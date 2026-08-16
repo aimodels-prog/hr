@@ -34,7 +34,9 @@ export const Route = createFileRoute("/jobs/$jobId")({
 });
 
 function JobDetail() {
-  const job = Route.useLoaderData();
+  const { jobId } = Route.useParams();
+  const job = jobs.find((j) => j.id === jobId) ?? jobs[0]!;
+
 
   return (
     <div className="min-h-screen">
