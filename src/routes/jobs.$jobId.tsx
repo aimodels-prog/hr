@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { jobs } from "@/lib/hr-data";
+import { jobs, type Job } from "@/lib/hr-data";
 
 export const Route = createFileRoute("/jobs/$jobId")({
   head: ({ params }) => {
@@ -24,11 +24,12 @@ export const Route = createFileRoute("/jobs/$jobId")({
       ],
     };
   },
-  loader: ({ params }) => {
+  loader: ({ params }): Job => {
     const job = jobs.find((j) => j.id === params.jobId);
     if (!job) throw notFound();
     return job;
   },
+
   component: JobDetail,
 });
 
