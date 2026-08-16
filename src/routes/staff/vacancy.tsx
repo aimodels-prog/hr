@@ -23,7 +23,7 @@ export const Route = createFileRoute("/staff/vacancy")({
       { property: "og:description", content: "Create a vacancy and draft the job description with AI." },
     ],
   }),
-  component: NewVacancy;
+  component: NewVacancy,
 });
 
 const draft = `Role summary
