@@ -19,6 +19,8 @@ export type Candidate = {
   risks: string[];
   skills: string[];
   email: string;
+  salaryExpectation?: number;
+  privateNotes?: string;
   interview?: {
     date: string;
     time: string;

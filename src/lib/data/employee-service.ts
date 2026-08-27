@@ -1,0 +1,937 @@
+import { getApplicationDataServices } from "./application-data.ts";
+import { getMasterDataRepository, getProjectRepository } from "./master-data.ts";
+import { LocalRepository } from "./repository.ts";
+import type {
+  Employee,
+  User,
+  EmploymentHistory,
+  Role,
+  ActorContext,
+  EmployeeStatus,
+  EmployeeSalary,
+  ProfileChangeRequest,
+} from "./types.ts";
+
+const PERSONAL_PROFILE_FIELDS = new Set<keyof Employee>([
+  "preferredName",
+  "phone",
+  "personalEmail",
+  "address",
+  "dateOfBirth",
+  "gender",
+  "nationality",
+  "maritalStatus",
+  "emergencyContacts",
+  "dependants",
+]);
+
+const EMPLOYMENT_EDIT_FIELDS = new Set<keyof Employee>([
+  "department",
+  "position",
+  "grade",
+  "location",
+  "projectId",
+  "costCentreId",
+  "employmentType",
+  "lineManagerId",
+  "startDate",
+  "probationEndDate",
+  "weeklyHours",
+  "salary",
+]);
+
+function hasOnlyPersonalProfileFields(changes: Partial<Employee>): boolean {
+  const keys = Object.keys(changes) as Array<keyof Employee>;
+  return keys.length > 0 && keys.every((key) => PERSONAL_PROFILE_FIELDS.has(key));
+}
+
+/**
+ * Independently verifies every master-data reference an employee create/update touches,
+ * rather than trusting that whatever the calling form's dropdown happened to submit is
+ * necessarily a real, currently-active department/position/location/grade/employment
+ * type/project/cost centre. department/position/location/grade/employmentType are stored on
+ * Employee as the master record's name (not its id), matching how the "Add Employee" and
+ * employment-update forms populate their <Select> options from these same repositories.
+ */
+function validateMasterDataReferences(
+  changes: Pick<
+    Partial<Employee>,
+    "department" | "position" | "location" | "grade" | "employmentType" | "projectId" | "costCentreId"
+  >,
+): void {
+  if (changes.department !== undefined) {
+    const match = getMasterDataRepository("departments").list().find((d) => d.name === changes.department && d.isActive);
+    if (!match) throw new Error(`"${changes.department}" is not an active department.`);
+  }
+  if (changes.position !== undefined) {
+    const match = getMasterDataRepository("positions").list().find((d) => d.name === changes.position && d.isActive);
+    if (!match) throw new Error(`"${changes.position}" is not an active position.`);
+  }
+  if (changes.location !== undefined) {
+    const match = getMasterDataRepository("locations").list().find((d) => d.name === changes.location && d.isActive);
+    if (!match) throw new Error(`"${changes.location}" is not an active location.`);
+  }
+  if (changes.grade) {
+    const match = getMasterDataRepository("grades").list().find((d) => d.name === changes.grade && d.isActive);
+    if (!match) throw new Error(`"${changes.grade}" is not an active grade.`);
+  }
+  if (changes.employmentType !== undefined) {
+    const match = getMasterDataRepository("employmentTypes").list().find((d) => d.name === changes.employmentType && d.isActive);
+    if (!match) throw new Error(`"${changes.employmentType}" is not an active employment type.`);
+  }
+  if (changes.projectId) {
+    const match = getProjectRepository().getById(changes.projectId);
+    if (!match || !match.isActive) throw new Error("Selected project is invalid or inactive.");
+  }
+  if (changes.costCentreId) {
+    const match = getMasterDataRepository("costCentres").getById(changes.costCentreId);
+    if (!match || !match.isActive) throw new Error("Selected cost centre is invalid or inactive.");
+  }
+}
+
+export class EmployeeService {
+  private employeeRepo: LocalRepository<Employee>;
+  private userRepo: LocalRepository<User>;
+  private historyRepo: LocalRepository<EmploymentHistory>;
+  private changeRequestRepo: LocalRepository<ProfileChangeRequest>;
+
+  constructor() {
+    const { storage, audit } = getApplicationDataServices();
+    this.employeeRepo = new LocalRepository<Employee>("employees", storage, audit, {
+      module: "core-hr",
+      entityType: "employee",
+    });
+    this.userRepo = new LocalRepository<User>("users", storage, audit, {
+      module: "system",
+      entityType: "user",
+    });
+    this.historyRepo = new LocalRepository<EmploymentHistory>(
+      "employment_history",
+      storage,
+      audit,
+      { module: "core-hr", entityType: "employment_history" },
+    );
+    this.changeRequestRepo = new LocalRepository<ProfileChangeRequest>(
+      "profile_change_requests",
+      storage,
+      audit,
+      { module: "core-hr", entityType: "profile_change_request" },
+    );
+  }
+
+  private notifyProfileReviewers(request: ProfileChangeRequest, actorContext: ActorContext): void {
+    const { notifications } = getApplicationDataServices();
+    const reviewers = this.userRepo
+      .list()
+      .filter(
+        (user) =>
+          user.status === "Active" &&
+          (user.roles.includes("HR") || user.roles.includes("Super Admin")),
+      );
+
+    for (const reviewer of reviewers) {
+      notifications.create(
+        {
+          recipientUserId: reviewer.id,
+          type: "profile.change-request",
+          title: "Profile update requires review",
+          message: `${request.requestedBy} submitted changes to their personal details.`,
+          priority: "Normal",
+          status: "Unread",
+          deduplicationKey: `profile-change-review-${request.id}-${reviewer.id}`,
+          link: {
+            entityType: "profile_change_request",
+            entityId: request.id,
+            path: `/staff/employees/${request.employeeId}`,
+          },
+        },
+        actorContext,
+      );
+    }
+  }
+
+  private notifyEmployeeOfProfileDecision(
+    employeeId: string,
+    requestId: string,
+    title: string,
+    message: string,
+    actorContext: ActorContext,
+  ): void {
+    const user = this.userRepo.list().find((item) => item.employeeId === employeeId);
+    if (!user) return;
+    getApplicationDataServices().notifications.create(
+      {
+        recipientUserId: user.id,
+        type: "profile.change-decision",
+        title,
+        message,
+        priority: "Normal",
+        status: "Unread",
+        deduplicationKey: `profile-change-decision-${requestId}-${user.id}`,
+        link: {
+          entityType: "profile_change_request",
+          entityId: requestId,
+          path: "/staff/me/profile",
+        },
+      },
+      actorContext,
+    );
+  }
+
+  getEmployeeRepository() {
+    return this.employeeRepo;
+  }
+
+  getEmployees(): Employee[] {
+    return this.employeeRepo.list();
+  }
+
+  getById(id: string): Employee | null {
+    return this.employeeRepo.getById(id);
+  }
+
+  addEmploymentHistory(
+    entry: Omit<
+      EmploymentHistory,
+      "id" | "createdAt" | "createdBy" | "updatedAt" | "updatedBy" | "recordVersion" | "archivedAt"
+    >,
+    actorContext: ActorContext,
+  ): EmploymentHistory {
+    return this.historyRepo.create(entry, actorContext);
+  }
+
+  getUserRepository() {
+    return this.userRepo;
+  }
+
+  getHistoryRepository() {
+    return this.historyRepo;
+  }
+
+  getChangeRequestRepository() {
+    return this.changeRequestRepo;
+  }
+
+  private denyProfileAction(
+    action: string,
+    employeeId: string,
+    reason: string,
+    actorContext: ActorContext,
+  ): never {
+    getApplicationDataServices().audit.record({
+      context: actorContext,
+      action: "access-denied",
+      module: "core-hr",
+      entityType: "employee",
+      entityId: employeeId,
+      reason: `${action}: ${reason}`,
+      riskLevel: "High",
+    });
+    throw new Error(reason);
+  }
+
+  updateUserAccess(
+    userId: string,
+    requestedRoles: Role[],
+    status: User["status"],
+    reason: string,
+    actorContext: ActorContext,
+  ): User {
+    const actorRole = actorContext.actor.activeRole;
+    const target = this.userRepo.getById(userId, { includeArchived: true });
+    if (!target) throw new Error("User not found.");
+
+    if (actorRole !== "HR" && actorRole !== "Super Admin") {
+      getApplicationDataServices().audit.record({
+        context: actorContext,
+        action: "access-denied",
+        module: "user-management",
+        entityType: "user",
+        entityId: userId,
+        reason: "Attempted to change user access without permission",
+        riskLevel: "High",
+      });
+      throw new Error("Only HR or a Super Admin can change user access.");
+    }
+
+    const trimmedReason = reason.trim();
+    if (trimmedReason.length < 5) {
+      throw new Error("Please give a short reason for this change.");
+    }
+
+    const roles = Array.from(new Set<Role>(["Employee", ...requestedRoles]));
+    if (actorRole === "HR" && target.roles.includes("Super Admin")) {
+      getApplicationDataServices().audit.record({
+        context: actorContext,
+        action: "access-denied",
+        module: "user-management",
+        entityType: "user",
+        entityId: userId,
+        reason: "HR attempted to change a Super Admin account",
+        riskLevel: "Critical",
+      });
+      throw new Error("Only a Super Admin can change a Super Admin account.");
+    }
+    const changesSuperAdminAccess =
+      target.roles.includes("Super Admin") !== roles.includes("Super Admin");
+    if (actorRole !== "Super Admin" && changesSuperAdminAccess) {
+      getApplicationDataServices().audit.record({
+        context: actorContext,
+        action: "access-denied",
+        module: "user-management",
+        entityType: "user",
+        entityId: userId,
+        reason: "HR attempted to change Super Admin access",
+        riskLevel: "Critical",
+      });
+      throw new Error("Only a Super Admin can grant or remove Super Admin access.");
+    }
+
+    const wasActiveSuperAdmin = target.status === "Active" && target.roles.includes("Super Admin");
+    const willBeActiveSuperAdmin = status === "Active" && roles.includes("Super Admin");
+    if (wasActiveSuperAdmin && !willBeActiveSuperAdmin) {
+      const activeSuperAdmins = this.userRepo
+        .list()
+        .filter((user) => user.status === "Active" && user.roles.includes("Super Admin"));
+      if (activeSuperAdmins.length <= 1) {
+        throw new Error("At least one active Super Admin must remain.");
+      }
+    }
+
+    return this.userRepo.update(
+      userId,
+      { roles, status },
+      { actor: actorContext.actor, reason: trimmedReason },
+    );
+  }
+
+  async createEmployee(
+    data: Omit<
+      Employee,
+      "id" | "createdAt" | "createdBy" | "updatedAt" | "updatedBy" | "recordVersion" | "archivedAt"
+    >,
+    _roles: Role[],
+    actorContext: ActorContext,
+  ): Promise<{ employee: Employee; user?: User }> {
+    if (actorContext.actor.activeRole !== "HR" && actorContext.actor.activeRole !== "Super Admin") {
+      getApplicationDataServices().audit.record({
+        context: actorContext,
+        action: "access-denied",
+        module: "core-hr",
+        entityType: "employee",
+        entityId: "new-employee",
+        reason: "Attempted to add an employee without permission",
+        riskLevel: "High",
+      });
+      throw new Error("Only HR or a Super Admin can add employees.");
+    }
+
+    // Uniqueness checks
+    const allEmployees = this.employeeRepo.list({ includeArchived: true });
+    if (allEmployees.some((e) => e.employeeNumber === data.employeeNumber)) {
+      throw new Error(`Employee number ${data.employeeNumber} is already in use.`);
+    }
+
+    const allUsers = this.userRepo.list({ includeArchived: true });
+    const workspaceEmail = data.workspaceEmail || data.workEmail;
+    if (allUsers.some((u) => u.workspaceEmail.toLowerCase() === workspaceEmail.toLowerCase())) {
+      throw new Error(`Workspace email ${workspaceEmail} is already assigned to a user.`);
+    }
+
+    if (data.probationEndDate && new Date(data.probationEndDate) < new Date(data.startDate)) {
+      throw new Error("Probation end date cannot be before start date.");
+    }
+
+    if (!data.lineManagerId && allEmployees.length > 0) {
+      throw new Error("A supervisor must be assigned before an employee record can be created.");
+    }
+    if (data.lineManagerId) {
+      const manager = this.employeeRepo.getById(data.lineManagerId);
+      if (!manager || manager.status === "Archived") {
+        throw new Error("Selected line manager is invalid or archived.");
+      }
+    }
+
+    // Salary and statutory-registration details are compensation/payroll data - the same
+    // Accounts-or-Super-Admin boundary updateEmploymentRecord enforces for later changes must
+    // also apply here, or HR could set (or see) payroll data simply by entering it at creation
+    // instead of waiting for the controlled employment-update path. This method is already
+    // restricted to HR/Super Admin above (Accounts cannot reach this point at all), so in
+    // practice this specifically blocks HR from including payroll fields at creation time.
+    if (
+      (data.salary !== undefined || data.socialInsuranceNumber !== undefined) &&
+      actorContext.actor.activeRole !== "Super Admin"
+    ) {
+      this.denyProfileAction(
+        "add employee",
+        "new-employee",
+        "Only Accounts or a Super Admin can set salary or social-insurance details. Add these afterward via the employment record.",
+        actorContext,
+      );
+    }
+
+    validateMasterDataReferences(data);
+
+    // Full-state snapshot/rollback: this is several separate writes (employee, user, initial
+    // history, and possibly a supervisor role grant) - if any step after the first fails, we
+    // must not leave a partially created employee behind.
+    const { storage } = getApplicationDataServices();
+    const snapshot = storage.exportState();
+    try {
+      const employee = this.employeeRepo.create(data, actorContext);
+      let user: User | undefined = undefined;
+
+      if (data.workEmail) {
+        user = this.userRepo.create(
+          {
+            employeeId: employee.id,
+            displayName: employee.preferredName,
+            workspaceEmail,
+            roles: ["Employee"],
+            status:
+              data.status === "Active" || data.status === "Onboarding" ? "Active" : "Suspended",
+          },
+          actorContext,
+        );
+      }
+
+      // Create initial employment history record
+      this.historyRepo.create(
+        {
+          employeeId: employee.id,
+          effectiveDate: employee.startDate,
+          reason: "Initial Employment",
+          field: "status",
+          newValue: employee.status,
+        },
+        actorContext,
+      );
+
+      if (employee.lineManagerId) {
+        this.ensureSupervisorAccess(employee.lineManagerId, actorContext);
+      }
+
+      return user ? { employee, user } : { employee };
+    } catch (err) {
+      storage.replaceState(snapshot);
+      throw new Error(
+        `Failed to create employee: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /**
+   * Direct self-service write path for onboarding intake (personal details, bank details).
+   * Unlike updateEmploymentRecord, this does not require an effective date/reason and does
+   * not generate employment-history entries - these are record-keeping fields the new hire
+   * is providing for the first time, not a negotiated change to employment terms.
+   */
+  submitSelfServiceOnboardingDetails(
+    employeeId: string,
+    changes: Partial<
+      Pick<
+        Employee,
+        | "dateOfBirth"
+        | "gender"
+        | "nationality"
+        | "maritalStatus"
+        | "address"
+        | "emergencyContacts"
+        | "dependants"
+        | "bankDetails"
+        | "personalEmail"
+        | "phone"
+      >
+    >,
+    actorContext: ActorContext,
+  ): Employee {
+    const employee = this.employeeRepo.getById(employeeId, { includeArchived: true });
+    if (!employee) throw new Error("Employee not found");
+    if (actorContext.actor.employeeId !== employeeId) {
+      this.denyProfileAction(
+        "submit onboarding details",
+        employeeId,
+        "You can only submit onboarding details for your own record.",
+        actorContext,
+      );
+    }
+    const activeOnboarding = getApplicationDataServices()
+      .storage.readCollection<{ employeeId: string; status: string }>("onboardingCases")
+      .some((item) => item.employeeId === employeeId && item.status === "In Progress");
+    if (!activeOnboarding) {
+      this.denyProfileAction(
+        "submit onboarding details",
+        employeeId,
+        "Onboarding details can be submitted only while your onboarding process is active.",
+        actorContext,
+      );
+    }
+    return this.employeeRepo.update(employeeId, changes, actorContext);
+  }
+
+  validateHierarchy(employeeId: string, newManagerId: string | undefined): void {
+    if (!newManagerId) return;
+    if (employeeId === newManagerId) {
+      throw new Error("An employee cannot report to themselves.");
+    }
+
+    const allEmployees = this.employeeRepo.list();
+    const employeeMap = new Map(allEmployees.map((e) => [e.id, e.lineManagerId]));
+
+    let currentManager = employeeMap.get(newManagerId);
+    let depth = 0;
+    while (currentManager) {
+      if (currentManager === employeeId) {
+        throw new Error(
+          "Circular reporting line detected. The selected manager reports to this employee.",
+        );
+      }
+      currentManager = employeeMap.get(currentManager);
+      depth++;
+      if (depth > 100) throw new Error("Hierarchy is too deep or contains an infinite loop.");
+    }
+  }
+
+  updateEmploymentRecord(
+    employeeId: string,
+    changes: Partial<Employee>,
+    effectiveDate: string,
+    reason: string,
+    actorContext: ActorContext,
+  ): Employee {
+    const employee = this.employeeRepo.getById(employeeId);
+    if (!employee) throw new Error("Employee not found");
+
+    const activeRole = actorContext.actor.activeRole;
+    const changedFields = Object.keys(changes) as Array<keyof Employee>;
+    if (
+      changedFields.length === 0 ||
+      changedFields.some((field) => !EMPLOYMENT_EDIT_FIELDS.has(field))
+    ) {
+      this.denyProfileAction(
+        "update employment record",
+        employeeId,
+        "This page can change employment details only. Status and personal records use their own controlled workflows.",
+        actorContext,
+      );
+    }
+    const changesSalary = changedFields.includes("salary");
+    const changesNonSalary = changedFields.some((field) => field !== "salary");
+    if (changesSalary && activeRole !== "Accounts" && activeRole !== "Super Admin") {
+      this.denyProfileAction(
+        "update employment record",
+        employeeId,
+        "Only Accounts or a Super Admin can change compensation.",
+        actorContext,
+      );
+    }
+    if (changesNonSalary && activeRole !== "HR" && activeRole !== "Super Admin") {
+      this.denyProfileAction(
+        "update employment record",
+        employeeId,
+        "Only HR or a Super Admin can change employment details.",
+        actorContext,
+      );
+    }
+    if (!reason.trim() || !effectiveDate) {
+      throw new Error("An effective date and reason are required.");
+    }
+    if (changes.salary) {
+      if (changes.salary.baseMonthly <= 0 || !changes.salary.currency.trim()) {
+        throw new Error("Compensation requires a positive base salary and currency.");
+      }
+      for (const allowance of [
+        changes.salary.housingAllowance,
+        changes.salary.transportAllowance,
+      ]) {
+        if (allowance !== undefined && allowance < 0) {
+          throw new Error("Allowances cannot be negative.");
+        }
+      }
+    }
+
+    if ("lineManagerId" in changes && !changes.lineManagerId) {
+      throw new Error("Every employee must have an assigned supervisor.");
+    }
+    if (changes.lineManagerId) {
+      const manager = this.employeeRepo.getById(changes.lineManagerId);
+      if (!manager || manager.status === "Archived") {
+        throw new Error("Selected line manager is invalid or archived.");
+      }
+      this.validateHierarchy(employeeId, changes.lineManagerId);
+    }
+    validateMasterDataReferences(changes);
+    if (changes.probationEndDate && changes.startDate) {
+      if (new Date(changes.probationEndDate) < new Date(changes.startDate)) {
+        throw new Error("Probation end date cannot be before start date.");
+      }
+    } else if (changes.probationEndDate && !changes.startDate) {
+      if (new Date(changes.probationEndDate) < new Date(employee.startDate)) {
+        throw new Error("Probation end date cannot be before start date.");
+      }
+    }
+
+    const updated = this.employeeRepo.update(employeeId, changes, {
+      actor: actorContext.actor,
+      reason,
+    });
+
+    if (changes.lineManagerId) {
+      this.ensureSupervisorAccess(changes.lineManagerId, actorContext);
+    }
+
+    // Create history records for tracked fields
+    const trackableFields: (keyof Employee)[] = [
+      "department",
+      "position",
+      "grade",
+      "location",
+      "employmentType",
+      "lineManagerId",
+      "status",
+      "projectId",
+      "costCentreId",
+      "startDate",
+      "probationEndDate",
+      "weeklyHours",
+      "salary",
+    ];
+
+    const formatTrackableValue = (field: keyof Employee, value: unknown): string => {
+      if (field === "salary") {
+        const salary = value as EmployeeSalary | undefined;
+        return salary ? `${salary.baseMonthly.toLocaleString()} ${salary.currency}` : "";
+      }
+      return String(value || "");
+    };
+
+    for (const field of trackableFields) {
+      if (!(field in changes)) continue;
+
+      // Salary is an object, not a scalar, so a reference/identity check is not a valid
+      // "did this actually change" test - compare by value instead. Scalar fields keep the
+      // cheap identity comparison they already used.
+      const hasChanged =
+        field === "salary"
+          ? JSON.stringify(changes[field] ?? null) !== JSON.stringify(employee[field] ?? null)
+          : changes[field] !== employee[field];
+
+      if (!hasChanged) continue;
+
+      this.historyRepo.create(
+        {
+          employeeId,
+          effectiveDate,
+          field,
+          oldValue: formatTrackableValue(field, employee[field]),
+          newValue: formatTrackableValue(field, changes[field]),
+          reason,
+        },
+        { actor: actorContext.actor, reason: `Recorded history for ${field}` },
+      );
+    }
+
+    return updated;
+  }
+
+  private ensureSupervisorAccess(supervisorEmployeeId: string, context: ActorContext): void {
+    const user = this.userRepo
+      .list()
+      .find((candidate) => candidate.employeeId === supervisorEmployeeId);
+    if (!user || user.roles.includes("Line Manager")) return;
+    this.userRepo.update(
+      user.id,
+      { roles: [...new Set<Role>(["Employee", ...user.roles, "Line Manager"])] },
+      {
+        ...context,
+        reason: "Supervisor access added because an employee now reports to this person",
+      },
+    );
+  }
+
+  changeEmployeeStatus(
+    employeeId: string,
+    newStatus: EmployeeStatus,
+    reason: string,
+    actorContext: ActorContext,
+  ): void {
+    const employee = this.employeeRepo.getById(employeeId, { includeArchived: true });
+    if (!employee) throw new Error("Employee not found");
+    if (actorContext.actor.activeRole !== "HR" && actorContext.actor.activeRole !== "Super Admin") {
+      this.denyProfileAction(
+        "change employee status",
+        employeeId,
+        "Only HR or a Super Admin can change an employee's status.",
+        actorContext,
+      );
+    }
+
+    const oldStatus = employee.status;
+    if (oldStatus === newStatus) return;
+
+    if (["Notice", "Inactive", "Archived"].includes(newStatus)) {
+      const offboardingCase = getApplicationDataServices()
+        .storage.readCollection<{ employeeId: string; status: string }>("offboardingCases")
+        .find((item) => item.employeeId === employeeId && item.status !== "Cancelled");
+      const permitted =
+        newStatus === "Notice"
+          ? offboardingCase?.status === "In Progress" ||
+            offboardingCase?.status === "Pending Clearance"
+          : offboardingCase?.status === "Completed";
+      if (!permitted) {
+        this.denyProfileAction(
+          "change employee status",
+          employeeId,
+          newStatus === "Notice"
+            ? "Start an offboarding case before moving an employee to Notice."
+            : "Complete the offboarding clearance before making an employee inactive or archived.",
+          actorContext,
+        );
+      }
+    }
+
+    // Update Employee Status
+    const effectiveDate = new Date().toISOString().split("T")[0] as string;
+    this.employeeRepo.update(employeeId, { status: newStatus }, actorContext);
+    this.historyRepo.create(
+      {
+        employeeId,
+        effectiveDate,
+        field: "status",
+        oldValue: oldStatus,
+        newValue: newStatus,
+        reason,
+      },
+      actorContext,
+    );
+
+    // Sync User status if applicable
+    const allUsers = this.userRepo.list({ includeArchived: true });
+    const user = allUsers.find((u) => u.employeeId === employeeId);
+    if (user) {
+      let newUserStatus: User["status"] = user.status;
+      if (newStatus === "Archived") newUserStatus = "Archived";
+      else if (newStatus === "Inactive" || newStatus === "Notice") newUserStatus = "Suspended";
+      else if (newStatus === "Active" || newStatus === "Probation") newUserStatus = "Active";
+
+      if (newUserStatus !== user.status) {
+        this.userRepo.update(
+          user.id,
+          { status: newUserStatus },
+          {
+            actor: actorContext.actor,
+            reason: `Status synced with employee record to ${newUserStatus}`,
+          },
+        );
+      }
+    }
+
+    // Perform Archive/Restore specifically if going into or out of Archived status
+    if (newStatus === "Archived") {
+      this.employeeRepo.archive(employeeId, { actor: actorContext.actor, reason });
+      if (user) this.userRepo.archive(user.id, { actor: actorContext.actor, reason });
+    } else if (oldStatus === "Archived") {
+      this.employeeRepo.restore(employeeId, { actor: actorContext.actor, reason });
+      if (user) this.userRepo.restore(user.id, { actor: actorContext.actor, reason });
+    }
+  }
+
+  finalizeEmployment(
+    employeeId: string,
+    terminationDate: string,
+    terminationReason: string,
+    actorContext: ActorContext,
+  ): Employee {
+    if (actorContext.actor.activeRole !== "HR" && actorContext.actor.activeRole !== "Super Admin") {
+      this.denyProfileAction(
+        "finalize employment",
+        employeeId,
+        "Only HR or a Super Admin can finalise employment.",
+        actorContext,
+      );
+    }
+    if (!terminationDate || terminationReason.trim().length < 3) {
+      throw new Error("A last working date and termination reason are required.");
+    }
+    this.changeEmployeeStatus(employeeId, "Inactive", terminationReason, actorContext);
+    const updated = this.employeeRepo.update(
+      employeeId,
+      { terminationDate, terminationReason },
+      actorContext,
+    );
+    for (const [field, newValue] of [
+      ["terminationDate", terminationDate],
+      ["terminationReason", terminationReason],
+    ] as const) {
+      this.historyRepo.create(
+        {
+          employeeId,
+          effectiveDate: terminationDate,
+          field,
+          newValue,
+          reason: `Offboarding finalised: ${terminationReason}`,
+        },
+        actorContext,
+      );
+    }
+    return updated;
+  }
+
+  requestProfileChange(
+    employeeId: string,
+    changes: Partial<Employee>,
+    actorContext: ActorContext,
+  ): ProfileChangeRequest {
+    if (actorContext.actor.employeeId !== employeeId) {
+      this.denyProfileAction(
+        "request profile change",
+        employeeId,
+        "You can only request changes to your own profile.",
+        actorContext,
+      );
+    }
+    if (!hasOnlyPersonalProfileFields(changes)) {
+      this.denyProfileAction(
+        "request profile change",
+        employeeId,
+        "Profile requests can contain personal and contact details only.",
+        actorContext,
+      );
+    }
+    const alreadyPending = this.changeRequestRepo
+      .list()
+      .some((request) => request.employeeId === employeeId && request.status === "Pending");
+    if (alreadyPending) throw new Error("A profile update is already awaiting HR review.");
+
+    const request = this.changeRequestRepo.create(
+      {
+        employeeId,
+        changes,
+        status: "Pending",
+        requestedBy: actorContext.actor.displayName,
+      },
+      actorContext,
+    );
+    this.notifyProfileReviewers(request, actorContext);
+    return request;
+  }
+
+  updatePersonalRecord(
+    employeeId: string,
+    changes: Partial<Employee>,
+    reason: string,
+    actorContext: ActorContext,
+  ): Employee {
+    if (actorContext.actor.activeRole !== "HR" && actorContext.actor.activeRole !== "Super Admin") {
+      this.denyProfileAction(
+        "update personal record",
+        employeeId,
+        "Only HR or a Super Admin can directly correct an employee's personal record.",
+        actorContext,
+      );
+    }
+    if (!hasOnlyPersonalProfileFields(changes)) {
+      throw new Error("Only personal and contact details can be changed here.");
+    }
+    if (reason.trim().length < 5) throw new Error("Please give a short reason for this change.");
+
+    return this.employeeRepo.update(employeeId, changes, {
+      actor: actorContext.actor,
+      reason: reason.trim(),
+    });
+  }
+
+  approveProfileChange(
+    requestId: string,
+    reviewerNotes: string | undefined,
+    actorContext: ActorContext,
+  ): void {
+    const request = this.changeRequestRepo.getById(requestId);
+    if (!request || request.status !== "Pending") throw new Error("Invalid or non-pending request");
+    if (actorContext.actor.activeRole !== "HR" && actorContext.actor.activeRole !== "Super Admin") {
+      this.denyProfileAction(
+        "approve profile change",
+        request.employeeId,
+        "Only HR or a Super Admin can approve profile changes.",
+        actorContext,
+      );
+    }
+    if (actorContext.actor.employeeId === request.employeeId) {
+      this.denyProfileAction(
+        "approve profile change",
+        request.employeeId,
+        "You cannot approve your own profile change request.",
+        actorContext,
+      );
+    }
+    if (!hasOnlyPersonalProfileFields(request.changes)) {
+      throw new Error("This request contains fields that cannot be approved from the profile.");
+    }
+
+    // Apply changes
+    this.employeeRepo.update(request.employeeId, request.changes, {
+      actor: actorContext.actor,
+      reason: "Approved personal-profile update",
+    });
+
+    this.changeRequestRepo.update(
+      requestId,
+      {
+        status: "Approved",
+        reviewerId: actorContext.actor.userId,
+        reviewedAt: new Date().toISOString(),
+        reviewNotes: reviewerNotes,
+      },
+      actorContext,
+    );
+    this.notifyEmployeeOfProfileDecision(
+      request.employeeId,
+      request.id,
+      "Profile update approved",
+      "HR approved the changes to your personal details.",
+      actorContext,
+    );
+  }
+
+  rejectProfileChange(requestId: string, reviewerNotes: string, actorContext: ActorContext): void {
+    const request = this.changeRequestRepo.getById(requestId);
+    if (!request || request.status !== "Pending") throw new Error("Invalid or non-pending request");
+
+    if (actorContext.actor.activeRole !== "HR" && actorContext.actor.activeRole !== "Super Admin") {
+      this.denyProfileAction(
+        "reject profile change",
+        request.employeeId,
+        "Only HR or a Super Admin can reject profile changes.",
+        actorContext,
+      );
+    }
+    if (actorContext.actor.employeeId === request.employeeId) {
+      this.denyProfileAction(
+        "reject profile change",
+        request.employeeId,
+        "You cannot reject your own profile change request.",
+        actorContext,
+      );
+    }
+
+    if (reviewerNotes.trim().length < 3) throw new Error("A rejection reason is required.");
+
+    this.changeRequestRepo.update(
+      requestId,
+      {
+        status: "Rejected",
+        reviewerId: actorContext.actor.userId,
+        reviewedAt: new Date().toISOString(),
+        reviewNotes: reviewerNotes,
+      },
+      actorContext,
+    );
+    this.notifyEmployeeOfProfileDecision(
+      request.employeeId,
+      request.id,
+      "Profile update needs changes",
+      reviewerNotes.trim(),
+      actorContext,
+    );
+  }
+}

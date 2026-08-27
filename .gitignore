@@ -16,6 +16,14 @@ dist-ssr
 .nitro
 *.local
 
+# Local source data and one-off diagnostics
+Candidates 2025.xlsx
+test-leave.ts
+
+# Local browser-test output
+test-results/
+playwright-report/
+
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars

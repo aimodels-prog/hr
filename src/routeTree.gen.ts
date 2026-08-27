@@ -12,8 +12,86 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as StaffRouteImport } from './routes/staff'
 import { Route as JobsJobIdRouteImport } from './routes/jobs.$jobId'
+import { Route as JobsAppliedRouteImport } from './routes/jobs.applied'
 import { Route as StaffIndexRouteImport } from './routes/staff/index'
+import { Route as StaffAnniversariesRouteImport } from './routes/staff/anniversaries'
+import { Route as StaffAttendanceRouteImport } from './routes/staff/attendance'
+import { Route as StaffAuditRouteImport } from './routes/staff/audit'
+import { Route as StaffCandidatesRouteImport } from './routes/staff/candidates'
+import { Route as StaffDocumentExpiryRouteImport } from './routes/staff/document-expiry'
+import { Route as StaffDocumentsRouteImport } from './routes/staff/documents'
+import { Route as StaffFilesRouteImport } from './routes/staff/files'
+import { Route as StaffInterviewsRouteImport } from './routes/staff/interviews'
+import { Route as StaffLeaveRouteImport } from './routes/staff/leave'
+import { Route as StaffLeaveAdminRouteImport } from './routes/staff/leave-admin'
+import { Route as StaffLeaveApprovalsRouteImport } from './routes/staff/leave-approvals'
+import { Route as StaffMyTasksRouteImport } from './routes/staff/my-tasks'
+import { Route as StaffOffboardingRouteImport } from './routes/staff/offboarding'
+import { Route as StaffOffersRouteImport } from './routes/staff/offers'
+import { Route as StaffOnboardingRouteImport } from './routes/staff/onboarding'
+import { Route as StaffOrgChartRouteImport } from './routes/staff/org-chart'
+import { Route as StaffOvertimeApprovalsRouteImport } from './routes/staff/overtime-approvals'
+import { Route as StaffPayrollRouteImport } from './routes/staff/payroll'
+import { Route as StaffPerformanceRouteImport } from './routes/staff/performance'
+import { Route as StaffRecommendationsRouteImport } from './routes/staff/recommendations'
+import { Route as StaffReportsRouteImport } from './routes/staff/reports'
+import { Route as StaffSettingsRouteImport } from './routes/staff/settings'
+import { Route as StaffTimesheetMonitoringRouteImport } from './routes/staff/timesheet-monitoring'
+import { Route as StaffTimesheetSettingsRouteImport } from './routes/staff/timesheet-settings'
+import { Route as StaffTimesheetsRouteImport } from './routes/staff/timesheets'
+import { Route as StaffTrainingRouteImport } from './routes/staff/training'
+import { Route as StaffTravelRouteImport } from './routes/staff/travel'
+import { Route as StaffTravelAccountsApprovalsRouteImport } from './routes/staff/travel-accounts-approvals'
+import { Route as StaffTravelClosuresRouteImport } from './routes/staff/travel-closures'
+import { Route as StaffTravelHrApprovalsRouteImport } from './routes/staff/travel-hr-approvals'
+import { Route as StaffUsersRouteImport } from './routes/staff/users'
 import { Route as StaffVacancyRouteImport } from './routes/staff/vacancy'
+import { Route as StaffAttendanceIndexRouteImport } from './routes/staff/attendance/index'
+import { Route as StaffAttendanceCorrectionsRouteImport } from './routes/staff/attendance/corrections'
+import { Route as StaffCandidatesIndexRouteImport } from './routes/staff/candidates/index'
+import { Route as StaffCandidatesCandidateIdRouteImport } from './routes/staff/candidates/$candidateId'
+import { Route as StaffCandidatesContactsRouteImport } from './routes/staff/candidates/contacts'
+import { Route as StaffCandidatesImportRouteImport } from './routes/staff/candidates/import'
+import { Route as StaffCandidatesIntakeRouteImport } from './routes/staff/candidates/intake'
+import { Route as StaffCandidatesRecommendRouteImport } from './routes/staff/candidates/recommend'
+import { Route as StaffEmployeesIndexRouteImport } from './routes/staff/employees/index'
+import { Route as StaffEmployeesEmployeeIdRouteImport } from './routes/staff/employees/$employeeId'
+import { Route as StaffEmployeesImportRouteImport } from './routes/staff/employees/import'
+import { Route as StaffEmployeesNewRouteImport } from './routes/staff/employees/new'
+import { Route as StaffMeAttendanceRouteImport } from './routes/staff/me/attendance'
+import { Route as StaffMeLeaveBalancesRouteImport } from './routes/staff/me/leave-balances'
+import { Route as StaffMeOnboardingRouteImport } from './routes/staff/me/onboarding'
+import { Route as StaffMeOvertimeRouteImport } from './routes/staff/me/overtime'
+import { Route as StaffMePerformanceRouteImport } from './routes/staff/me/performance'
+import { Route as StaffMeProfileRouteImport } from './routes/staff/me/profile'
+import { Route as StaffMeTrainingRouteImport } from './routes/staff/me/training'
+import { Route as StaffOffboardingIndexRouteImport } from './routes/staff/offboarding/index'
+import { Route as StaffOffboardingCaseIdRouteImport } from './routes/staff/offboarding/$caseId'
+import { Route as StaffOnboardingIndexRouteImport } from './routes/staff/onboarding/index'
+import { Route as StaffOnboardingCaseIdRouteImport } from './routes/staff/onboarding/$caseId'
+import { Route as StaffPayrollIndexRouteImport } from './routes/staff/payroll/index'
+import { Route as StaffPayrollOvertimeRouteImport } from './routes/staff/payroll/overtime'
+import { Route as StaffPerformanceGoalsRouteImport } from './routes/staff/performance/goals'
+import { Route as StaffPerformanceTeamRouteImport } from './routes/staff/performance/team'
+import { Route as StaffRecommendationsIndexRouteImport } from './routes/staff/recommendations/index'
+import { Route as StaffRecommendationsEmailRouteImport } from './routes/staff/recommendations/$email'
+import { Route as StaffTimesheetApprovalsIndexRouteImport } from './routes/staff/timesheet-approvals/index'
+import { Route as StaffTimesheetApprovalsTimesheetIdRouteImport } from './routes/staff/timesheet-approvals/$timesheetId'
+import { Route as StaffTrainingIndexRouteImport } from './routes/staff/training/index'
+import { Route as StaffTravelIndexRouteImport } from './routes/staff/travel/index'
+import { Route as StaffTravelRequestIdRouteImport } from './routes/staff/travel/$requestId'
+import { Route as StaffTravelNewRouteImport } from './routes/staff/travel/new'
+import { Route as StaffVacanciesIndexRouteImport } from './routes/staff/vacancies/index'
+import { Route as StaffVacanciesVacancyIdRouteImport } from './routes/staff/vacancies/$vacancyId'
+import { Route as StaffVacanciesNewRouteImport } from './routes/staff/vacancies/new'
+import { Route as StaffCandidatesCandidateIdConvertRouteImport } from './routes/staff/candidates/$candidateId/convert'
+import { Route as StaffMeTimesheetsIndexRouteImport } from './routes/staff/me/timesheets/index'
+import { Route as StaffMeTimesheetsPeriodIdRouteImport } from './routes/staff/me/timesheets/$periodId'
+import { Route as StaffPayrollPeriodsIndexRouteImport } from './routes/staff/payroll/periods/index'
+import { Route as StaffPayrollPeriodsPeriodIdRouteImport } from './routes/staff/payroll/periods/$periodId'
+import { Route as StaffPerformanceCyclesIndexRouteImport } from './routes/staff/performance/cycles/index'
+import { Route as StaffPerformanceCyclesNewRouteImport } from './routes/staff/performance/cycles/new'
+import { Route as StaffPerformanceReviewsReviewIdRouteImport } from './routes/staff/performance/reviews/$reviewId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -30,9 +108,171 @@ const JobsJobIdRoute = JobsJobIdRouteImport.update({
   path: '/jobs/$jobId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const JobsAppliedRoute = JobsAppliedRouteImport.update({
+  id: '/jobs/applied',
+  path: '/jobs/applied',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StaffIndexRoute = StaffIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffAnniversariesRoute = StaffAnniversariesRouteImport.update({
+  id: '/anniversaries',
+  path: '/anniversaries',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffAttendanceRoute = StaffAttendanceRouteImport.update({
+  id: '/attendance',
+  path: '/attendance',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffAuditRoute = StaffAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffCandidatesRoute = StaffCandidatesRouteImport.update({
+  id: '/candidates',
+  path: '/candidates',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffDocumentExpiryRoute = StaffDocumentExpiryRouteImport.update({
+  id: '/document-expiry',
+  path: '/document-expiry',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffDocumentsRoute = StaffDocumentsRouteImport.update({
+  id: '/documents',
+  path: '/documents',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffFilesRoute = StaffFilesRouteImport.update({
+  id: '/files',
+  path: '/files',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffInterviewsRoute = StaffInterviewsRouteImport.update({
+  id: '/interviews',
+  path: '/interviews',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffLeaveRoute = StaffLeaveRouteImport.update({
+  id: '/leave',
+  path: '/leave',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffLeaveAdminRoute = StaffLeaveAdminRouteImport.update({
+  id: '/leave-admin',
+  path: '/leave-admin',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffLeaveApprovalsRoute = StaffLeaveApprovalsRouteImport.update({
+  id: '/leave-approvals',
+  path: '/leave-approvals',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffMyTasksRoute = StaffMyTasksRouteImport.update({
+  id: '/my-tasks',
+  path: '/my-tasks',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffOffboardingRoute = StaffOffboardingRouteImport.update({
+  id: '/offboarding',
+  path: '/offboarding',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffOffersRoute = StaffOffersRouteImport.update({
+  id: '/offers',
+  path: '/offers',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffOnboardingRoute = StaffOnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffOrgChartRoute = StaffOrgChartRouteImport.update({
+  id: '/org-chart',
+  path: '/org-chart',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffOvertimeApprovalsRoute = StaffOvertimeApprovalsRouteImport.update({
+  id: '/overtime-approvals',
+  path: '/overtime-approvals',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffPayrollRoute = StaffPayrollRouteImport.update({
+  id: '/payroll',
+  path: '/payroll',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffPerformanceRoute = StaffPerformanceRouteImport.update({
+  id: '/performance',
+  path: '/performance',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffRecommendationsRoute = StaffRecommendationsRouteImport.update({
+  id: '/recommendations',
+  path: '/recommendations',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffReportsRoute = StaffReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffSettingsRoute = StaffSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffTimesheetMonitoringRoute =
+  StaffTimesheetMonitoringRouteImport.update({
+    id: '/timesheet-monitoring',
+    path: '/timesheet-monitoring',
+    getParentRoute: () => StaffRoute,
+  } as any)
+const StaffTimesheetSettingsRoute = StaffTimesheetSettingsRouteImport.update({
+  id: '/timesheet-settings',
+  path: '/timesheet-settings',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffTimesheetsRoute = StaffTimesheetsRouteImport.update({
+  id: '/timesheets',
+  path: '/timesheets',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffTrainingRoute = StaffTrainingRouteImport.update({
+  id: '/training',
+  path: '/training',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffTravelRoute = StaffTravelRouteImport.update({
+  id: '/travel',
+  path: '/travel',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffTravelAccountsApprovalsRoute =
+  StaffTravelAccountsApprovalsRouteImport.update({
+    id: '/travel-accounts-approvals',
+    path: '/travel-accounts-approvals',
+    getParentRoute: () => StaffRoute,
+  } as any)
+const StaffTravelClosuresRoute = StaffTravelClosuresRouteImport.update({
+  id: '/travel-closures',
+  path: '/travel-closures',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffTravelHrApprovalsRoute = StaffTravelHrApprovalsRouteImport.update({
+  id: '/travel-hr-approvals',
+  path: '/travel-hr-approvals',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffUsersRoute = StaffUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
   getParentRoute: () => StaffRoute,
 } as any)
 const StaffVacancyRoute = StaffVacancyRouteImport.update({
@@ -40,41 +280,753 @@ const StaffVacancyRoute = StaffVacancyRouteImport.update({
   path: '/vacancy',
   getParentRoute: () => StaffRoute,
 } as any)
+const StaffAttendanceIndexRoute = StaffAttendanceIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => StaffAttendanceRoute,
+} as any)
+const StaffAttendanceCorrectionsRoute =
+  StaffAttendanceCorrectionsRouteImport.update({
+    id: '/corrections',
+    path: '/corrections',
+    getParentRoute: () => StaffAttendanceRoute,
+  } as any)
+const StaffCandidatesIndexRoute = StaffCandidatesIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => StaffCandidatesRoute,
+} as any)
+const StaffCandidatesCandidateIdRoute =
+  StaffCandidatesCandidateIdRouteImport.update({
+    id: '/$candidateId',
+    path: '/$candidateId',
+    getParentRoute: () => StaffCandidatesRoute,
+  } as any)
+const StaffCandidatesContactsRoute = StaffCandidatesContactsRouteImport.update({
+  id: '/contacts',
+  path: '/contacts',
+  getParentRoute: () => StaffCandidatesRoute,
+} as any)
+const StaffCandidatesImportRoute = StaffCandidatesImportRouteImport.update({
+  id: '/import',
+  path: '/import',
+  getParentRoute: () => StaffCandidatesRoute,
+} as any)
+const StaffCandidatesIntakeRoute = StaffCandidatesIntakeRouteImport.update({
+  id: '/intake',
+  path: '/intake',
+  getParentRoute: () => StaffCandidatesRoute,
+} as any)
+const StaffCandidatesRecommendRoute =
+  StaffCandidatesRecommendRouteImport.update({
+    id: '/recommend',
+    path: '/recommend',
+    getParentRoute: () => StaffCandidatesRoute,
+  } as any)
+const StaffEmployeesIndexRoute = StaffEmployeesIndexRouteImport.update({
+  id: '/employees/',
+  path: '/employees/',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffEmployeesEmployeeIdRoute =
+  StaffEmployeesEmployeeIdRouteImport.update({
+    id: '/employees/$employeeId',
+    path: '/employees/$employeeId',
+    getParentRoute: () => StaffRoute,
+  } as any)
+const StaffEmployeesImportRoute = StaffEmployeesImportRouteImport.update({
+  id: '/employees/import',
+  path: '/employees/import',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffEmployeesNewRoute = StaffEmployeesNewRouteImport.update({
+  id: '/employees/new',
+  path: '/employees/new',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffMeAttendanceRoute = StaffMeAttendanceRouteImport.update({
+  id: '/me/attendance',
+  path: '/me/attendance',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffMeLeaveBalancesRoute = StaffMeLeaveBalancesRouteImport.update({
+  id: '/me/leave-balances',
+  path: '/me/leave-balances',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffMeOnboardingRoute = StaffMeOnboardingRouteImport.update({
+  id: '/me/onboarding',
+  path: '/me/onboarding',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffMeOvertimeRoute = StaffMeOvertimeRouteImport.update({
+  id: '/me/overtime',
+  path: '/me/overtime',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffMePerformanceRoute = StaffMePerformanceRouteImport.update({
+  id: '/me/performance',
+  path: '/me/performance',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffMeProfileRoute = StaffMeProfileRouteImport.update({
+  id: '/me/profile',
+  path: '/me/profile',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffMeTrainingRoute = StaffMeTrainingRouteImport.update({
+  id: '/me/training',
+  path: '/me/training',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffOffboardingIndexRoute = StaffOffboardingIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => StaffOffboardingRoute,
+} as any)
+const StaffOffboardingCaseIdRoute = StaffOffboardingCaseIdRouteImport.update({
+  id: '/$caseId',
+  path: '/$caseId',
+  getParentRoute: () => StaffOffboardingRoute,
+} as any)
+const StaffOnboardingIndexRoute = StaffOnboardingIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => StaffOnboardingRoute,
+} as any)
+const StaffOnboardingCaseIdRoute = StaffOnboardingCaseIdRouteImport.update({
+  id: '/$caseId',
+  path: '/$caseId',
+  getParentRoute: () => StaffOnboardingRoute,
+} as any)
+const StaffPayrollIndexRoute = StaffPayrollIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => StaffPayrollRoute,
+} as any)
+const StaffPayrollOvertimeRoute = StaffPayrollOvertimeRouteImport.update({
+  id: '/overtime',
+  path: '/overtime',
+  getParentRoute: () => StaffPayrollRoute,
+} as any)
+const StaffPerformanceGoalsRoute = StaffPerformanceGoalsRouteImport.update({
+  id: '/goals',
+  path: '/goals',
+  getParentRoute: () => StaffPerformanceRoute,
+} as any)
+const StaffPerformanceTeamRoute = StaffPerformanceTeamRouteImport.update({
+  id: '/team',
+  path: '/team',
+  getParentRoute: () => StaffPerformanceRoute,
+} as any)
+const StaffRecommendationsIndexRoute =
+  StaffRecommendationsIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => StaffRecommendationsRoute,
+  } as any)
+const StaffRecommendationsEmailRoute =
+  StaffRecommendationsEmailRouteImport.update({
+    id: '/$email',
+    path: '/$email',
+    getParentRoute: () => StaffRecommendationsRoute,
+  } as any)
+const StaffTimesheetApprovalsIndexRoute =
+  StaffTimesheetApprovalsIndexRouteImport.update({
+    id: '/timesheet-approvals/',
+    path: '/timesheet-approvals/',
+    getParentRoute: () => StaffRoute,
+  } as any)
+const StaffTimesheetApprovalsTimesheetIdRoute =
+  StaffTimesheetApprovalsTimesheetIdRouteImport.update({
+    id: '/timesheet-approvals/$timesheetId',
+    path: '/timesheet-approvals/$timesheetId',
+    getParentRoute: () => StaffRoute,
+  } as any)
+const StaffTrainingIndexRoute = StaffTrainingIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => StaffTrainingRoute,
+} as any)
+const StaffTravelIndexRoute = StaffTravelIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => StaffTravelRoute,
+} as any)
+const StaffTravelRequestIdRoute = StaffTravelRequestIdRouteImport.update({
+  id: '/$requestId',
+  path: '/$requestId',
+  getParentRoute: () => StaffTravelRoute,
+} as any)
+const StaffTravelNewRoute = StaffTravelNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => StaffTravelRoute,
+} as any)
+const StaffVacanciesIndexRoute = StaffVacanciesIndexRouteImport.update({
+  id: '/vacancies/',
+  path: '/vacancies/',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffVacanciesVacancyIdRoute = StaffVacanciesVacancyIdRouteImport.update({
+  id: '/vacancies/$vacancyId',
+  path: '/vacancies/$vacancyId',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffVacanciesNewRoute = StaffVacanciesNewRouteImport.update({
+  id: '/vacancies/new',
+  path: '/vacancies/new',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffCandidatesCandidateIdConvertRoute =
+  StaffCandidatesCandidateIdConvertRouteImport.update({
+    id: '/convert',
+    path: '/convert',
+    getParentRoute: () => StaffCandidatesCandidateIdRoute,
+  } as any)
+const StaffMeTimesheetsIndexRoute = StaffMeTimesheetsIndexRouteImport.update({
+  id: '/me/timesheets/',
+  path: '/me/timesheets/',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffMeTimesheetsPeriodIdRoute =
+  StaffMeTimesheetsPeriodIdRouteImport.update({
+    id: '/me/timesheets/$periodId',
+    path: '/me/timesheets/$periodId',
+    getParentRoute: () => StaffRoute,
+  } as any)
+const StaffPayrollPeriodsIndexRoute =
+  StaffPayrollPeriodsIndexRouteImport.update({
+    id: '/periods/',
+    path: '/periods/',
+    getParentRoute: () => StaffPayrollRoute,
+  } as any)
+const StaffPayrollPeriodsPeriodIdRoute =
+  StaffPayrollPeriodsPeriodIdRouteImport.update({
+    id: '/periods/$periodId',
+    path: '/periods/$periodId',
+    getParentRoute: () => StaffPayrollRoute,
+  } as any)
+const StaffPerformanceCyclesIndexRoute =
+  StaffPerformanceCyclesIndexRouteImport.update({
+    id: '/cycles/',
+    path: '/cycles/',
+    getParentRoute: () => StaffPerformanceRoute,
+  } as any)
+const StaffPerformanceCyclesNewRoute =
+  StaffPerformanceCyclesNewRouteImport.update({
+    id: '/cycles/new',
+    path: '/cycles/new',
+    getParentRoute: () => StaffPerformanceRoute,
+  } as any)
+const StaffPerformanceReviewsReviewIdRoute =
+  StaffPerformanceReviewsReviewIdRouteImport.update({
+    id: '/reviews/$reviewId',
+    path: '/reviews/$reviewId',
+    getParentRoute: () => StaffPerformanceRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/staff': typeof StaffRouteWithChildren
   '/jobs/$jobId': typeof JobsJobIdRoute
+  '/jobs/applied': typeof JobsAppliedRoute
+  '/staff/anniversaries': typeof StaffAnniversariesRoute
+  '/staff/attendance': typeof StaffAttendanceRouteWithChildren
+  '/staff/audit': typeof StaffAuditRoute
+  '/staff/candidates': typeof StaffCandidatesRouteWithChildren
+  '/staff/document-expiry': typeof StaffDocumentExpiryRoute
+  '/staff/documents': typeof StaffDocumentsRoute
+  '/staff/files': typeof StaffFilesRoute
+  '/staff/interviews': typeof StaffInterviewsRoute
+  '/staff/leave': typeof StaffLeaveRoute
+  '/staff/leave-admin': typeof StaffLeaveAdminRoute
+  '/staff/leave-approvals': typeof StaffLeaveApprovalsRoute
+  '/staff/my-tasks': typeof StaffMyTasksRoute
+  '/staff/offboarding': typeof StaffOffboardingRouteWithChildren
+  '/staff/offers': typeof StaffOffersRoute
+  '/staff/onboarding': typeof StaffOnboardingRouteWithChildren
+  '/staff/org-chart': typeof StaffOrgChartRoute
+  '/staff/overtime-approvals': typeof StaffOvertimeApprovalsRoute
+  '/staff/payroll': typeof StaffPayrollRouteWithChildren
+  '/staff/performance': typeof StaffPerformanceRouteWithChildren
+  '/staff/recommendations': typeof StaffRecommendationsRouteWithChildren
+  '/staff/reports': typeof StaffReportsRoute
+  '/staff/settings': typeof StaffSettingsRoute
+  '/staff/timesheet-monitoring': typeof StaffTimesheetMonitoringRoute
+  '/staff/timesheet-settings': typeof StaffTimesheetSettingsRoute
+  '/staff/timesheets': typeof StaffTimesheetsRoute
+  '/staff/training': typeof StaffTrainingRouteWithChildren
+  '/staff/travel': typeof StaffTravelRouteWithChildren
+  '/staff/travel-accounts-approvals': typeof StaffTravelAccountsApprovalsRoute
+  '/staff/travel-closures': typeof StaffTravelClosuresRoute
+  '/staff/travel-hr-approvals': typeof StaffTravelHrApprovalsRoute
+  '/staff/users': typeof StaffUsersRoute
   '/staff/vacancy': typeof StaffVacancyRoute
   '/staff/': typeof StaffIndexRoute
+  '/staff/attendance/corrections': typeof StaffAttendanceCorrectionsRoute
+  '/staff/candidates/$candidateId': typeof StaffCandidatesCandidateIdRouteWithChildren
+  '/staff/candidates/contacts': typeof StaffCandidatesContactsRoute
+  '/staff/candidates/import': typeof StaffCandidatesImportRoute
+  '/staff/candidates/intake': typeof StaffCandidatesIntakeRoute
+  '/staff/candidates/recommend': typeof StaffCandidatesRecommendRoute
+  '/staff/employees/$employeeId': typeof StaffEmployeesEmployeeIdRoute
+  '/staff/employees/import': typeof StaffEmployeesImportRoute
+  '/staff/employees/new': typeof StaffEmployeesNewRoute
+  '/staff/me/attendance': typeof StaffMeAttendanceRoute
+  '/staff/me/leave-balances': typeof StaffMeLeaveBalancesRoute
+  '/staff/me/onboarding': typeof StaffMeOnboardingRoute
+  '/staff/me/overtime': typeof StaffMeOvertimeRoute
+  '/staff/me/performance': typeof StaffMePerformanceRoute
+  '/staff/me/profile': typeof StaffMeProfileRoute
+  '/staff/me/training': typeof StaffMeTrainingRoute
+  '/staff/offboarding/$caseId': typeof StaffOffboardingCaseIdRoute
+  '/staff/onboarding/$caseId': typeof StaffOnboardingCaseIdRoute
+  '/staff/payroll/overtime': typeof StaffPayrollOvertimeRoute
+  '/staff/performance/goals': typeof StaffPerformanceGoalsRoute
+  '/staff/performance/team': typeof StaffPerformanceTeamRoute
+  '/staff/recommendations/$email': typeof StaffRecommendationsEmailRoute
+  '/staff/timesheet-approvals/$timesheetId': typeof StaffTimesheetApprovalsTimesheetIdRoute
+  '/staff/travel/$requestId': typeof StaffTravelRequestIdRoute
+  '/staff/travel/new': typeof StaffTravelNewRoute
+  '/staff/vacancies/$vacancyId': typeof StaffVacanciesVacancyIdRoute
+  '/staff/vacancies/new': typeof StaffVacanciesNewRoute
+  '/staff/attendance/': typeof StaffAttendanceIndexRoute
+  '/staff/candidates/': typeof StaffCandidatesIndexRoute
+  '/staff/employees/': typeof StaffEmployeesIndexRoute
+  '/staff/offboarding/': typeof StaffOffboardingIndexRoute
+  '/staff/onboarding/': typeof StaffOnboardingIndexRoute
+  '/staff/payroll/': typeof StaffPayrollIndexRoute
+  '/staff/recommendations/': typeof StaffRecommendationsIndexRoute
+  '/staff/timesheet-approvals/': typeof StaffTimesheetApprovalsIndexRoute
+  '/staff/training/': typeof StaffTrainingIndexRoute
+  '/staff/travel/': typeof StaffTravelIndexRoute
+  '/staff/vacancies/': typeof StaffVacanciesIndexRoute
+  '/staff/candidates/$candidateId/convert': typeof StaffCandidatesCandidateIdConvertRoute
+  '/staff/me/timesheets/$periodId': typeof StaffMeTimesheetsPeriodIdRoute
+  '/staff/payroll/periods/$periodId': typeof StaffPayrollPeriodsPeriodIdRoute
+  '/staff/performance/cycles/new': typeof StaffPerformanceCyclesNewRoute
+  '/staff/performance/reviews/$reviewId': typeof StaffPerformanceReviewsReviewIdRoute
+  '/staff/me/timesheets/': typeof StaffMeTimesheetsIndexRoute
+  '/staff/payroll/periods/': typeof StaffPayrollPeriodsIndexRoute
+  '/staff/performance/cycles/': typeof StaffPerformanceCyclesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/jobs/$jobId': typeof JobsJobIdRoute
+  '/jobs/applied': typeof JobsAppliedRoute
+  '/staff/anniversaries': typeof StaffAnniversariesRoute
+  '/staff/audit': typeof StaffAuditRoute
+  '/staff/document-expiry': typeof StaffDocumentExpiryRoute
+  '/staff/documents': typeof StaffDocumentsRoute
+  '/staff/files': typeof StaffFilesRoute
+  '/staff/interviews': typeof StaffInterviewsRoute
+  '/staff/leave': typeof StaffLeaveRoute
+  '/staff/leave-admin': typeof StaffLeaveAdminRoute
+  '/staff/leave-approvals': typeof StaffLeaveApprovalsRoute
+  '/staff/my-tasks': typeof StaffMyTasksRoute
+  '/staff/offers': typeof StaffOffersRoute
+  '/staff/org-chart': typeof StaffOrgChartRoute
+  '/staff/overtime-approvals': typeof StaffOvertimeApprovalsRoute
+  '/staff/performance': typeof StaffPerformanceRouteWithChildren
+  '/staff/reports': typeof StaffReportsRoute
+  '/staff/settings': typeof StaffSettingsRoute
+  '/staff/timesheet-monitoring': typeof StaffTimesheetMonitoringRoute
+  '/staff/timesheet-settings': typeof StaffTimesheetSettingsRoute
+  '/staff/timesheets': typeof StaffTimesheetsRoute
+  '/staff/travel-accounts-approvals': typeof StaffTravelAccountsApprovalsRoute
+  '/staff/travel-closures': typeof StaffTravelClosuresRoute
+  '/staff/travel-hr-approvals': typeof StaffTravelHrApprovalsRoute
+  '/staff/users': typeof StaffUsersRoute
   '/staff/vacancy': typeof StaffVacancyRoute
   '/staff': typeof StaffIndexRoute
+  '/staff/attendance/corrections': typeof StaffAttendanceCorrectionsRoute
+  '/staff/candidates/$candidateId': typeof StaffCandidatesCandidateIdRouteWithChildren
+  '/staff/candidates/contacts': typeof StaffCandidatesContactsRoute
+  '/staff/candidates/import': typeof StaffCandidatesImportRoute
+  '/staff/candidates/intake': typeof StaffCandidatesIntakeRoute
+  '/staff/candidates/recommend': typeof StaffCandidatesRecommendRoute
+  '/staff/employees/$employeeId': typeof StaffEmployeesEmployeeIdRoute
+  '/staff/employees/import': typeof StaffEmployeesImportRoute
+  '/staff/employees/new': typeof StaffEmployeesNewRoute
+  '/staff/me/attendance': typeof StaffMeAttendanceRoute
+  '/staff/me/leave-balances': typeof StaffMeLeaveBalancesRoute
+  '/staff/me/onboarding': typeof StaffMeOnboardingRoute
+  '/staff/me/overtime': typeof StaffMeOvertimeRoute
+  '/staff/me/performance': typeof StaffMePerformanceRoute
+  '/staff/me/profile': typeof StaffMeProfileRoute
+  '/staff/me/training': typeof StaffMeTrainingRoute
+  '/staff/offboarding/$caseId': typeof StaffOffboardingCaseIdRoute
+  '/staff/onboarding/$caseId': typeof StaffOnboardingCaseIdRoute
+  '/staff/payroll/overtime': typeof StaffPayrollOvertimeRoute
+  '/staff/performance/goals': typeof StaffPerformanceGoalsRoute
+  '/staff/performance/team': typeof StaffPerformanceTeamRoute
+  '/staff/recommendations/$email': typeof StaffRecommendationsEmailRoute
+  '/staff/timesheet-approvals/$timesheetId': typeof StaffTimesheetApprovalsTimesheetIdRoute
+  '/staff/travel/$requestId': typeof StaffTravelRequestIdRoute
+  '/staff/travel/new': typeof StaffTravelNewRoute
+  '/staff/vacancies/$vacancyId': typeof StaffVacanciesVacancyIdRoute
+  '/staff/vacancies/new': typeof StaffVacanciesNewRoute
+  '/staff/attendance': typeof StaffAttendanceIndexRoute
+  '/staff/candidates': typeof StaffCandidatesIndexRoute
+  '/staff/employees': typeof StaffEmployeesIndexRoute
+  '/staff/offboarding': typeof StaffOffboardingIndexRoute
+  '/staff/onboarding': typeof StaffOnboardingIndexRoute
+  '/staff/payroll': typeof StaffPayrollIndexRoute
+  '/staff/recommendations': typeof StaffRecommendationsIndexRoute
+  '/staff/timesheet-approvals': typeof StaffTimesheetApprovalsIndexRoute
+  '/staff/training': typeof StaffTrainingIndexRoute
+  '/staff/travel': typeof StaffTravelIndexRoute
+  '/staff/vacancies': typeof StaffVacanciesIndexRoute
+  '/staff/candidates/$candidateId/convert': typeof StaffCandidatesCandidateIdConvertRoute
+  '/staff/me/timesheets/$periodId': typeof StaffMeTimesheetsPeriodIdRoute
+  '/staff/payroll/periods/$periodId': typeof StaffPayrollPeriodsPeriodIdRoute
+  '/staff/performance/cycles/new': typeof StaffPerformanceCyclesNewRoute
+  '/staff/performance/reviews/$reviewId': typeof StaffPerformanceReviewsReviewIdRoute
+  '/staff/me/timesheets': typeof StaffMeTimesheetsIndexRoute
+  '/staff/payroll/periods': typeof StaffPayrollPeriodsIndexRoute
+  '/staff/performance/cycles': typeof StaffPerformanceCyclesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/staff': typeof StaffRouteWithChildren
   '/jobs/$jobId': typeof JobsJobIdRoute
+  '/jobs/applied': typeof JobsAppliedRoute
+  '/staff/anniversaries': typeof StaffAnniversariesRoute
+  '/staff/attendance': typeof StaffAttendanceRouteWithChildren
+  '/staff/audit': typeof StaffAuditRoute
+  '/staff/candidates': typeof StaffCandidatesRouteWithChildren
+  '/staff/document-expiry': typeof StaffDocumentExpiryRoute
+  '/staff/documents': typeof StaffDocumentsRoute
+  '/staff/files': typeof StaffFilesRoute
+  '/staff/interviews': typeof StaffInterviewsRoute
+  '/staff/leave': typeof StaffLeaveRoute
+  '/staff/leave-admin': typeof StaffLeaveAdminRoute
+  '/staff/leave-approvals': typeof StaffLeaveApprovalsRoute
+  '/staff/my-tasks': typeof StaffMyTasksRoute
+  '/staff/offboarding': typeof StaffOffboardingRouteWithChildren
+  '/staff/offers': typeof StaffOffersRoute
+  '/staff/onboarding': typeof StaffOnboardingRouteWithChildren
+  '/staff/org-chart': typeof StaffOrgChartRoute
+  '/staff/overtime-approvals': typeof StaffOvertimeApprovalsRoute
+  '/staff/payroll': typeof StaffPayrollRouteWithChildren
+  '/staff/performance': typeof StaffPerformanceRouteWithChildren
+  '/staff/recommendations': typeof StaffRecommendationsRouteWithChildren
+  '/staff/reports': typeof StaffReportsRoute
+  '/staff/settings': typeof StaffSettingsRoute
+  '/staff/timesheet-monitoring': typeof StaffTimesheetMonitoringRoute
+  '/staff/timesheet-settings': typeof StaffTimesheetSettingsRoute
+  '/staff/timesheets': typeof StaffTimesheetsRoute
+  '/staff/training': typeof StaffTrainingRouteWithChildren
+  '/staff/travel': typeof StaffTravelRouteWithChildren
+  '/staff/travel-accounts-approvals': typeof StaffTravelAccountsApprovalsRoute
+  '/staff/travel-closures': typeof StaffTravelClosuresRoute
+  '/staff/travel-hr-approvals': typeof StaffTravelHrApprovalsRoute
+  '/staff/users': typeof StaffUsersRoute
   '/staff/vacancy': typeof StaffVacancyRoute
   '/staff/': typeof StaffIndexRoute
+  '/staff/attendance/corrections': typeof StaffAttendanceCorrectionsRoute
+  '/staff/candidates/$candidateId': typeof StaffCandidatesCandidateIdRouteWithChildren
+  '/staff/candidates/contacts': typeof StaffCandidatesContactsRoute
+  '/staff/candidates/import': typeof StaffCandidatesImportRoute
+  '/staff/candidates/intake': typeof StaffCandidatesIntakeRoute
+  '/staff/candidates/recommend': typeof StaffCandidatesRecommendRoute
+  '/staff/employees/$employeeId': typeof StaffEmployeesEmployeeIdRoute
+  '/staff/employees/import': typeof StaffEmployeesImportRoute
+  '/staff/employees/new': typeof StaffEmployeesNewRoute
+  '/staff/me/attendance': typeof StaffMeAttendanceRoute
+  '/staff/me/leave-balances': typeof StaffMeLeaveBalancesRoute
+  '/staff/me/onboarding': typeof StaffMeOnboardingRoute
+  '/staff/me/overtime': typeof StaffMeOvertimeRoute
+  '/staff/me/performance': typeof StaffMePerformanceRoute
+  '/staff/me/profile': typeof StaffMeProfileRoute
+  '/staff/me/training': typeof StaffMeTrainingRoute
+  '/staff/offboarding/$caseId': typeof StaffOffboardingCaseIdRoute
+  '/staff/onboarding/$caseId': typeof StaffOnboardingCaseIdRoute
+  '/staff/payroll/overtime': typeof StaffPayrollOvertimeRoute
+  '/staff/performance/goals': typeof StaffPerformanceGoalsRoute
+  '/staff/performance/team': typeof StaffPerformanceTeamRoute
+  '/staff/recommendations/$email': typeof StaffRecommendationsEmailRoute
+  '/staff/timesheet-approvals/$timesheetId': typeof StaffTimesheetApprovalsTimesheetIdRoute
+  '/staff/travel/$requestId': typeof StaffTravelRequestIdRoute
+  '/staff/travel/new': typeof StaffTravelNewRoute
+  '/staff/vacancies/$vacancyId': typeof StaffVacanciesVacancyIdRoute
+  '/staff/vacancies/new': typeof StaffVacanciesNewRoute
+  '/staff/attendance/': typeof StaffAttendanceIndexRoute
+  '/staff/candidates/': typeof StaffCandidatesIndexRoute
+  '/staff/employees/': typeof StaffEmployeesIndexRoute
+  '/staff/offboarding/': typeof StaffOffboardingIndexRoute
+  '/staff/onboarding/': typeof StaffOnboardingIndexRoute
+  '/staff/payroll/': typeof StaffPayrollIndexRoute
+  '/staff/recommendations/': typeof StaffRecommendationsIndexRoute
+  '/staff/timesheet-approvals/': typeof StaffTimesheetApprovalsIndexRoute
+  '/staff/training/': typeof StaffTrainingIndexRoute
+  '/staff/travel/': typeof StaffTravelIndexRoute
+  '/staff/vacancies/': typeof StaffVacanciesIndexRoute
+  '/staff/candidates/$candidateId/convert': typeof StaffCandidatesCandidateIdConvertRoute
+  '/staff/me/timesheets/$periodId': typeof StaffMeTimesheetsPeriodIdRoute
+  '/staff/payroll/periods/$periodId': typeof StaffPayrollPeriodsPeriodIdRoute
+  '/staff/performance/cycles/new': typeof StaffPerformanceCyclesNewRoute
+  '/staff/performance/reviews/$reviewId': typeof StaffPerformanceReviewsReviewIdRoute
+  '/staff/me/timesheets/': typeof StaffMeTimesheetsIndexRoute
+  '/staff/payroll/periods/': typeof StaffPayrollPeriodsIndexRoute
+  '/staff/performance/cycles/': typeof StaffPerformanceCyclesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/staff' | '/jobs/$jobId' | '/staff/vacancy' | '/staff/'
+  fullPaths:
+    | '/'
+    | '/staff'
+    | '/jobs/$jobId'
+    | '/jobs/applied'
+    | '/staff/anniversaries'
+    | '/staff/attendance'
+    | '/staff/audit'
+    | '/staff/candidates'
+    | '/staff/document-expiry'
+    | '/staff/documents'
+    | '/staff/files'
+    | '/staff/interviews'
+    | '/staff/leave'
+    | '/staff/leave-admin'
+    | '/staff/leave-approvals'
+    | '/staff/my-tasks'
+    | '/staff/offboarding'
+    | '/staff/offers'
+    | '/staff/onboarding'
+    | '/staff/org-chart'
+    | '/staff/overtime-approvals'
+    | '/staff/payroll'
+    | '/staff/performance'
+    | '/staff/recommendations'
+    | '/staff/reports'
+    | '/staff/settings'
+    | '/staff/timesheet-monitoring'
+    | '/staff/timesheet-settings'
+    | '/staff/timesheets'
+    | '/staff/training'
+    | '/staff/travel'
+    | '/staff/travel-accounts-approvals'
+    | '/staff/travel-closures'
+    | '/staff/travel-hr-approvals'
+    | '/staff/users'
+    | '/staff/vacancy'
+    | '/staff/'
+    | '/staff/attendance/corrections'
+    | '/staff/candidates/$candidateId'
+    | '/staff/candidates/contacts'
+    | '/staff/candidates/import'
+    | '/staff/candidates/intake'
+    | '/staff/candidates/recommend'
+    | '/staff/employees/$employeeId'
+    | '/staff/employees/import'
+    | '/staff/employees/new'
+    | '/staff/me/attendance'
+    | '/staff/me/leave-balances'
+    | '/staff/me/onboarding'
+    | '/staff/me/overtime'
+    | '/staff/me/performance'
+    | '/staff/me/profile'
+    | '/staff/me/training'
+    | '/staff/offboarding/$caseId'
+    | '/staff/onboarding/$caseId'
+    | '/staff/payroll/overtime'
+    | '/staff/performance/goals'
+    | '/staff/performance/team'
+    | '/staff/recommendations/$email'
+    | '/staff/timesheet-approvals/$timesheetId'
+    | '/staff/travel/$requestId'
+    | '/staff/travel/new'
+    | '/staff/vacancies/$vacancyId'
+    | '/staff/vacancies/new'
+    | '/staff/attendance/'
+    | '/staff/candidates/'
+    | '/staff/employees/'
+    | '/staff/offboarding/'
+    | '/staff/onboarding/'
+    | '/staff/payroll/'
+    | '/staff/recommendations/'
+    | '/staff/timesheet-approvals/'
+    | '/staff/training/'
+    | '/staff/travel/'
+    | '/staff/vacancies/'
+    | '/staff/candidates/$candidateId/convert'
+    | '/staff/me/timesheets/$periodId'
+    | '/staff/payroll/periods/$periodId'
+    | '/staff/performance/cycles/new'
+    | '/staff/performance/reviews/$reviewId'
+    | '/staff/me/timesheets/'
+    | '/staff/payroll/periods/'
+    | '/staff/performance/cycles/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/jobs/$jobId' | '/staff/vacancy' | '/staff'
+  to:
+    | '/'
+    | '/jobs/$jobId'
+    | '/jobs/applied'
+    | '/staff/anniversaries'
+    | '/staff/audit'
+    | '/staff/document-expiry'
+    | '/staff/documents'
+    | '/staff/files'
+    | '/staff/interviews'
+    | '/staff/leave'
+    | '/staff/leave-admin'
+    | '/staff/leave-approvals'
+    | '/staff/my-tasks'
+    | '/staff/offers'
+    | '/staff/org-chart'
+    | '/staff/overtime-approvals'
+    | '/staff/performance'
+    | '/staff/reports'
+    | '/staff/settings'
+    | '/staff/timesheet-monitoring'
+    | '/staff/timesheet-settings'
+    | '/staff/timesheets'
+    | '/staff/travel-accounts-approvals'
+    | '/staff/travel-closures'
+    | '/staff/travel-hr-approvals'
+    | '/staff/users'
+    | '/staff/vacancy'
+    | '/staff'
+    | '/staff/attendance/corrections'
+    | '/staff/candidates/$candidateId'
+    | '/staff/candidates/contacts'
+    | '/staff/candidates/import'
+    | '/staff/candidates/intake'
+    | '/staff/candidates/recommend'
+    | '/staff/employees/$employeeId'
+    | '/staff/employees/import'
+    | '/staff/employees/new'
+    | '/staff/me/attendance'
+    | '/staff/me/leave-balances'
+    | '/staff/me/onboarding'
+    | '/staff/me/overtime'
+    | '/staff/me/performance'
+    | '/staff/me/profile'
+    | '/staff/me/training'
+    | '/staff/offboarding/$caseId'
+    | '/staff/onboarding/$caseId'
+    | '/staff/payroll/overtime'
+    | '/staff/performance/goals'
+    | '/staff/performance/team'
+    | '/staff/recommendations/$email'
+    | '/staff/timesheet-approvals/$timesheetId'
+    | '/staff/travel/$requestId'
+    | '/staff/travel/new'
+    | '/staff/vacancies/$vacancyId'
+    | '/staff/vacancies/new'
+    | '/staff/attendance'
+    | '/staff/candidates'
+    | '/staff/employees'
+    | '/staff/offboarding'
+    | '/staff/onboarding'
+    | '/staff/payroll'
+    | '/staff/recommendations'
+    | '/staff/timesheet-approvals'
+    | '/staff/training'
+    | '/staff/travel'
+    | '/staff/vacancies'
+    | '/staff/candidates/$candidateId/convert'
+    | '/staff/me/timesheets/$periodId'
+    | '/staff/payroll/periods/$periodId'
+    | '/staff/performance/cycles/new'
+    | '/staff/performance/reviews/$reviewId'
+    | '/staff/me/timesheets'
+    | '/staff/payroll/periods'
+    | '/staff/performance/cycles'
   id:
-    '__root__' | '/' | '/staff' | '/jobs/$jobId' | '/staff/vacancy' | '/staff/'
+    | '__root__'
+    | '/'
+    | '/staff'
+    | '/jobs/$jobId'
+    | '/jobs/applied'
+    | '/staff/anniversaries'
+    | '/staff/attendance'
+    | '/staff/audit'
+    | '/staff/candidates'
+    | '/staff/document-expiry'
+    | '/staff/documents'
+    | '/staff/files'
+    | '/staff/interviews'
+    | '/staff/leave'
+    | '/staff/leave-admin'
+    | '/staff/leave-approvals'
+    | '/staff/my-tasks'
+    | '/staff/offboarding'
+    | '/staff/offers'
+    | '/staff/onboarding'
+    | '/staff/org-chart'
+    | '/staff/overtime-approvals'
+    | '/staff/payroll'
+    | '/staff/performance'
+    | '/staff/recommendations'
+    | '/staff/reports'
+    | '/staff/settings'
+    | '/staff/timesheet-monitoring'
+    | '/staff/timesheet-settings'
+    | '/staff/timesheets'
+    | '/staff/training'
+    | '/staff/travel'
+    | '/staff/travel-accounts-approvals'
+    | '/staff/travel-closures'
+    | '/staff/travel-hr-approvals'
+    | '/staff/users'
+    | '/staff/vacancy'
+    | '/staff/'
+    | '/staff/attendance/corrections'
+    | '/staff/candidates/$candidateId'
+    | '/staff/candidates/contacts'
+    | '/staff/candidates/import'
+    | '/staff/candidates/intake'
+    | '/staff/candidates/recommend'
+    | '/staff/employees/$employeeId'
+    | '/staff/employees/import'
+    | '/staff/employees/new'
+    | '/staff/me/attendance'
+    | '/staff/me/leave-balances'
+    | '/staff/me/onboarding'
+    | '/staff/me/overtime'
+    | '/staff/me/performance'
+    | '/staff/me/profile'
+    | '/staff/me/training'
+    | '/staff/offboarding/$caseId'
+    | '/staff/onboarding/$caseId'
+    | '/staff/payroll/overtime'
+    | '/staff/performance/goals'
+    | '/staff/performance/team'
+    | '/staff/recommendations/$email'
+    | '/staff/timesheet-approvals/$timesheetId'
+    | '/staff/travel/$requestId'
+    | '/staff/travel/new'
+    | '/staff/vacancies/$vacancyId'
+    | '/staff/vacancies/new'
+    | '/staff/attendance/'
+    | '/staff/candidates/'
+    | '/staff/employees/'
+    | '/staff/offboarding/'
+    | '/staff/onboarding/'
+    | '/staff/payroll/'
+    | '/staff/recommendations/'
+    | '/staff/timesheet-approvals/'
+    | '/staff/training/'
+    | '/staff/travel/'
+    | '/staff/vacancies/'
+    | '/staff/candidates/$candidateId/convert'
+    | '/staff/me/timesheets/$periodId'
+    | '/staff/payroll/periods/$periodId'
+    | '/staff/performance/cycles/new'
+    | '/staff/performance/reviews/$reviewId'
+    | '/staff/me/timesheets/'
+    | '/staff/payroll/periods/'
+    | '/staff/performance/cycles/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   StaffRoute: typeof StaffRouteWithChildren
   JobsJobIdRoute: typeof JobsJobIdRoute
+  JobsAppliedRoute: typeof JobsAppliedRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -100,11 +1052,235 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof JobsJobIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/jobs/applied': {
+      id: '/jobs/applied'
+      path: '/jobs/applied'
+      fullPath: '/jobs/applied'
+      preLoaderRoute: typeof JobsAppliedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/staff/': {
       id: '/staff/'
       path: '/'
       fullPath: '/staff/'
       preLoaderRoute: typeof StaffIndexRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/anniversaries': {
+      id: '/staff/anniversaries'
+      path: '/anniversaries'
+      fullPath: '/staff/anniversaries'
+      preLoaderRoute: typeof StaffAnniversariesRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/attendance': {
+      id: '/staff/attendance'
+      path: '/attendance'
+      fullPath: '/staff/attendance'
+      preLoaderRoute: typeof StaffAttendanceRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/audit': {
+      id: '/staff/audit'
+      path: '/audit'
+      fullPath: '/staff/audit'
+      preLoaderRoute: typeof StaffAuditRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/candidates': {
+      id: '/staff/candidates'
+      path: '/candidates'
+      fullPath: '/staff/candidates'
+      preLoaderRoute: typeof StaffCandidatesRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/document-expiry': {
+      id: '/staff/document-expiry'
+      path: '/document-expiry'
+      fullPath: '/staff/document-expiry'
+      preLoaderRoute: typeof StaffDocumentExpiryRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/documents': {
+      id: '/staff/documents'
+      path: '/documents'
+      fullPath: '/staff/documents'
+      preLoaderRoute: typeof StaffDocumentsRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/files': {
+      id: '/staff/files'
+      path: '/files'
+      fullPath: '/staff/files'
+      preLoaderRoute: typeof StaffFilesRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/interviews': {
+      id: '/staff/interviews'
+      path: '/interviews'
+      fullPath: '/staff/interviews'
+      preLoaderRoute: typeof StaffInterviewsRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/leave': {
+      id: '/staff/leave'
+      path: '/leave'
+      fullPath: '/staff/leave'
+      preLoaderRoute: typeof StaffLeaveRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/leave-admin': {
+      id: '/staff/leave-admin'
+      path: '/leave-admin'
+      fullPath: '/staff/leave-admin'
+      preLoaderRoute: typeof StaffLeaveAdminRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/leave-approvals': {
+      id: '/staff/leave-approvals'
+      path: '/leave-approvals'
+      fullPath: '/staff/leave-approvals'
+      preLoaderRoute: typeof StaffLeaveApprovalsRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/my-tasks': {
+      id: '/staff/my-tasks'
+      path: '/my-tasks'
+      fullPath: '/staff/my-tasks'
+      preLoaderRoute: typeof StaffMyTasksRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/offboarding': {
+      id: '/staff/offboarding'
+      path: '/offboarding'
+      fullPath: '/staff/offboarding'
+      preLoaderRoute: typeof StaffOffboardingRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/offers': {
+      id: '/staff/offers'
+      path: '/offers'
+      fullPath: '/staff/offers'
+      preLoaderRoute: typeof StaffOffersRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/onboarding': {
+      id: '/staff/onboarding'
+      path: '/onboarding'
+      fullPath: '/staff/onboarding'
+      preLoaderRoute: typeof StaffOnboardingRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/org-chart': {
+      id: '/staff/org-chart'
+      path: '/org-chart'
+      fullPath: '/staff/org-chart'
+      preLoaderRoute: typeof StaffOrgChartRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/overtime-approvals': {
+      id: '/staff/overtime-approvals'
+      path: '/overtime-approvals'
+      fullPath: '/staff/overtime-approvals'
+      preLoaderRoute: typeof StaffOvertimeApprovalsRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/payroll': {
+      id: '/staff/payroll'
+      path: '/payroll'
+      fullPath: '/staff/payroll'
+      preLoaderRoute: typeof StaffPayrollRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/performance': {
+      id: '/staff/performance'
+      path: '/performance'
+      fullPath: '/staff/performance'
+      preLoaderRoute: typeof StaffPerformanceRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/recommendations': {
+      id: '/staff/recommendations'
+      path: '/recommendations'
+      fullPath: '/staff/recommendations'
+      preLoaderRoute: typeof StaffRecommendationsRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/reports': {
+      id: '/staff/reports'
+      path: '/reports'
+      fullPath: '/staff/reports'
+      preLoaderRoute: typeof StaffReportsRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/settings': {
+      id: '/staff/settings'
+      path: '/settings'
+      fullPath: '/staff/settings'
+      preLoaderRoute: typeof StaffSettingsRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/timesheet-monitoring': {
+      id: '/staff/timesheet-monitoring'
+      path: '/timesheet-monitoring'
+      fullPath: '/staff/timesheet-monitoring'
+      preLoaderRoute: typeof StaffTimesheetMonitoringRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/timesheet-settings': {
+      id: '/staff/timesheet-settings'
+      path: '/timesheet-settings'
+      fullPath: '/staff/timesheet-settings'
+      preLoaderRoute: typeof StaffTimesheetSettingsRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/timesheets': {
+      id: '/staff/timesheets'
+      path: '/timesheets'
+      fullPath: '/staff/timesheets'
+      preLoaderRoute: typeof StaffTimesheetsRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/training': {
+      id: '/staff/training'
+      path: '/training'
+      fullPath: '/staff/training'
+      preLoaderRoute: typeof StaffTrainingRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/travel': {
+      id: '/staff/travel'
+      path: '/travel'
+      fullPath: '/staff/travel'
+      preLoaderRoute: typeof StaffTravelRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/travel-accounts-approvals': {
+      id: '/staff/travel-accounts-approvals'
+      path: '/travel-accounts-approvals'
+      fullPath: '/staff/travel-accounts-approvals'
+      preLoaderRoute: typeof StaffTravelAccountsApprovalsRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/travel-closures': {
+      id: '/staff/travel-closures'
+      path: '/travel-closures'
+      fullPath: '/staff/travel-closures'
+      preLoaderRoute: typeof StaffTravelClosuresRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/travel-hr-approvals': {
+      id: '/staff/travel-hr-approvals'
+      path: '/travel-hr-approvals'
+      fullPath: '/staff/travel-hr-approvals'
+      preLoaderRoute: typeof StaffTravelHrApprovalsRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/users': {
+      id: '/staff/users'
+      path: '/users'
+      fullPath: '/staff/users'
+      preLoaderRoute: typeof StaffUsersRouteImport
       parentRoute: typeof StaffRoute
     }
     '/staff/vacancy': {
@@ -114,17 +1290,594 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StaffVacancyRouteImport
       parentRoute: typeof StaffRoute
     }
+    '/staff/attendance/': {
+      id: '/staff/attendance/'
+      path: '/'
+      fullPath: '/staff/attendance/'
+      preLoaderRoute: typeof StaffAttendanceIndexRouteImport
+      parentRoute: typeof StaffAttendanceRoute
+    }
+    '/staff/attendance/corrections': {
+      id: '/staff/attendance/corrections'
+      path: '/corrections'
+      fullPath: '/staff/attendance/corrections'
+      preLoaderRoute: typeof StaffAttendanceCorrectionsRouteImport
+      parentRoute: typeof StaffAttendanceRoute
+    }
+    '/staff/candidates/': {
+      id: '/staff/candidates/'
+      path: '/'
+      fullPath: '/staff/candidates/'
+      preLoaderRoute: typeof StaffCandidatesIndexRouteImport
+      parentRoute: typeof StaffCandidatesRoute
+    }
+    '/staff/candidates/$candidateId': {
+      id: '/staff/candidates/$candidateId'
+      path: '/$candidateId'
+      fullPath: '/staff/candidates/$candidateId'
+      preLoaderRoute: typeof StaffCandidatesCandidateIdRouteImport
+      parentRoute: typeof StaffCandidatesRoute
+    }
+    '/staff/candidates/contacts': {
+      id: '/staff/candidates/contacts'
+      path: '/contacts'
+      fullPath: '/staff/candidates/contacts'
+      preLoaderRoute: typeof StaffCandidatesContactsRouteImport
+      parentRoute: typeof StaffCandidatesRoute
+    }
+    '/staff/candidates/import': {
+      id: '/staff/candidates/import'
+      path: '/import'
+      fullPath: '/staff/candidates/import'
+      preLoaderRoute: typeof StaffCandidatesImportRouteImport
+      parentRoute: typeof StaffCandidatesRoute
+    }
+    '/staff/candidates/intake': {
+      id: '/staff/candidates/intake'
+      path: '/intake'
+      fullPath: '/staff/candidates/intake'
+      preLoaderRoute: typeof StaffCandidatesIntakeRouteImport
+      parentRoute: typeof StaffCandidatesRoute
+    }
+    '/staff/candidates/recommend': {
+      id: '/staff/candidates/recommend'
+      path: '/recommend'
+      fullPath: '/staff/candidates/recommend'
+      preLoaderRoute: typeof StaffCandidatesRecommendRouteImport
+      parentRoute: typeof StaffCandidatesRoute
+    }
+    '/staff/employees/': {
+      id: '/staff/employees/'
+      path: '/employees'
+      fullPath: '/staff/employees/'
+      preLoaderRoute: typeof StaffEmployeesIndexRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/employees/$employeeId': {
+      id: '/staff/employees/$employeeId'
+      path: '/employees/$employeeId'
+      fullPath: '/staff/employees/$employeeId'
+      preLoaderRoute: typeof StaffEmployeesEmployeeIdRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/employees/import': {
+      id: '/staff/employees/import'
+      path: '/employees/import'
+      fullPath: '/staff/employees/import'
+      preLoaderRoute: typeof StaffEmployeesImportRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/employees/new': {
+      id: '/staff/employees/new'
+      path: '/employees/new'
+      fullPath: '/staff/employees/new'
+      preLoaderRoute: typeof StaffEmployeesNewRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/me/attendance': {
+      id: '/staff/me/attendance'
+      path: '/me/attendance'
+      fullPath: '/staff/me/attendance'
+      preLoaderRoute: typeof StaffMeAttendanceRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/me/leave-balances': {
+      id: '/staff/me/leave-balances'
+      path: '/me/leave-balances'
+      fullPath: '/staff/me/leave-balances'
+      preLoaderRoute: typeof StaffMeLeaveBalancesRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/me/onboarding': {
+      id: '/staff/me/onboarding'
+      path: '/me/onboarding'
+      fullPath: '/staff/me/onboarding'
+      preLoaderRoute: typeof StaffMeOnboardingRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/me/overtime': {
+      id: '/staff/me/overtime'
+      path: '/me/overtime'
+      fullPath: '/staff/me/overtime'
+      preLoaderRoute: typeof StaffMeOvertimeRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/me/performance': {
+      id: '/staff/me/performance'
+      path: '/me/performance'
+      fullPath: '/staff/me/performance'
+      preLoaderRoute: typeof StaffMePerformanceRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/me/profile': {
+      id: '/staff/me/profile'
+      path: '/me/profile'
+      fullPath: '/staff/me/profile'
+      preLoaderRoute: typeof StaffMeProfileRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/me/training': {
+      id: '/staff/me/training'
+      path: '/me/training'
+      fullPath: '/staff/me/training'
+      preLoaderRoute: typeof StaffMeTrainingRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/offboarding/': {
+      id: '/staff/offboarding/'
+      path: '/'
+      fullPath: '/staff/offboarding/'
+      preLoaderRoute: typeof StaffOffboardingIndexRouteImport
+      parentRoute: typeof StaffOffboardingRoute
+    }
+    '/staff/offboarding/$caseId': {
+      id: '/staff/offboarding/$caseId'
+      path: '/$caseId'
+      fullPath: '/staff/offboarding/$caseId'
+      preLoaderRoute: typeof StaffOffboardingCaseIdRouteImport
+      parentRoute: typeof StaffOffboardingRoute
+    }
+    '/staff/onboarding/': {
+      id: '/staff/onboarding/'
+      path: '/'
+      fullPath: '/staff/onboarding/'
+      preLoaderRoute: typeof StaffOnboardingIndexRouteImport
+      parentRoute: typeof StaffOnboardingRoute
+    }
+    '/staff/onboarding/$caseId': {
+      id: '/staff/onboarding/$caseId'
+      path: '/$caseId'
+      fullPath: '/staff/onboarding/$caseId'
+      preLoaderRoute: typeof StaffOnboardingCaseIdRouteImport
+      parentRoute: typeof StaffOnboardingRoute
+    }
+    '/staff/payroll/': {
+      id: '/staff/payroll/'
+      path: '/'
+      fullPath: '/staff/payroll/'
+      preLoaderRoute: typeof StaffPayrollIndexRouteImport
+      parentRoute: typeof StaffPayrollRoute
+    }
+    '/staff/payroll/overtime': {
+      id: '/staff/payroll/overtime'
+      path: '/overtime'
+      fullPath: '/staff/payroll/overtime'
+      preLoaderRoute: typeof StaffPayrollOvertimeRouteImport
+      parentRoute: typeof StaffPayrollRoute
+    }
+    '/staff/performance/goals': {
+      id: '/staff/performance/goals'
+      path: '/goals'
+      fullPath: '/staff/performance/goals'
+      preLoaderRoute: typeof StaffPerformanceGoalsRouteImport
+      parentRoute: typeof StaffPerformanceRoute
+    }
+    '/staff/performance/team': {
+      id: '/staff/performance/team'
+      path: '/team'
+      fullPath: '/staff/performance/team'
+      preLoaderRoute: typeof StaffPerformanceTeamRouteImport
+      parentRoute: typeof StaffPerformanceRoute
+    }
+    '/staff/recommendations/': {
+      id: '/staff/recommendations/'
+      path: '/'
+      fullPath: '/staff/recommendations/'
+      preLoaderRoute: typeof StaffRecommendationsIndexRouteImport
+      parentRoute: typeof StaffRecommendationsRoute
+    }
+    '/staff/recommendations/$email': {
+      id: '/staff/recommendations/$email'
+      path: '/$email'
+      fullPath: '/staff/recommendations/$email'
+      preLoaderRoute: typeof StaffRecommendationsEmailRouteImport
+      parentRoute: typeof StaffRecommendationsRoute
+    }
+    '/staff/timesheet-approvals/': {
+      id: '/staff/timesheet-approvals/'
+      path: '/timesheet-approvals'
+      fullPath: '/staff/timesheet-approvals/'
+      preLoaderRoute: typeof StaffTimesheetApprovalsIndexRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/timesheet-approvals/$timesheetId': {
+      id: '/staff/timesheet-approvals/$timesheetId'
+      path: '/timesheet-approvals/$timesheetId'
+      fullPath: '/staff/timesheet-approvals/$timesheetId'
+      preLoaderRoute: typeof StaffTimesheetApprovalsTimesheetIdRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/training/': {
+      id: '/staff/training/'
+      path: '/'
+      fullPath: '/staff/training/'
+      preLoaderRoute: typeof StaffTrainingIndexRouteImport
+      parentRoute: typeof StaffTrainingRoute
+    }
+    '/staff/travel/': {
+      id: '/staff/travel/'
+      path: '/'
+      fullPath: '/staff/travel/'
+      preLoaderRoute: typeof StaffTravelIndexRouteImport
+      parentRoute: typeof StaffTravelRoute
+    }
+    '/staff/travel/$requestId': {
+      id: '/staff/travel/$requestId'
+      path: '/$requestId'
+      fullPath: '/staff/travel/$requestId'
+      preLoaderRoute: typeof StaffTravelRequestIdRouteImport
+      parentRoute: typeof StaffTravelRoute
+    }
+    '/staff/travel/new': {
+      id: '/staff/travel/new'
+      path: '/new'
+      fullPath: '/staff/travel/new'
+      preLoaderRoute: typeof StaffTravelNewRouteImport
+      parentRoute: typeof StaffTravelRoute
+    }
+    '/staff/vacancies/': {
+      id: '/staff/vacancies/'
+      path: '/vacancies'
+      fullPath: '/staff/vacancies/'
+      preLoaderRoute: typeof StaffVacanciesIndexRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/vacancies/$vacancyId': {
+      id: '/staff/vacancies/$vacancyId'
+      path: '/vacancies/$vacancyId'
+      fullPath: '/staff/vacancies/$vacancyId'
+      preLoaderRoute: typeof StaffVacanciesVacancyIdRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/vacancies/new': {
+      id: '/staff/vacancies/new'
+      path: '/vacancies/new'
+      fullPath: '/staff/vacancies/new'
+      preLoaderRoute: typeof StaffVacanciesNewRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/candidates/$candidateId/convert': {
+      id: '/staff/candidates/$candidateId/convert'
+      path: '/convert'
+      fullPath: '/staff/candidates/$candidateId/convert'
+      preLoaderRoute: typeof StaffCandidatesCandidateIdConvertRouteImport
+      parentRoute: typeof StaffCandidatesCandidateIdRoute
+    }
+    '/staff/me/timesheets/': {
+      id: '/staff/me/timesheets/'
+      path: '/me/timesheets'
+      fullPath: '/staff/me/timesheets/'
+      preLoaderRoute: typeof StaffMeTimesheetsIndexRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/me/timesheets/$periodId': {
+      id: '/staff/me/timesheets/$periodId'
+      path: '/me/timesheets/$periodId'
+      fullPath: '/staff/me/timesheets/$periodId'
+      preLoaderRoute: typeof StaffMeTimesheetsPeriodIdRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/payroll/periods/': {
+      id: '/staff/payroll/periods/'
+      path: '/periods'
+      fullPath: '/staff/payroll/periods/'
+      preLoaderRoute: typeof StaffPayrollPeriodsIndexRouteImport
+      parentRoute: typeof StaffPayrollRoute
+    }
+    '/staff/payroll/periods/$periodId': {
+      id: '/staff/payroll/periods/$periodId'
+      path: '/periods/$periodId'
+      fullPath: '/staff/payroll/periods/$periodId'
+      preLoaderRoute: typeof StaffPayrollPeriodsPeriodIdRouteImport
+      parentRoute: typeof StaffPayrollRoute
+    }
+    '/staff/performance/cycles/': {
+      id: '/staff/performance/cycles/'
+      path: '/cycles'
+      fullPath: '/staff/performance/cycles/'
+      preLoaderRoute: typeof StaffPerformanceCyclesIndexRouteImport
+      parentRoute: typeof StaffPerformanceRoute
+    }
+    '/staff/performance/cycles/new': {
+      id: '/staff/performance/cycles/new'
+      path: '/cycles/new'
+      fullPath: '/staff/performance/cycles/new'
+      preLoaderRoute: typeof StaffPerformanceCyclesNewRouteImport
+      parentRoute: typeof StaffPerformanceRoute
+    }
+    '/staff/performance/reviews/$reviewId': {
+      id: '/staff/performance/reviews/$reviewId'
+      path: '/reviews/$reviewId'
+      fullPath: '/staff/performance/reviews/$reviewId'
+      preLoaderRoute: typeof StaffPerformanceReviewsReviewIdRouteImport
+      parentRoute: typeof StaffPerformanceRoute
+    }
   }
 }
 
+interface StaffAttendanceRouteChildren {
+  StaffAttendanceCorrectionsRoute: typeof StaffAttendanceCorrectionsRoute
+  StaffAttendanceIndexRoute: typeof StaffAttendanceIndexRoute
+}
+
+const StaffAttendanceRouteChildren: StaffAttendanceRouteChildren = {
+  StaffAttendanceCorrectionsRoute: StaffAttendanceCorrectionsRoute,
+  StaffAttendanceIndexRoute: StaffAttendanceIndexRoute,
+}
+
+const StaffAttendanceRouteWithChildren = StaffAttendanceRoute._addFileChildren(
+  StaffAttendanceRouteChildren,
+)
+
+interface StaffCandidatesCandidateIdRouteChildren {
+  StaffCandidatesCandidateIdConvertRoute: typeof StaffCandidatesCandidateIdConvertRoute
+}
+
+const StaffCandidatesCandidateIdRouteChildren: StaffCandidatesCandidateIdRouteChildren =
+  {
+    StaffCandidatesCandidateIdConvertRoute:
+      StaffCandidatesCandidateIdConvertRoute,
+  }
+
+const StaffCandidatesCandidateIdRouteWithChildren =
+  StaffCandidatesCandidateIdRoute._addFileChildren(
+    StaffCandidatesCandidateIdRouteChildren,
+  )
+
+interface StaffCandidatesRouteChildren {
+  StaffCandidatesCandidateIdRoute: typeof StaffCandidatesCandidateIdRouteWithChildren
+  StaffCandidatesContactsRoute: typeof StaffCandidatesContactsRoute
+  StaffCandidatesImportRoute: typeof StaffCandidatesImportRoute
+  StaffCandidatesIntakeRoute: typeof StaffCandidatesIntakeRoute
+  StaffCandidatesRecommendRoute: typeof StaffCandidatesRecommendRoute
+  StaffCandidatesIndexRoute: typeof StaffCandidatesIndexRoute
+}
+
+const StaffCandidatesRouteChildren: StaffCandidatesRouteChildren = {
+  StaffCandidatesCandidateIdRoute: StaffCandidatesCandidateIdRouteWithChildren,
+  StaffCandidatesContactsRoute: StaffCandidatesContactsRoute,
+  StaffCandidatesImportRoute: StaffCandidatesImportRoute,
+  StaffCandidatesIntakeRoute: StaffCandidatesIntakeRoute,
+  StaffCandidatesRecommendRoute: StaffCandidatesRecommendRoute,
+  StaffCandidatesIndexRoute: StaffCandidatesIndexRoute,
+}
+
+const StaffCandidatesRouteWithChildren = StaffCandidatesRoute._addFileChildren(
+  StaffCandidatesRouteChildren,
+)
+
+interface StaffOffboardingRouteChildren {
+  StaffOffboardingCaseIdRoute: typeof StaffOffboardingCaseIdRoute
+  StaffOffboardingIndexRoute: typeof StaffOffboardingIndexRoute
+}
+
+const StaffOffboardingRouteChildren: StaffOffboardingRouteChildren = {
+  StaffOffboardingCaseIdRoute: StaffOffboardingCaseIdRoute,
+  StaffOffboardingIndexRoute: StaffOffboardingIndexRoute,
+}
+
+const StaffOffboardingRouteWithChildren =
+  StaffOffboardingRoute._addFileChildren(StaffOffboardingRouteChildren)
+
+interface StaffOnboardingRouteChildren {
+  StaffOnboardingCaseIdRoute: typeof StaffOnboardingCaseIdRoute
+  StaffOnboardingIndexRoute: typeof StaffOnboardingIndexRoute
+}
+
+const StaffOnboardingRouteChildren: StaffOnboardingRouteChildren = {
+  StaffOnboardingCaseIdRoute: StaffOnboardingCaseIdRoute,
+  StaffOnboardingIndexRoute: StaffOnboardingIndexRoute,
+}
+
+const StaffOnboardingRouteWithChildren = StaffOnboardingRoute._addFileChildren(
+  StaffOnboardingRouteChildren,
+)
+
+interface StaffPayrollRouteChildren {
+  StaffPayrollOvertimeRoute: typeof StaffPayrollOvertimeRoute
+  StaffPayrollIndexRoute: typeof StaffPayrollIndexRoute
+  StaffPayrollPeriodsPeriodIdRoute: typeof StaffPayrollPeriodsPeriodIdRoute
+  StaffPayrollPeriodsIndexRoute: typeof StaffPayrollPeriodsIndexRoute
+}
+
+const StaffPayrollRouteChildren: StaffPayrollRouteChildren = {
+  StaffPayrollOvertimeRoute: StaffPayrollOvertimeRoute,
+  StaffPayrollIndexRoute: StaffPayrollIndexRoute,
+  StaffPayrollPeriodsPeriodIdRoute: StaffPayrollPeriodsPeriodIdRoute,
+  StaffPayrollPeriodsIndexRoute: StaffPayrollPeriodsIndexRoute,
+}
+
+const StaffPayrollRouteWithChildren = StaffPayrollRoute._addFileChildren(
+  StaffPayrollRouteChildren,
+)
+
+interface StaffPerformanceRouteChildren {
+  StaffPerformanceGoalsRoute: typeof StaffPerformanceGoalsRoute
+  StaffPerformanceTeamRoute: typeof StaffPerformanceTeamRoute
+  StaffPerformanceCyclesNewRoute: typeof StaffPerformanceCyclesNewRoute
+  StaffPerformanceReviewsReviewIdRoute: typeof StaffPerformanceReviewsReviewIdRoute
+  StaffPerformanceCyclesIndexRoute: typeof StaffPerformanceCyclesIndexRoute
+}
+
+const StaffPerformanceRouteChildren: StaffPerformanceRouteChildren = {
+  StaffPerformanceGoalsRoute: StaffPerformanceGoalsRoute,
+  StaffPerformanceTeamRoute: StaffPerformanceTeamRoute,
+  StaffPerformanceCyclesNewRoute: StaffPerformanceCyclesNewRoute,
+  StaffPerformanceReviewsReviewIdRoute: StaffPerformanceReviewsReviewIdRoute,
+  StaffPerformanceCyclesIndexRoute: StaffPerformanceCyclesIndexRoute,
+}
+
+const StaffPerformanceRouteWithChildren =
+  StaffPerformanceRoute._addFileChildren(StaffPerformanceRouteChildren)
+
+interface StaffRecommendationsRouteChildren {
+  StaffRecommendationsEmailRoute: typeof StaffRecommendationsEmailRoute
+  StaffRecommendationsIndexRoute: typeof StaffRecommendationsIndexRoute
+}
+
+const StaffRecommendationsRouteChildren: StaffRecommendationsRouteChildren = {
+  StaffRecommendationsEmailRoute: StaffRecommendationsEmailRoute,
+  StaffRecommendationsIndexRoute: StaffRecommendationsIndexRoute,
+}
+
+const StaffRecommendationsRouteWithChildren =
+  StaffRecommendationsRoute._addFileChildren(StaffRecommendationsRouteChildren)
+
+interface StaffTrainingRouteChildren {
+  StaffTrainingIndexRoute: typeof StaffTrainingIndexRoute
+}
+
+const StaffTrainingRouteChildren: StaffTrainingRouteChildren = {
+  StaffTrainingIndexRoute: StaffTrainingIndexRoute,
+}
+
+const StaffTrainingRouteWithChildren = StaffTrainingRoute._addFileChildren(
+  StaffTrainingRouteChildren,
+)
+
+interface StaffTravelRouteChildren {
+  StaffTravelRequestIdRoute: typeof StaffTravelRequestIdRoute
+  StaffTravelNewRoute: typeof StaffTravelNewRoute
+  StaffTravelIndexRoute: typeof StaffTravelIndexRoute
+}
+
+const StaffTravelRouteChildren: StaffTravelRouteChildren = {
+  StaffTravelRequestIdRoute: StaffTravelRequestIdRoute,
+  StaffTravelNewRoute: StaffTravelNewRoute,
+  StaffTravelIndexRoute: StaffTravelIndexRoute,
+}
+
+const StaffTravelRouteWithChildren = StaffTravelRoute._addFileChildren(
+  StaffTravelRouteChildren,
+)
+
 interface StaffRouteChildren {
+  StaffAnniversariesRoute: typeof StaffAnniversariesRoute
+  StaffAttendanceRoute: typeof StaffAttendanceRouteWithChildren
+  StaffAuditRoute: typeof StaffAuditRoute
+  StaffCandidatesRoute: typeof StaffCandidatesRouteWithChildren
+  StaffDocumentExpiryRoute: typeof StaffDocumentExpiryRoute
+  StaffDocumentsRoute: typeof StaffDocumentsRoute
+  StaffFilesRoute: typeof StaffFilesRoute
+  StaffInterviewsRoute: typeof StaffInterviewsRoute
+  StaffLeaveRoute: typeof StaffLeaveRoute
+  StaffLeaveAdminRoute: typeof StaffLeaveAdminRoute
+  StaffLeaveApprovalsRoute: typeof StaffLeaveApprovalsRoute
+  StaffMyTasksRoute: typeof StaffMyTasksRoute
+  StaffOffboardingRoute: typeof StaffOffboardingRouteWithChildren
+  StaffOffersRoute: typeof StaffOffersRoute
+  StaffOnboardingRoute: typeof StaffOnboardingRouteWithChildren
+  StaffOrgChartRoute: typeof StaffOrgChartRoute
+  StaffOvertimeApprovalsRoute: typeof StaffOvertimeApprovalsRoute
+  StaffPayrollRoute: typeof StaffPayrollRouteWithChildren
+  StaffPerformanceRoute: typeof StaffPerformanceRouteWithChildren
+  StaffRecommendationsRoute: typeof StaffRecommendationsRouteWithChildren
+  StaffReportsRoute: typeof StaffReportsRoute
+  StaffSettingsRoute: typeof StaffSettingsRoute
+  StaffTimesheetMonitoringRoute: typeof StaffTimesheetMonitoringRoute
+  StaffTimesheetSettingsRoute: typeof StaffTimesheetSettingsRoute
+  StaffTimesheetsRoute: typeof StaffTimesheetsRoute
+  StaffTrainingRoute: typeof StaffTrainingRouteWithChildren
+  StaffTravelRoute: typeof StaffTravelRouteWithChildren
+  StaffTravelAccountsApprovalsRoute: typeof StaffTravelAccountsApprovalsRoute
+  StaffTravelClosuresRoute: typeof StaffTravelClosuresRoute
+  StaffTravelHrApprovalsRoute: typeof StaffTravelHrApprovalsRoute
+  StaffUsersRoute: typeof StaffUsersRoute
   StaffVacancyRoute: typeof StaffVacancyRoute
   StaffIndexRoute: typeof StaffIndexRoute
+  StaffEmployeesEmployeeIdRoute: typeof StaffEmployeesEmployeeIdRoute
+  StaffEmployeesImportRoute: typeof StaffEmployeesImportRoute
+  StaffEmployeesNewRoute: typeof StaffEmployeesNewRoute
+  StaffMeAttendanceRoute: typeof StaffMeAttendanceRoute
+  StaffMeLeaveBalancesRoute: typeof StaffMeLeaveBalancesRoute
+  StaffMeOnboardingRoute: typeof StaffMeOnboardingRoute
+  StaffMeOvertimeRoute: typeof StaffMeOvertimeRoute
+  StaffMePerformanceRoute: typeof StaffMePerformanceRoute
+  StaffMeProfileRoute: typeof StaffMeProfileRoute
+  StaffMeTrainingRoute: typeof StaffMeTrainingRoute
+  StaffTimesheetApprovalsTimesheetIdRoute: typeof StaffTimesheetApprovalsTimesheetIdRoute
+  StaffVacanciesVacancyIdRoute: typeof StaffVacanciesVacancyIdRoute
+  StaffVacanciesNewRoute: typeof StaffVacanciesNewRoute
+  StaffEmployeesIndexRoute: typeof StaffEmployeesIndexRoute
+  StaffTimesheetApprovalsIndexRoute: typeof StaffTimesheetApprovalsIndexRoute
+  StaffVacanciesIndexRoute: typeof StaffVacanciesIndexRoute
+  StaffMeTimesheetsPeriodIdRoute: typeof StaffMeTimesheetsPeriodIdRoute
+  StaffMeTimesheetsIndexRoute: typeof StaffMeTimesheetsIndexRoute
 }
 
 const StaffRouteChildren: StaffRouteChildren = {
+  StaffAnniversariesRoute: StaffAnniversariesRoute,
+  StaffAttendanceRoute: StaffAttendanceRouteWithChildren,
+  StaffAuditRoute: StaffAuditRoute,
+  StaffCandidatesRoute: StaffCandidatesRouteWithChildren,
+  StaffDocumentExpiryRoute: StaffDocumentExpiryRoute,
+  StaffDocumentsRoute: StaffDocumentsRoute,
+  StaffFilesRoute: StaffFilesRoute,
+  StaffInterviewsRoute: StaffInterviewsRoute,
+  StaffLeaveRoute: StaffLeaveRoute,
+  StaffLeaveAdminRoute: StaffLeaveAdminRoute,
+  StaffLeaveApprovalsRoute: StaffLeaveApprovalsRoute,
+  StaffMyTasksRoute: StaffMyTasksRoute,
+  StaffOffboardingRoute: StaffOffboardingRouteWithChildren,
+  StaffOffersRoute: StaffOffersRoute,
+  StaffOnboardingRoute: StaffOnboardingRouteWithChildren,
+  StaffOrgChartRoute: StaffOrgChartRoute,
+  StaffOvertimeApprovalsRoute: StaffOvertimeApprovalsRoute,
+  StaffPayrollRoute: StaffPayrollRouteWithChildren,
+  StaffPerformanceRoute: StaffPerformanceRouteWithChildren,
+  StaffRecommendationsRoute: StaffRecommendationsRouteWithChildren,
+  StaffReportsRoute: StaffReportsRoute,
+  StaffSettingsRoute: StaffSettingsRoute,
+  StaffTimesheetMonitoringRoute: StaffTimesheetMonitoringRoute,
+  StaffTimesheetSettingsRoute: StaffTimesheetSettingsRoute,
+  StaffTimesheetsRoute: StaffTimesheetsRoute,
+  StaffTrainingRoute: StaffTrainingRouteWithChildren,
+  StaffTravelRoute: StaffTravelRouteWithChildren,
+  StaffTravelAccountsApprovalsRoute: StaffTravelAccountsApprovalsRoute,
+  StaffTravelClosuresRoute: StaffTravelClosuresRoute,
+  StaffTravelHrApprovalsRoute: StaffTravelHrApprovalsRoute,
+  StaffUsersRoute: StaffUsersRoute,
   StaffVacancyRoute: StaffVacancyRoute,
   StaffIndexRoute: StaffIndexRoute,
+  StaffEmployeesEmployeeIdRoute: StaffEmployeesEmployeeIdRoute,
+  StaffEmployeesImportRoute: StaffEmployeesImportRoute,
+  StaffEmployeesNewRoute: StaffEmployeesNewRoute,
+  StaffMeAttendanceRoute: StaffMeAttendanceRoute,
+  StaffMeLeaveBalancesRoute: StaffMeLeaveBalancesRoute,
+  StaffMeOnboardingRoute: StaffMeOnboardingRoute,
+  StaffMeOvertimeRoute: StaffMeOvertimeRoute,
+  StaffMePerformanceRoute: StaffMePerformanceRoute,
+  StaffMeProfileRoute: StaffMeProfileRoute,
+  StaffMeTrainingRoute: StaffMeTrainingRoute,
+  StaffTimesheetApprovalsTimesheetIdRoute:
+    StaffTimesheetApprovalsTimesheetIdRoute,
+  StaffVacanciesVacancyIdRoute: StaffVacanciesVacancyIdRoute,
+  StaffVacanciesNewRoute: StaffVacanciesNewRoute,
+  StaffEmployeesIndexRoute: StaffEmployeesIndexRoute,
+  StaffTimesheetApprovalsIndexRoute: StaffTimesheetApprovalsIndexRoute,
+  StaffVacanciesIndexRoute: StaffVacanciesIndexRoute,
+  StaffMeTimesheetsPeriodIdRoute: StaffMeTimesheetsPeriodIdRoute,
+  StaffMeTimesheetsIndexRoute: StaffMeTimesheetsIndexRoute,
 }
 
 const StaffRouteWithChildren = StaffRoute._addFileChildren(StaffRouteChildren)
@@ -133,6 +1886,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   StaffRoute: StaffRouteWithChildren,
   JobsJobIdRoute: JobsJobIdRoute,
+  JobsAppliedRoute: JobsAppliedRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
