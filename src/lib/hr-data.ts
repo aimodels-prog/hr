@@ -1,10 +1,4 @@
-export type Stage =
-  | "Sourced"
-  | "Screened"
-  | "Shortlisted"
-  | "Interview"
-  | "Offer"
-  | "Onboarding";
+export type Stage = "Sourced" | "Screened" | "Shortlisted" | "Interview" | "Offer" | "Onboarding";
 
 export type Candidate = {
   id: string;
@@ -19,15 +13,17 @@ export type Candidate = {
   risks: string[];
   skills: string[];
   email: string;
-  salaryExpectation?: number;
-  privateNotes?: string;
-  interview?: {
-    date: string;
-    time: string;
-    panel: string;
-    calendar: "Scheduled" | "Pending" | "Completed";
-  };
-  interviewScore?: number;
+  salaryExpectation?: number | undefined;
+  privateNotes?: string | undefined;
+  interview?:
+    | {
+        date: string;
+        time: string;
+        panel: string;
+        calendar: "Scheduled" | "Pending" | "Completed";
+      }
+    | undefined;
+  interviewScore?: number | undefined;
 };
 
 export type Job = {
@@ -146,6 +142,9 @@ export const candidates: Candidate[] = [
     score: 94,
     stage: "Interview",
     email: "amira.haddad@example.com",
+    salaryExpectation: 2800,
+    privateNotes:
+      "Internal HR note: Candidate has competing offer from DHL. Willing to negotiate on start date if notice buyout is approved.",
     skills: ["CargoWise", "Team leadership", "Carrier negotiation", "Arabic"],
     reasons: [
       "9 years in multimodal freight, 4 of them leading teams of 6-10",
@@ -153,7 +152,12 @@ export const candidates: Candidate[] = [
       "Delivered 98.2% OTIF at previous 3PL, above the target in the JD",
     ],
     risks: ["Notice period of 60 days"],
-    interview: { date: "Mon 24 Aug", time: "10:00", panel: "R. Nair, S. Fadel", calendar: "Scheduled" },
+    interview: {
+      date: "Mon 24 Aug",
+      time: "10:00",
+      panel: "R. Nair, S. Fadel",
+      calendar: "Scheduled",
+    },
     interviewScore: 4.6,
   },
   {
@@ -162,10 +166,13 @@ export const candidates: Candidate[] = [
     title: "Operations Lead, Sea Freight",
     location: "Abu Dhabi, UAE",
     years: 7,
-    source: "Email inbox",
+    source: "Referral",
     score: 91,
     stage: "Interview",
-    email: "d.okoro@example.com",
+    email: "daniel.okoro@example.com",
+    salaryExpectation: 2200,
+    privateNotes:
+      "Internal HR note: Recommended by Layla Al Harthy. Highly rated carrier contract negotiation abilities.",
     skills: ["Sea freight", "P&L ownership", "TMS", "Lean"],
     reasons: [
       "Owned a $14M lane P&L — direct match for cost-per-shipment focus",
@@ -275,10 +282,7 @@ export const candidates: Candidate[] = [
     stage: "Sourced",
     email: "rahul.kapoor@example.com",
     skills: ["Warehousing", "3PL", "WMS", "Contract logistics"],
-    reasons: [
-      "Contract logistics depth and local market network",
-      "Available immediately",
-    ],
+    reasons: ["Contract logistics depth and local market network", "Available immediately"],
     risks: ["Warehouse-weighted profile, lighter on forwarding"],
   },
   {
@@ -328,8 +332,30 @@ export const interviewCriteria = [
 ];
 
 export const onboardingTasks = [
-  { group: "Documents", items: ["Passport & visa copy", "Signed offer letter", "Emirates ID application", "Educational certificates"] },
-  { group: "Payroll & benefits", items: ["Bank account details", "WPS enrolment", "Medical insurance form", "Dependant declaration"] },
-  { group: "IT & access", items: ["Laptop allocation", "Email & SSO account", "TMS role assignment", "Access badge"] },
-  { group: "Day one", items: ["Welcome session", "HSE induction", "Buddy assignment", "30-60-90 plan review"] },
+  {
+    group: "Documents",
+    items: [
+      "Passport & visa copy",
+      "Signed offer letter",
+      "Emirates ID application",
+      "Educational certificates",
+    ],
+  },
+  {
+    group: "Payroll & benefits",
+    items: [
+      "Bank account details",
+      "WPS enrolment",
+      "Medical insurance form",
+      "Dependant declaration",
+    ],
+  },
+  {
+    group: "IT & access",
+    items: ["Laptop allocation", "Email & SSO account", "TMS role assignment", "Access badge"],
+  },
+  {
+    group: "Day one",
+    items: ["Welcome session", "HSE induction", "Buddy assignment", "30-60-90 plan review"],
+  },
 ];

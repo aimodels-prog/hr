@@ -1,243 +1,644 @@
+import { useMemo, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
-import { CalendarCheck, CalendarClock, Loader2, Trophy, ArrowRight, Video } from "lucide-react";
-import { toast } from "sonner";
+import { CalendarClock, Users, ClipboardCheck, AlertTriangle, CheckCircle2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { RequirePermission, useCurrentUser } from "@/lib/auth";
+import { InterviewService } from "@/lib/data/interview-service";
+import { ScorecardService } from "@/lib/data/scorecard-service";
+import { CandidateService } from "@/lib/data/candidate-service";
+import { VacancyService } from "@/lib/data/vacancy-service";
+import { EmployeeService } from "@/lib/data/employee-service";
+import { ScorecardForm } from "@/components/interviews/scorecard-form";
+import type { InterviewEvent } from "@/lib/data/types";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ScoreBadge } from "@/components/score-badge";
-import { candidates, interviewCriteria } from "@/lib/hr-data";
+import { Checkbox } from "@/components/ui/checkbox";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/staff/interviews")({
   head: () => ({
     meta: [
-      { title: "Interviews — VIA International Staff Portal" },
+      { title: "Interviews — VIA HR System" },
       {
         name: "description",
-        content: "Auto-schedule interviews to Google Calendar and capture panel scorecards.",
+        content: "Interviews you are on the panel for, and company-wide interview oversight.",
       },
-      { property: "og:title", content: "Interviews — VIA International Staff Portal" },
-      { property: "og:description", content: "Calendar scheduling and structured interview scorecards." },
     ],
   }),
-  component: Interviews,
+  component: InterviewsWrapper,
 });
 
-const shortlisted = candidates.slice(0, 5);
+function InterviewsWrapper() {
+  return (
+    <RequirePermission permission="recruitment:score_interviews_assigned" resourceName="Interviews">
+      <Interviews />
+    </RequirePermission>
+  );
+}
 
 function Interviews() {
-  const [syncing, setSyncing] = useState(false);
-  const [synced, setSynced] = useState(false);
-  const [active, setActive] = useState(shortlisted[0]!.id);
-  const [scores, setScores] = useState<Record<string, number[]>>(
-    Object.fromEntries(shortlisted.map((c) => [c.id, interviewCriteria.map(() => 3)])),
-  );
-  const [hrPick, setHrPick] = useState<string | null>(null);
+  const { userId, can, getActorContext } = useCurrentUser();
+  const canViewAll = can("recruitment:view_interviews");
+  const canManage = can("recruitment:manage_interviews");
 
-  const avg = (id: string) => {
-    const list = scores[id] ?? [];
-    return list.length ? list.reduce((a, b) => a + b, 0) / list.length : 0;
+  const [interviewService] = useState(() => new InterviewService());
+  const [scorecardService] = useState(() => new ScorecardService());
+  const [candidateService] = useState(() => new CandidateService());
+  const [vacancyService] = useState(() => new VacancyService());
+  const [empService] = useState(() => new EmployeeService());
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [scoringInterview, setScoringInterview] = useState<InterviewEvent | null>(null);
+  const [reschedulingInterview, setReschedulingInterview] = useState<InterviewEvent | null>(null);
+  const [rescheduleStart, setRescheduleStart] = useState("");
+  const [respondingInterview, setRespondingInterview] = useState<InterviewEvent | null>(null);
+  const [chosenSlotIndex, setChosenSlotIndex] = useState<number | null>(null);
+  const [declineNote, setDeclineNote] = useState("");
+
+  const submitCandidateResponse = async (response: "Accepted" | "Declined") => {
+    if (!respondingInterview) return;
+    try {
+      await interviewService.recordCandidateResponse(
+        respondingInterview.id,
+        response,
+        getActorContext(),
+        response === "Accepted" && chosenSlotIndex !== null
+          ? respondingInterview.proposedSlots[chosenSlotIndex]
+          : undefined,
+        declineNote,
+      );
+      toast.success(response === "Accepted" ? "Interview confirmed" : "Marked as declined");
+      setRespondingInterview(null);
+      setChosenSlotIndex(null);
+      setDeclineNote("");
+      refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not record response");
+    }
   };
-  const ranked = [...shortlisted].sort((a, b) => avg(b.id) - avg(a.id));
-  const systemPick = ranked[0]!;
+
+  const allInterviews = useMemo(
+    () => interviewService.getInterviews(getActorContext()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [interviewService, getActorContext, refreshKey],
+  );
+
+  const candidateById = useMemo(() => {
+    void refreshKey;
+    const map = new Map(
+      candidateService
+        .getCandidateRepository()
+        .list()
+        .map((c) => [c.id, c]),
+    );
+    return map;
+  }, [candidateService, refreshKey]);
+
+  const vacancyById = useMemo(() => {
+    void refreshKey;
+    const map = new Map(
+      vacancyService
+        .getVacancyRepository()
+        .list()
+        .map((v) => [v.id, v]),
+    );
+    return map;
+  }, [vacancyService, refreshKey]);
+
+  const userById = useMemo(() => {
+    void refreshKey;
+    const map = new Map(
+      empService
+        .getUserRepository()
+        .list()
+        .map((u) => [u.id, u]),
+    );
+    return map;
+  }, [empService, refreshKey]);
+
+  const candidateName = (id: string) => {
+    const c = candidateById.get(id);
+    return c ? `${c.firstName} ${c.lastName}` : "Unknown candidate";
+  };
+  const userName = (id: string) => userById.get(id)?.displayName || "Unknown user";
+
+  const myInterviews = useMemo(
+    () => allInterviews.filter((i) => i.panelUserIds.includes(userId)).sort(sortByTime),
+    [allInterviews, userId],
+  );
+
+  const refresh = () => setRefreshKey((k) => k + 1);
+
+  const [statusChangeTarget, setStatusChangeTarget] = useState<{
+    interview: InterviewEvent;
+    status: "Completed" | "Cancelled" | "No Show";
+  } | null>(null);
+  const [statusChangeReason, setStatusChangeReason] = useState("");
+  const [waiverAcknowledged, setWaiverAcknowledged] = useState(false);
+
+  const statusChangeMetrics = useMemo(() => {
+    if (!statusChangeTarget) return null;
+    return scorecardService.calculateInterviewMetrics(
+      statusChangeTarget.interview.id,
+      statusChangeTarget.interview.panelUserIds,
+    );
+  }, [scorecardService, statusChangeTarget]);
+  const statusChangeNeedsWaiver =
+    statusChangeTarget?.status === "Completed" && statusChangeMetrics
+      ? !statusChangeMetrics.isComplete
+      : false;
+
+  const openStatusChangeDialog = (
+    interview: InterviewEvent,
+    status: "Completed" | "Cancelled" | "No Show",
+  ) => {
+    setStatusChangeReason("");
+    setWaiverAcknowledged(false);
+    setStatusChangeTarget({ interview, status });
+  };
+
+  const submitStatusChange = () => {
+    if (!statusChangeTarget) return;
+    if (!statusChangeReason.trim()) {
+      toast.error("A reason is required.");
+      return;
+    }
+    if (statusChangeNeedsWaiver && !waiverAcknowledged) {
+      toast.error("Required scorecards are incomplete - acknowledge the waiver to proceed.");
+      return;
+    }
+    try {
+      interviewService.changeStatus(
+        statusChangeTarget.interview.id,
+        statusChangeTarget.status,
+        statusChangeReason,
+        { ...getActorContext(), reason: statusChangeReason },
+        statusChangeNeedsWaiver,
+      );
+      toast.success(`Interview marked ${statusChangeTarget.status}`);
+      setStatusChangeTarget(null);
+      refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update interview");
+    }
+  };
+
+  const confirmReschedule = async () => {
+    if (!reschedulingInterview || !rescheduleStart) return;
+    const start = new Date(rescheduleStart);
+    const end = new Date(start.getTime() + reschedulingInterview.durationMinutes * 60_000);
+    try {
+      await interviewService.rescheduleInterview(
+        reschedulingInterview.id,
+        {
+          startTime: start.toISOString(),
+          endTime: end.toISOString(),
+          timezone: reschedulingInterview.confirmedSlot?.timezone || "Asia/Dubai",
+        },
+        { ...getActorContext(), reason: "Interview rescheduled by HR" },
+      );
+      toast.success("Interview rescheduled and invitation details updated");
+      setReschedulingInterview(null);
+      setRescheduleStart("");
+      refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not reschedule interview");
+    }
+  };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Interviews</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Logistics Operations Lead · 5 shortlisted candidates
-          </p>
-        </div>
-        <Button
-          onClick={() => {
-            setSyncing(true);
-            setTimeout(() => {
-              setSyncing(false);
-              setSynced(true);
-              toast.success("Invites sent", {
-                description: "Slots booked on the panel's Google Calendar with Meet links.",
-              });
-            }, 1400);
-          }}
-          disabled={syncing}
-        >
-          {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CalendarCheck className="mr-2 h-4 w-4" />}
-          {syncing ? "Booking slots…" : "Auto-schedule with Google Calendar"}
-        </Button>
+    <div className="mx-auto max-w-6xl space-y-8 pb-10">
+      <div>
+        <h1 className="text-2xl font-semibold">Interviews</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Interviews you are on the panel for, and their scorecards.
+        </p>
       </div>
 
-      <Tabs defaultValue="schedule">
-        <TabsList>
-          <TabsTrigger value="schedule">Schedule</TabsTrigger>
-          <TabsTrigger value="scorecards">Scorecards</TabsTrigger>
-          <TabsTrigger value="decision">Decision</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="schedule" className="mt-4 space-y-3">
+      <div className="space-y-3">
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          <ClipboardCheck className="h-4 w-4 text-primary" /> My Interviews to Score
+        </h2>
+        {myInterviews.length === 0 ? (
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Week of 24 August</CardTitle>
-              <CardDescription>
-                Slots are matched against panel availability in Google Calendar
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {shortlisted.map((c, i) => {
-                const slot = c.interview ?? {
-                  date: ["Tue 25 Aug", "Tue 25 Aug", "Wed 26 Aug"][i - 2] ?? "Wed 26 Aug",
-                  time: ["09:30", "11:00", "15:00"][i - 2] ?? "15:00",
-                  panel: "R. Nair",
-                  calendar: synced ? ("Scheduled" as const) : ("Pending" as const),
-                };
-                const status = synced ? "Scheduled" : slot.calendar;
-                return (
-                  <div key={c.id} className="flex flex-wrap items-center gap-3 rounded-lg border p-4">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium">{c.name}</p>
-                      <p className="text-xs text-muted-foreground">{c.title}</p>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm">
-                      <CalendarClock className="h-4 w-4 text-muted-foreground" />
-                      {slot.date} · {slot.time}
-                    </div>
-                    <span className="hidden text-xs text-muted-foreground md:inline">Panel: {slot.panel}</span>
-                    <Badge variant={status === "Scheduled" ? "default" : "secondary"}>{status}</Badge>
-                    <Button variant="ghost" size="sm">
-                      <Video className="mr-1 h-4 w-4" /> Meet
-                    </Button>
-                  </div>
-                );
-              })}
+            <CardContent className="py-10 text-center text-muted-foreground text-sm">
+              You are not on the panel for any interview right now. When someone schedules you as an
+              interviewer from a candidate&rsquo;s profile, it will show up here.
             </CardContent>
           </Card>
-        </TabsContent>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {myInterviews.map((interview) => {
+              const myScorecard = scorecardService
+                .getScorecardsForInterview(interview.id)
+                .find((s) => s.panelUserId === userId);
+              const vacancy = interview.vacancyId
+                ? vacancyById.get(interview.vacancyId)
+                : undefined;
+              return (
+                <Card key={interview.id}>
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <CardTitle className="text-base truncate">
+                        {candidateName(interview.candidateId)}
+                      </CardTitle>
+                      <Badge variant={interview.status === "Scheduled" ? "default" : "secondary"}>
+                        {interview.status}
+                      </Badge>
+                    </div>
+                    <CardDescription className="truncate">
+                      {interview.stageName} {vacancy ? `· ${vacancy.title}` : ""}
+                    </CardDescription>
+                    {!vacancy && interview.positionTitle && (
+                      <p className="text-xs text-muted-foreground">
+                        Manual position: {interview.positionTitle}
+                      </p>
+                    )}
+                  </CardHeader>
+                  <CardContent className="space-y-2 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-1.5">
+                      <CalendarClock className="h-3.5 w-3.5" />
+                      <span>
+                        {interview.confirmedSlot
+                          ? new Date(interview.confirmedSlot.startTime).toLocaleString()
+                          : "Not yet confirmed"}
+                      </span>
+                    </div>
+                    {interview.meetingJoinUrl && (
+                      <a
+                        href={interview.meetingJoinUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block text-primary hover:underline"
+                      >
+                        Open meeting
+                      </a>
+                    )}
+                    <div className="flex items-center gap-1.5">
+                      <Users className="h-3.5 w-3.5" />
+                      <span>{interview.panelUserIds.map(userName).join(", ")}</span>
+                    </div>
 
-        <TabsContent value="scorecards" className="mt-4 grid gap-4 lg:grid-cols-[240px_1fr]">
-          <Card className="h-fit">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Candidates</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1">
-              {shortlisted.map((c) => (
+                    {interview.templateId ? (
+                      <Button
+                        size="sm"
+                        variant={myScorecard?.status === "Submitted" ? "outline" : "default"}
+                        className="mt-2 w-full"
+                        onClick={() => setScoringInterview(interview)}
+                      >
+                        {myScorecard?.status === "Submitted"
+                          ? "View my scorecard"
+                          : myScorecard?.status === "Draft"
+                            ? "Continue scoring"
+                            : "Score this interview"}
+                      </Button>
+                    ) : (
+                      <p className="mt-2 text-[11px] italic">
+                        No scorecard template assigned to this interview.
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {canViewAll && (
+        <div className="space-y-3">
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <Users className="h-4 w-4 text-primary" /> All Interviews
+          </h2>
+          <Card>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Candidate</TableHead>
+                    <TableHead>Vacancy</TableHead>
+                    <TableHead>Stage</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Panel</TableHead>
+                    <TableHead>Scorecards</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {allInterviews.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                        No interviews scheduled yet.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    [...allInterviews].sort(sortByTime).map((interview) => {
+                      const metrics = scorecardService.calculateInterviewMetrics(
+                        interview.id,
+                        interview.panelUserIds,
+                      );
+                      const vacancy = interview.vacancyId
+                        ? vacancyById.get(interview.vacancyId)
+                        : undefined;
+                      return (
+                        <TableRow key={interview.id}>
+                          <TableCell className="font-medium">
+                            {candidateName(interview.candidateId)}
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {vacancy?.title || interview.positionTitle || "No vacancy linked"}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {interview.stageName}
+                            {interview.source === "Manual / Offline" && (
+                              <Badge variant="outline" className="ml-2">
+                                Manual
+                              </Badge>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={interview.status === "Scheduled" ? "default" : "secondary"}
+                            >
+                              {interview.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {interview.panelUserIds.map(userName).join(", ")}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1.5 text-xs">
+                              {metrics.isComplete ? (
+                                <CheckCircle2 className="h-3.5 w-3.5 text-success" />
+                              ) : (
+                                <ClipboardCheck className="h-3.5 w-3.5 text-muted-foreground" />
+                              )}
+                              <span>
+                                {metrics.completedCount}/{metrics.totalExpected}
+                              </span>
+                              {metrics.hasDisagreement && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] px-1 py-0 border-warning/30 text-warning bg-warning/15 gap-1"
+                                >
+                                  <AlertTriangle className="h-3 w-3" /> Split decision
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex flex-wrap justify-end gap-1">
+                              {canManage && interview.status === "Scheduled" && (
+                                <>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setReschedulingInterview(interview)}
+                                  >
+                                    Reschedule
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => openStatusChangeDialog(interview, "Completed")}
+                                  >
+                                    Complete
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => openStatusChangeDialog(interview, "No Show")}
+                                  >
+                                    No Show
+                                  </Button>
+                                  <Button
+                                    variant="destructive"
+                                    size="sm"
+                                    onClick={() => openStatusChangeDialog(interview, "Cancelled")}
+                                  >
+                                    Cancel
+                                  </Button>
+                                </>
+                              )}
+                              {canManage && interview.status === "Proposed" && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={interview.proposedSlots.length === 0}
+                                  onClick={() => {
+                                    try {
+                                      interviewService.sendSlotsToCandidate(
+                                        interview.id,
+                                        getActorContext(),
+                                      );
+                                      toast.success("Slots sent to candidate");
+                                      refresh();
+                                    } catch (error) {
+                                      toast.error(
+                                        error instanceof Error
+                                          ? error.message
+                                          : "Could not send slots",
+                                      );
+                                    }
+                                  }}
+                                >
+                                  Send Slots to Candidate
+                                </Button>
+                              )}
+                              {canManage && interview.status === "Awaiting Candidate" && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setRespondingInterview(interview)}
+                                >
+                                  Record Response
+                                </Button>
+                              )}
+                              <Button asChild variant="ghost" size="sm">
+                                <Link
+                                  to="/staff/candidates/$candidateId"
+                                  params={{ candidateId: interview.candidateId }}
+                                >
+                                  Open candidate
+                                </Link>
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {scoringInterview && (
+        <ScorecardForm
+          open={!!scoringInterview}
+          onOpenChange={(open) => !open && setScoringInterview(null)}
+          interviewId={scoringInterview.id}
+          templateId={scoringInterview.templateId!}
+          onSuccess={refresh}
+        />
+      )}
+
+      <Dialog
+        open={!!reschedulingInterview}
+        onOpenChange={(open) => !open && setReschedulingInterview(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reschedule Interview</DialogTitle>
+            <DialogDescription>
+              The previous time will remain in the interview history. Confirm the new time below.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="reschedule-start">New start date and time</Label>
+            <Input
+              id="reschedule-start"
+              type="datetime-local"
+              value={rescheduleStart}
+              onChange={(event) => setRescheduleStart(event.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReschedulingInterview(null)}>
+              Cancel
+            </Button>
+            <Button disabled={!rescheduleStart} onClick={() => void confirmReschedule()}>
+              Confirm Reschedule
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!statusChangeTarget}
+        onOpenChange={(open) => !open && setStatusChangeTarget(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Mark interview as {statusChangeTarget?.status}</DialogTitle>
+            <DialogDescription>
+              This is recorded on the interview history and requires a reason.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="status-change-reason">Reason</Label>
+            <Textarea
+              id="status-change-reason"
+              value={statusChangeReason}
+              onChange={(event) => setStatusChangeReason(event.target.value)}
+              placeholder={`Reason for marking this interview ${statusChangeTarget?.status ?? ""}`}
+            />
+          </div>
+          {statusChangeNeedsWaiver && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3">
+              <Checkbox
+                id="status-change-waiver"
+                checked={waiverAcknowledged}
+                onCheckedChange={(checked) => setWaiverAcknowledged(checked === true)}
+              />
+              <Label htmlFor="status-change-waiver" className="text-sm font-normal leading-snug">
+                Required scorecards are incomplete. I confirm this is an authorised waiver to
+                complete the interview anyway.
+              </Label>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setStatusChangeTarget(null)}>
+              Cancel
+            </Button>
+            <Button onClick={submitStatusChange}>Confirm</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!respondingInterview}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRespondingInterview(null);
+            setChosenSlotIndex(null);
+            setDeclineNote("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Record Candidate Response</DialogTitle>
+            <DialogDescription>
+              What did the candidate say about the proposed times?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Label>Proposed slots</Label>
+            <div className="space-y-2">
+              {respondingInterview?.proposedSlots.map((slot, index) => (
                 <button
-                  key={c.id}
-                  onClick={() => setActive(c.id)}
-                  className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm ${
-                    active === c.id ? "bg-primary text-primary-foreground" : "hover:bg-muted"
+                  key={index}
+                  type="button"
+                  onClick={() => setChosenSlotIndex(index)}
+                  className={`w-full rounded-md border px-3 py-2 text-left text-sm ${
+                    chosenSlotIndex === index ? "border-primary bg-primary/5" : ""
                   }`}
                 >
-                  <span className="truncate">{c.name}</span>
-                  <span className="tabular-nums">{avg(c.id).toFixed(1)}</span>
+                  {new Date(slot.startTime).toLocaleString()} ({slot.timezone})
                 </button>
               ))}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">
-                Panel scorecard — {shortlisted.find((c) => c.id === active)?.name}
-              </CardTitle>
-              <CardDescription>Interview held offline; scores captured here</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              {interviewCriteria.map((criterion, idx) => (
-                <div key={criterion} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>{criterion}</Label>
-                    <span className="font-display text-sm tabular-nums">
-                      {scores[active]?.[idx] ?? 3} / 5
-                    </span>
-                  </div>
-                  <Slider
-                    min={1}
-                    max={5}
-                    step={1}
-                    value={[scores[active]?.[idx] ?? 3]}
-                    onValueChange={(v) =>
-                      setScores((s) => {
-                        const next = [...(s[active] ?? [])];
-                        next[idx] = v[0] ?? 3;
-                        return { ...s, [active]: next };
-                      })
-                    }
-                  />
-                </div>
-              ))}
-              <div className="space-y-2">
-                <Label htmlFor="feedback">Panel notes</Label>
-                <Textarea id="feedback" rows={4} placeholder="Strengths, concerns, recommendation…" />
-              </div>
-              <Button onClick={() => toast.success("Scorecard saved")}>Save scorecard</Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="decision" className="mt-4 space-y-4">
-          <Card className="border-primary/40">
-            <CardHeader className="flex-row items-center gap-3 space-y-0">
-              <Trophy className="h-5 w-5 text-primary" />
-              <div>
-                <CardTitle className="text-base">System recommendation: {systemPick.name}</CardTitle>
-                <CardDescription>
-                  Highest combined AI match ({systemPick.score}/100) and panel average (
-                  {avg(systemPick.id).toFixed(1)}/5)
-                </CardDescription>
-              </div>
-            </CardHeader>
-          </Card>
-
-          <div className="space-y-3">
-            {ranked.map((c) => (
-              <Card key={c.id} className={hrPick === c.id ? "border-success/50" : undefined}>
-                <CardContent className="flex flex-wrap items-center gap-4 p-5">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-display font-semibold">{c.name}</p>
-                    <p className="text-xs text-muted-foreground">{c.title}</p>
-                  </div>
-                  <div className="text-right text-xs text-muted-foreground">
-                    <p>Panel avg</p>
-                    <p className="font-display text-base text-foreground tabular-nums">
-                      {avg(c.id).toFixed(1)}/5
-                    </p>
-                  </div>
-                  <ScoreBadge score={c.score} />
-                  <Button
-                    variant={hrPick === c.id ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => {
-                      setHrPick(c.id);
-                      toast.success(`${c.name} selected for offer`, {
-                        description:
-                          c.id === systemPick.id
-                            ? "Matches the system recommendation."
-                            : "HR override recorded with reason required.",
-                      });
-                    }}
-                  >
-                    {hrPick === c.id ? "Selected" : "Select for offer"}
-                  </Button>
-                </CardContent>
-              </Card>
-            ))}
+            </div>
+            <div className="space-y-2 pt-2">
+              <Label htmlFor="decline-note">If declined, note why (optional)</Label>
+              <Textarea
+                id="decline-note"
+                value={declineNote}
+                onChange={(event) => setDeclineNote(event.target.value)}
+                placeholder="None of these times work because..."
+              />
+            </div>
           </div>
-
-          <div className="flex justify-end">
-            <Button asChild variant="outline" disabled={!hrPick}>
-              <Link to="/staff/onboarding">
-                Start onboarding <ArrowRight className="ml-1 h-4 w-4" />
-              </Link>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => void submitCandidateResponse("Declined")}>
+              Candidate Declined
             </Button>
-          </div>
-        </TabsContent>
-      </Tabs>
+            <Button
+              disabled={chosenSlotIndex === null}
+              onClick={() => void submitCandidateResponse("Accepted")}
+            >
+              Candidate Accepted Slot
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+function sortByTime(a: InterviewEvent, b: InterviewEvent): number {
+  const at = a.confirmedSlot?.startTime || a.createdAt;
+  const bt = b.confirmedSlot?.startTime || b.createdAt;
+  return new Date(bt).getTime() - new Date(at).getTime();
 }

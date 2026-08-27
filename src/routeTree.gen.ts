@@ -45,7 +45,6 @@ import { Route as StaffTravelAccountsApprovalsRouteImport } from './routes/staff
 import { Route as StaffTravelClosuresRouteImport } from './routes/staff/travel-closures'
 import { Route as StaffTravelHrApprovalsRouteImport } from './routes/staff/travel-hr-approvals'
 import { Route as StaffUsersRouteImport } from './routes/staff/users'
-import { Route as StaffVacancyRouteImport } from './routes/staff/vacancy'
 import { Route as StaffAttendanceIndexRouteImport } from './routes/staff/attendance/index'
 import { Route as StaffAttendanceCorrectionsRouteImport } from './routes/staff/attendance/corrections'
 import { Route as StaffCandidatesIndexRouteImport } from './routes/staff/candidates/index'
@@ -273,11 +272,6 @@ const StaffTravelHrApprovalsRoute = StaffTravelHrApprovalsRouteImport.update({
 const StaffUsersRoute = StaffUsersRouteImport.update({
   id: '/users',
   path: '/users',
-  getParentRoute: () => StaffRoute,
-} as any)
-const StaffVacancyRoute = StaffVacancyRouteImport.update({
-  id: '/vacancy',
-  path: '/vacancy',
   getParentRoute: () => StaffRoute,
 } as any)
 const StaffAttendanceIndexRoute = StaffAttendanceIndexRouteImport.update({
@@ -562,7 +556,6 @@ export interface FileRoutesByFullPath {
   '/staff/travel-closures': typeof StaffTravelClosuresRoute
   '/staff/travel-hr-approvals': typeof StaffTravelHrApprovalsRoute
   '/staff/users': typeof StaffUsersRoute
-  '/staff/vacancy': typeof StaffVacancyRoute
   '/staff/': typeof StaffIndexRoute
   '/staff/attendance/corrections': typeof StaffAttendanceCorrectionsRoute
   '/staff/candidates/$candidateId': typeof StaffCandidatesCandidateIdRouteWithChildren
@@ -638,7 +631,6 @@ export interface FileRoutesByTo {
   '/staff/travel-closures': typeof StaffTravelClosuresRoute
   '/staff/travel-hr-approvals': typeof StaffTravelHrApprovalsRoute
   '/staff/users': typeof StaffUsersRoute
-  '/staff/vacancy': typeof StaffVacancyRoute
   '/staff': typeof StaffIndexRoute
   '/staff/attendance/corrections': typeof StaffAttendanceCorrectionsRoute
   '/staff/candidates/$candidateId': typeof StaffCandidatesCandidateIdRouteWithChildren
@@ -724,7 +716,6 @@ export interface FileRoutesById {
   '/staff/travel-closures': typeof StaffTravelClosuresRoute
   '/staff/travel-hr-approvals': typeof StaffTravelHrApprovalsRoute
   '/staff/users': typeof StaffUsersRoute
-  '/staff/vacancy': typeof StaffVacancyRoute
   '/staff/': typeof StaffIndexRoute
   '/staff/attendance/corrections': typeof StaffAttendanceCorrectionsRoute
   '/staff/candidates/$candidateId': typeof StaffCandidatesCandidateIdRouteWithChildren
@@ -811,7 +802,6 @@ export interface FileRouteTypes {
     | '/staff/travel-closures'
     | '/staff/travel-hr-approvals'
     | '/staff/users'
-    | '/staff/vacancy'
     | '/staff/'
     | '/staff/attendance/corrections'
     | '/staff/candidates/$candidateId'
@@ -887,7 +877,6 @@ export interface FileRouteTypes {
     | '/staff/travel-closures'
     | '/staff/travel-hr-approvals'
     | '/staff/users'
-    | '/staff/vacancy'
     | '/staff'
     | '/staff/attendance/corrections'
     | '/staff/candidates/$candidateId'
@@ -972,7 +961,6 @@ export interface FileRouteTypes {
     | '/staff/travel-closures'
     | '/staff/travel-hr-approvals'
     | '/staff/users'
-    | '/staff/vacancy'
     | '/staff/'
     | '/staff/attendance/corrections'
     | '/staff/candidates/$candidateId'
@@ -1281,13 +1269,6 @@ declare module '@tanstack/react-router' {
       path: '/users'
       fullPath: '/staff/users'
       preLoaderRoute: typeof StaffUsersRouteImport
-      parentRoute: typeof StaffRoute
-    }
-    '/staff/vacancy': {
-      id: '/staff/vacancy'
-      path: '/vacancy'
-      fullPath: '/staff/vacancy'
-      preLoaderRoute: typeof StaffVacancyRouteImport
       parentRoute: typeof StaffRoute
     }
     '/staff/attendance/': {
@@ -1803,7 +1784,6 @@ interface StaffRouteChildren {
   StaffTravelClosuresRoute: typeof StaffTravelClosuresRoute
   StaffTravelHrApprovalsRoute: typeof StaffTravelHrApprovalsRoute
   StaffUsersRoute: typeof StaffUsersRoute
-  StaffVacancyRoute: typeof StaffVacancyRoute
   StaffIndexRoute: typeof StaffIndexRoute
   StaffEmployeesEmployeeIdRoute: typeof StaffEmployeesEmployeeIdRoute
   StaffEmployeesImportRoute: typeof StaffEmployeesImportRoute
@@ -1857,7 +1837,6 @@ const StaffRouteChildren: StaffRouteChildren = {
   StaffTravelClosuresRoute: StaffTravelClosuresRoute,
   StaffTravelHrApprovalsRoute: StaffTravelHrApprovalsRoute,
   StaffUsersRoute: StaffUsersRoute,
-  StaffVacancyRoute: StaffVacancyRoute,
   StaffIndexRoute: StaffIndexRoute,
   StaffEmployeesEmployeeIdRoute: StaffEmployeesEmployeeIdRoute,
   StaffEmployeesImportRoute: StaffEmployeesImportRoute,

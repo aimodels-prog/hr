@@ -167,7 +167,7 @@ test("public application progresses through shortlist, interview, offer and onbo
           candidateId: candidate.id,
           vacancyId: "log-ops-lead",
           template: "VIA Standard Employment Offer",
-          position: "Logistics Operations Lead",
+          position: "Operations Lead",
           grade: "G6",
           salary: 18000,
           currency: "AED",

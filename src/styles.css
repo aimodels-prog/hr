@@ -11,8 +11,9 @@
   --radius-xl: calc(var(--radius) + 4px);
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
-  --font-display: "Sora", ui-sans-serif, system-ui, sans-serif;
-  --font-sans: "Inter Tight", ui-sans-serif, system-ui, sans-serif;
+  --font-display:
+    "Aptos Display", "Segoe UI Variable Display", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Aptos", "Segoe UI Variable Text", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -31,6 +32,8 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-signal: var(--signal);
   --color-signal-foreground: var(--signal-foreground);
   --color-border: var(--border);
@@ -53,9 +56,9 @@
 }
 
 :root {
-  --radius: 0.5rem;
-  --background: oklch(0.985 0.004 240);
-  --foreground: oklch(0.22 0.03 250);
+  --radius: 0.75rem;
+  --background: oklch(0.975 0.006 248);
+  --foreground: oklch(0.2 0.04 252);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.22 0.03 250);
   --popover: oklch(1 0 0);
@@ -64,7 +67,7 @@
   --primary-foreground: oklch(0.99 0.005 240);
   --secondary: oklch(0.94 0.015 248);
   --secondary-foreground: oklch(0.32 0.06 252);
-  --muted: oklch(0.955 0.01 248);
+  --muted: oklch(0.95 0.012 248);
   --muted-foreground: oklch(0.53 0.03 250);
   --accent: oklch(0.93 0.03 250);
   --accent-foreground: oklch(0.34 0.09 253);
@@ -72,9 +75,11 @@
   --destructive-foreground: oklch(0.99 0.005 240);
   --success: oklch(0.55 0.15 152);
   --success-foreground: oklch(0.99 0.005 240);
+  --warning: oklch(0.65 0.16 75);
+  --warning-foreground: oklch(0.99 0.005 240);
   --signal: oklch(0.62 0.21 27);
   --signal-foreground: oklch(0.99 0.005 240);
-  --border: oklch(0.9 0.015 250);
+  --border: oklch(0.89 0.017 250);
   --input: oklch(0.9 0.015 250);
   --ring: oklch(0.44 0.13 253);
   --chart-1: oklch(0.44 0.13 253);
@@ -82,7 +87,7 @@
   --chart-3: oklch(0.62 0.21 27);
   --chart-4: oklch(0.65 0.09 253);
   --chart-5: oklch(0.78 0.05 250);
-  --sidebar: oklch(0.28 0.07 253);
+  --sidebar: oklch(0.235 0.075 253);
   --sidebar-foreground: oklch(0.93 0.02 248);
   --sidebar-primary: oklch(0.62 0.14 253);
   --sidebar-primary-foreground: oklch(0.99 0.005 240);
@@ -111,6 +116,8 @@
   --destructive-foreground: oklch(0.98 0.005 240);
   --success: oklch(0.65 0.15 152);
   --success-foreground: oklch(0.15 0.03 253);
+  --warning: oklch(0.75 0.13 75);
+  --warning-foreground: oklch(0.15 0.03 253);
   --signal: oklch(0.68 0.2 27);
   --signal-foreground: oklch(0.15 0.03 253);
   --border: oklch(1 0 0 / 12%);
@@ -141,6 +148,8 @@
     color: var(--color-foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
   h1,
@@ -148,7 +157,11 @@
   h3,
   h4 {
     font-family: var(--font-display);
-    letter-spacing: -0.02em;
+    letter-spacing: -0.035em;
+  }
+
+  ::selection {
+    background: oklch(0.74 0.1 252 / 35%);
   }
 }
 
@@ -156,9 +169,23 @@
   background-color: var(--color-card);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-xl);
-  box-shadow: 0 1px 2px oklch(0.44 0.13 253 / 6%), 0 12px 32px -24px oklch(0.44 0.13 253 / 40%);
+  box-shadow:
+    0 1px 2px oklch(0.3 0.08 253 / 5%),
+    0 18px 50px -30px oklch(0.3 0.1 253 / 35%);
 }
 
 @utility brand-gradient {
-  background-image: linear-gradient(135deg, oklch(0.36 0.11 253), oklch(0.5 0.14 253));
+  background-image: linear-gradient(
+    135deg,
+    oklch(0.235 0.075 253),
+    oklch(0.44 0.14 253) 70%,
+    oklch(0.5 0.12 246)
+  );
+}
+
+@utility page-grid {
+  background-image:
+    linear-gradient(oklch(0.44 0.13 253 / 2.4%) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(0.44 0.13 253 / 2.4%) 1px, transparent 1px);
+  background-size: 32px 32px;
 }

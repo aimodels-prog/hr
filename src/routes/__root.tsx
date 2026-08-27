@@ -4,13 +4,18 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
+  useRouterState,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
+import { initializeApplicationData } from "../lib/data/application-data";
+import { CandidatePreparationService } from "../lib/data/candidate-preparation-service";
+import { CurrentUserProvider } from "../lib/auth";
+import { ApplicationBootScreen } from "../components/layout/application-boot-screen";
 
 function NotFoundComponent() {
   return (
@@ -77,17 +82,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "VIA International — Careers & Staff Portal" },
+      { title: "VIA HR System" },
       {
         name: "description",
         content:
           "Hiring and people operations for VIA International: job openings, AI-assisted shortlisting, interviews and onboarding.",
       },
       { name: "author", content: "VIA International" },
-      { property: "og:title", content: "VIA International — Careers & Staff Portal" },
+      { property: "og:title", content: "VIA HR System" },
       {
         property: "og:description",
-        content: "Job openings, AI-assisted shortlisting, interviews and onboarding at VIA International.",
+        content:
+          "Job openings, AI-assisted shortlisting, interviews and onboarding at VIA International.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -101,7 +107,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {
         rel: "stylesheet",
-        href: "https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter+Tight:wght@400;500;600&display=swap",
+        href: "https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600;700&display=swap",
       },
       { rel: "icon", href: "/favicon.png", type: "image/png" },
     ],
@@ -129,11 +135,47 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const isStaffRoute = pathname === "/staff" || pathname.startsWith("/staff/");
+  const [isApplicationReady, setIsApplicationReady] = useState(false);
+
+  useEffect(() => {
+    try {
+      initializeApplicationData();
+      void new CandidatePreparationService()
+        .resumePendingRuns({
+          actor: {
+            userId: "system",
+            displayName: "VIA HR System",
+            roles: ["Super Admin"],
+            activeRole: "Super Admin",
+          },
+          reason: "Resumed interrupted CV preparation when VIA HR System opened",
+        })
+        .catch((error) => {
+          console.error("VIA HR System could not resume CV preparation.", error);
+        });
+    } catch (error) {
+      console.error("VIA HR System data initialisation failed.", error);
+    } finally {
+      setIsApplicationReady(true);
+    }
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>
-      {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-      <Outlet />
+      {isStaffRoute ? (
+        isApplicationReady ? (
+          <CurrentUserProvider>
+            {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+            <Outlet />
+          </CurrentUserProvider>
+        ) : (
+          <ApplicationBootScreen />
+        )
+      ) : (
+        <Outlet />
+      )}
     </QueryClientProvider>
   );
 }
