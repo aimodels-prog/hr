@@ -97,19 +97,19 @@ function DocumentExpiryRoute() {
   const allDocs = useMemo(
     () =>
       documentService
-        .getDocumentRepository()
-        .list()
+        .getDocuments(currentUser.getActorContext())
         .filter((d) => d.status !== "Replaced" && d.status !== "Rejected" && d.expiryDate),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [documentService, refreshKey],
+    [currentUser, documentService, refreshKey],
   );
   const allEmployees = useMemo(
-    () => employeeService.getEmployeeRepository().list({ includeArchived: false }),
+    () => employeeService.getEmployees(currentUser.getActorContext()),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [employeeService, refreshKey],
   );
   const hrUsers = useMemo(
-    () => employeeService.getUserRepository().list().filter((u) => u.roles.includes("HR")),
+    () =>
+      employeeService.getUsers(currentUser.getActorContext()).filter((u) => u.roles.includes("HR")),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [employeeService, refreshKey],
   );

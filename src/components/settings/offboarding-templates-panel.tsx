@@ -24,33 +24,25 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useCurrentUser } from "@/lib/auth";
 import { EmployeeService } from "@/lib/data/employee-service";
-import { OnboardingService } from "@/lib/data/onboarding-service";
+import { OffboardingService } from "@/lib/data/offboarding-service";
 import type {
-  OnboardingTemplate,
-  OnboardingTemplateTask,
-  TaskCheckpoint,
-  TaskGroup,
-} from "@/lib/data/onboarding-types";
+  OffboardingTemplate,
+  OffboardingTemplateTask,
+  OffboardingTaskGroup,
+} from "@/lib/data/offboarding-types";
 import type { Role } from "@/lib/data/types";
 
-const GROUPS: TaskGroup[] = [
-  "Personal & Legal Documents",
-  "Contract & Payroll",
-  "Visa, Work Permit & ID",
-  "IT & Equipment",
+const GROUPS: OffboardingTaskGroup[] = [
+  "Manager Handover",
+  "Project Reassignment",
+  "IT & Assets",
   "Access & Security",
-  "HSE & Induction",
-  "Department Introduction",
-  "Manager Plan",
-  "Probation Goals",
-];
-const CHECKPOINTS: TaskCheckpoint[] = [
-  "Pre-Arrival",
-  "Day 1",
-  "Week 1",
-  "Day 30",
-  "Day 60",
-  "Day 90",
+  "Visa & Work Permit Cancellation",
+  "Leave & Attendance Reconciliation",
+  "Expenses & Advances",
+  "Final Payroll Input",
+  "Exit Interview",
+  "Service Documents",
 ];
 const OWNERS: Role[] = ["Employee", "Line Manager", "HR", "Accounts", "IT", "Super Admin"];
 const newId = () =>
@@ -62,15 +54,15 @@ const list = (value: string) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
-export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void }) {
+export function OffboardingTemplatesPanel({ onChanged }: { onChanged?: () => void }) {
   const currentUser = useCurrentUser();
-  const [service] = useState(() => new OnboardingService());
+  const [service] = useState(() => new OffboardingService());
   const [employeeService] = useState(() => new EmployeeService());
   const [templates, setTemplates] = useState(() =>
     service.getTemplates(currentUser.getActorContext()),
   );
-  const [editing, setEditing] = useState<OnboardingTemplate | null>(null);
-  const [archiveTarget, setArchiveTarget] = useState<OnboardingTemplate | null>(null);
+  const [editing, setEditing] = useState<OffboardingTemplate | null>(null);
+  const [archiveTarget, setArchiveTarget] = useState<OffboardingTemplate | null>(null);
   const [saving, setSaving] = useState(false);
   const users = employeeService
     .getUsers(currentUser.getActorContext())
@@ -79,17 +71,14 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
     setTemplates(service.getTemplates(currentUser.getActorContext()));
     onChanged?.();
   };
-  const blankTemplate = (): OnboardingTemplate => {
+  const blankTemplate = (): OffboardingTemplate => {
     const now = new Date().toISOString();
     return {
       id: newId(),
       name: "",
       description: "",
       isActive: true,
-      countries: [],
-      legalEntities: [],
       departments: [],
-      roles: [],
       employmentTypes: [],
       tasks: [],
       createdAt: now,
@@ -99,18 +88,17 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
       recordVersion: 1,
     };
   };
-  const blankTask = (): OnboardingTemplateTask => ({
+  const blankTask = (): OffboardingTemplateTask => ({
     id: newId(),
     title: "",
-    group: "Department Introduction",
-    checkpoint: "Pre-Arrival",
+    group: "IT & Assets",
     ownerRole: "HR",
-    offsetDaysFromStart: 0,
+    offsetDaysFromLastWorkingDate: 0,
     isMandatory: true,
     requiresEvidence: false,
     dependsOnTaskIds: [],
   });
-  const updateTask = (taskId: string, changes: Partial<OnboardingTemplateTask>) =>
+  const updateTask = (taskId: string, changes: Partial<OffboardingTemplateTask>) =>
     setEditing((current) =>
       current
         ? {
@@ -128,9 +116,9 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
     try {
       service.saveTemplate(editing, {
         ...currentUser.getActorContext(),
-        reason: "Saved onboarding checklist template",
+        reason: "Saved offboarding clearance template",
       });
-      toast.success("Checklist template saved");
+      toast.success("Clearance template saved");
       setEditing(null);
       refresh();
     } catch (error) {
@@ -144,9 +132,9 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
     try {
       service.deleteTemplate(archiveTarget.id, {
         ...currentUser.getActorContext(),
-        reason: "Archived onboarding checklist template",
+        reason: "Archived offboarding clearance template",
       });
-      toast.success("Checklist template archived");
+      toast.success("Clearance template archived");
       setArchiveTarget(null);
       refresh();
     } catch (error) {
@@ -158,9 +146,10 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-lg font-semibold">Checklist templates</h2>
+          <h2 className="text-lg font-semibold">Offboarding clearance templates</h2>
           <p className="text-sm text-muted-foreground">
-            Set the work, owners and timing used when a new employee joins.
+            Set the clearance tasks, owners and timing used when a departing employee's offboarding
+            case is started.
           </p>
         </div>
         <Button onClick={() => setEditing(blankTemplate())}>
@@ -239,13 +228,6 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
                     : "All employment types"}
                 </Badge>
               </div>
-              <div className="text-xs text-muted-foreground">
-                Used for{" "}
-                {template.countries.length ? template.countries.join(", ") : "all countries"} ·{" "}
-                {template.legalEntities.length
-                  ? template.legalEntities.join(", ")
-                  : "all VIA entities"}
-              </div>
             </CardContent>
           </Card>
         ))}
@@ -261,8 +243,8 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
           <DialogHeader>
             <DialogTitle>
               {templates.some((template) => template.id === editing?.id)
-                ? "Edit checklist template"
-                : "Create checklist template"}
+                ? "Edit clearance template"
+                : "Create clearance template"}
             </DialogTitle>
           </DialogHeader>
           {editing && (
@@ -282,7 +264,7 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
                         setEditing({ ...editing, isActive: checked === true })
                       }
                     />{" "}
-                    Available for new employees
+                    Available for new offboarding cases
                   </label>
                 </Field>
                 <Field label="Description" wide>
@@ -299,26 +281,11 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
                 <p className="mb-3 text-sm text-muted-foreground">
                   Leave a field empty when the template applies to everyone.
                 </p>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  <CsvField
-                    label="Countries"
-                    value={editing.countries}
-                    onChange={(countries) => setEditing({ ...editing, countries })}
-                  />
-                  <CsvField
-                    label="VIA entities"
-                    value={editing.legalEntities}
-                    onChange={(legalEntities) => setEditing({ ...editing, legalEntities })}
-                  />
+                <div className="grid gap-4 sm:grid-cols-2">
                   <CsvField
                     label="Departments"
                     value={editing.departments}
                     onChange={(departments) => setEditing({ ...editing, departments })}
-                  />
-                  <CsvField
-                    label="Positions"
-                    value={editing.roles}
-                    onChange={(roles) => setEditing({ ...editing, roles })}
                   />
                   <CsvField
                     label="Employment types"
@@ -330,9 +297,10 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="font-semibold">Checklist tasks</h3>
+                    <h3 className="font-semibold">Clearance tasks</h3>
                     <p className="text-sm text-muted-foreground">
-                      Tasks are copied into each employee’s onboarding record.
+                      Tasks are copied into each employee's offboarding case, due relative to their
+                      last working date.
                     </p>
                   </div>
                   <Button
@@ -346,7 +314,7 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
                 </div>
                 {editing.tasks.length === 0 && (
                   <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
-                    Add the first task to this checklist.
+                    Add the first clearance task.
                   </div>
                 )}
                 {editing.tasks.map((task, index) => (
@@ -385,7 +353,7 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
                           <Select
                             value={task.group}
                             onValueChange={(value) =>
-                              updateTask(task.id, { group: value as TaskGroup })
+                              updateTask(task.id, { group: value as OffboardingTaskGroup })
                             }
                           >
                             <SelectTrigger>
@@ -395,25 +363,6 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
                               {GROUPS.map((group) => (
                                 <SelectItem key={group} value={group}>
                                   {group}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </Field>
-                        <Field label="Checkpoint">
-                          <Select
-                            value={task.checkpoint}
-                            onValueChange={(value) =>
-                              updateTask(task.id, { checkpoint: value as TaskCheckpoint })
-                            }
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {CHECKPOINTS.map((checkpoint) => (
-                                <SelectItem key={checkpoint} value={checkpoint}>
-                                  {checkpoint}
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -470,15 +419,15 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
                             type="number"
                             min={-365}
                             max={365}
-                            value={task.offsetDaysFromStart}
+                            value={task.offsetDaysFromLastWorkingDate}
                             onChange={(event) =>
                               updateTask(task.id, {
-                                offsetDaysFromStart: Number(event.target.value),
+                                offsetDaysFromLastWorkingDate: Number(event.target.value),
                               })
                             }
                           />
                           <p className="text-xs text-muted-foreground">
-                            Days before (-) or after (+) start
+                            Days before (-) or after (+) the last working date
                           </p>
                         </Field>
                         <Field label="Depends on">
@@ -564,8 +513,8 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
             <DialogTitle>Archive this template?</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Existing employee checklists will remain unchanged. This template will no longer be
-            available for new onboarding cases.
+            Existing offboarding cases will remain unchanged. This template will no longer be
+            available for new cases.
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setArchiveTarget(null)}>

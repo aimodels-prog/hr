@@ -1,3 +1,4 @@
+import { SYSTEM_CONTEXT } from "../src/lib/data/types.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -80,7 +81,7 @@ function setup() {
 test("uploading a passport without a document number is rejected", async () => {
   setup();
   const documents = new DocumentService();
-  const countBefore = documents.getDocumentRepository().list().length;
+  const countBefore = documents.getDocumentRepository(SYSTEM_CONTEXT).list().length;
 
   await assert.rejects(
     documents.uploadDocument(
@@ -94,7 +95,7 @@ test("uploading a passport without a document number is rejected", async () => {
   );
 
   // Confirm no document record was created for the rejected upload.
-  assert.equal(documents.getDocumentRepository().list().length, countBefore);
+  assert.equal(documents.getDocumentRepository(SYSTEM_CONTEXT).list().length, countBefore);
 });
 
 test("uploading a document with issue date after expiry date is rejected", async () => {
@@ -142,7 +143,7 @@ test("uploading a valid passport persists documentNumber and issuingCountry", as
   assert.equal(doc.documentNumber, "P1234567");
   assert.equal(doc.issuingCountry, "Oman");
 
-  const stored = documents.getDocumentRepository().getById(doc.id);
+  const stored = documents.getDocumentRepository(SYSTEM_CONTEXT).getById(doc.id);
   assert.equal(stored?.issuingCountry, "Oman");
 });
 
@@ -160,6 +161,47 @@ test("document types that don't require a document number still upload without o
 
   assert.equal(doc.type, "contract");
   assert.equal(doc.documentNumber, undefined);
+});
+
+test("replaceDocument marks the old document Replaced and links it to the new one", async () => {
+  setup();
+  const documents = new DocumentService();
+
+  const original = await documents.uploadDocument(
+    "employee-omar",
+    new Blob(["v1"], { type: "application/pdf" }),
+    "passport-v1.pdf",
+    {
+      type: "passport",
+      documentNumber: "P1234567",
+      issuingAuthority: "Ministry of Interior",
+      issueDate: "2020-01-01",
+      expiryDate: "2025-01-01",
+      visibility: "Restricted",
+    },
+    employee,
+  );
+
+  const replacement = await documents.replaceDocument(
+    original.id,
+    new Blob(["v2"], { type: "application/pdf" }),
+    "passport-v2.pdf",
+    {
+      type: "passport",
+      documentNumber: "P7654321",
+      issuingAuthority: "Ministry of Interior",
+      issueDate: "2025-01-02",
+      expiryDate: "2035-01-02",
+      visibility: "Restricted",
+    },
+    employee,
+  );
+
+  const oldReloaded = documents.getDocumentRepository(SYSTEM_CONTEXT).getById(original.id);
+  assert.equal(oldReloaded?.status, "Replaced");
+  assert.equal(oldReloaded?.replacedById, replacement.id);
+  assert.equal(replacement.documentNumber, "P7654321");
+  assert.equal(replacement.status, "Pending Verification");
 });
 
 test.after(() => configureApplicationDataServices(undefined));

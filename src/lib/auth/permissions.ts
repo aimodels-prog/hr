@@ -44,7 +44,6 @@ export const ALL_PERMISSIONS = [
 
   // Travel & Reimbursements
   "travel:request_self",
-  "travel:approve_direct_reports",
   "travel:hr_review",
   "travel:finance_review",
   "travel:final_close",
@@ -143,7 +142,6 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     "attendance:approve_direct_reports",
     "attendance:site_visit_request_self",
     "travel:request_self",
-    "travel:approve_direct_reports",
     "document:view_self",
     "document:view_direct_reports",
     "onboarding:view_self",
@@ -187,7 +185,6 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     "attendance:site_visit_approve",
     "attendance:manage_all",
     "travel:request_self",
-    "travel:approve_direct_reports",
     "travel:hr_review",
     "document:view_self",
     "document:view_direct_reports",

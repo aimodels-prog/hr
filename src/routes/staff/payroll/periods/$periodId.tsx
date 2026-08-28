@@ -39,7 +39,10 @@ function PayrollWorkbenchRoute() {
   const currentUser = useCurrentUser();
   const payrollService = useMemo(() => new PayrollService(), []);
   const empService = useMemo(() => new EmployeeService(), []);
-  const allEmployees = useMemo(() => empService.getEmployees(), [empService]);
+  const allEmployees = useMemo(
+    () => empService.getDirectoryEmployees(currentUser.getActorContext()),
+    [currentUser, empService],
+  );
 
   const [period, setPeriod] = useState(payrollService.getPeriodById(periodId));
 

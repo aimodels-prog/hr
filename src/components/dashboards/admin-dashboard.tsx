@@ -30,20 +30,20 @@ export function AdminDashboard() {
   const onboardingService = useMemo(() => new OnboardingService(), []);
   const travelService = useMemo(() => new TravelService(), []);
 
-  const pendingLeave = leaveService.getPendingRequestsForSuperAdmin();
+  const pendingLeave = leaveService.getPendingRequestsForSuperAdmin(currentUser.getActorContext());
   const pendingPayroll = payrollService.getAllPeriods().filter((p) => p.status === "Prepared");
   const activeEmployees = employeeService
-    .getEmployees()
+    .getEmployees(currentUser.getActorContext())
     .filter((employee) => isCurrentWorkforceMember(employee));
   const currentEmployeeIds = new Set(activeEmployees.map((employee) => employee.id));
   const criticalExpiries = docService
-    .getExpiringDocuments()
+    .getExpiringDocuments(currentUser.getActorContext())
     .filter((document) => currentEmployeeIds.has(document.employeeId));
   const openVacancies = recruitmentService
     .getVacancies()
     .filter((vacancy) => vacancy.status === "Open");
   const activeOnboarding = onboardingService
-    .getCases()
+    .getCasesForContext(currentUser.getActorContext())
     .filter(
       (item) =>
         item.status !== "Completed" && item.status !== "Cancelled" && item.progressPercentage < 100,

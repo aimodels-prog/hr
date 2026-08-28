@@ -43,17 +43,20 @@ function AttendanceCorrectionsRoute() {
   const [reviewMode, setReviewMode] = useState<"manager" | "hr">("manager");
   const [notes, setNotes] = useState("");
   const actorContext = currentUser.getActorContext();
-  const employees = employeeService.getEmployees();
+  const employees = employeeService.getEmployees(actorContext);
   const records = attendanceService.getRecordsForContext(actorContext);
-  const canManagerReview = ["Line Manager", "Super Admin"].includes(currentUser.activeRole);
+  const canManagerReview = ["Line Manager", "HR", "Super Admin"].includes(currentUser.activeRole);
   const canHrReview = currentUser.can("attendance:manage_all");
   const managerCorrections = canManagerReview
-    ? attendanceService
-        .getCorrectionsForDirectReports(actorContext)
-        .filter((item) => item.status === "Pending Manager")
+    ? (canHrReview
+        ? attendanceService.getAllCorrections(actorContext)
+        : attendanceService.getCorrectionsForDirectReports(actorContext)
+      ).filter((item) => item.status === "Pending Manager")
     : [];
   const hrCorrections = canHrReview
-    ? attendanceService.getAllCorrections().filter((item) => item.status === "Pending HR")
+    ? attendanceService
+        .getAllCorrections(actorContext)
+        .filter((item) => item.status === "Pending HR")
     : [];
   const visibleCorrections = attendanceService.getCorrectionsForContext(actorContext);
   const history = visibleCorrections
@@ -133,10 +136,7 @@ function AttendanceCorrectionsRoute() {
             ) : (
               corrections.map((correction) => {
                 const record =
-                  records.find((item) => item.id === correction.attendanceRecordId) ??
-                  attendanceService
-                    .getAllRecords()
-                    .find((item) => item.id === correction.attendanceRecordId);
+                  records.find((item) => item.id === correction.attendanceRecordId) ?? null;
                 const employee = employees.find((item) => item.id === correction.employeeId);
                 return (
                   <TableRow key={correction.id}>
@@ -203,7 +203,10 @@ function AttendanceCorrectionsRoute() {
   const defaultTab = canManagerReview ? "manager" : canHrReview ? "hr" : "history";
 
   return (
-    <RequirePermission permission="attendance:approve_direct_reports" resourceName="Attendance Corrections">
+    <RequirePermission
+      permission="attendance:approve_direct_reports"
+      resourceName="Attendance Corrections"
+    >
       <div className="mx-auto flex max-w-7xl flex-col gap-6 pb-10" data-revision={revision}>
         <PageHeader
           title="Attendance Corrections"
@@ -212,7 +215,9 @@ function AttendanceCorrectionsRoute() {
         <Tabs defaultValue={defaultTab}>
           <TabsList>
             {canManagerReview && (
-              <TabsTrigger value="manager">My Team ({managerCorrections.length})</TabsTrigger>
+              <TabsTrigger value="manager">
+                {canHrReview ? "Supervisor Recovery" : "My Team"} ({managerCorrections.length})
+              </TabsTrigger>
             )}
             {canHrReview && (
               <TabsTrigger value="hr">HR Finalisation ({hrCorrections.length})</TabsTrigger>

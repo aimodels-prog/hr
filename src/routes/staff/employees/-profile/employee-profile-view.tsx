@@ -160,9 +160,9 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
   const employeeService = useMemo(() => new EmployeeService(), []);
   const offboardingService = useMemo(() => new OffboardingService(), []);
 
-  const rawEmployee = employeeService
-    .getEmployeeRepository()
-    .getById(employeeId, { includeArchived: true });
+  const rawEmployee = employeeService.getById(employeeId, currentUser.getActorContext(), {
+    includeArchived: true,
+  });
 
   // Personal-life fields that redactEmployee does not cover (it only strips salary, bank
   // details, passport, national id and performance data). A viewer who is only in-scope via
@@ -191,24 +191,20 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
   const userMapping = useMemo(
     () =>
       employeeService
-        .getUserRepository()
-        .list({ includeArchived: true })
+        .getUsers(currentUser.getActorContext(), { includeArchived: true })
         .find((u) => u.employeeId === employeeId),
-    [employeeService, employeeId],
+    [currentUser, employeeService, employeeId],
   );
   const history = employeeService
-    .getHistoryRepository()
-    .list()
-    .filter((record) => record.employeeId === employeeId)
+    .getEmploymentHistory(employeeId, currentUser.getActorContext())
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   const allEmployees = useMemo(
     () =>
       employeeService
-        .getEmployeeRepository()
-        .list()
+        .getEmployees(currentUser.getActorContext())
         .filter((e) => e.status !== "Archived" && e.id !== employeeId),
-    [employeeService, employeeId],
+    [currentUser, employeeService, employeeId],
   );
 
   const departments = useMemo(() => getMasterDataRepository("departments").list(), []);
@@ -270,7 +266,9 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
     currentUser.activeRole === "Accounts" || currentUser.activeRole === "Super Admin";
   const canViewAudit = currentUser.permissions.has("system:audit_view");
   const manager = employee.lineManagerId
-    ? employeeService.getEmployeeRepository().getById(employee.lineManagerId)
+    ? employeeService
+        .getEmployeesWithReportingLine(currentUser.getActorContext())
+        .find((item) => item.id === employee.lineManagerId)
     : undefined;
   const initials = (employee.preferredName || employee.legalName)
     .split(" ")
@@ -384,7 +382,10 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
       // offboarding clearance process (mandatory tasks + financial + legal clearance) instead
       // of a raw status flip that skips it entirely.
       if (targetStatus === "Inactive" || targetStatus === "Archived") {
-        const existingCase = offboardingService.getCaseByEmployeeId(employeeId);
+        const existingCase = offboardingService.getCaseByEmployeeId(
+          employeeId,
+          currentUser.getActorContext(),
+        );
         const isFinalized = existingCase?.status === "Completed";
 
         if (existingCase && !isFinalized) {
@@ -1286,11 +1287,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                       <div>
                         <div className="text-muted-foreground">Supervisor</div>
                         <div className="font-medium">
-                          {employee.lineManagerId
-                            ? employeeService
-                                .getEmployeeRepository()
-                                .getById(employee.lineManagerId)?.preferredName || "Unknown"
-                            : "None"}
+                          {employee.lineManagerId ? manager?.preferredName || "Unknown" : "None"}
                         </div>
                       </div>
                     </div>

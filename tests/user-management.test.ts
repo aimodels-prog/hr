@@ -1,3 +1,4 @@
+import { SYSTEM_CONTEXT } from "../src/lib/data/types.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -37,7 +38,7 @@ const hr: ActorContext = {
 test("HR can add access while Employee access always remains", () => {
   const { service, audit } = setup();
   const target = service
-    .getUserRepository()
+    .getUserRepository(SYSTEM_CONTEXT)
     .list()
     .find((user) => user.roles.length === 1);
   assert.ok(target);
@@ -57,7 +58,7 @@ test("HR can add access while Employee access always remains", () => {
 test("HR cannot change a Super Admin account and the denial is audited", () => {
   const { service, audit } = setup();
   const target = service
-    .getUserRepository()
+    .getUserRepository(SYSTEM_CONTEXT)
     .list()
     .find((user) => user.roles.includes("Super Admin"));
   assert.ok(target);

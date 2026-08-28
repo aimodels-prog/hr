@@ -826,4 +826,11 @@ export const SYSTEM_ACTOR: AuditActor = {
   userId: "system",
   displayName: "VIA HR System",
   roles: ["Super Admin"],
+  activeRole: "Super Admin",
 };
+
+/**
+ * Reserved capability context for trusted workflow services and scheduled operations.
+ * User-facing components must always pass the signed-in user's ActorContext instead.
+ */
+export const SYSTEM_CONTEXT: ActorContext = { actor: SYSTEM_ACTOR };

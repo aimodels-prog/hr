@@ -34,22 +34,22 @@ export function AttendanceTab({ employeeId }: { employeeId: string }) {
   const records = useMemo(
     () =>
       attendanceService
-        .getRecordsForEmployee(employeeId)
+        .getRecordsForEmployee(employeeId, currentUser.getActorContext())
         .sort((a, b) => b.date.localeCompare(a.date))
         .slice(0, 30),
-    [attendanceService, employeeId],
+    [attendanceService, currentUser, employeeId],
   );
   const corrections = useMemo(
     () =>
       attendanceService
-        .getAllCorrections()
+        .getCorrectionsForEmployee(employeeId, currentUser.getActorContext())
         .filter(
           (c) =>
             records.some((r) => r.id === c.attendanceRecordId) &&
             c.status !== "Approved" &&
             c.status !== "Rejected",
         ),
-    [attendanceService, records],
+    [attendanceService, currentUser, employeeId, records],
   );
   const overtimeClaims = useMemo(
     () =>

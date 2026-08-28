@@ -1,3 +1,4 @@
+import { SYSTEM_CONTEXT } from "./types.ts";
 import { LocalRepository } from "./repository.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import type {
@@ -140,11 +141,13 @@ export class TimesheetService {
     return periodsGenerated;
   }
 
-  getTimesheetsForPeriod(periodId: string): TimesheetWithEntries[] {
+  getTimesheetsForPeriod(periodId: string, context: ActorContext): TimesheetWithEntries[] {
+    this.requireOrganisationRead(context, "view this timesheet period");
     return this.timesheetRepo.list().filter((t) => t.periodId === periodId);
   }
 
-  getAllTimesheets(): TimesheetWithEntries[] {
+  getAllTimesheets(context: ActorContext): TimesheetWithEntries[] {
+    this.requireOrganisationRead(context, "view all timesheets");
     return this.timesheetRepo.list();
   }
 
@@ -154,7 +157,7 @@ export class TimesheetService {
     if (context.actor.activeRole === "Line Manager" && context.actor.employeeId) {
       const reportIds = new Set(
         new EmployeeService()
-          .getEmployees()
+          .getEmployees(SYSTEM_CONTEXT)
           .filter((employee) => employee.lineManagerId === context.actor.employeeId)
           .map((employee) => employee.id),
       );
@@ -163,7 +166,8 @@ export class TimesheetService {
     return all.filter((timesheet) => timesheet.employeeId === context.actor.employeeId);
   }
 
-  getTimesheetsForEmployee(employeeId: string): TimesheetWithEntries[] {
+  getTimesheetsForEmployee(employeeId: string, context: ActorContext): TimesheetWithEntries[] {
+    this.requireEmployeeRead(employeeId, context, "view this employee's timesheets");
     return this.timesheetRepo.list().filter((t) => t.employeeId === employeeId);
   }
 
@@ -173,7 +177,7 @@ export class TimesheetService {
     const settings = this.getSettings();
     const attendanceByDate = new Map(
       this.attendanceService
-        .getRecordsForEmployee(timesheet.employeeId)
+        .getRecordsForEmployee(timesheet.employeeId, SYSTEM_CONTEXT)
         .filter((record) => record.date >= period.startDate && record.date <= period.endDate)
         .map((record) => [record.date, record]),
     );
@@ -186,7 +190,8 @@ export class TimesheetService {
       const record = attendanceByDate.get(date);
       const virtualStatus = record
         ? undefined
-        : this.attendanceService.reconcileDailyStatus(timesheet.employeeId, date)?.status;
+        : this.attendanceService.reconcileDailyStatus(timesheet.employeeId, date, SYSTEM_CONTEXT)
+            ?.status;
       let workHours = 0;
       let leaveHours = 0;
       let holidayHours = 0;
@@ -267,7 +272,10 @@ export class TimesheetService {
 
     const settings = this.getSettings();
     const workingDays = new SettingsService().getAppSettings().workingDays;
-    const interval = eachDayOfInterval({ start: parseISO(period.startDate), end: parseISO(period.endDate) });
+    const interval = eachDayOfInterval({
+      start: parseISO(period.startDate),
+      end: parseISO(period.endDate),
+    });
     let expectedHours = 0;
     for (const day of interval) {
       if (workingDays.includes(day.getDay())) {
@@ -302,7 +310,7 @@ export class TimesheetService {
 
     const leaveService = new LeaveService();
     const approvedLeaves = leaveService
-      .getAllRequests()
+      .getAllRequests(SYSTEM_CONTEXT)
       .filter(
         (r) => r.employeeId === employeeId && (r.status === "Approved" || r.status === "Taken"),
       );
@@ -324,10 +332,14 @@ export class TimesheetService {
 
       const dayStr = format(day, "yyyy-MM-dd");
 
-      // Check Holiday
-      // Let's assume MasterRecord code/description has dates, or we just keep it simple
-      // For this prototype, let's just match exact ISO strings in description or assume no holidays if format isn't strictly YYYY-MM-DD
-      const isH = holidays.some((h) => h.description === dayStr || h.name.includes(dayStr));
+      const isH = holidays.some((holiday) => {
+        const structuredDate = (holiday as typeof holiday & { date?: string }).date;
+        return (
+          structuredDate === dayStr ||
+          holiday.description === dayStr ||
+          holiday.name.includes(dayStr)
+        );
+      });
       if (isH) {
         holidayHours[dayStr] = settings.standardDailyHours;
         return; // Skip checking leave if holiday
@@ -390,13 +402,13 @@ export class TimesheetService {
     this.requireSelfOrAdmin(timesheet.employeeId, context, "save this timesheet");
     const existing = this.timesheetRepo.getById(timesheet.id);
     if (!existing) throw new Error("Timesheet not found");
-    if (existing.status !== "Draft" && existing.status !== "Returned") {
-      throw new Error("Cannot modify a timesheet that is not Draft or Returned.");
-    }
     const period = this.periodRepo.getById(timesheet.periodId);
     if (!period) throw new Error("Period not found");
     if (period.status === "Closed") {
       throw new Error("Cannot modify a timesheet in a closed period.");
+    }
+    if (existing.status !== "Draft" && existing.status !== "Returned") {
+      throw new Error("Cannot modify a timesheet that is not Draft or Returned.");
     }
     this.validateEntryHours(timesheet, period);
 
@@ -418,16 +430,16 @@ export class TimesheetService {
     if (!ts) throw new Error("Timesheet not found");
     this.requireSelfOrAdmin(ts.employeeId, context, "submit this timesheet");
 
-    if (ts.status !== "Draft" && ts.status !== "Returned") {
-      throw new Error("Cannot submit timesheet in current state.");
-    }
-
-    // Validation: > 24h per day
     const period = this.periodRepo.getById(ts.periodId);
     if (!period) throw new Error("Period not found");
     if (period.status === "Closed") {
       throw new Error("Cannot submit a timesheet in a closed period.");
     }
+    if (ts.status !== "Draft" && ts.status !== "Returned") {
+      throw new Error("Cannot submit timesheet in current state.");
+    }
+
+    // Validation: > 24h per day
     this.validateEntryHours(ts, period);
 
     const dailyTotals: Record<string, number> = {};
@@ -479,15 +491,21 @@ export class TimesheetService {
         }
         const costCentre = allCostCentres.find((c) => c.id === entry.costCentreId);
         if (!costCentre || !costCentre.isActive) {
-          throw new Error(`Cost centre ${costCentre?.name ?? entry.costCentreId} is invalid or inactive.`);
+          throw new Error(
+            `Cost centre ${costCentre?.name ?? entry.costCentreId} is invalid or inactive.`,
+          );
         }
         const activity = allActivityCodes.find((a) => a.id === entry.activityCodeId);
         if (!activity || !activity.isActive) {
-          throw new Error(`Activity code ${activity?.name ?? entry.activityCodeId} is invalid or inactive.`);
+          throw new Error(
+            `Activity code ${activity?.name ?? entry.activityCodeId} is invalid or inactive.`,
+          );
         }
         const location = allLocations.find((l) => l.id === entry.locationCodeId);
         if (!location || !location.isActive) {
-          throw new Error(`Location ${location?.name ?? entry.locationCodeId} is invalid or inactive.`);
+          throw new Error(
+            `Location ${location?.name ?? entry.locationCodeId} is invalid or inactive.`,
+          );
         }
       }
     }
@@ -525,7 +543,7 @@ export class TimesheetService {
       );
     }
 
-    const employee = new EmployeeService().getById(ts.employeeId);
+    const employee = new EmployeeService().getById(ts.employeeId, SYSTEM_CONTEXT);
     if (!employee?.lineManagerId) {
       throw new Error(
         "Your supervisor has not been assigned. Ask HR to update your reporting line.",
@@ -597,8 +615,11 @@ export class TimesheetService {
       throw new Error("No entries found in the previous week.");
     }
 
-    // Preserve the leave/holiday blocks generated in the current TS
-    const newEntries = currentTs.entries.filter((e) => e.isLeave || e.isHoliday);
+    // Keep every row and hour already entered. Copy adds missing row structures only.
+    const newEntries = currentTs.entries.map((entry) => ({
+      ...entry,
+      hours: { ...entry.hours },
+    }));
 
     // Copy rows from previous (excluding its leave/holidays) but zero out the hours
     prevTs.entries.forEach((e) => {
@@ -650,7 +671,9 @@ export class TimesheetService {
 
     ts.status = "Returned";
     ts.managerNotes = reason;
-    return this.timesheetRepo.update(ts.id, ts, context);
+    const updated = this.timesheetRepo.update(ts.id, ts, context);
+    this.notifyEmployee(updated, context);
+    return updated;
   }
 
   approveTimesheet(timesheetId: string, context: ActorContext): TimesheetWithEntries {
@@ -719,7 +742,9 @@ export class TimesheetService {
       this.requireHrApproval(context, "reopen an HR-approved timesheet");
       ts.status = "Returned";
       ts.managerNotes = reason;
-      return this.timesheetRepo.update(ts.id, ts, context);
+      const updated = this.timesheetRepo.update(ts.id, ts, context);
+      this.notifyEmployee(updated, context);
+      return updated;
     }
 
     if (ts.status === "Payroll Locked") {
@@ -732,15 +757,8 @@ export class TimesheetService {
       ) {
         this.deny(context, "reopen a payroll-locked timesheet", ts.id);
       }
-      // Find the latest open period
-      const openPeriods = this.getPeriods().filter((p) => p.status === "Open");
-      if (openPeriods.length === 0)
-        throw new Error("No open periods available to route the correction.");
-      const currentPeriod = openPeriods[0]!; // Assume first is current (length checked above)
-
-      // Mark original as Corrected
-      ts.status = "Corrected";
-      this.timesheetRepo.update(ts.id, ts, context);
+      const currentPeriod = this.findCorrectionPeriod(ts.employeeId);
+      const correctionSummary = this.previewTimesheetSummary(ts.employeeId, currentPeriod);
 
       // The original entries' hours are keyed by dates from the OLD (locked) period - carrying
       // them as-is into a timesheet for a different period would silently place hours on dates
@@ -757,18 +775,21 @@ export class TimesheetService {
           total: 0,
         }));
 
-      return this.timesheetRepo.create(
+      const { created } = this.timesheetRepo.createWithSideEffect(
         {
           employeeId: ts.employeeId,
           periodId: currentPeriod.id,
           status: "Returned",
-          expectedHours: ts.expectedHours,
+          expectedHours: correctionSummary?.expectedHours ?? ts.expectedHours,
           totalHours: 0,
           entries: correctedEntries,
           managerNotes: `Correction triggered: ${reason}`,
         },
+        { id: ts.id, changes: { status: "Corrected", managerNotes: reason } },
         context,
       );
+      this.notifyEmployee(created, context);
+      return created;
     }
 
     throw new Error("Only Approved or Payroll Locked timesheets can be reopened.");
@@ -799,11 +820,68 @@ export class TimesheetService {
     const period = this.periodRepo.getById(periodId);
     if (!period) throw new Error("Period not found");
     if (period.status === "Closed") return period;
+    const outstanding = this.timesheetRepo
+      .list()
+      .filter(
+        (timesheet) =>
+          timesheet.periodId === periodId &&
+          !["Approved", "Payroll Locked", "Corrected"].includes(timesheet.status),
+      );
+    if (outstanding.length > 0) {
+      throw new Error(
+        `This period has ${outstanding.length} unfinished timesheet${outstanding.length === 1 ? "" : "s"}. Complete or resolve them before closing the period.`,
+      );
+    }
     return this.periodRepo.update(
       periodId,
       { status: "Closed" },
       { ...context, reason: context.reason || "Timesheet period closed" },
     );
+  }
+
+  reopenPeriod(periodId: string, reason: string, context: ActorContext): TimesheetPeriod {
+    this.requireTimesheetAdmin(context, "reopen this timesheet period");
+    if (reason.trim().length < 5) throw new Error("Enter a reason for reopening the period.");
+    const period = this.periodRepo.getById(periodId);
+    if (!period) throw new Error("Period not found");
+    if (period.status === "Open") return period;
+    return this.periodRepo.update(period.id, { status: "Open" }, { ...context, reason });
+  }
+
+  getCurrentPeriod(): TimesheetPeriod | undefined {
+    const today = new Date().toISOString().slice(0, 10);
+    const periods = this.getPeriods();
+    return (
+      periods.find((period) => period.startDate <= today && period.endDate >= today) ??
+      periods.find((period) => period.startDate <= today) ??
+      [...periods].reverse().find((period) => period.startDate > today)
+    );
+  }
+
+  private findCorrectionPeriod(employeeId: string): TimesheetPeriod {
+    const today = new Date().toISOString().slice(0, 10);
+    const open = this.getPeriods()
+      .filter((period) => period.status === "Open")
+      .sort((a, b) => a.startDate.localeCompare(b.startDate));
+    const ordered = [
+      ...open.filter((period) => period.startDate <= today && period.endDate >= today),
+      ...open.filter((period) => period.startDate > today),
+      ...open.filter((period) => period.endDate < today).reverse(),
+    ];
+    const available = ordered.find(
+      (period) =>
+        !this.timesheetRepo
+          .list()
+          .some(
+            (timesheet) => timesheet.employeeId === employeeId && timesheet.periodId === period.id,
+          ),
+    );
+    if (!available) {
+      throw new Error(
+        "No open timesheet period is available for this correction without creating a duplicate.",
+      );
+    }
+    return available;
   }
 
   // Rejects negative hour values (which would silently reduce a total) and any date key that
@@ -816,7 +894,9 @@ export class TimesheetService {
           throw new Error(`Hours on ${date} cannot be negative.`);
         }
         if (date < period.startDate || date > period.endDate) {
-          throw new Error(`${date} falls outside this timesheet's period (${period.startDate} to ${period.endDate}).`);
+          throw new Error(
+            `${date} falls outside this timesheet's period (${period.startDate} to ${period.endDate}).`,
+          );
         }
       }
     }
@@ -829,18 +909,48 @@ export class TimesheetService {
     this.deny(context, action, employeeId);
   }
 
+  private requireOrganisationRead(context: ActorContext, action: string): void {
+    if (["HR", "Accounts", "Super Admin"].includes(context.actor.activeRole ?? "")) return;
+    this.deny(context, action, "all-timesheets");
+  }
+
+  private requireEmployeeRead(employeeId: string, context: ActorContext, action: string): void {
+    if (context.actor.employeeId === employeeId) return;
+    if (["HR", "Accounts", "Super Admin"].includes(context.actor.activeRole ?? "")) return;
+    if (context.actor.activeRole === "Line Manager" && context.actor.employeeId) {
+      const employee = new EmployeeService().getById(employeeId, SYSTEM_CONTEXT);
+      if (employee?.lineManagerId === context.actor.employeeId) return;
+    }
+    this.deny(context, action, employeeId);
+  }
+
   private requireTimesheetAdmin(context: ActorContext, action: string): void {
     if (["HR", "Super Admin"].includes(context.actor.activeRole ?? "")) return;
     this.deny(context, action, "timesheet-settings");
   }
 
   private requireDirectReport(employeeId: string, context: ActorContext, action: string): void {
-    const employee = new EmployeeService().getById(employeeId);
+    const employee = new EmployeeService().getById(employeeId, SYSTEM_CONTEXT);
     if (
       context.actor.activeRole === "Line Manager" &&
       context.actor.employeeId &&
       employee?.lineManagerId === context.actor.employeeId
     ) {
+      return;
+    }
+    if (["HR", "Super Admin"].includes(context.actor.activeRole ?? "")) {
+      if ((context.reason?.trim().length ?? 0) < 5) {
+        getApplicationDataServices().audit.record({
+          context,
+          action: "timesheet_access_denied",
+          module: "timesheets",
+          entityType: "timesheet",
+          entityId: employeeId,
+          reason: "Supervisor recovery was attempted without the required explanation.",
+          riskLevel: "High",
+        });
+        throw new Error("Enter a reason for completing the unavailable supervisor's review.");
+      }
       return;
     }
     this.deny(context, action, employeeId);
@@ -853,7 +963,7 @@ export class TimesheetService {
 
   private notifyHrReviewers(timesheet: TimesheetWithEntries, context: ActorContext): void {
     const { storage, notifications } = getApplicationDataServices();
-    const employee = new EmployeeService().getById(timesheet.employeeId);
+    const employee = new EmployeeService().getById(timesheet.employeeId, SYSTEM_CONTEXT);
     for (const user of storage.readCollection<User>("users")) {
       if (
         user.status !== "Active" ||

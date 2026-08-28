@@ -131,14 +131,17 @@ function MyAttendanceRoute() {
 
   if (!employeeId) return <div className="p-6">Employee profile required.</div>;
 
-  const records = attendanceService.getRecordsForEmployee(employeeId);
-  const openRecord = attendanceService.getOpenRecord(employeeId);
+  const records = attendanceService.getRecordsForEmployee(employeeId, actorContext);
+  const openRecord = attendanceService.getOpenRecord(employeeId, actorContext);
+  const todayKey = format(new Date(), "yyyy-MM-dd");
+  const todayOpenRecord = openRecord?.date === todayKey ? openRecord : null;
+  const missedOpenRecord = attendanceService.getMissedOpenRecord(employeeId, actorContext);
   const siteVisits = attendanceService.getSiteVisitsForEmployee(employeeId, actorContext);
   const policy = attendanceService.getPolicy();
   const locations = attendanceService.getClockInLocations();
   const monthPrefix = format(currentMonth, "yyyy-MM");
-  const summary = attendanceService.getMonthlySummary(employeeId, monthPrefix);
-  const corrections = attendanceService.getCorrectionsForEmployee(employeeId);
+  const summary = attendanceService.getMonthlySummary(employeeId, monthPrefix, actorContext);
+  const corrections = attendanceService.getCorrectionsForEmployee(employeeId, actorContext);
   const correctionByRecord = new Map(corrections.map((item) => [item.attendanceRecordId, item]));
   const monthDays = eachDayOfInterval({
     start: startOfMonth(currentMonth),
@@ -150,7 +153,7 @@ function MyAttendanceRoute() {
       const date = format(day, "yyyy-MM-dd");
       const record = records.find((item) => item.date === date);
       if (record) return { ...record, virtual: false };
-      const reconciled = attendanceService.reconcileDailyStatus(employeeId, date);
+      const reconciled = attendanceService.reconcileDailyStatus(employeeId, date, actorContext);
       return {
         id: `virtual-${date}`,
         employeeId,
@@ -211,6 +214,7 @@ function MyAttendanceRoute() {
   const submitCorrection = async () => {
     if (!correctionRecord) return;
     setSubmittingCorrection(true);
+    let uploadedFileId: string | undefined;
     try {
       const persistedRecord = correctionRecord.id.startsWith("virtual-")
         ? attendanceService.ensureRecordForDate(employeeId, correctionRecord.date, actorContext)
@@ -227,8 +231,9 @@ function MyAttendanceRoute() {
           actorContext,
         );
         evidenceFileId = metadata.id;
+        uploadedFileId = metadata.id;
       }
-      attendanceService.requestCorrection(
+      await attendanceService.requestCorrection(
         persistedRecord.id,
         proposedIn,
         proposedOut,
@@ -236,10 +241,17 @@ function MyAttendanceRoute() {
         actorContext,
         evidenceFileId,
       );
+      uploadedFileId = undefined;
       setCorrectionRecord(null);
       setRevision((value) => value + 1);
       toast.success("Correction submitted to your line manager.");
     } catch (error) {
+      if (uploadedFileId) {
+        await getApplicationDataServices().files.delete(uploadedFileId, {
+          ...actorContext,
+          reason: "Attendance correction failed before the evidence was attached",
+        });
+      }
       toast.error(error instanceof Error ? error.message : "Correction could not be submitted.");
     } finally {
       setSubmittingCorrection(false);
@@ -298,22 +310,24 @@ function MyAttendanceRoute() {
           <CardContent className="grid gap-6 p-6 lg:grid-cols-[1fr_auto] lg:items-center">
             <div>
               <div className="mb-2 flex flex-wrap items-center gap-2">
-                <Badge variant={openRecord ? "default" : "outline"}>
-                  {openRecord ? "Attendance open" : "Not clocked in"}
+                <Badge variant={todayOpenRecord ? "default" : "outline"}>
+                  {todayOpenRecord ? "Attendance open" : "Not clocked in today"}
                 </Badge>
-                {openRecord?.workMode && <Badge variant="secondary">{openRecord.workMode}</Badge>}
+                {todayOpenRecord?.workMode && (
+                  <Badge variant="secondary">{todayOpenRecord.workMode}</Badge>
+                )}
               </div>
               <h2 className="text-2xl font-semibold">
-                {openRecord
-                  ? `Clocked in at ${openRecord.clockIn}`
+                {todayOpenRecord
+                  ? `Clocked in at ${todayOpenRecord.clockIn}`
                   : "Verify your office location to begin"}
               </h2>
               <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-                {openRecord
+                {todayOpenRecord
                   ? `The system will issue three reminders after ${policy.standardDailyHours} worked hours while this record remains open.`
                   : `Clocking is allowed only inside an active VIA office zone with browser accuracy of ${policy.maximumLocationAccuracyMeters} metres or better.`}
               </p>
-              {openRecord && openRecord.date < format(new Date(), "yyyy-MM-dd") && (
+              {missedOpenRecord && (
                 <Alert className="mt-4 border-amber-300 bg-amber-50 text-amber-950">
                   <Clock className="h-4 w-4" />
                   <AlertTitle>Sign-out was missed</AlertTitle>
@@ -324,7 +338,7 @@ function MyAttendanceRoute() {
               )}
             </div>
             <div className="flex flex-col gap-2 sm:min-w-52">
-              {!openRecord ? (
+              {!todayOpenRecord ? (
                 <Button
                   size="lg"
                   disabled={locating || locations.length === 0}
@@ -332,10 +346,6 @@ function MyAttendanceRoute() {
                 >
                   <LocateFixed className="mr-2 h-5 w-5" />
                   {locating ? "Verifying…" : "Clock In"}
-                </Button>
-              ) : openRecord.date < format(new Date(), "yyyy-MM-dd") ? (
-                <Button size="lg" onClick={() => openCorrection({ ...openRecord, virtual: false })}>
-                  <Clock className="mr-2 h-5 w-5" /> Submit Justification
                 </Button>
               ) : (
                 <Button
@@ -345,6 +355,15 @@ function MyAttendanceRoute() {
                 >
                   <CheckCircle2 className="mr-2 h-5 w-5" />
                   {locating ? "Verifying…" : "Clock Out"}
+                </Button>
+              )}
+              {missedOpenRecord && (
+                <Button
+                  size="lg"
+                  variant="outline"
+                  onClick={() => openCorrection({ ...missedOpenRecord, virtual: false })}
+                >
+                  <Clock className="mr-2 h-5 w-5" /> Submit Missed Sign-out
                 </Button>
               )}
               <span className="text-center text-xs text-muted-foreground">

@@ -98,9 +98,7 @@ export function PersonalTab({
   const [rejectionReason, setRejectionReason] = useState("");
 
   const changeRequests = employeeService
-    .getChangeRequestRepository()
-    .list()
-    .filter((request) => request.employeeId === employee.id)
+    .getProfileChangeRequests(employee.id, currentUser.getActorContext())
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const pendingRequests = changeRequests.filter((request) => request.status === "Pending");
   const hasPending = pendingRequests.length > 0;

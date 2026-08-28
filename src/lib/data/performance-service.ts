@@ -1,9 +1,17 @@
+import { SYSTEM_CONTEXT } from "./types.ts";
 import { LocalRepository } from "./repository";
 import type { ActorContext } from "./types";
 import { EmployeeService } from "./employee-service";
 
 const generateId = () => Math.random().toString(36).substring(2, 9);
-import type { ReviewTemplate, ReviewCycle, PerformanceReview, ReviewSectionInstance, ReviewItemInstance, ReviewSectionTemplate } from "./performance-types";
+import type {
+  ReviewTemplate,
+  ReviewCycle,
+  PerformanceReview,
+  ReviewSectionInstance,
+  ReviewItemInstance,
+  ReviewSectionTemplate,
+} from "./performance-types";
 import { GoalService, type EmployeeGoal } from "./goal-service";
 import { getApplicationDataServices } from "./application-data";
 
@@ -15,40 +23,72 @@ export class PerformanceService {
 
   constructor() {
     const { storage, audit } = getApplicationDataServices();
-    this.templatesRepo = new LocalRepository<ReviewTemplate>("performanceTemplates", storage, audit, { module: "hr", entityType: "performance-template" });
-    this.cyclesRepo = new LocalRepository<ReviewCycle>("performanceCycles", storage, audit, { module: "hr", entityType: "performance-cycle" });
-    this.reviewsRepo = new LocalRepository<PerformanceReview>("performanceReviews", storage, audit, { module: "hr", entityType: "performance-review" });
+    this.templatesRepo = new LocalRepository<ReviewTemplate>(
+      "performanceTemplates",
+      storage,
+      audit,
+      { module: "hr", entityType: "performance-template" },
+    );
+    this.cyclesRepo = new LocalRepository<ReviewCycle>("performanceCycles", storage, audit, {
+      module: "hr",
+      entityType: "performance-cycle",
+    });
+    this.reviewsRepo = new LocalRepository<PerformanceReview>(
+      "performanceReviews",
+      storage,
+      audit,
+      { module: "hr", entityType: "performance-review" },
+    );
     this.seedDefaultTemplate();
   }
 
   private seedDefaultTemplate() {
     if (this.templatesRepo.list().length === 0) {
-      this.templatesRepo.create({
-        id: "tmpl-annual",
-        name: "Annual Performance Review",
-        description: "Standard annual review encompassing goals and core competencies.",
-        isActive: true,
-        maxRating: 5,
-        sections: [
-          {
-            id: "sec-goals",
-            title: "Goals & Objectives",
-            weight: 50,
-            items: [
-              { id: "item-g1", title: "Goal Achievement", description: "Rate the achievement of primary goals set for the year.", evidencePrompt: "List key accomplishments", weight: 100 }
-            ]
-          },
-          {
-            id: "sec-comp",
-            title: "Core Competencies",
-            weight: 50,
-            items: [
-              { id: "item-c1", title: "Communication", description: "Communicates clearly and effectively.", weight: 50 },
-              { id: "item-c2", title: "Teamwork", description: "Collaborates well with others.", weight: 50 }
-            ]
-          }
-        ],
-      }, { actor: { userId: "system", displayName: "System", roles: ["Super Admin"] } });
+      this.templatesRepo.create(
+        {
+          id: "tmpl-annual",
+          name: "Annual Performance Review",
+          description: "Standard annual review encompassing goals and core competencies.",
+          isActive: true,
+          maxRating: 5,
+          sections: [
+            {
+              id: "sec-goals",
+              title: "Goals & Objectives",
+              weight: 50,
+              items: [
+                {
+                  id: "item-g1",
+                  title: "Goal Achievement",
+                  description: "Rate the achievement of primary goals set for the year.",
+                  evidencePrompt: "List key accomplishments",
+                  weight: 100,
+                },
+              ],
+            },
+            {
+              id: "sec-comp",
+              title: "Core Competencies",
+              weight: 50,
+              items: [
+                {
+                  id: "item-c1",
+                  title: "Communication",
+                  description: "Communicates clearly and effectively.",
+                  weight: 50,
+                },
+                {
+                  id: "item-c2",
+                  title: "Teamwork",
+                  description: "Collaborates well with others.",
+                  weight: 50,
+                },
+              ],
+            },
+          ],
+        },
+        { actor: { userId: "system", displayName: "System", roles: ["Super Admin"] } },
+      );
     }
   }
 
@@ -92,14 +132,14 @@ export class PerformanceService {
   updateCycleStatus(id: string, status: "Draft" | "Active" | "Completed", context: ActorContext) {
     const cycle = this.cyclesRepo.getById(id);
     if (!cycle) throw new Error("Cycle not found");
-    
+
     if (cycle.status === "Draft" && status === "Active") {
       cycle.status = status;
       this.cyclesRepo.update(id, cycle, context);
       this.launchCycle(id, context);
       return;
     }
-    
+
     cycle.status = status;
     this.cyclesRepo.update(id, cycle, context);
   }
@@ -111,19 +151,27 @@ export class PerformanceService {
     const template = this.templatesRepo.getById(cycle.templateId);
     if (!template) throw new Error("Template not found");
 
-    const allEmployees = this.empService.getEmployeeRepository().list().filter(e => e.status !== "Archived");
-    
-    const targetEmployees = allEmployees.filter(e => {
+    const allEmployees = this.empService
+      .getEmployeeRepository(SYSTEM_CONTEXT)
+      .list()
+      .filter((e) => e.status !== "Archived");
+
+    const targetEmployees = allEmployees.filter((e) => {
       const matchDept = cycle.departments.length === 0 || cycle.departments.includes(e.department);
-      const matchType = cycle.employmentTypes.length === 0 || cycle.employmentTypes.includes(e.employmentType);
+      const matchType =
+        cycle.employmentTypes.length === 0 || cycle.employmentTypes.includes(e.employmentType);
       return matchDept && matchType;
     });
 
     for (const emp of targetEmployees) {
       const goalService = new GoalService();
-      const activeGoals = goalService.getGoalsForEmployee(emp.id, cycle.id).filter(g => g.status === "Active");
+      const activeGoals = goalService
+        .getGoalsForEmployee(emp.id, cycle.id)
+        .filter((g) => g.status === "Active");
 
-      const sections: ReviewSectionInstance[] = template.sections.map(ts => this.buildSectionInstance(ts, activeGoals));
+      const sections: ReviewSectionInstance[] = template.sections.map((ts) =>
+        this.buildSectionInstance(ts, activeGoals),
+      );
 
       const review: PerformanceReview = {
         id: generateId(),
@@ -136,7 +184,7 @@ export class PerformanceService {
         createdBy: context.actor.userId,
         updatedAt: new Date().toISOString(),
         updatedBy: context.actor.userId,
-        recordVersion: 1
+        recordVersion: 1,
       };
 
       this.reviewsRepo.create(review, context);
@@ -147,28 +195,34 @@ export class PerformanceService {
     return title.toLowerCase().includes("goal");
   }
 
-  private buildSectionInstance(ts: ReviewSectionTemplate, activeGoals: EmployeeGoal[]): ReviewSectionInstance {
+  private buildSectionInstance(
+    ts: ReviewSectionTemplate,
+    activeGoals: EmployeeGoal[],
+  ): ReviewSectionInstance {
     // If this is the "Goals" section, we dynamically inject the employee's approved goals
     if (this.isGoalsSection(ts.title)) {
-      const goalItems: ReviewItemInstance[] = activeGoals.map(g => ({
+      const goalItems: ReviewItemInstance[] = activeGoals.map((g) => ({
         templateItemId: `goal-${g.id}`, // pseudo id
         title: g.title,
         description: g.description,
         evidencePrompt: "Provide evidence of achievement for this specific goal.",
-        weight: g.weight
+        weight: g.weight,
       }));
 
       return {
         templateSectionId: ts.id,
         title: ts.title,
         weight: ts.weight,
-        items: goalItems.length > 0 ? goalItems : ts.items.map(ti => ({
-          templateItemId: ti.id,
-          title: ti.title,
-          description: ti.description,
-          ...(ti.evidencePrompt !== undefined ? { evidencePrompt: ti.evidencePrompt } : {}),
-          weight: ti.weight
-        }))
+        items:
+          goalItems.length > 0
+            ? goalItems
+            : ts.items.map((ti) => ({
+                templateItemId: ti.id,
+                title: ti.title,
+                description: ti.description,
+                ...(ti.evidencePrompt !== undefined ? { evidencePrompt: ti.evidencePrompt } : {}),
+                weight: ti.weight,
+              })),
       };
     }
 
@@ -176,13 +230,13 @@ export class PerformanceService {
       templateSectionId: ts.id,
       title: ts.title,
       weight: ts.weight,
-      items: ts.items.map(ti => ({
+      items: ts.items.map((ti) => ({
         templateItemId: ti.id,
         title: ti.title,
         description: ti.description,
         ...(ti.evidencePrompt !== undefined ? { evidencePrompt: ti.evidencePrompt } : {}),
-        weight: ti.weight
-      }))
+        weight: ti.weight,
+      })),
     };
   }
 
@@ -215,19 +269,21 @@ export class PerformanceService {
       return review;
     }
 
-    const hasGoalsSection = review.sections.some(s => this.isGoalsSection(s.title));
+    const hasGoalsSection = review.sections.some((s) => this.isGoalsSection(s.title));
     if (!hasGoalsSection) {
       return review;
     }
 
     const goalService = new GoalService();
-    const activeGoals = goalService.getGoalsForEmployee(review.employeeId, review.cycleId).filter(g => g.status === "Active");
+    const activeGoals = goalService
+      .getGoalsForEmployee(review.employeeId, review.cycleId)
+      .filter((g) => g.status === "Active");
 
-    const refreshedSections = review.sections.map(section => {
+    const refreshedSections = review.sections.map((section) => {
       if (!this.isGoalsSection(section.title)) {
         return section;
       }
-      const ts = template.sections.find(s => s.id === section.templateSectionId);
+      const ts = template.sections.find((s) => s.id === section.templateSectionId);
       if (!ts) {
         return section;
       }
@@ -248,22 +304,29 @@ export class PerformanceService {
   }
 
   getReviewsForCycle(cycleId: string) {
-    return this.reviewsRepo.list()
-      .filter(r => r.cycleId === cycleId && r.status !== "Corrected")
-      .map(r => this.resolveReviewGoals(r));
+    return this.reviewsRepo
+      .list()
+      .filter((r) => r.cycleId === cycleId && r.status !== "Corrected")
+      .map((r) => this.resolveReviewGoals(r));
   }
 
   getReviewsForEmployee(employeeId: string) {
-    return this.reviewsRepo.list()
-      .filter(r => r.employeeId === employeeId && r.status !== "Corrected")
-      .map(r => this.resolveReviewGoals(r));
+    return this.reviewsRepo
+      .list()
+      .filter((r) => r.employeeId === employeeId && r.status !== "Corrected")
+      .map((r) => this.resolveReviewGoals(r));
   }
 
   getReviewsForManager(managerId: string) {
-    const directReports = this.empService.getEmployeeRepository().list().filter(e => e.lineManagerId === managerId).map(e => e.id);
-    return this.reviewsRepo.list()
-      .filter(r => directReports.includes(r.employeeId) && r.status !== "Corrected")
-      .map(r => this.resolveReviewGoals(r));
+    const directReports = this.empService
+      .getEmployeeRepository(SYSTEM_CONTEXT)
+      .list()
+      .filter((e) => e.lineManagerId === managerId)
+      .map((e) => e.id);
+    return this.reviewsRepo
+      .list()
+      .filter((r) => directReports.includes(r.employeeId) && r.status !== "Corrected")
+      .map((r) => this.resolveReviewGoals(r));
   }
 
   private calculateScores(review: PerformanceReview) {
@@ -323,19 +386,29 @@ export class PerformanceService {
     }
   }
 
-  submitSelfAssessment(reviewId: string, updatedSections: ReviewSectionInstance[], context: ActorContext) {
+  submitSelfAssessment(
+    reviewId: string,
+    updatedSections: ReviewSectionInstance[],
+    context: ActorContext,
+  ) {
     const review = this.reviewsRepo.getById(reviewId);
     if (!review) throw new Error("Review not found");
-    if (review.status !== "Self Assessment Pending") throw new Error("Not in self-assessment phase");
+    if (review.status !== "Self Assessment Pending")
+      throw new Error("Not in self-assessment phase");
 
     review.sections = updatedSections;
     this.calculateScores(review);
     review.status = "Manager Review Pending";
-    
+
     return this.reviewsRepo.update(reviewId, review, context);
   }
 
-  submitManagerReview(reviewId: string, updatedSections: ReviewSectionInstance[], summaryComment: string, context: ActorContext) {
+  submitManagerReview(
+    reviewId: string,
+    updatedSections: ReviewSectionInstance[],
+    summaryComment: string,
+    context: ActorContext,
+  ) {
     const review = this.reviewsRepo.getById(reviewId);
     if (!review) throw new Error("Review not found");
     if (review.status !== "Manager Review Pending") throw new Error("Not in manager review phase");
@@ -343,14 +416,14 @@ export class PerformanceService {
     review.sections = updatedSections;
     review.managerSummaryComment = summaryComment;
     this.calculateScores(review);
-    
+
     const cycle = this.cyclesRepo.getById(review.cycleId);
     if (cycle && cycle.requiresModeration) {
       review.status = "Moderation Pending";
     } else {
       review.status = "Discussion Pending";
     }
-    
+
     return this.reviewsRepo.update(reviewId, review, context);
   }
 
@@ -373,19 +446,25 @@ export class PerformanceService {
       review.employeeAcknowledgementComment = comment;
     }
     review.status = "Acknowledged";
-    
+
     return this.reviewsRepo.update(reviewId, review, context);
   }
 
   lockReview(reviewId: string, context: ActorContext) {
     const review = this.reviewsRepo.getById(reviewId);
     if (!review) throw new Error("Review not found");
-    
+
     review.status = "Locked";
     return this.reviewsRepo.update(reviewId, review, context);
   }
 
-  correctReview(reviewId: string, correctedSections: ReviewSectionInstance[], newSummaryComment: string, reason: string, context: ActorContext) {
+  correctReview(
+    reviewId: string,
+    correctedSections: ReviewSectionInstance[],
+    newSummaryComment: string,
+    reason: string,
+    context: ActorContext,
+  ) {
     const original = this.reviewsRepo.getById(reviewId);
     if (!original) throw new Error("Review not found");
     if (original.status !== "Locked") throw new Error("Can only correct locked reviews");
@@ -403,9 +482,9 @@ export class PerformanceService {
       createdBy: context.actor.userId,
       updatedAt: new Date().toISOString(),
       updatedBy: context.actor.userId,
-      recordVersion: 1
+      recordVersion: 1,
     };
-    
+
     this.calculateScores(correction);
     const savedCorrection = this.reviewsRepo.create(correction, context);
 

@@ -17,6 +17,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { LeaveService } from "@/lib/data/leave-service";
@@ -32,8 +41,11 @@ import {
   FileText,
   Upload,
   X,
+  Check,
+  ChevronsUpDown,
 } from "lucide-react";
 import { getApplicationDataServices } from "@/lib/data/application-data";
+import { cn } from "@/lib/utils";
 
 const MAX_EVIDENCE_SIZE = 10 * 1024 * 1024;
 const EVIDENCE_TYPES = ["application/pdf", "image/jpeg", "image/png"];
@@ -55,8 +67,10 @@ export function LeaveRequestDialog({
   const leaveService = useMemo(() => new LeaveService(), []);
   const empService = useMemo(() => new EmployeeService(), []);
 
-  const employees = empService.getEmployees();
-  const policies = leaveService.getEligiblePolicies(employeeId);
+  const employees = empService.getEmployees(currentUser.getActorContext());
+  const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
+  const policies = leaveService.getEligiblePolicies(employeeId, actorContext);
+  const coveringColleagueCandidates = employees.filter((employee) => employee.id !== employeeId);
 
   const [policyId, setPolicyId] = useState<string>("");
   const [startDate, setStartDate] = useState("");
@@ -64,6 +78,7 @@ export function LeaveRequestDialog({
   const [isHalfDay, setIsHalfDay] = useState(false);
   const [reason, setReason] = useState("");
   const [handoverContactId, setHandoverContactId] = useState("");
+  const [handoverPickerOpen, setHandoverPickerOpen] = useState(false);
   const [attachment, setAttachment] = useState<File | null>(null);
 
   const [workingDays, setWorkingDays] = useState(0);
@@ -82,11 +97,13 @@ export function LeaveRequestDialog({
         const days = leaveService.calculateWorkingDays(startDate, endDate, isHalfDay);
         setWorkingDays(days);
 
-        const bal = leaveService.calculateBalance(employeeId, policyId);
+        const bal = leaveService.calculateBalance(employeeId, policyId, actorContext);
         setBalance(bal);
 
         if (selectedPolicy?.type === "Sick" && days > 0) {
-          setSickPayBreakdown(leaveService.getSickLeavePayBreakdown(employeeId, days));
+          setSickPayBreakdown(
+            leaveService.getSickLeavePayBreakdown(employeeId, days, actorContext),
+          );
         } else {
           setSickPayBreakdown([]);
         }
@@ -98,12 +115,28 @@ export function LeaveRequestDialog({
       setWorkingDays(0);
       setSickPayBreakdown([]);
     }
-  }, [policyId, startDate, endDate, isHalfDay, employeeId, selectedPolicy, leaveService]);
+  }, [
+    policyId,
+    startDate,
+    endDate,
+    isHalfDay,
+    employeeId,
+    selectedPolicy,
+    leaveService,
+    actorContext,
+  ]);
+
+  const handoverRequired = selectedPolicy?.requiresHandoverContact ?? true;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!policyId || !startDate || !endDate || !reason || !handoverContactId) {
-      toast.error("Please fill in all required fields, including a Covering Colleague.");
+    if (!policyId || !startDate || !endDate || !reason) {
+      toast.error("Please fill in all required fields.");
+      return;
+    }
+
+    if (handoverRequired && !handoverContactId) {
+      toast.error("Please select a Covering Colleague for this leave type.");
       return;
     }
 
@@ -141,7 +174,7 @@ export function LeaveRequestDialog({
           endDate,
           isHalfDay,
           reason,
-          handoverContactId,
+          ...(handoverContactId ? { handoverContactId } : {}),
           ...(uploadedFileId ? { attachmentFileId: uploadedFileId } : {}),
         },
         actorContext,
@@ -450,22 +483,73 @@ export function LeaveRequestDialog({
 
             <div className="space-y-2">
               <Label>
-                Covering Colleague (Backstop) <span className="text-destructive">*</span>
+                Covering Colleague{" "}
+                {handoverRequired ? (
+                  <span className="text-destructive">*</span>
+                ) : (
+                  <span className="text-xs font-normal text-muted-foreground">(optional)</span>
+                )}
               </Label>
-              <Select value={handoverContactId} onValueChange={setHandoverContactId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Who will cover your duties while you are away?" />
-                </SelectTrigger>
-                <SelectContent>
-                  {employees
-                    .filter((e) => e.id !== employeeId)
-                    .map((e) => (
-                      <SelectItem key={e.id} value={e.id}>
-                        {e.preferredName}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
+              <Popover open={handoverPickerOpen} onOpenChange={setHandoverPickerOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={handoverPickerOpen}
+                    className="w-full justify-between font-normal"
+                  >
+                    {coveringColleagueCandidates.find(
+                      (employee) => employee.id === handoverContactId,
+                    )?.preferredName ?? (
+                      <span className="text-muted-foreground">
+                        Who will cover your work while you are away?
+                      </span>
+                    )}
+                    <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
+                  <Command>
+                    <CommandInput placeholder="Type a name to search..." />
+                    <CommandList>
+                      <CommandEmpty>No matching colleague found.</CommandEmpty>
+                      <CommandGroup>
+                        {!handoverRequired && handoverContactId && (
+                          <CommandItem
+                            value="__clear_handover_selection__"
+                            onSelect={() => {
+                              setHandoverContactId("");
+                              setHandoverPickerOpen(false);
+                            }}
+                            className="text-muted-foreground"
+                          >
+                            Clear selection
+                          </CommandItem>
+                        )}
+                        {coveringColleagueCandidates.map((employee) => (
+                          <CommandItem
+                            key={employee.id}
+                            value={employee.preferredName}
+                            onSelect={() => {
+                              setHandoverContactId(employee.id);
+                              setHandoverPickerOpen(false);
+                            }}
+                          >
+                            <Check
+                              className={cn(
+                                "mr-2 h-4 w-4",
+                                handoverContactId === employee.id ? "opacity-100" : "opacity-0",
+                              )}
+                            />
+                            {employee.preferredName}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
 
@@ -478,7 +562,8 @@ export function LeaveRequestDialog({
               disabled={
                 isSubmitting ||
                 workingDays <= 0 ||
-                Boolean(selectedPolicy?.requiresAttachment && !attachment)
+                Boolean(selectedPolicy?.requiresAttachment && !attachment) ||
+                (handoverRequired && !handoverContactId)
               }
             >
               {isSubmitting ? "Submitting..." : "Submit Request"}

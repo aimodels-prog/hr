@@ -43,7 +43,7 @@ function ConversionWizardRoute() {
     ? vacancyService.getVacancyRepository().getById(acceptedOffer.vacancyId)
     : null;
 
-  const allEmployees = empService.getEmployees();
+  const allEmployees = empService.getEmployees(currentUser.getActorContext());
 
   const [employeeData, setEmployeeData] = useState({
     employeeNumber: `EMP-${Math.floor(Math.random() * 10000)}`,

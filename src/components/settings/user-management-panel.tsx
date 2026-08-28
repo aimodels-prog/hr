@@ -57,9 +57,9 @@ const extraAccess: Array<{ role: Role; description: string }> = [
 export function UserManagementPanel() {
   const { userId, activeRole, getActorContext } = useCurrentUser();
   const [service] = useState(() => new EmployeeService());
-  const userRepo = useMemo(() => service.getUserRepository(), [service]);
-  const employeeRepo = useMemo(() => service.getEmployeeRepository(), [service]);
-  const [users, setUsers] = useState(() => userRepo.list({ includeArchived: true }));
+  const [users, setUsers] = useState(() =>
+    service.getUsers(getActorContext(), { includeArchived: true }),
+  );
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<User | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
@@ -67,7 +67,10 @@ export function UserManagementPanel() {
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const employees = useMemo(() => employeeRepo.list({ includeArchived: true }), [employeeRepo]);
+  const employees = useMemo(
+    () => service.getEmployees(getActorContext(), { includeArchived: true }),
+    [getActorContext, service],
+  );
   const rows = useMemo(
     () =>
       users.filter((user) => {
@@ -98,7 +101,7 @@ export function UserManagementPanel() {
       service.updateUserAccess(selected.id, roles, status, reason, getActorContext());
       toast.success(`${selected.displayName}'s access has been updated`);
       setSelected(null);
-      setUsers(userRepo.list({ includeArchived: true }));
+      setUsers(service.getUsers(getActorContext(), { includeArchived: true }));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not update this user");
     } finally {

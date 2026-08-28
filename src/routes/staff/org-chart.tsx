@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { getScopedEmployeesWithAncestors } from "@/lib/auth/record-scope";
+import { redactEmployee } from "@/lib/auth/redaction";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -44,7 +45,13 @@ const MAX_ANCESTOR_HOPS = 100;
 function OrgChartRoute() {
   const currentUser = useCurrentUser();
   const employeeService = useMemo(() => new EmployeeService(), []);
-  const allEmployees = employeeService.getEmployeeRepository().list({ includeArchived: false });
+  // Redacted immediately after fetching - this page is visible to every role (org chart is
+  // company-wide directory info), so no full, unredacted record (salary, bank details, etc.)
+  // for anyone outside the viewer's own management chain may sit in this component's memory,
+  // even briefly, even if the tree/count UI never renders those fields directly.
+  const allEmployees = employeeService
+    .getEmployeesWithReportingLine(currentUser.getActorContext(), { includeArchived: false })
+    .map((e) => redactEmployee(e, currentUser));
 
   const visibleList = useMemo(
     () => getScopedEmployeesWithAncestors(allEmployees, currentUser),

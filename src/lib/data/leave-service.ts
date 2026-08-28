@@ -1,3 +1,4 @@
+import { SYSTEM_CONTEXT } from "./types.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { LocalRepository, type NewRecord } from "./repository.ts";
 import type { ActorContext, Employee, User } from "./types.ts";
@@ -12,6 +13,7 @@ import type {
   LeaveRequestStatus,
   SickPayTier,
   SickPayTierBreakdown,
+  EmployeeLeaveEntitlementOverride,
 } from "./leave-types.ts";
 import {
   differenceInCalendarDays,
@@ -48,6 +50,7 @@ const POLICY_DEFINITIONS = [
     allowNegativeBalance: true,
     maxNegativeBalance: 5,
     requiresAttachment: false,
+    requiresHandoverContact: true,
     countsTowardGratuity: true,
     approvalChain: ["Line Manager", "HR"],
     noticeRules: {
@@ -81,6 +84,7 @@ const POLICY_DEFINITIONS = [
     carryForwardLimit: 0,
     allowNegativeBalance: false,
     requiresAttachment: true,
+    requiresHandoverContact: false,
     countsTowardGratuity: true,
     approvalChain: ["Line Manager", "HR"],
     isEnabled: true,
@@ -103,6 +107,7 @@ const POLICY_DEFINITIONS = [
     allowNegativeBalance: true,
     maxNegativeBalance: 98,
     requiresAttachment: true,
+    requiresHandoverContact: true,
     countsTowardGratuity: true,
     eligibility: { genderRestriction: "Female" },
     approvalChain: ["Line Manager", "HR"],
@@ -126,6 +131,7 @@ const POLICY_DEFINITIONS = [
     allowNegativeBalance: true,
     maxNegativeBalance: 7,
     requiresAttachment: true,
+    requiresHandoverContact: true,
     countsTowardGratuity: true,
     eligibility: { genderRestriction: "Male" },
     approvalChain: ["Line Manager"],
@@ -148,6 +154,7 @@ const POLICY_DEFINITIONS = [
     allowNegativeBalance: true,
     maxNegativeBalance: 3,
     requiresAttachment: true,
+    requiresHandoverContact: true,
     countsTowardGratuity: true,
     approvalChain: ["Line Manager"],
     isEnabled: true,
@@ -170,6 +177,7 @@ const POLICY_DEFINITIONS = [
     allowNegativeBalance: true,
     maxNegativeBalance: 10,
     requiresAttachment: true,
+    requiresHandoverContact: false,
     countsTowardGratuity: true,
     approvalChain: ["Line Manager", "HR"],
     isEnabled: true,
@@ -191,6 +199,7 @@ const POLICY_DEFINITIONS = [
     carryForwardLimit: 0,
     allowNegativeBalance: false,
     requiresAttachment: false,
+    requiresHandoverContact: true,
     countsTowardGratuity: true,
     approvalChain: ["Line Manager"],
     isEnabled: true,
@@ -212,6 +221,7 @@ const POLICY_DEFINITIONS = [
     carryForwardLimit: 0,
     allowNegativeBalance: false,
     requiresAttachment: true,
+    requiresHandoverContact: false,
     countsTowardGratuity: true,
     eligibility: { omaniOnly: true },
     approvalChain: ["Line Manager", "HR"],
@@ -235,6 +245,7 @@ const POLICY_DEFINITIONS = [
     allowNegativeBalance: true,
     maxNegativeBalance: 15,
     requiresAttachment: true,
+    requiresHandoverContact: true,
     countsTowardGratuity: true,
     eligibility: { omaniOnly: true, minimumServiceMonths: 12 },
     approvalChain: ["Line Manager", "HR"],
@@ -257,6 +268,7 @@ const POLICY_DEFINITIONS = [
     carryForwardLimit: 0,
     allowNegativeBalance: false,
     requiresAttachment: true,
+    requiresHandoverContact: true,
     countsTowardGratuity: true,
     eligibility: { omaniOnly: true },
     approvalChain: ["Line Manager", "HR"],
@@ -271,7 +283,7 @@ const POLICY_DEFINITIONS = [
     category: "Statutory",
     legalBasis: "Labour Law Art. 84.8",
     description:
-      "Paid leave for a female employee whose husband has died: 130 days for a Muslim employee, 14 days for a non-Muslim employee. This policy defaults to 130 days. HR should adjust the entitlement down to 14 for a non-Muslim employee via Manual Adjustment when granting it.",
+      "Paid leave for a female employee whose husband has died: 130 days for a Muslim employee and 14 days for a non-Muslim employee. HR can set the correct individual allowance from the employee's leave record.",
     isPaid: true,
     baseEntitlementDays: 130,
     scope: "Per Event",
@@ -280,6 +292,7 @@ const POLICY_DEFINITIONS = [
     allowNegativeBalance: true,
     maxNegativeBalance: 130,
     requiresAttachment: true,
+    requiresHandoverContact: false,
     countsTowardGratuity: true,
     eligibility: { genderRestriction: "Female" },
     approvalChain: ["Line Manager", "HR"],
@@ -302,6 +315,7 @@ const POLICY_DEFINITIONS = [
     carryForwardLimit: 0,
     allowNegativeBalance: false,
     requiresAttachment: false,
+    requiresHandoverContact: true,
     countsTowardGratuity: false,
     approvalChain: ["Line Manager", "HR"],
     isEnabled: true,
@@ -323,6 +337,7 @@ const POLICY_DEFINITIONS = [
     allowNegativeBalance: true,
     maxNegativeBalance: 2,
     requiresAttachment: false,
+    requiresHandoverContact: false,
     countsTowardGratuity: true,
     approvalChain: ["Line Manager"],
     isEnabled: true,
@@ -343,6 +358,7 @@ const POLICY_DEFINITIONS = [
     carryForwardLimit: 0,
     allowNegativeBalance: true,
     requiresAttachment: false,
+    requiresHandoverContact: false,
     countsTowardGratuity: true,
     approvalChain: ["Line Manager"],
     isEnabled: true,
@@ -363,6 +379,7 @@ const POLICY_DEFINITIONS = [
     carryForwardLimit: 0,
     allowNegativeBalance: true,
     requiresAttachment: false,
+    requiresHandoverContact: false,
     countsTowardGratuity: false,
     approvalChain: ["HR"],
     isEnabled: true,
@@ -375,6 +392,7 @@ export class LeaveService {
   private policyRepo: LocalRepository<LeavePolicy>;
   private transactionRepo: LocalRepository<LeaveTransaction>;
   private requestRepo: LocalRepository<LeaveRequest>;
+  private entitlementOverrideRepo: LocalRepository<EmployeeLeaveEntitlementOverride>;
 
   constructor() {
     const { storage, audit } = getApplicationDataServices();
@@ -392,6 +410,12 @@ export class LeaveService {
       module: "hr",
       entityType: "leave_request",
     });
+    this.entitlementOverrideRepo = new LocalRepository<EmployeeLeaveEntitlementOverride>(
+      "leave_entitlement_overrides",
+      storage,
+      audit,
+      { module: "hr", entityType: "leave_entitlement_override" },
+    );
 
     this.ensureSeedData();
   }
@@ -414,6 +438,33 @@ export class LeaveService {
     throw new Error(reason);
   }
 
+  private requireOrganisationRead(context: ActorContext, action: string): void {
+    const activeRole = context.actor.activeRole ?? context.actor.roles[0];
+    if (activeRole && ["HR", "Super Admin"].includes(activeRole)) return;
+    this.denyAccess(
+      "Leave read denied",
+      "all-leave-records",
+      `You are not authorised to ${action}.`,
+      context,
+    );
+  }
+
+  private requireEmployeeRead(employeeId: string, context: ActorContext, action: string): void {
+    const activeRole = context.actor.activeRole ?? context.actor.roles[0];
+    if (context.actor.employeeId === employeeId) return;
+    if (activeRole && ["HR", "Super Admin"].includes(activeRole)) return;
+    if (activeRole === "Line Manager" && context.actor.employeeId) {
+      const employee = new EmployeeService().getById(employeeId, SYSTEM_CONTEXT);
+      if (employee?.lineManagerId === context.actor.employeeId) return;
+    }
+    this.denyAccess(
+      "Leave read denied",
+      employeeId,
+      `You are not authorised to ${action}.`,
+      context,
+    );
+  }
+
   async getAttachmentBlob(
     requestId: string,
     context: ActorContext,
@@ -423,8 +474,9 @@ export class LeaveService {
     if (!req.attachmentFileId) throw new Error("This request has no supporting attachment.");
 
     const isOwner = context.actor.employeeId === req.employeeId;
-    const isHrOrAdmin = context.actor.activeRole === "HR" || context.actor.activeRole === "Super Admin";
-    const employee = new EmployeeService().getById(req.employeeId);
+    const isHrOrAdmin =
+      context.actor.activeRole === "HR" || context.actor.activeRole === "Super Admin";
+    const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
     const isLineManager =
       Boolean(context.actor.employeeId) && employee?.lineManagerId === context.actor.employeeId;
 
@@ -511,7 +563,7 @@ export class LeaveService {
     const wasFreshLeaveLedger = transactions.length === 0;
     const empService = new EmployeeService();
     const employees = empService
-      .getEmployees()
+      .getEmployees(SYSTEM_CONTEXT)
       .filter((employee) => !["Inactive", "Archived"].includes(employee.status));
     const now = new Date().toISOString();
     const currentYear = new Date(now).getFullYear();
@@ -640,9 +692,10 @@ export class LeaveService {
     return true;
   }
 
-  getEligiblePolicies(employeeId: string): LeavePolicy[] {
+  getEligiblePolicies(employeeId: string, context: ActorContext): LeavePolicy[] {
+    this.requireEmployeeRead(employeeId, context, "view this employee's leave eligibility");
     const empService = new EmployeeService();
-    const employee = empService.getById(employeeId);
+    const employee = empService.getById(employeeId, SYSTEM_CONTEXT);
     const policies = this.getPolicies();
 
     if (!employee) {
@@ -714,13 +767,17 @@ export class LeaveService {
 
     const currentYear = new Date().getFullYear();
     const employees = new EmployeeService()
-      .getEmployees()
+      .getEmployees(SYSTEM_CONTEXT)
       .filter((employee) => !["Inactive", "Archived"].includes(employee.status));
 
     for (const employee of employees) {
       if (!this.isEmployeeEligibleForPolicy(employee, updated)) continue;
 
-      const currentYearEntitlement = this.getTransactionsForEmployee(employee.id, updated.id).find(
+      const currentYearEntitlement = this.getTransactionsForEmployee(
+        employee.id,
+        updated.id,
+        context,
+      ).find(
         (transaction) =>
           transaction.transactionType === "Entitlement" &&
           new Date(transaction.date).getFullYear() === currentYear,
@@ -755,30 +812,102 @@ export class LeaveService {
     }
   }
 
-  getTransactionsForEmployee(employeeId: string, policyId?: string): LeaveTransaction[] {
+  getTransactionsForEmployee(
+    employeeId: string,
+    policyId: string | undefined,
+    context: ActorContext,
+  ): LeaveTransaction[] {
+    this.requireEmployeeRead(employeeId, context, "view this employee's leave balance activity");
     const list = this.transactionRepo.list().filter((t) => t.employeeId === employeeId);
     if (policyId) return list.filter((t) => t.policyId === policyId);
     return list;
   }
 
-  getAllRequests(): LeaveRequest[] {
+  getAllRequests(context: ActorContext): LeaveRequest[] {
+    this.requireOrganisationRead(context, "view all leave requests");
     return this.requestRepo.list();
   }
 
-  getRequests(): LeaveRequest[] {
-    return this.getAllRequests();
+  getPayrollLeaveRequests(context: ActorContext): LeaveRequest[] {
+    if (context.actor.activeRole !== "Accounts" && context.actor.activeRole !== "Super Admin") {
+      this.denyAccess(
+        "Payroll leave read denied",
+        "payroll-leave-records",
+        "Only Accounts or Super Admin can view payroll leave inputs.",
+        context,
+      );
+    }
+    return this.requestRepo
+      .list()
+      .filter((request) => request.status === "Approved" || request.status === "Taken")
+      .map((request) => {
+        const safeRequest = {
+          ...request,
+          reason: "Not included in payroll",
+        };
+        delete safeRequest.attachmentFileId;
+        delete safeRequest.handoverContactId;
+        return safeRequest;
+      });
   }
 
-  getLeaveRequestsForEmployee(employeeId: string): LeaveRequest[] {
-    return this.requestRepo.list().filter((r) => r.employeeId === employeeId);
+  getRequests(context: ActorContext): LeaveRequest[] {
+    if (["HR", "Super Admin"].includes(context.actor.activeRole ?? "")) {
+      return this.requestRepo.list().map((request) => this.presentRequest(request));
+    }
+    if (context.actor.activeRole === "Accounts") return this.getPayrollLeaveRequests(context);
+    if (context.actor.activeRole === "Line Manager" && context.actor.employeeId) {
+      const reportIds = new Set(
+        new EmployeeService()
+          .getEmployees(SYSTEM_CONTEXT)
+          .filter((employee) => employee.lineManagerId === context.actor.employeeId)
+          .map((employee) => employee.id),
+      );
+      return this.requestRepo
+        .list()
+        .filter(
+          (request) =>
+            request.employeeId === context.actor.employeeId || reportIds.has(request.employeeId),
+        )
+        .map((request) => this.presentRequest(request));
+    }
+    return context.actor.employeeId
+      ? this.requestRepo
+          .list()
+          .filter((request) => request.employeeId === context.actor.employeeId)
+          .map((request) => this.presentRequest(request))
+      : [];
   }
 
-  getPendingRequestsForManager(managerUserId: string): LeaveRequest[] {
+  getLeaveRequestsForEmployee(employeeId: string, context: ActorContext): LeaveRequest[] {
+    this.requireEmployeeRead(employeeId, context, "view this employee's leave requests");
+    return this.requestRepo
+      .list()
+      .filter((r) => r.employeeId === employeeId)
+      .map((request) => this.presentRequest(request));
+  }
+
+  private presentRequest(request: LeaveRequest): LeaveRequest {
+    const today = new Date().toISOString().slice(0, 10);
+    return request.status === "Approved" && request.endDate < today
+      ? { ...request, status: "Taken" }
+      : request;
+  }
+
+  getPendingRequestsForManager(context: ActorContext): LeaveRequest[] {
+    if (!context.actor.employeeId || context.actor.activeRole !== "Line Manager") {
+      this.denyAccess(
+        "Manager leave queue denied",
+        "manager-queue",
+        "Only a line manager can view their direct-report leave queue.",
+        context,
+      );
+    }
     const empService = new EmployeeService();
-    const allEmployees = empService.getEmployees();
+    const allEmployees = empService.getEmployees(SYSTEM_CONTEXT);
 
     // Find employees who report directly to this manager
-    const directReports = allEmployees.filter((e) => e.lineManagerId === managerUserId);
+    const directReports = allEmployees.filter((e) => e.lineManagerId === context.actor.employeeId);
     const reportIds = new Set(directReports.map((e) => e.id));
 
     return this.requestRepo
@@ -786,11 +915,20 @@ export class LeaveService {
       .filter((r) => r.status === "Pending Line Manager" && reportIds.has(r.employeeId));
   }
 
-  getPendingRequestsForHr(): LeaveRequest[] {
+  getPendingRequestsForHr(context: ActorContext): LeaveRequest[] {
+    if (context.actor.activeRole !== "HR" && context.actor.activeRole !== "Super Admin") {
+      this.denyAccess(
+        "HR leave queue denied",
+        "hr-queue",
+        "Only HR or Super Admin can view the final leave queue.",
+        context,
+      );
+    }
     return this.requestRepo
       .list()
       .filter(
         (r) =>
+          r.status === "Pending Line Manager" ||
           r.status === "Pending HR" ||
           r.status === "Pending Super Admin" ||
           r.status === "Cancellation Pending",
@@ -798,18 +936,38 @@ export class LeaveService {
   }
 
   /** Compatibility alias for older dashboard code and browser records. */
-  getPendingRequestsForSuperAdmin(): LeaveRequest[] {
-    return this.getPendingRequestsForHr();
+  getPendingRequestsForSuperAdmin(context: ActorContext): LeaveRequest[] {
+    return this.getPendingRequestsForHr(context);
   }
 
-  getTeamOverlaps(departmentId: string, startDate: string, endDate: string): LeaveRequest[] {
+  getTeamOverlaps(
+    departmentId: string,
+    startDate: string,
+    endDate: string,
+    context: ActorContext,
+  ): LeaveRequest[] {
+    if (!["Line Manager", "HR", "Super Admin"].includes(context.actor.activeRole ?? "")) {
+      this.denyAccess(
+        "Team leave overlap denied",
+        departmentId,
+        "You are not authorised to view team leave overlaps.",
+        context,
+      );
+    }
     const start = parseISO(startDate);
     const end = parseISO(endDate);
 
     const empService = new EmployeeService();
-    const allEmployees = empService.getEmployees();
+    const allEmployees = empService.getEmployees(SYSTEM_CONTEXT);
     const deptEmployees = new Set(
-      allEmployees.filter((e) => e.department === departmentId).map((e) => e.id),
+      allEmployees
+        .filter(
+          (employee) =>
+            employee.department === departmentId &&
+            (context.actor.activeRole !== "Line Manager" ||
+              employee.lineManagerId === context.actor.employeeId),
+        )
+        .map((e) => e.id),
     );
 
     return this.requestRepo.list().filter((r) => {
@@ -835,14 +993,20 @@ export class LeaveService {
     if (!req) throw new Error("Request not found");
 
     if (req.status === "Pending Line Manager") {
-      const employee = new EmployeeService().getById(req.employeeId);
-      if (!context.actor.employeeId || employee?.lineManagerId !== context.actor.employeeId) {
+      const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
+      const isAssignedManager =
+        Boolean(context.actor.employeeId) && employee?.lineManagerId === context.actor.employeeId;
+      const isRecoveryApprover = ["HR", "Super Admin"].includes(context.actor.activeRole ?? "");
+      if (!isAssignedManager && !isRecoveryApprover) {
         this.denyAccess(
           "Leave approval denied",
           req.id,
           "Only the employee’s assigned line manager can complete this approval.",
           context,
         );
+      }
+      if (isRecoveryApprover && !isAssignedManager && (context.reason?.trim().length ?? 0) < 5) {
+        throw new Error("Enter a reason for completing the unavailable supervisor's review.");
       }
       // Update chain
       const step = req.chainApprovals.find(
@@ -948,14 +1112,20 @@ export class LeaveService {
     if (!req) throw new Error("Request not found");
 
     if (req.status === "Pending Line Manager") {
-      const employee = new EmployeeService().getById(req.employeeId);
-      if (!context.actor.employeeId || employee?.lineManagerId !== context.actor.employeeId) {
+      const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
+      const isAssignedManager =
+        Boolean(context.actor.employeeId) && employee?.lineManagerId === context.actor.employeeId;
+      const isRecoveryApprover = ["HR", "Super Admin"].includes(context.actor.activeRole ?? "");
+      if (!isAssignedManager && !isRecoveryApprover) {
         this.denyAccess(
           "Leave rejection denied",
           req.id,
           "Only the employee’s assigned line manager can decline this request at this stage.",
           context,
         );
+      }
+      if (isRecoveryApprover && !isAssignedManager && (context.reason?.trim().length ?? 0) < 5) {
+        throw new Error("Enter a reason for completing the unavailable supervisor's review.");
       }
     } else if (
       req.status === "Pending HR" ||
@@ -1030,7 +1200,7 @@ export class LeaveService {
       const { storage, audit } = getApplicationDataServices();
       const notifService = new NotificationService(storage, audit);
       const empService = new EmployeeService();
-      const requester = empService.getById(req.employeeId);
+      const requester = empService.getById(req.employeeId, SYSTEM_CONTEXT);
       const handoverUser = storage
         .readCollection<User>("users")
         .find((user) => user.employeeId === req.handoverContactId && user.status === "Active");
@@ -1055,7 +1225,7 @@ export class LeaveService {
 
   private notifyApprovedLeave(request: LeaveRequest, context: ActorContext): void {
     const { storage, notifications } = getApplicationDataServices();
-    const employees = new EmployeeService().getEmployees();
+    const employees = new EmployeeService().getEmployees(SYSTEM_CONTEXT);
     const requester = employees.find((employee) => employee.id === request.employeeId);
     if (!requester) return;
     const users = storage.readCollection<User>("users").filter((user) => user.status === "Active");
@@ -1151,16 +1321,18 @@ export class LeaveService {
     return workingDays;
   }
 
-  async submitLeaveRequest(payload: Partial<LeaveRequest>, context: ActorContext): Promise<LeaveRequest> {
+  async submitLeaveRequest(
+    payload: Partial<LeaveRequest>,
+    context: ActorContext,
+  ): Promise<LeaveRequest> {
     if (
       !payload.employeeId ||
       !payload.policyId ||
       !payload.startDate ||
       !payload.endDate ||
-      !payload.reason?.trim() ||
-      !payload.handoverContactId
+      !payload.reason?.trim()
     ) {
-      throw new Error("Missing required fields for leave request, including Covering Colleague.");
+      throw new Error("Missing required fields for leave request.");
     }
 
     if (!context.actor.employeeId || context.actor.employeeId !== payload.employeeId) {
@@ -1176,6 +1348,9 @@ export class LeaveService {
     if (!policy) throw new Error("Policy not found.");
     if (policy.requiresAttachment && !payload.attachmentFileId) {
       throw new Error(`Supporting evidence is required for ${policy.name}.`);
+    }
+    if (policy.requiresHandoverContact && !payload.handoverContactId) {
+      throw new Error(`A covering colleague is required for ${policy.name}.`);
     }
     // A caller could otherwise reference any file ID at all, including one belonging to a
     // different employee entirely - the file must actually exist and be tagged as evidence
@@ -1203,7 +1378,10 @@ export class LeaveService {
     // Re-check eligibility server-side. The UI dropdown filtering is a convenience;
     // this is the real enforcement.
     const empServiceForEligibility = new EmployeeService();
-    const employeeForEligibility = empServiceForEligibility.getById(payload.employeeId);
+    const employeeForEligibility = empServiceForEligibility.getById(
+      payload.employeeId,
+      SYSTEM_CONTEXT,
+    );
 
     if (policy.eligibility && employeeForEligibility) {
       const eligibility = policy.eligibility;
@@ -1241,6 +1419,11 @@ export class LeaveService {
     // Scope-aware balance/cap validation
     if (policy.consumesBalance) {
       if (policy.scope === "Once Per Service") {
+        const serviceLimit = this.getEmployeeEntitlementLimit(
+          payload.employeeId,
+          policy.id,
+          context,
+        );
         const activeStatuses: LeaveRequestStatus[] = [
           "Pending Line Manager",
           "Pending HR",
@@ -1262,25 +1445,30 @@ export class LeaveService {
             `${policy.name} can be used only one time in total for this employee${basis}. The entitlement has already been used or requested.`,
           );
         }
-        if (workingDays > policy.baseEntitlementDays) {
+        if (workingDays > serviceLimit) {
           const basis = policy.legalBasis ? ` (${policy.legalBasis})` : "";
           throw new Error(
-            `${policy.name} is capped at ${policy.baseEntitlementDays} days per occurrence${basis}. You requested ${workingDays} days.`,
+            `${policy.name} is capped at ${serviceLimit} days per occurrence${basis}. You requested ${workingDays} days.`,
           );
         }
       } else if (policy.scope === "Per Event") {
-        if (workingDays > policy.baseEntitlementDays) {
+        const eventLimit = this.getEmployeeEntitlementLimit(payload.employeeId, policy.id, context);
+        if (workingDays > eventLimit) {
           const basis = policy.legalBasis ? ` (${policy.legalBasis})` : "";
           throw new Error(
-            `${policy.name} is capped at ${policy.baseEntitlementDays} days per occurrence${basis}. You requested ${workingDays} days.`,
+            `${policy.name} is capped at ${eventLimit} days per occurrence${basis}. You requested ${workingDays} days.`,
           );
         }
       } else {
         // Annual or Ledger: balance-ledger check, unchanged.
-        const balance = this.calculateBalance(payload.employeeId, payload.policyId);
-        if (!policy.allowNegativeBalance && balance.projectedAvailable < workingDays) {
+        const balance = this.calculateBalance(payload.employeeId, payload.policyId, context);
+        const minimumBalance = policy.allowNegativeBalance ? -(policy.maxNegativeBalance ?? 0) : 0;
+        const balanceAfterRequest = balance.projectedAvailable - workingDays;
+        if (balanceAfterRequest < minimumBalance) {
           throw new Error(
-            `Insufficient balance. You requested ${workingDays} days, but only have ${balance.projectedAvailable} days available.`,
+            policy.allowNegativeBalance
+              ? `This request would reduce the balance to ${balanceAfterRequest} days. The lowest permitted balance is ${minimumBalance} days.`
+              : `Insufficient balance. You requested ${workingDays} days, but only have ${balance.projectedAvailable} days available.`,
           );
         }
       }
@@ -1288,7 +1476,8 @@ export class LeaveService {
 
     // Leave Notice Rules
     const chainIncludesManager = policy.approvalChain.some(isManagerRoleName);
-    const chainStartsWithManager = chainIncludesManager && isManagerRoleName(policy.approvalChain[0] ?? "");
+    const chainStartsWithManager =
+      chainIncludesManager && isManagerRoleName(policy.approvalChain[0] ?? "");
     let status: LeaveRequestStatus = chainStartsWithManager ? "Pending Line Manager" : "Pending HR";
     let refusalReason = "";
 
@@ -1324,7 +1513,7 @@ export class LeaveService {
     }));
 
     const empService = new EmployeeService();
-    const requester = empService.getById(payload.employeeId);
+    const requester = empService.getById(payload.employeeId, SYSTEM_CONTEXT);
 
     if (chainIncludesManager && status !== "Automatically Refused" && !requester?.lineManagerId) {
       throw new Error(
@@ -1352,7 +1541,7 @@ export class LeaveService {
     // having to recompute it later from mutable "already taken this year" state.
     const sickPayTiers: SickPayTierBreakdown[] | undefined =
       policy.payTiers && policy.payTiers.length > 0
-        ? this.getSickLeavePayBreakdown(payload.employeeId, workingDays)
+        ? this.getSickLeavePayBreakdown(payload.employeeId, workingDays, context)
         : undefined;
 
     const request: NewRecord<LeaveRequest> = {
@@ -1363,7 +1552,7 @@ export class LeaveService {
       isHalfDay: !!payload.isHalfDay,
       workingDaysRequested: workingDays,
       reason: payload.reason,
-      handoverContactId: payload.handoverContactId,
+      ...(payload.handoverContactId ? { handoverContactId: payload.handoverContactId } : {}),
       ...(payload.attachmentFileId ? { attachmentFileId: payload.attachmentFileId } : {}),
       status,
       chainApprovals,
@@ -1383,7 +1572,7 @@ export class LeaveService {
   private notifySubmission(request: LeaveRequest, context: ActorContext): void {
     if (request.status === "Automatically Refused") return;
     const { storage, notifications } = getApplicationDataServices();
-    const requester = new EmployeeService().getById(request.employeeId);
+    const requester = new EmployeeService().getById(request.employeeId, SYSTEM_CONTEXT);
     const requesterName = requester
       ? `${requester.preferredName} ${requester.legalName}`
       : "An employee";
@@ -1402,7 +1591,11 @@ export class LeaveService {
             priority: "High",
             status: "Unread",
             deduplicationKey: `leave-submitted-manager-${request.id}`,
-            link: { entityType: "leave-request", entityId: request.id, path: "/staff/leave-approvals" },
+            link: {
+              entityType: "leave-request",
+              entityId: request.id,
+              path: "/staff/leave-approvals",
+            },
           },
           context,
         );
@@ -1421,7 +1614,11 @@ export class LeaveService {
             priority: "High",
             status: "Unread",
             deduplicationKey: `leave-submitted-hr-${request.id}-${hrUser.id}`,
-            link: { entityType: "leave-request", entityId: request.id, path: "/staff/leave-approvals" },
+            link: {
+              entityType: "leave-request",
+              entityId: request.id,
+              path: "/staff/leave-approvals",
+            },
           },
           context,
         );
@@ -1540,11 +1737,55 @@ export class LeaveService {
     );
   }
 
+  reverseCompensationLeaveCredit(
+    employeeId: string,
+    overtimeClaimId: string,
+    reason: string,
+    context: ActorContext,
+  ): LeaveTransaction {
+    if (!["HR", "Super Admin"].includes(context.actor.activeRole ?? "")) {
+      this.denyAccess(
+        "Compensation leave reversal denied",
+        overtimeClaimId,
+        "Only HR or Super Admin can reverse compensation leave.",
+        context,
+      );
+    }
+    const original = this.transactionRepo
+      .list()
+      .find(
+        (transaction) =>
+          transaction.employeeId === employeeId &&
+          transaction.referenceId === overtimeClaimId &&
+          transaction.days > 0,
+      );
+    if (!original) throw new Error("The original time-off credit could not be found.");
+    const reversalReference = `reversal:${overtimeClaimId}`;
+    const existing = this.transactionRepo
+      .list()
+      .find((transaction) => transaction.referenceId === reversalReference);
+    if (existing) return existing;
+    return this.recordTransaction(
+      {
+        employeeId,
+        policyId: original.policyId,
+        transactionType: "Manual Adjustment",
+        days: -original.days,
+        reason: reason.trim(),
+        referenceId: reversalReference,
+      },
+      context,
+    );
+  }
+
   // Not exposed outside this class - every legitimate way to move a leave balance goes through
   // a method here that carries its own authorization check first (approveRequest,
   // setEmployeeAvailableBalance, creditCompensationLeave, runAnnualRollover, etc.). Keeping this
   // private closes off a path that let any caller mutate balances with no check at all.
-  private recordTransaction(payload: Partial<LeaveTransaction>, context: ActorContext): LeaveTransaction {
+  private recordTransaction(
+    payload: Partial<LeaveTransaction>,
+    context: ActorContext,
+  ): LeaveTransaction {
     if (
       !payload.employeeId ||
       !payload.policyId ||
@@ -1580,7 +1821,7 @@ export class LeaveService {
     newAvailableBalance: number,
     reason: string,
     context: ActorContext,
-  ): LeaveTransaction {
+  ): LeaveTransaction | EmployeeLeaveEntitlementOverride {
     const activeRole = context.actor.activeRole ?? context.actor.roles[0];
     if (activeRole !== "HR" && activeRole !== "Super Admin") {
       getApplicationDataServices().audit.record({
@@ -1602,17 +1843,24 @@ export class LeaveService {
       throw new Error("A detailed reason is required for the audit history.");
     }
 
-    const employee = new EmployeeService().getById(employeeId);
+    const employee = new EmployeeService().getById(employeeId, SYSTEM_CONTEXT);
     if (!employee) throw new Error("The employee record was not found.");
     const policy = this.policyRepo.getById(policyId);
     if (!policy || !policy.isEnabled) throw new Error("The leave policy is not available.");
     if (!this.isEmployeeEligibleForPolicy(employee, policy)) {
       throw new Error(`${employee.preferredName} is not eligible for ${policy.name}.`);
     }
-    if (policy.scope !== "Annual" && policy.scope !== "Ledger") {
-      throw new Error(
-        `${policy.name} is controlled per event and does not have an editable balance.`,
+    if (policy.scope === "Per Event" || policy.scope === "Once Per Service") {
+      return this.setEmployeeEntitlementLimit(
+        employeeId,
+        policyId,
+        newAvailableBalance,
+        reason,
+        context,
       );
+    }
+    if (policy.scope !== "Annual" && policy.scope !== "Ledger") {
+      throw new Error(`${policy.name} does not have an editable allowance.`);
     }
 
     const minimumBalance = policy.allowNegativeBalance ? -(policy.maxNegativeBalance ?? 0) : 0;
@@ -1624,7 +1872,7 @@ export class LeaveService {
       );
     }
 
-    const current = this.calculateBalance(employeeId, policyId);
+    const current = this.calculateBalance(employeeId, policyId, context);
     const adjustment = Number((newAvailableBalance - current.available).toFixed(2));
     if (adjustment === 0) {
       throw new Error("The new balance is the same as the current balance.");
@@ -1645,8 +1893,63 @@ export class LeaveService {
     );
   }
 
-  calculateBalance(employeeId: string, policyId: string): LeaveBalanceReport {
-    const txs = this.getTransactionsForEmployee(employeeId, policyId);
+  getEmployeeEntitlementLimit(employeeId: string, policyId: string, context: ActorContext): number {
+    this.requireEmployeeRead(employeeId, context, "view this employee's leave allowance");
+    const policy = this.policyRepo.getById(policyId);
+    if (!policy) throw new Error("The leave policy was not found.");
+    const latest = this.entitlementOverrideRepo
+      .list()
+      .filter((item) => item.employeeId === employeeId && item.policyId === policyId)
+      .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0];
+    return latest?.days ?? policy.baseEntitlementDays;
+  }
+
+  setEmployeeEntitlementLimit(
+    employeeId: string,
+    policyId: string,
+    days: number,
+    reason: string,
+    context: ActorContext,
+  ): EmployeeLeaveEntitlementOverride {
+    const role = context.actor.activeRole ?? context.actor.roles[0];
+    if (!role || !["HR", "Super Admin"].includes(role)) {
+      this.denyAccess(
+        "Leave allowance exception denied",
+        `${employeeId}:${policyId}`,
+        "Only HR or Super Admin can set an employee-specific allowance.",
+        context,
+      );
+    }
+    if (!Number.isFinite(days) || days < 0) throw new Error("Enter a valid allowance.");
+    if (reason.trim().length < 5) throw new Error("Explain why this allowance is different.");
+    const employee = new EmployeeService().getById(employeeId, SYSTEM_CONTEXT);
+    const policy = this.policyRepo.getById(policyId);
+    if (!employee || !policy) throw new Error("The employee or leave policy was not found.");
+    if (policy.scope !== "Per Event" && policy.scope !== "Once Per Service") {
+      throw new Error("This leave type uses a running balance instead of an individual limit.");
+    }
+    const existing = this.entitlementOverrideRepo
+      .list()
+      .find((item) => item.employeeId === employeeId && item.policyId === policyId);
+    const values = {
+      employeeId,
+      policyId,
+      days,
+      reason: reason.trim(),
+      effectiveFrom: new Date().toISOString(),
+    };
+    return existing
+      ? this.entitlementOverrideRepo.update(existing.id, values, { ...context, reason })
+      : this.entitlementOverrideRepo.create(values, { ...context, reason });
+  }
+
+  calculateBalance(
+    employeeId: string,
+    policyId: string,
+    context: ActorContext,
+  ): LeaveBalanceReport {
+    this.requireEmployeeRead(employeeId, context, "view this employee's leave balance");
+    const txs = this.getTransactionsForEmployee(employeeId, policyId, context);
 
     let entitlement = 0;
     let carriedForward = 0;
@@ -1657,7 +1960,7 @@ export class LeaveService {
     let pending = 0;
 
     // Get all requests for this policy
-    const requests = this.getLeaveRequestsForEmployee(employeeId).filter(
+    const requests = this.getLeaveRequestsForEmployee(employeeId, context).filter(
       (r) => r.policyId === policyId,
     );
     for (const req of requests) {
@@ -1714,8 +2017,10 @@ export class LeaveService {
     };
   }
 
-  getAllBalancesForEmployee(employeeId: string): LeaveBalanceReport[] {
-    return this.getEligiblePolicies(employeeId).map((p) => this.calculateBalance(employeeId, p.id));
+  getAllBalancesForEmployee(employeeId: string, context: ActorContext): LeaveBalanceReport[] {
+    return this.getEligiblePolicies(employeeId, context).map((policy) =>
+      this.calculateBalance(employeeId, policy.id, context),
+    );
   }
 
   /**
@@ -1747,7 +2052,7 @@ export class LeaveService {
       );
     }
     const empService = new EmployeeService();
-    const employees = empService.getEmployees();
+    const employees = empService.getEmployees(SYSTEM_CONTEXT);
     const annualPolicies = this.getPolicies().filter((p) => p.scope === "Annual" && p.isEnabled);
     const allTransactions = this.transactionRepo.list();
     const rolloverDate = new Date(Date.UTC(targetYear, 0, 1)).toISOString();
@@ -1774,7 +2079,7 @@ export class LeaveService {
         );
         if (alreadyRolled) continue;
 
-        const balanceBeforeRollover = this.calculateBalance(emp.id, policy.id);
+        const balanceBeforeRollover = this.calculateBalance(emp.id, policy.id, context);
         const unused = Math.max(0, balanceBeforeRollover.available);
         const carryForwardLimit = policy.carryForwardLimit ?? 0;
         const carriedForward = Math.min(unused, carryForwardLimit);
@@ -1841,13 +2146,21 @@ export class LeaveService {
         module: "leave",
         entityType: "leave_policy",
         entityId: "annual-rollover",
-        reason: error instanceof Error ? error.message : "Unknown error running automatic annual rollover",
+        reason:
+          error instanceof Error
+            ? error.message
+            : "Unknown error running automatic annual rollover",
         riskLevel: "Medium",
       });
     }
   }
 
-  getSickLeavePayBreakdown(employeeId: string, additionalDays: number): SickPayTierBreakdown[] {
+  getSickLeavePayBreakdown(
+    employeeId: string,
+    additionalDays: number,
+    context: ActorContext,
+  ): SickPayTierBreakdown[] {
+    this.requireEmployeeRead(employeeId, context, "view this employee's sick-leave calculation");
     const sickPolicy = this.getPolicies().find((p) => p.type === "Sick");
     if (!sickPolicy || !sickPolicy.payTiers || sickPolicy.payTiers.length === 0) {
       return [];
@@ -1862,7 +2175,7 @@ export class LeaveService {
     ];
     const currentYear = new Date().getFullYear();
 
-    const alreadyTaken = this.getLeaveRequestsForEmployee(employeeId)
+    const alreadyTaken = this.getLeaveRequestsForEmployee(employeeId, context)
       .filter((r) => r.policyId === sickPolicy.id)
       .filter((r) => activeStatuses.includes(r.status))
       .filter((r) => parseISO(r.startDate).getFullYear() === currentYear)

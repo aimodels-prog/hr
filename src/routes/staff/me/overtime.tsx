@@ -39,11 +39,11 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
 import { OvertimeService } from "@/lib/data/overtime-service";
-import { getProjectRepository } from "@/lib/data/master-data";
+import { getMasterDataRepository, getProjectRepository } from "@/lib/data/master-data";
 import { getApplicationDataServices } from "@/lib/data/application-data";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { AlertTriangle, Clock, FileEdit, Paperclip } from "lucide-react";
-import type { OvertimeCompensationType } from "@/lib/data/overtime-types";
+import type { OvertimeClaim, OvertimeCompensationType } from "@/lib/data/overtime-types";
 
 export const Route = createFileRoute("/staff/me/overtime")({
   component: MyOvertimeRoute,
@@ -59,11 +59,23 @@ function MyOvertimeRoute() {
   const activeProjects = getProjectRepository()
     .list()
     .filter((p) => p.isActive);
+  const costCentres = getMasterDataRepository("costCentres")
+    .list()
+    .filter((item) => item.isActive);
+  const activities = getMasterDataRepository("activityCodes")
+    .list()
+    .filter((item) => item.isActive);
+  const workLocations = getMasterDataRepository("locations")
+    .list()
+    .filter((item) => item.isActive);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dateStr, setDateStr] = useState("");
   const [hoursStr, setHoursStr] = useState("");
   const [projectId, setProjectId] = useState("");
+  const [costCentreId, setCostCentreId] = useState("");
+  const [activityCodeId, setActivityCodeId] = useState("");
+  const [locationCodeId, setLocationCodeId] = useState("");
   const [reason, setReason] = useState("");
   const [originalClaimId, setOriginalClaimId] = useState("");
   const [compensationType, setCompensationType] = useState<OvertimeCompensationType>("Payment");
@@ -74,6 +86,9 @@ function MyOvertimeRoute() {
     setDateStr("");
     setHoursStr("");
     setProjectId("");
+    setCostCentreId("");
+    setActivityCodeId("");
+    setLocationCodeId("");
     setReason("");
     setOriginalClaimId("");
     setCompensationType("Payment");
@@ -81,10 +96,13 @@ function MyOvertimeRoute() {
     setDialogOpen(true);
   };
 
-  const handleOpenCorrection = (claim: any) => {
+  const handleOpenCorrection = (claim: OvertimeClaim) => {
     setDateStr(claim.date);
     setHoursStr(claim.hours.toString());
     setProjectId(claim.projectId || "");
+    setCostCentreId(claim.costCentreId);
+    setActivityCodeId(claim.activityCodeId);
+    setLocationCodeId(claim.locationCodeId);
     setReason(`Correction of original claim: ${claim.reason}`);
     setOriginalClaimId(claim.id);
     setCompensationType(claim.compensationType || "Payment");
@@ -94,6 +112,8 @@ function MyOvertimeRoute() {
 
   const handleSubmit = async () => {
     setIsUploading(true);
+    let uploadedFileId: string | undefined;
+    const actorContext = currentUser.getActorContext();
     try {
       let evidenceFileId: string | undefined;
       if (evidenceFile) {
@@ -105,9 +125,10 @@ function MyOvertimeRoute() {
             mimeType: evidenceFile.type,
             owner: { entityType: "overtime-claim", entityId: currentUser!.employeeId! },
           },
-          currentUser!.getActorContext(),
+          actorContext,
         );
         evidenceFileId = saved.id;
+        uploadedFileId = saved.id;
       }
 
       if (originalClaimId) {
@@ -115,7 +136,8 @@ function MyOvertimeRoute() {
           originalClaimId,
           parseFloat(hoursStr),
           reason,
-          currentUser!.getActorContext(),
+          actorContext,
+          evidenceFileId,
         );
         toast.success("Correction request sent. The original record was kept.");
       } else {
@@ -125,18 +147,28 @@ function MyOvertimeRoute() {
             date: dateStr,
             hours: parseFloat(hoursStr),
             ...(projectId && projectId !== "none" ? { projectId } : {}),
+            costCentreId,
+            activityCodeId,
+            locationCodeId,
             reason,
             compensationType,
             ...(evidenceFileId ? { evidenceFileId } : {}),
           },
-          currentUser!.getActorContext(),
+          actorContext,
         );
         toast.success("Overtime claim sent to your manager.");
       }
-      setClaims(otService.getClaimsForEmployee(currentUser!.employeeId!, currentUser!.getActorContext()));
+      uploadedFileId = undefined;
+      setClaims(otService.getClaimsForEmployee(currentUser.employeeId!, actorContext));
       setDialogOpen(false);
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (error: unknown) {
+      if (uploadedFileId) {
+        await getApplicationDataServices().files.delete(uploadedFileId, {
+          ...actorContext,
+          reason: "Overtime submission failed before the evidence was attached",
+        });
+      }
+      toast.error(error instanceof Error ? error.message : "Overtime claim could not be sent.");
     } finally {
       setIsUploading(false);
     }
@@ -292,6 +324,65 @@ function MyOvertimeRoute() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Cost Centre</label>
+                  <Select
+                    value={costCentreId}
+                    onValueChange={setCostCentreId}
+                    disabled={!!originalClaimId}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {costCentres.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Activity</label>
+                  <Select
+                    value={activityCodeId}
+                    onValueChange={setActivityCodeId}
+                    disabled={!!originalClaimId}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {activities.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Work Location</label>
+                  <Select
+                    value={locationCodeId}
+                    onValueChange={setLocationCodeId}
+                    disabled={!!originalClaimId}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {workLocations.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
               {!originalClaimId && (
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Compensation</label>
@@ -304,7 +395,9 @@ function MyOvertimeRoute() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="Payment">Paid overtime</SelectItem>
-                      <SelectItem value="TOIL">Time off in lieu (credited to Compensation Leave)</SelectItem>
+                      <SelectItem value="TOIL">
+                        Time off in lieu (credited to Compensation Leave)
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -335,7 +428,15 @@ function MyOvertimeRoute() {
               </Button>
               <Button
                 onClick={() => void handleSubmit()}
-                disabled={!dateStr || !hoursStr || reason.trim().length < 5 || isUploading}
+                disabled={
+                  !dateStr ||
+                  !hoursStr ||
+                  !costCentreId ||
+                  !activityCodeId ||
+                  !locationCodeId ||
+                  reason.trim().length < 5 ||
+                  isUploading
+                }
               >
                 {isUploading ? "Submitting..." : "Submit Claim"}
               </Button>

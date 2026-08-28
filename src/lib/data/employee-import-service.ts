@@ -1,5 +1,7 @@
+import { SYSTEM_CONTEXT } from "./types.ts";
 import * as XLSX from "xlsx";
 import type { EmployeeService } from "./employee-service.ts";
+import { getMasterDataRepository } from "./master-data.ts";
 import type { OnboardingService } from "./onboarding-service.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import type {
@@ -363,14 +365,14 @@ export class EmployeeImportService {
     employeeService: EmployeeService,
   ): ResolvedImportRow[] {
     const existingEmployees = employeeService
-      .getEmployeeRepository()
+      .getEmployeeRepository(SYSTEM_CONTEXT)
       .list({ includeArchived: true });
     const existingByNumber = new Map(
       existingEmployees.map((e) => [e.employeeNumber.toLowerCase(), e]),
     );
     const existingEmailsLower = new Set(
       employeeService
-        .getUserRepository()
+        .getUserRepository(SYSTEM_CONTEXT)
         .list({ includeArchived: true })
         .map((u) => u.workspaceEmail.toLowerCase()),
     );
@@ -415,6 +417,73 @@ export class EmployeeImportService {
 
       return { row, blockingErrors };
     });
+
+    // Independently verify department/position/location/employment type against active master
+    // data here too - the same rule createEmployee() itself enforces (an exact, case-sensitive
+    // name match) - so a row that would fail is caught during Review, with a clear per-row
+    // reason, instead of silently failing at commit time after HR has already been told the
+    // batch was ready to import. A case-insensitive spreadsheet value ("operations" vs the
+    // master-data record's "Operations") is corrected to the record's exact casing rather than
+    // rejected outright, since createEmployee's check is exact-match and a purely cosmetic case
+    // difference is not a real data problem worth blocking an otherwise-valid row over.
+    const activeByLowerName = (collection: Parameters<typeof getMasterDataRepository>[0]) => {
+      const map = new Map<string, string>();
+      for (const item of getMasterDataRepository(collection).list()) {
+        if (item.isActive) map.set(item.name.toLowerCase(), item.name);
+      }
+      return map;
+    };
+    const departmentsByLowerName = activeByLowerName("departments");
+    const positionsByLowerName = activeByLowerName("positions");
+    const locationsByLowerName = activeByLowerName("locations");
+    const employmentTypesByLowerName = activeByLowerName("employmentTypes");
+    const reconcileMasterDataField = (
+      value: string,
+      byLowerName: Map<string, string>,
+      label: string,
+      blockingErrors: string[],
+    ): string => {
+      const canonical = byLowerName.get(value.toLowerCase());
+      if (!canonical) {
+        blockingErrors.push(`"${value}" is not an active ${label}.`);
+        return value;
+      }
+      return canonical;
+    };
+    for (const entry of resolved) {
+      if (entry.row.department) {
+        entry.row.department = reconcileMasterDataField(
+          entry.row.department,
+          departmentsByLowerName,
+          "department",
+          entry.blockingErrors,
+        );
+      }
+      if (entry.row.position) {
+        entry.row.position = reconcileMasterDataField(
+          entry.row.position,
+          positionsByLowerName,
+          "position",
+          entry.blockingErrors,
+        );
+      }
+      if (entry.row.location) {
+        entry.row.location = reconcileMasterDataField(
+          entry.row.location,
+          locationsByLowerName,
+          "location",
+          entry.blockingErrors,
+        );
+      }
+      if (entry.row.employmentType) {
+        entry.row.employmentType = reconcileMasterDataField(
+          entry.row.employmentType,
+          employmentTypesByLowerName,
+          "employment type",
+          entry.blockingErrors,
+        );
+      }
+    }
 
     for (const entry of resolved) {
       const managerNumber = entry.row.managerEmployeeNumber?.toLowerCase();

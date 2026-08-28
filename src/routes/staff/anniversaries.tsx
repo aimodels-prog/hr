@@ -43,7 +43,9 @@ function AnniversariesRoute() {
   const anniversaryService = useMemo(() => new AnniversaryService(), []);
   const employeeService = useMemo(() => new EmployeeService(), []);
   const managerNameById = useMemo(() => {
-    const employees = employeeService.getEmployeeRepository().list({ includeArchived: true });
+    const employees = employeeService.getEmployees(currentUser.getActorContext(), {
+      includeArchived: true,
+    });
     return new Map(employees.map((e) => [e.id, e.preferredName]));
   }, [employeeService]);
 

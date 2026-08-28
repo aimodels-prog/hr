@@ -51,14 +51,14 @@ export function ManagerDashboard({ employee, userId }: { employee: Employee; use
   const overtimeService = useMemo(() => new OvertimeService(), []);
 
   // Direct Reports
-  const allEmployees = empService.getEmployees();
+  const allEmployees = empService.getEmployees(currentUser.getActorContext());
   const directReports = allEmployees.filter(
     (e) => e.lineManagerId === employee.id && isCurrentWorkforceMember(e),
   );
   const teamIds = new Set(directReports.map((e) => e.id));
 
   // Leave
-  const allLeaveRequests = leaveService.getRequests();
+  const allLeaveRequests = leaveService.getRequests(currentUser.getActorContext());
   const pendingLeave = allLeaveRequests.filter(
     (r) => r.status === "Pending Line Manager" && teamIds.has(r.employeeId),
   );
@@ -77,11 +77,13 @@ export function ManagerDashboard({ employee, userId }: { employee: Employee; use
     .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
 
   // Timesheets
-  const allTeamTimesheets = tsService.getAllTimesheets().filter((t) => teamIds.has(t.employeeId));
+  const allTeamTimesheets = tsService
+    .getTimesheetsForContext(currentUser.getActorContext())
+    .filter((t) => teamIds.has(t.employeeId));
   const pendingTimesheets = allTeamTimesheets.filter((t) => t.status === "Pending Manager");
   const returnedTimesheets = allTeamTimesheets.filter((t) => t.status === "Returned");
   const attendanceExceptions = attendanceService
-    .getAllRecords()
+    .getRecordsForContext(currentUser.getActorContext())
     .filter(
       (record) =>
         teamIds.has(record.employeeId) &&
@@ -94,7 +96,7 @@ export function ManagerDashboard({ employee, userId }: { employee: Employee; use
 
   // Onboarding/Offboarding tasks assigned to this manager
   const obTasks = obService
-    .getCases()
+    .getCasesForContext(currentUser.getActorContext())
     .flatMap((c) =>
       c.tasks
         .filter((t) => t.assignedUserId === userId && t.status === "Pending")

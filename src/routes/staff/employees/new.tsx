@@ -92,10 +92,9 @@ function NewEmployeeRoute() {
   const activeEmployees = useMemo(
     () =>
       employeeService
-        .getEmployeeRepository()
-        .list()
+        .getEmployees(currentUser.getActorContext())
         .filter((e) => e.status !== "Archived"),
-    [employeeService],
+    [currentUser, employeeService],
   );
 
   const form = useForm<z.infer<typeof formSchema>>({
@@ -167,9 +166,7 @@ function NewEmployeeRoute() {
               baseMonthly: parseFloat(baseMonthly),
               currency: currency || "OMR",
               ...(housingAllowance ? { housingAllowance: parseFloat(housingAllowance) } : {}),
-              ...(transportAllowance
-                ? { transportAllowance: parseFloat(transportAllowance) }
-                : {}),
+              ...(transportAllowance ? { transportAllowance: parseFloat(transportAllowance) } : {}),
               ...(payFrequency ? { payFrequency } : {}),
             }
           : undefined;
@@ -673,103 +670,103 @@ function NewEmployeeRoute() {
             </Card>
 
             {canSetPayroll && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Compensation & Payroll Setup</CardTitle>
-              </CardHeader>
-              <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <FormField
-                  control={form.control as any}
-                  name="baseMonthly"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Base Monthly Salary</FormLabel>
-                      <FormControl>
-                        <Input type="number" placeholder="0.00" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control as any}
-                  name="currency"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Currency</FormLabel>
-                      <FormControl>
-                        <Input placeholder="OMR" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control as any}
-                  name="housingAllowance"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Housing Allowance</FormLabel>
-                      <FormControl>
-                        <Input type="number" placeholder="0.00" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control as any}
-                  name="transportAllowance"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Transport Allowance</FormLabel>
-                      <FormControl>
-                        <Input type="number" placeholder="0.00" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control as any}
-                  name="payFrequency"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Pay Frequency</FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value as string}>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Compensation & Payroll Setup</CardTitle>
+                </CardHeader>
+                <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control as any}
+                    name="baseMonthly"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Base Monthly Salary</FormLabel>
                         <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select Frequency" />
-                          </SelectTrigger>
+                          <Input type="number" placeholder="0.00" {...field} />
                         </FormControl>
-                        <SelectContent>
-                          <SelectItem value="Monthly">Monthly</SelectItem>
-                          <SelectItem value="Biweekly">Biweekly</SelectItem>
-                          <SelectItem value="Weekly">Weekly</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control as any}
-                  name="socialInsuranceNumber"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Social Insurance Number</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="GOSI / PASI / statutory registration number"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </CardContent>
-            </Card>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control as any}
+                    name="currency"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Currency</FormLabel>
+                        <FormControl>
+                          <Input placeholder="OMR" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control as any}
+                    name="housingAllowance"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Housing Allowance</FormLabel>
+                        <FormControl>
+                          <Input type="number" placeholder="0.00" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control as any}
+                    name="transportAllowance"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Transport Allowance</FormLabel>
+                        <FormControl>
+                          <Input type="number" placeholder="0.00" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control as any}
+                    name="payFrequency"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Pay Frequency</FormLabel>
+                        <Select onValueChange={field.onChange} defaultValue={field.value as string}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select Frequency" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="Monthly">Monthly</SelectItem>
+                            <SelectItem value="Biweekly">Biweekly</SelectItem>
+                            <SelectItem value="Weekly">Weekly</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control as any}
+                    name="socialInsuranceNumber"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Social Insurance Number</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="GOSI / PASI / statutory registration number"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </CardContent>
+              </Card>
             )}
 
             <div className="flex justify-end gap-2">

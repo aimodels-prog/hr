@@ -89,12 +89,7 @@ function CandidatesIndex() {
   const projectNameById = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects]);
   const userById = useMemo(
     () =>
-      new Map(
-        empService
-          .getUserRepository()
-          .list()
-          .map((u) => [u.id, u.displayName]),
-      ),
+      new Map(empService.getUsers(currentUser.getActorContext()).map((u) => [u.id, u.displayName])),
     [empService],
   );
 

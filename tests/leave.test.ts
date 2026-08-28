@@ -80,7 +80,11 @@ function fakeFileRepository(): FileRepository {
     },
     async listByOwner(owner) {
       return [...files.values()]
-        .filter((f) => f.metadata.owner.entityType === owner.entityType && f.metadata.owner.entityId === owner.entityId)
+        .filter(
+          (f) =>
+            f.metadata.owner.entityType === owner.entityType &&
+            f.metadata.owner.entityId === owner.entityId,
+        )
         .map((f) => f.metadata);
     },
     async delete(id: string) {
@@ -140,6 +144,45 @@ test("leave types requiring evidence cannot be submitted without a stored file r
   );
 });
 
+test("a covering colleague is required only for leave types marked as needing a handover", async () => {
+  const { service } = harness();
+  // Emergency Leave is short-notice by design and must never block submission on naming a
+  // colleague; Annual Leave is a planned absence where a handover genuinely matters.
+  const emergencyPolicy = service.getPolicies().find((policy) => policy.type === "Emergency");
+  const annualPolicy = service.getPolicies().find((policy) => policy.type === "Annual");
+  assert.ok(emergencyPolicy);
+  assert.ok(annualPolicy);
+  assert.equal(emergencyPolicy.requiresHandoverContact, false);
+  assert.equal(annualPolicy.requiresHandoverContact, true);
+
+  const request = await service.submitLeaveRequest(
+    {
+      employeeId: "employee-omar",
+      policyId: emergencyPolicy.id,
+      startDate: "2027-06-01",
+      endDate: "2027-06-01",
+      reason: "Family emergency",
+    },
+    employee,
+  );
+  assert.equal(request.handoverContactId, undefined);
+
+  await assert.rejects(
+    () =>
+      service.submitLeaveRequest(
+        {
+          employeeId: "employee-omar",
+          policyId: annualPolicy.id,
+          startDate: "2027-06-02",
+          endDate: "2027-06-02",
+          reason: "Trip",
+        },
+        employee,
+      ),
+    /A covering colleague is required/,
+  );
+});
+
 test("employees cannot submit leave for another employee", async () => {
   const { service, audit } = harness();
   const annualPolicy = service.getPolicies().find((policy) => policy.type === "Annual");
@@ -163,6 +206,48 @@ test("employees cannot submit leave for another employee", async () => {
   assert.equal(audit.list().at(-1)?.action, "access-denied");
 });
 
+test("leave reads are enforced by employee relationship and active role", () => {
+  const { service, audit } = harness();
+  const annualPolicy = service.getPolicies().find((policy) => policy.type === "Annual")!;
+
+  assert.ok(service.getAllBalancesForEmployee("employee-omar", employee).length > 0);
+  assert.throws(
+    () => service.getAllBalancesForEmployee("employee-mariam", employee),
+    /not authorised/,
+  );
+  assert.ok(service.getLeaveRequestsForEmployee("employee-omar", manager));
+  assert.throws(() => service.getAllRequests(employee), /not authorised/);
+  assert.throws(
+    () => service.getTransactionsForEmployee("employee-mariam", annualPolicy.id, employee),
+    /not authorised/,
+  );
+
+  assert.ok(
+    audit.list().some((event) => event.module === "leave" && event.action === "access-denied"),
+  );
+});
+
+test("Accounts receives only payroll-safe approved leave inputs", () => {
+  const { service } = harness();
+  const accounts: ActorContext = {
+    actor: {
+      userId: "user-mariam",
+      employeeId: "employee-mariam",
+      displayName: "Mariam Said",
+      activeRole: "Accounts",
+      roles: ["Employee", "Accounts"],
+    },
+  };
+
+  assert.throws(() => service.getAllRequests(accounts), /not authorised/);
+  for (const request of service.getPayrollLeaveRequests(accounts)) {
+    assert.equal(request.reason, "Not included in payroll");
+    assert.equal(request.attachmentFileId, undefined);
+    assert.equal(request.handoverContactId, undefined);
+    assert.ok(request.status === "Approved" || request.status === "Taken");
+  }
+});
+
 test("only the assigned supervisor and HR can complete their approval stages", async () => {
   const { service, audit, storage } = harness();
   const annualPolicy = service.getPolicies().find((policy) => policy.type === "Annual");
@@ -179,9 +264,12 @@ test("only the assigned supervisor and HR can complete their approval stages", a
     employee,
   );
 
-  assert.throws(() => service.approveRequest(request.id, hr), /assigned line manager/);
+  assert.throws(
+    () => service.approveRequest(request.id, hr),
+    /reason for completing the unavailable supervisor's review/,
+  );
   assert.equal(
-    service.getRequests().find((item) => item.id === request.id)?.status,
+    service.getRequests(hr).find((item) => item.id === request.id)?.status,
     "Pending Line Manager",
   );
 
@@ -192,7 +280,8 @@ test("only the assigned supervisor and HR can complete their approval stages", a
   );
   assert.ok(
     hrHandoffNotifications.some(
-      (item) => item.recipientUserId === "user-rana" && item.title === "Leave request awaiting HR approval",
+      (item) =>
+        item.recipientUserId === "user-rana" && item.title === "Leave request awaiting HR approval",
     ),
     "HR must be notified once the manager advances a request to the HR stage",
   );
@@ -219,13 +308,13 @@ test("HR annual-entitlement changes update every eligible employee's current bal
   assert.ok(annualPolicy);
 
   const employeeId = "employee-omar";
-  const before = service.calculateBalance(employeeId, annualPolicy.id);
+  const before = service.calculateBalance(employeeId, annualPolicy.id, hr);
   service.updatePolicy(
     annualPolicy.id,
     { baseEntitlementDays: annualPolicy.baseEntitlementDays + 5 },
     hr,
   );
-  const after = service.calculateBalance(employeeId, annualPolicy.id);
+  const after = service.calculateBalance(employeeId, annualPolicy.id, hr);
 
   assert.equal(after.available, before.available + 5);
   assert.equal(
@@ -234,7 +323,7 @@ test("HR annual-entitlement changes update every eligible employee's current bal
   );
   assert.ok(
     service
-      .getTransactionsForEmployee(employeeId, annualPolicy.id)
+      .getTransactionsForEmployee(employeeId, annualPolicy.id, hr)
       .some(
         (transaction) =>
           transaction.transactionType === "Manual Adjustment" && transaction.days === 5,
@@ -302,17 +391,22 @@ test("legacy 25-day demo data is reconciled to VIA's 30-day annual policy once",
 
   const migrated = new LeaveService();
   const migratedPolicy = migrated.getPolicies().find((policy) => policy.id === annualPolicy.id);
-  const balance = migrated.calculateBalance("employee-omar", annualPolicy.id);
+  const balance = migrated.calculateBalance("employee-omar", annualPolicy.id, employee);
   assert.equal(migratedPolicy?.baseEntitlementDays, 30);
   assert.equal(migratedPolicy?.noticeRules?.shortLeaveNoticeDays, 14);
   assert.equal(migratedPolicy?.noticeRules?.longLeaveNoticeDays, 60);
   assert.equal(balance.entitlement + balance.adjustments, 30);
 
-  const afterFirstMigration = migrated.getTransactionsForEmployee("employee-omar", annualPolicy.id);
+  const afterFirstMigration = migrated.getTransactionsForEmployee(
+    "employee-omar",
+    annualPolicy.id,
+    employee,
+  );
   new LeaveService();
   const afterSecondMigration = migrated.getTransactionsForEmployee(
     "employee-omar",
     annualPolicy.id,
+    employee,
   );
   assert.equal(afterSecondMigration.length, afterFirstMigration.length);
 });
@@ -348,7 +442,7 @@ test("older saved policies without visibility fields remain available after migr
   );
 
   const migrated = new LeaveService();
-  const visible = migrated.getEligiblePolicies("employee-aisha");
+  const visible = migrated.getEligiblePolicies("employee-aisha", hr);
   assert.ok(visible.length > 0);
   assert.equal(visible.find((policy) => policy.id === annualPolicy.id)?.isEnabled, true);
   assert.equal(
@@ -381,17 +475,18 @@ test("an employee added after the leave ledger exists receives current entitleme
   const annualPolicy = reconciled.getPolicies().find((policy) => policy.type === "Annual");
   assert.ok(annualPolicy);
   assert.equal(
-    reconciled.calculateBalance(laterEmployee.id, annualPolicy.id).entitlement,
+    reconciled.calculateBalance(laterEmployee.id, annualPolicy.id, hr).entitlement,
     annualPolicy.baseEntitlementDays,
   );
 
   const transactionCount = reconciled.getTransactionsForEmployee(
     laterEmployee.id,
     annualPolicy.id,
+    hr,
   ).length;
   new LeaveService();
   assert.equal(
-    reconciled.getTransactionsForEmployee(laterEmployee.id, annualPolicy.id).length,
+    reconciled.getTransactionsForEmployee(laterEmployee.id, annualPolicy.id, hr).length,
     transactionCount,
   );
 });
@@ -401,8 +496,8 @@ test("HR can set a corrected available balance without rewriting leave history",
   const annualPolicy = service.getPolicies().find((policy) => policy.type === "Annual");
   assert.ok(annualPolicy);
   const employeeId = "employee-aisha";
-  const before = service.calculateBalance(employeeId, annualPolicy.id);
-  const transactionsBefore = service.getTransactionsForEmployee(employeeId, annualPolicy.id);
+  const before = service.calculateBalance(employeeId, annualPolicy.id, hr);
+  const transactionsBefore = service.getTransactionsForEmployee(employeeId, annualPolicy.id, hr);
 
   service.setEmployeeAvailableBalance(
     employeeId,
@@ -412,8 +507,8 @@ test("HR can set a corrected available balance without rewriting leave history",
     hr,
   );
 
-  const after = service.calculateBalance(employeeId, annualPolicy.id);
-  const transactionsAfter = service.getTransactionsForEmployee(employeeId, annualPolicy.id);
+  const after = service.calculateBalance(employeeId, annualPolicy.id, hr);
+  const transactionsAfter = service.getTransactionsForEmployee(employeeId, annualPolicy.id, hr);
   assert.equal(after.available, before.available + 2.5);
   assert.equal(transactionsAfter.length, transactionsBefore.length + 1);
   assert.equal(transactionsAfter.at(-1)?.transactionType, "Manual Adjustment");
@@ -424,7 +519,7 @@ test("employees cannot edit leave balances and the denial is audited", () => {
   const { service, audit } = harness();
   const annualPolicy = service.getPolicies().find((policy) => policy.type === "Annual");
   assert.ok(annualPolicy);
-  const current = service.calculateBalance("employee-omar", annualPolicy.id);
+  const current = service.calculateBalance("employee-omar", annualPolicy.id, employee);
 
   assert.throws(
     () =>
@@ -527,10 +622,7 @@ test("leave attachment access is restricted to the owner, their line manager, an
       roles: ["Employee"],
     },
   };
-  await assert.rejects(
-    () => service.getAttachmentBlob(request.id, unrelated),
-    /not authorised/,
-  );
+  await assert.rejects(() => service.getAttachmentBlob(request.id, unrelated), /not authorised/);
   assert.equal(audit.list().at(-1)?.action, "access-denied");
 
   const accessEvents = audit.list().filter((event) => event.action === "leave_attachment_accessed");
@@ -547,7 +639,7 @@ test("autoRunAnnualRollover grants the current year's entitlement without needin
   // exactly like the other background reconciliation jobs it runs alongside.
   service.autoRunAnnualRollover();
 
-  const after = service.getTransactionsForEmployee("employee-omar", annualPolicy.id);
+  const after = service.getTransactionsForEmployee("employee-omar", annualPolicy.id, employee);
   const granted = after.filter(
     (t) => t.transactionType === "Entitlement" && new Date(t.date).getFullYear() === currentYear,
   );
@@ -555,13 +647,93 @@ test("autoRunAnnualRollover grants the current year's entitlement without needin
 
   // Calling it again (e.g. the next 60-second reconciliation tick) must not double-grant.
   service.autoRunAnnualRollover();
-  const afterSecondRun = service.getTransactionsForEmployee("employee-omar", annualPolicy.id);
+  const afterSecondRun = service.getTransactionsForEmployee(
+    "employee-omar",
+    annualPolicy.id,
+    employee,
+  );
   assert.equal(
     afterSecondRun.filter(
       (t) => t.transactionType === "Entitlement" && new Date(t.date).getFullYear() === currentYear,
     ).length,
     1,
     "a second automatic run must not create a duplicate grant",
+  );
+});
+
+test("negative leave is limited by the policy cap", async () => {
+  const { service } = harness();
+  const annualPolicy = service.getPolicies().find((policy) => policy.type === "Annual");
+  assert.ok(annualPolicy);
+  service.setEmployeeAvailableBalance(
+    "employee-omar",
+    annualPolicy.id,
+    0,
+    "Set a zero starting balance for the cap check",
+    hr,
+  );
+
+  await assert.rejects(
+    () =>
+      service.submitLeaveRequest(
+        {
+          employeeId: "employee-omar",
+          policyId: annualPolicy.id,
+          startDate: "2027-03-01",
+          endDate: "2027-03-08",
+          reason: "Family travel",
+          handoverContactId: "employee-tariq",
+        },
+        employee,
+      ),
+    /lowest permitted balance is -5 days/,
+  );
+});
+
+test("HR can set an employee-specific statutory leave allowance", () => {
+  const { service } = harness();
+  const iddahPolicy = service.getPolicies().find((policy) => policy.type === "Iddah");
+  assert.ok(iddahPolicy);
+
+  const override = service.setEmployeeAvailableBalance(
+    "employee-mariam",
+    iddahPolicy.id,
+    14,
+    "Non-Muslim statutory allowance",
+    hr,
+  );
+  assert.equal("days" in override ? override.days : undefined, 14);
+  assert.equal(service.getEmployeeEntitlementLimit("employee-mariam", iddahPolicy.id, hr), 14);
+});
+
+test("HR can recover a manager-stage leave request only with a recorded explanation", async () => {
+  const { service, audit } = harness();
+  const annualPolicy = service.getPolicies().find((policy) => policy.type === "Annual");
+  assert.ok(annualPolicy);
+  const request = await service.submitLeaveRequest(
+    {
+      employeeId: "employee-omar",
+      policyId: annualPolicy.id,
+      startDate: "2027-04-04",
+      endDate: "2027-04-04",
+      reason: "Family appointment",
+      handoverContactId: "employee-tariq",
+    },
+    employee,
+  );
+
+  const recovered = service.approveRequest(request.id, {
+    ...hr,
+    reason: "Assigned supervisor is unavailable",
+  });
+  assert.equal(recovered.status, "Pending HR");
+  assert.ok(
+    audit
+      .list()
+      .some(
+        (event) =>
+          event.entityId === request.id && event.reason?.includes("supervisor is unavailable"),
+      ),
   );
 });
 

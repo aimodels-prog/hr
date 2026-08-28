@@ -25,6 +25,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { EmployeeService } from "@/lib/data/employee-service";
@@ -57,9 +64,15 @@ function OffboardingCaseRoute() {
   const [offboardingService] = useState(() => new OffboardingService());
   const [employeeService] = useState(() => new EmployeeService());
   const [taskActions] = useState(() => new LifecycleTaskService());
+  // getCaseForViewer confirms case access AND strips confidentialNotes before the case ever
+  // reaches component state - a render path that hides confidential fields behind a permission
+  // check still leaves them sitting in state/devtools if the unredacted object was fetched
+  // first. caseExists is tracked separately (existence only, never stored as a full case) so
+  // "not found" and "access denied" can still show distinct messages below.
   const [offboardingCase, setOffboardingCase] = useState(() =>
-    offboardingService.getCaseById(caseId),
+    offboardingService.getCaseForViewer(caseId, currentUser.getActorContext()),
   );
+  const caseExists = offboardingCase !== undefined;
   const [selectedTask, setSelectedTask] = useState<OffboardingTask | null>(null);
   const [waiverReason, setWaiverReason] = useState("");
   const [evidenceFiles, setEvidenceFiles] = useState<Record<string, File>>({});
@@ -68,23 +81,18 @@ function OffboardingCaseRoute() {
   const [cancelReason, setCancelReason] = useState("");
 
   const actorContext = currentUser.getActorContext();
-  const hasAccess = offboardingCase
-    ? offboardingService.canAccessCase(offboardingCase, actorContext)
-    : true;
+  const hasAccess = caseExists && offboardingCase !== undefined;
 
-  useEffect(() => {
-    if (!offboardingCase || hasAccess) return;
-    try {
-      offboardingService.requireCaseAccess(offboardingCase, actorContext);
-    } catch {
-      // The service records the denied attempt. The page shows the safe state below.
-    }
-  }, [actorContext, hasAccess, offboardingCase, offboardingService]);
+  // Every mutating service call returns the full, unredacted case - route every update through
+  // this so a viewer who cannot see confidentialNotes never has it land in state afterward.
+  const applyCaseUpdate = (updated: NonNullable<typeof offboardingCase>) => {
+    setOffboardingCase(offboardingService.redactCaseForViewer(updated, actorContext));
+  };
 
   const employee = offboardingCase
     ? employeeService
-        .getEmployeeRepository()
-        .getById(offboardingCase.employeeId, { includeArchived: true })
+        .getDirectoryEmployees(actorContext, { includeArchived: true })
+        .find((item) => item.id === offboardingCase.employeeId)
     : null;
   const visibleTasks = useMemo(
     () =>
@@ -94,7 +102,7 @@ function OffboardingCaseRoute() {
     [actorContext, hasAccess, offboardingCase, offboardingService],
   );
 
-  if (!offboardingCase) {
+  if (!caseExists) {
     return (
       <SafeMessage
         title="Offboarding case not found"
@@ -102,7 +110,7 @@ function OffboardingCaseRoute() {
       />
     );
   }
-  if (!hasAccess) {
+  if (!hasAccess || !offboardingCase) {
     return (
       <SafeMessage
         title="You cannot open this case"
@@ -156,7 +164,7 @@ function OffboardingCaseRoute() {
         currentUser.getActorContext(),
         evidenceFiles[task.id],
       );
-      setOffboardingCase(updated);
+      applyCaseUpdate(updated);
       setEvidenceFiles((current) => {
         const next = { ...current };
         delete next[task.id];
@@ -170,17 +178,17 @@ function OffboardingCaseRoute() {
     }
   };
 
-  const handleWaive = () => {
+  const handleWaive = async () => {
     if (!selectedTask) return;
     try {
-      const updated = taskActions.waive(
+      const updated = await taskActions.waive(
         "offboarding",
         offboardingCase.id,
         selectedTask.id,
         waiverReason,
         currentUser.getActorContext(),
       );
-      setOffboardingCase(updated);
+      applyCaseUpdate(updated);
       setSelectedTask(null);
       setWaiverReason("");
       toast.success("Task waived");
@@ -189,9 +197,26 @@ function OffboardingCaseRoute() {
     }
   };
 
-  const updateCase = (action: () => typeof offboardingCase, message: string) => {
+  const activeUsers = employeeService.getUsers(actorContext).filter((u) => u.status === "Active");
+
+  const handleAssign = (task: OffboardingTask, userId: string) => {
     try {
-      setOffboardingCase(action());
+      const updated = offboardingService.assignTaskOwner(
+        offboardingCase.id,
+        task.id,
+        userId === "role" ? undefined : userId,
+        currentUser.getActorContext(),
+      );
+      applyCaseUpdate(updated);
+      toast.success(userId === "role" ? "Task reassignment cleared" : "Task reassigned");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Task could not be reassigned");
+    }
+  };
+
+  const updateCase = (action: () => NonNullable<typeof offboardingCase>, message: string) => {
+    try {
+      applyCaseUpdate(action());
       toast.success(message);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "The case could not be updated");
@@ -204,7 +229,7 @@ function OffboardingCaseRoute() {
         ...currentUser.getActorContext(),
         reason: cancelReason,
       });
-      setOffboardingCase(updated);
+      applyCaseUpdate(updated);
       setCancelOpen(false);
       setCancelReason("");
       toast.success("Offboarding cancelled and the employee is Active again");
@@ -240,6 +265,11 @@ function OffboardingCaseRoute() {
               </div>
               <span className="text-sm font-semibold">{offboardingCase.progressPercentage}%</span>
               <Badge variant="outline">{offboardingCase.status}</Badge>
+              {canSeeConfidential && offboardingCase.confidentialityLevel === "Restricted" && (
+                <Badge variant="destructive" className="gap-1">
+                  <Lock className="h-3 w-3" /> Restricted
+                </Badge>
+              )}
               {canLegal &&
                 offboardingCase.status !== "Completed" &&
                 offboardingCase.status !== "Cancelled" && (
@@ -405,7 +435,11 @@ function OffboardingCaseRoute() {
                               <Clock3 className="mr-1 inline h-3 w-3" /> Due{" "}
                               {format(parseISO(task.dueDate), "d MMM yyyy")}
                             </span>
-                            <span>Owner: {task.ownerRole}</span>
+                            <span>
+                              Owner: {task.ownerRole}
+                              {task.assignedUserId &&
+                                ` (${activeUsers.find((u) => u.id === task.assignedUserId)?.displayName ?? "Unknown"})`}
+                            </span>
                             <span>{task.status}</span>
                           </div>
                           {task.status === "Blocked" && (
@@ -419,6 +453,33 @@ function OffboardingCaseRoute() {
                             </p>
                           )}
                         </div>
+                        {canWaive && !done && (
+                          <div className="w-full md:w-56">
+                            <label className="text-xs font-medium">
+                              Named owner
+                              <Select
+                                value={task.assignedUserId ?? "role"}
+                                onValueChange={(value) => handleAssign(task, value)}
+                              >
+                                <SelectTrigger className="mt-1">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="role">
+                                    Anyone with this responsibility
+                                  </SelectItem>
+                                  {activeUsers
+                                    .filter((u) => u.roles.includes(task.ownerRole))
+                                    .map((u) => (
+                                      <SelectItem key={u.id} value={u.id}>
+                                        {u.displayName}
+                                      </SelectItem>
+                                    ))}
+                                </SelectContent>
+                              </Select>
+                            </label>
+                          </div>
+                        )}
                         {task.status === "Pending" && canComplete(task) && (
                           <div className="flex w-full flex-col gap-2 md:w-72">
                             {task.requiresEvidence && (

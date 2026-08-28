@@ -53,6 +53,8 @@ function TimesheetEntryRoute() {
   const tsService = useMemo(() => new TimesheetService(), []);
 
   const [timesheet, setTimesheet] = useState<TimesheetWithEntries | null>(null);
+  const [isCertifyOpen, setIsCertifyOpen] = useState(false);
+  const [isCopyConfirmOpen, setIsCopyConfirmOpen] = useState(false);
 
   const projects = getProjectRepository().list();
   const costCentres = getMasterDataRepository("costCentres").list();
@@ -148,8 +150,6 @@ function TimesheetEntryRoute() {
     }
   };
 
-  const [isCertifyOpen, setIsCertifyOpen] = useState(false);
-
   const handleSubmit = () => {
     setIsCertifyOpen(true);
   };
@@ -168,7 +168,7 @@ function TimesheetEntryRoute() {
     }
   };
 
-  const handleCopyPrev = () => {
+  const performCopyPrev = () => {
     try {
       const copied = tsService.copyPreviousWeek(
         currentUser.employeeId!,
@@ -180,6 +180,15 @@ function TimesheetEntryRoute() {
     } catch (error: unknown) {
       toast.error(error instanceof Error ? error.message : "Previous week could not be copied.");
     }
+  };
+
+  const handleCopyPrev = () => {
+    const hasEnteredRows = timesheet.entries.some((entry) => !entry.isLeave && !entry.isHoliday);
+    if (hasEnteredRows) {
+      setIsCopyConfirmOpen(true);
+      return;
+    }
+    performCopyPrev();
   };
 
   // Calculations
@@ -591,13 +600,35 @@ function TimesheetEntryRoute() {
           <AlertDialogHeader>
             <AlertDialogTitle>Certify and submit</AlertDialogTitle>
             <AlertDialogDescription>
-              I certify that these hours are a mathematically correct and true representation of
-              the time worked.
+              I certify that these hours are a mathematically correct and true representation of the
+              time worked.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={confirmSubmit}>Certify and Submit</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={isCopyConfirmOpen} onOpenChange={setIsCopyConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Add rows from the previous week?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your current rows and entered hours will be kept. VIA will add only project rows that
+              are not already on this timesheet.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setIsCopyConfirmOpen(false);
+                performCopyPrev();
+              }}
+            >
+              Add Previous Rows
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

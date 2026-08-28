@@ -149,24 +149,23 @@ test("line managers receive only direct-report lifecycle work and blockers remai
   assert.ok(!tasks.some((task) => task.id.endsWith("hr-task")));
 });
 
-test("onboarding completion is enforced by owner role and denials are audited", () => {
+test("onboarding completion is enforced by owner role and denials are audited", async () => {
   const { storage, audit } = setup();
   storage.writeCollection("onboardingCases", [onboardingCase()]);
   const service = new OnboardingService();
 
-  assert.throws(
-    () =>
-      service.updateTaskStatus(
-        "onboarding-task-test",
-        "hr-task",
-        "Completed",
-        actor("user-omar", "employee-omar", "Employee"),
-      ),
+  await assert.rejects(
+    service.updateTaskStatus(
+      "onboarding-task-test",
+      "hr-task",
+      "Completed",
+      actor("user-omar", "employee-omar", "Employee"),
+    ),
     /assigned to another person or role/i,
   );
   assert.equal(audit.list().at(-1)?.action, "access-denied");
 
-  const updated = service.updateTaskStatus(
+  const updated = await service.updateTaskStatus(
     "onboarding-task-test",
     "hr-task",
     "Completed",
@@ -174,16 +173,15 @@ test("onboarding completion is enforced by owner role and denials are audited", 
   );
   assert.equal(updated.tasks.find((task) => task.id === "hr-task")?.status, "Completed");
 
-  assert.throws(
-    () =>
-      service.updateTaskStatus(
-        "onboarding-task-test",
-        "it-task",
-        "Waived",
-        actor("user-it", "employee-omar", "IT"),
-        undefined,
-        "Not needed",
-      ),
+  await assert.rejects(
+    service.updateTaskStatus(
+      "onboarding-task-test",
+      "it-task",
+      "Waived",
+      actor("user-it", "employee-omar", "IT"),
+      undefined,
+      "Not needed",
+    ),
     /Only HR or a Super Admin/i,
   );
 });

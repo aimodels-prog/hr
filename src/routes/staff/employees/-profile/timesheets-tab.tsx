@@ -32,9 +32,9 @@ export function TimesheetsTab({ employeeId }: { employeeId: string }) {
   const timesheets = useMemo(
     () =>
       timesheetService
-        .getTimesheetsForEmployee(employeeId)
+        .getTimesheetsForEmployee(employeeId, currentUser.getActorContext())
         .sort((a, b) => b.periodId.localeCompare(a.periodId)),
-    [timesheetService, employeeId],
+    [currentUser, timesheetService, employeeId],
   );
   const periods = useMemo(() => timesheetService.getPeriods(), [timesheetService]);
 

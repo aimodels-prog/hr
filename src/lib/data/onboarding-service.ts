@@ -1,3 +1,4 @@
+import { SYSTEM_CONTEXT } from "./types.ts";
 import { LocalRepository } from "./repository.ts";
 import type {
   OnboardingCase,
@@ -98,7 +99,7 @@ export class OnboardingService {
     context: ActorContext,
   ): void {
     const role = this.activeRole(context);
-    const employee = this.empService.getEmployeeRepository().getById(c.employeeId);
+    const employee = this.empService.getEmployeeRepository(SYSTEM_CONTEXT).getById(c.employeeId);
     const explicitlyAssigned =
       task.assignedUserId === context.actor.userId ||
       task.assignedUserId === context.actor.employeeId;
@@ -108,7 +109,9 @@ export class OnboardingService {
       (task.ownerRole === "Line Manager" &&
         role === "Line Manager" &&
         employee?.lineManagerId === context.actor.employeeId) ||
-      task.ownerRole === role;
+      (task.ownerRole === role &&
+        task.ownerRole !== "Employee" &&
+        task.ownerRole !== "Line Manager");
 
     if (status === "Waived") {
       if (role !== "HR" && role !== "Super Admin") {
@@ -139,7 +142,7 @@ export class OnboardingService {
     if (!task.selfServiceFormKey && !task.requiresBankDetails && !task.verificationDocumentType) {
       return;
     }
-    const employee = this.empService.getEmployeeRepository().getById(c.employeeId);
+    const employee = this.empService.getEmployeeRepository(SYSTEM_CONTEXT).getById(c.employeeId);
     if (!employee) throw new Error("Employee not found");
     if (task.selfServiceFormKey === "personal_details") {
       if (
@@ -529,7 +532,8 @@ export class OnboardingService {
     }
   }
 
-  getTemplates() {
+  getTemplates(context: ActorContext) {
+    this.requireCaseManager(context, "view onboarding templates");
     return this.templatesRepo.list().map((template) => ({
       ...template,
       countries: template.countries ?? [],
@@ -547,7 +551,7 @@ export class OnboardingService {
     }
     if (template.tasks.length === 0) throw new Error("Add at least one onboarding task.");
     const taskIds = new Set<string>();
-    const users = this.empService.getUserRepository().list();
+    const users = this.empService.getUserRepository(SYSTEM_CONTEXT).list();
     for (const task of template.tasks) {
       if (!task.id || taskIds.has(task.id)) throw new Error("Every task must have a unique ID.");
       taskIds.add(task.id);
@@ -638,27 +642,51 @@ export class OnboardingService {
     this.requireCaseManager(context, "archive onboarding template");
     const template = this.templatesRepo.getById(id);
     if (!template) throw new Error("Onboarding template not found.");
-    if (template.isActive && this.getTemplates().filter((item) => item.isActive).length <= 1) {
+    if (
+      template.isActive &&
+      this.templatesRepo.list().filter((item) => item.isActive).length <= 1
+    ) {
       throw new Error("Keep at least one active onboarding template.");
     }
     return this.templatesRepo.archive(id, context);
   }
 
-  getCases() {
+  private getCasesInternal() {
     return this.casesRepo.list();
   }
 
   getCasesForContext(context: ActorContext): OnboardingCase[] {
     const role = this.activeRole(context);
-    if (role === "HR" || role === "Super Admin") return this.getCases();
-    return this.getCases().filter((onboardingCase) => this.canAccessCase(onboardingCase, context));
+    if (role === "HR" || role === "Super Admin") return this.getCasesInternal();
+    return this.getCasesInternal().filter((onboardingCase) =>
+      this.canAccessCase(onboardingCase, context),
+    );
   }
 
-  getCaseById(id: string) {
-    return this.casesRepo.getById(id);
+  getCaseById(id: string, context: ActorContext) {
+    const onboardingCase = this.casesRepo.getById(id);
+    if (!onboardingCase) return undefined;
+    this.requireCaseAccess(onboardingCase, context);
+    return onboardingCase;
   }
 
-  getCaseByEmployeeId(employeeId: string) {
+  getCaseForViewer(id: string, context: ActorContext): OnboardingCase | undefined {
+    const onboardingCase = this.casesRepo.getById(id);
+    if (!onboardingCase) return undefined;
+    if (this.canAccessCase(onboardingCase, context)) return onboardingCase;
+    getApplicationDataServices().audit.record({
+      context,
+      action: "access-denied",
+      module: "onboarding",
+      entityType: "onboarding_case",
+      entityId: id,
+      reason: "Attempted to view an onboarding case outside the viewer's assignment.",
+      riskLevel: "High",
+    });
+    return undefined;
+  }
+
+  private getCaseByEmployeeIdInternal(employeeId: string) {
     return this.casesRepo
       .list()
       .filter((onboardingCase) => onboardingCase.employeeId === employeeId)
@@ -669,10 +697,17 @@ export class OnboardingService {
       })[0];
   }
 
+  getCaseByEmployeeId(employeeId: string, context: ActorContext) {
+    const onboardingCase = this.getCaseByEmployeeIdInternal(employeeId);
+    if (!onboardingCase) return undefined;
+    this.requireCaseAccess(onboardingCase, context);
+    return onboardingCase;
+  }
+
   canAccessCase(c: OnboardingCase, context: ActorContext): boolean {
     const role = this.activeRole(context);
     if (role === "HR" || role === "Super Admin") return true;
-    const employee = this.empService.getEmployeeRepository().getById(c.employeeId);
+    const employee = this.empService.getEmployeeRepository(SYSTEM_CONTEXT).getById(c.employeeId);
     return c.tasks.some(
       (task) =>
         task.assignedUserId === context.actor.userId ||
@@ -681,7 +716,14 @@ export class OnboardingService {
         (task.ownerRole === "Line Manager" &&
           role === "Line Manager" &&
           employee?.lineManagerId === context.actor.employeeId) ||
-        task.ownerRole === role,
+        // Employee/Line Manager are relationship-scoped by the two branches above and must
+        // never fall through here, or any employee/manager could reach someone else's
+        // unrelated case purely by sharing its task's owner role. IT/Accounts/HR are genuine
+        // shared-service functions - anyone holding that role legitimately handles any
+        // employee's task of that type, so the bare role match is correct only for those.
+        (task.ownerRole === role &&
+          task.ownerRole !== "Employee" &&
+          task.ownerRole !== "Line Manager"),
     );
   }
 
@@ -699,7 +741,7 @@ export class OnboardingService {
   getTasksForContext(c: OnboardingCase, context: ActorContext): OnboardingTask[] {
     const role = this.activeRole(context);
     if (role === "HR" || role === "Super Admin") return c.tasks;
-    const employee = this.empService.getEmployeeRepository().getById(c.employeeId);
+    const employee = this.empService.getEmployeeRepository(SYSTEM_CONTEXT).getById(c.employeeId);
     return c.tasks.filter(
       (task) =>
         task.assignedUserId === context.actor.userId ||
@@ -708,7 +750,9 @@ export class OnboardingService {
         (task.ownerRole === "Line Manager" &&
           role === "Line Manager" &&
           employee?.lineManagerId === context.actor.employeeId) ||
-        task.ownerRole === role,
+        (task.ownerRole === role &&
+          task.ownerRole !== "Employee" &&
+          task.ownerRole !== "Line Manager"),
     );
   }
 
@@ -722,7 +766,7 @@ export class OnboardingService {
         context,
       );
     }
-    const c = this.getCaseByEmployeeId(employeeId);
+    const c = this.getCaseByEmployeeIdInternal(employeeId);
     if (!c) return [];
     return c.tasks.filter((t) => t.ownerRole === "Employee" && t.isMandatory);
   }
@@ -737,7 +781,7 @@ export class OnboardingService {
         context,
       );
     }
-    const c = this.getCaseByEmployeeId(employeeId);
+    const c = this.getCaseByEmployeeIdInternal(employeeId);
     if (!c || c.status !== "In Progress") return false;
     return c.tasks.some(
       (t) =>
@@ -833,7 +877,7 @@ export class OnboardingService {
     options: { templateId?: string; assignedHRId?: string } = {},
   ) {
     this.requireCaseManager(context, "create onboarding case");
-    const employee = this.empService.getEmployeeRepository().getById(employeeId);
+    const employee = this.empService.getEmployeeRepository(SYSTEM_CONTEXT).getById(employeeId);
     if (!employee) throw new Error("Employee not found");
     if (employee.status !== "Onboarding") {
       throw new Error("Onboarding can be started only for an employee with Onboarding status.");
@@ -853,7 +897,7 @@ export class OnboardingService {
     // Calculate dates
     const startDate = new Date(employee.startDate);
     if (Number.isNaN(startDate.getTime())) throw new Error("Employee start date is invalid.");
-    const users = this.empService.getUserRepository().list();
+    const users = this.empService.getUserRepository(SYSTEM_CONTEXT).list();
     const assignedHRId =
       options.assignedHRId ||
       (this.activeRole(context) === "HR"
@@ -987,10 +1031,24 @@ export class OnboardingService {
       recordVersion: 1,
     };
 
-    const saved = this.casesRepo.create(obCase, context);
-    const updated = this.recalculateCaseProgress(saved.id, context, { internal: true });
-    this.notifyCaseStarted(updated, employee, users, context);
-    return updated;
+    // Creating the case, recalculating its initial progress (which can itself cascade into an
+    // employee-status change via activateEmployeeIfReady if every mandatory task turns out
+    // already satisfied), and notifying task owners are several separate writes - if a later
+    // one fails, we must not leave a case behind that was never actually announced or whose
+    // cascading employee-status update never landed.
+    const { storage } = getApplicationDataServices();
+    const snapshot = storage.exportState();
+    try {
+      const saved = this.casesRepo.create(obCase, context);
+      const updated = this.recalculateCaseProgress(saved.id, context, { internal: true });
+      this.notifyCaseStarted(updated, employee, users, context);
+      return updated;
+    } catch (err) {
+      storage.replaceState(snapshot);
+      throw new Error(
+        `Failed to start onboarding: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   rescheduleCase(caseId: string, context: ActorContext): OnboardingCase {
@@ -1000,7 +1058,9 @@ export class OnboardingService {
     if (onboardingCase.status !== "In Progress") {
       throw new Error("Only an active onboarding case can be rescheduled.");
     }
-    const employee = this.empService.getEmployeeRepository().getById(onboardingCase.employeeId);
+    const employee = this.empService
+      .getEmployeeRepository(SYSTEM_CONTEXT)
+      .getById(onboardingCase.employeeId);
     if (!employee) throw new Error("Employee not found.");
     const startDate = new Date(employee.startDate);
     if (Number.isNaN(startDate.getTime())) throw new Error("Employee start date is invalid.");
@@ -1040,44 +1100,60 @@ export class OnboardingService {
       throw new Error("Only an open onboarding case can be cancelled.");
     }
     const actionContext = { ...context, reason: trimmedReason };
-    const updated = this.casesRepo.update(caseId, { status: "Cancelled" }, actionContext);
-    const employee = this.empService
-      .getEmployeeRepository()
-      .getById(onboardingCase.employeeId, { includeArchived: true });
-    if (employee?.status === "Onboarding") {
-      this.empService
-        .getEmployeeRepository()
-        .update(employee.id, { status: "Inactive" }, actionContext);
-      this.empService.getHistoryRepository().create(
-        {
-          employeeId: employee.id,
-          effectiveDate: this.currentDate(),
-          field: "status",
-          oldValue: "Onboarding",
-          newValue: "Inactive",
-          reason: trimmedReason,
-        },
-        actionContext,
-      );
-      const user = this.empService
-        .getUserRepository()
-        .list({ includeArchived: true })
-        .find((item) => item.employeeId === employee.id);
-      if (user && user.status === "Active") {
-        this.empService.getUserRepository().update(user.id, { status: "Suspended" }, actionContext);
+
+    // Cancelling the case, reverting the employee out of Onboarding status, recording that
+    // change in employment history, and suspending their user account are four separate writes
+    // - if a later one fails, the case must not be left Cancelled while the employee record
+    // still shows Onboarding (or vice versa).
+    const { storage } = getApplicationDataServices();
+    const snapshot = storage.exportState();
+    try {
+      const updated = this.casesRepo.update(caseId, { status: "Cancelled" }, actionContext);
+      const employee = this.empService
+        .getEmployeeRepository(SYSTEM_CONTEXT)
+        .getById(onboardingCase.employeeId, { includeArchived: true });
+      if (employee?.status === "Onboarding") {
+        this.empService
+          .getEmployeeRepository(SYSTEM_CONTEXT)
+          .update(employee.id, { status: "Inactive" }, actionContext);
+        this.empService.addEmploymentHistory(
+          {
+            employeeId: employee.id,
+            effectiveDate: this.currentDate(),
+            field: "status",
+            oldValue: "Onboarding",
+            newValue: "Inactive",
+            reason: trimmedReason,
+          },
+          actionContext,
+        );
+        const user = this.empService
+          .getUserRepository(SYSTEM_CONTEXT)
+          .list({ includeArchived: true })
+          .find((item) => item.employeeId === employee.id);
+        if (user && user.status === "Active") {
+          this.empService
+            .getUserRepository(SYSTEM_CONTEXT)
+            .update(user.id, { status: "Suspended" }, actionContext);
+        }
       }
+      this.notifyMilestone(
+        updated,
+        "Onboarding cancelled",
+        `The onboarding process was cancelled: ${trimmedReason}`,
+        actionContext,
+        "cancelled",
+      );
+      return updated;
+    } catch (err) {
+      storage.replaceState(snapshot);
+      throw new Error(
+        `Failed to cancel onboarding: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
-    this.notifyMilestone(
-      updated,
-      "Onboarding cancelled",
-      `The onboarding process was cancelled: ${trimmedReason}`,
-      actionContext,
-      "cancelled",
-    );
-    return updated;
   }
 
-  updateTaskStatus(
+  async updateTaskStatus(
     caseId: string,
     taskId: string,
     status: OnboardingTaskStatus,
@@ -1106,6 +1182,23 @@ export class OnboardingService {
       throw new Error("This task requires evidence to be completed.");
     }
     if (status === "Completed") this.validateSelfServiceCompletion(c, task, evidenceFileId);
+    // The generic (non document-upload) evidence path must not just trust that a
+    // caller-supplied evidenceFileId is real and actually belongs to this case - re-verify it
+    // independently here, the same way OffboardingService.updateTaskStatus already does. A
+    // "document_upload" task's evidence is a real EmployeeDocument (owned by the employee, not
+    // this case) and is already verified above by validateSelfServiceCompletion, so it is
+    // exempt from this specific check.
+    if (status === "Completed" && evidenceFileId && task.selfServiceFormKey !== "document_upload") {
+      const { files } = getApplicationDataServices();
+      const metadata = await files.getMetadata(evidenceFileId);
+      if (
+        !metadata ||
+        metadata.owner.entityType !== "onboarding-case" ||
+        metadata.owner.entityId !== caseId
+      ) {
+        throw new Error("The uploaded evidence file could not be verified. Please re-upload it.");
+      }
+    }
 
     if (status === "Waived" && (!waiverReason || waiverReason.trim().length < 5)) {
       throw new Error("A reason must be provided to waive a task.");
@@ -1215,7 +1308,7 @@ export class OnboardingService {
     context: ActorContext,
     milestone: string,
   ): void {
-    const users = this.empService.getUserRepository().list();
+    const users = this.empService.getUserRepository(SYSTEM_CONTEXT).list();
     const recipientIds = new Set<string>();
     const employeeUser = users.find((user) => user.employeeId === onboardingCase.employeeId);
     if (employeeUser) recipientIds.add(employeeUser.id);
@@ -1247,7 +1340,9 @@ export class OnboardingService {
 
   private activateEmployeeIfReady(onboardingCase: OnboardingCase): void {
     if (!onboardingCase.isReadyForStartDate || onboardingCase.status === "Cancelled") return;
-    const employee = this.empService.getEmployeeRepository().getById(onboardingCase.employeeId);
+    const employee = this.empService
+      .getEmployeeRepository(SYSTEM_CONTEXT)
+      .getById(onboardingCase.employeeId);
     if (!employee || employee.status !== "Onboarding") return;
     const today = this.currentDate();
     if (employee.startDate > today) return;
@@ -1264,7 +1359,7 @@ export class OnboardingService {
       systemContext,
     );
     const employeeUser = this.empService
-      .getUserRepository()
+      .getUserRepository(SYSTEM_CONTEXT)
       .list()
       .find((user) => user.employeeId === employee.id);
     if (employeeUser) {
@@ -1291,9 +1386,13 @@ export class OnboardingService {
   reconcileStartDates(): number {
     let activated = 0;
     for (const onboardingCase of this.casesRepo.list()) {
-      const before = this.empService.getEmployeeRepository().getById(onboardingCase.employeeId);
+      const before = this.empService
+        .getEmployeeRepository(SYSTEM_CONTEXT)
+        .getById(onboardingCase.employeeId);
       this.activateEmployeeIfReady(onboardingCase);
-      const after = this.empService.getEmployeeRepository().getById(onboardingCase.employeeId);
+      const after = this.empService
+        .getEmployeeRepository(SYSTEM_CONTEXT)
+        .getById(onboardingCase.employeeId);
       if (before?.status === "Onboarding" && after?.status !== "Onboarding") activated += 1;
     }
     return activated;

@@ -59,17 +59,16 @@ function LeaveAdminRoute() {
     if (currentUser) {
       leaveService.reconcileLeaveStates(currentUser.getActorContext());
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, leaveService, refreshKey]);
 
-  const employees = empService.getEmployees();
+  const employees = empService.getEmployees(currentUser.getActorContext());
   const departments = getMasterDataRepository("departments").list() as MasterRecord[];
   const policies = leaveService.getPolicies();
 
   const allRequests = useMemo(
     () =>
       leaveService
-        .getAllRequests()
+        .getAllRequests(currentUser.getActorContext())
         .sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime()),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [leaveService, refreshKey],
@@ -236,6 +235,9 @@ function LeaveAdminRoute() {
                         <SelectItem value="Taken">Taken (Past)</SelectItem>
                         <SelectItem value="Automatically Refused">Automatically Refused</SelectItem>
                         <SelectItem value="Cancellation Pending">Cancellation Pending</SelectItem>
+                        <SelectItem value="Cancellation Approved">Cancellation Approved</SelectItem>
+                        <SelectItem value="Cancelled">Cancelled</SelectItem>
+                        <SelectItem value="Declined">Declined</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -297,9 +299,13 @@ function LeaveAdminRoute() {
                                     ? "secondary"
                                     : req.status.startsWith("Pending")
                                       ? "outline"
-                                      : req.status === "Automatically Refused"
+                                      : req.status === "Automatically Refused" ||
+                                          req.status === "Declined"
                                         ? "destructive"
-                                        : "secondary"
+                                        : req.status === "Cancelled" ||
+                                            req.status === "Cancellation Approved"
+                                          ? "outline"
+                                          : "secondary"
                               }
                             >
                               {req.status}
@@ -432,9 +438,9 @@ function LeaveAdminRoute() {
           <DialogHeader>
             <DialogTitle>Run Annual Rollover</DialogTitle>
             <DialogDescription>
-              This adds each employee's allowance for the selected year and carries over unused
-              days within the policy limit. Running it again for a year already rolled over will
-              not duplicate balances.
+              This adds each employee's allowance for the selected year and carries over unused days
+              within the policy limit. Running it again for a year already rolled over will not
+              duplicate balances.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">

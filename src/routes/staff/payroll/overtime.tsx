@@ -2,7 +2,14 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { OvertimeService } from "@/lib/data/overtime-service";
 import { EmployeeService } from "@/lib/data/employee-service";
@@ -18,7 +25,7 @@ function PayrollOvertimeRoute() {
   const empService = useMemo(() => new EmployeeService(), []);
 
   const claims = otService.getAllClaims(currentUser.getActorContext());
-  const allEmployees = empService.getEmployees();
+  const allEmployees = empService.getDirectoryEmployees(currentUser.getActorContext());
   const approved = claims.filter((c) => c.status === "Approved");
 
   return (
@@ -54,14 +61,20 @@ function PayrollOvertimeRoute() {
                       <TableCell>{c.date}</TableCell>
                       <TableCell className="font-bold text-emerald-600">{c.hours}h</TableCell>
                       <TableCell className="text-muted-foreground">{c.projectId || "-"}</TableCell>
-                      <TableCell className="max-w-[300px] truncate text-sm" title={c.reason}>{c.reason}</TableCell>
-                      <TableCell><Badge>Ready for Payroll</Badge></TableCell>
+                      <TableCell className="max-w-[300px] truncate text-sm" title={c.reason}>
+                        {c.reason}
+                      </TableCell>
+                      <TableCell>
+                        <Badge>Ready for Payroll</Badge>
+                      </TableCell>
                     </TableRow>
                   );
                 })}
                 {approved.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No approved claims ready for payroll.</TableCell>
+                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      No approved claims ready for payroll.
+                    </TableCell>
                   </TableRow>
                 )}
               </TableBody>

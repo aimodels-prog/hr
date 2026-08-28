@@ -1,11 +1,21 @@
 import { LocalRepository } from "./repository.ts";
 import { getApplicationDataServices } from "./application-data.ts";
-import type { TravelRequest, TravelRequestStatus, TravelApprovalState, ExpenseLine } from "./travel-types.ts";
-import type { ActorContext } from "./types.ts";
+import type {
+  TravelRequest,
+  TravelRequestStatus,
+  TravelApprovalState,
+  ExpenseLine,
+} from "./travel-types.ts";
+import { SYSTEM_CONTEXT, type ActorContext } from "./types.ts";
 import { getProjectRepository, getMasterDataRepository } from "./master-data.ts";
 import { NotificationService } from "./notification-service.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { parseISO, isAfter, isBefore } from "date-fns";
+
+export function calculateTravelVariancePercent(estimate: number, actual: number): number {
+  if (estimate > 0) return ((actual - estimate) / estimate) * 100;
+  return actual > 0 ? 100 : 0;
+}
 
 export class TravelService {
   private repo: LocalRepository<TravelRequest>;
@@ -14,7 +24,7 @@ export class TravelService {
     const { storage, audit } = getApplicationDataServices();
     this.repo = new LocalRepository<TravelRequest>("travelRequests", storage, audit, {
       module: "travel",
-      entityType: "request"
+      entityType: "request",
     });
   }
 
@@ -33,7 +43,12 @@ export class TravelService {
 
   // Self-service actions (submit, withdraw, submit expenses) are for the traveller's own
   // request, or HR/Super Admin acting on their behalf - never an arbitrary other employee.
-  private requireSelfOrHr(req: { employeeId: string }, context: ActorContext, action: string, entityId: string): void {
+  private requireSelfOrHr(
+    req: { employeeId: string },
+    context: ActorContext,
+    action: string,
+    entityId: string,
+  ): void {
     const isSelf = context.actor.employeeId === req.employeeId;
     const isHr = context.actor.activeRole === "HR" || context.actor.activeRole === "Super Admin";
     if (!isSelf && !isHr) {
@@ -70,17 +85,32 @@ export class TravelService {
   /** Requires HR/Accounts/Super Admin - reviewer dashboards, payroll reconciliation, reports. */
   getAllRequests(context: ActorContext): TravelRequest[] {
     if (!this.isReviewerRole(context)) {
-      this.deny("view all travel requests", "all-requests", "You are not authorised to view all travel requests.", context);
+      this.deny(
+        "view all travel requests",
+        "all-requests",
+        "You are not authorised to view all travel requests.",
+        context,
+      );
     }
     return this.repo.list();
   }
 
   getRequestsForEmployee(employeeId: string, context: ActorContext): TravelRequest[] {
     const isSelf = context.actor.employeeId === employeeId;
-    if (!isSelf && !this.isReviewerRole(context)) {
-      this.deny("view this employee's travel requests", employeeId, "You are not authorised to view this employee's travel requests.", context);
+    const isDirectManager =
+      context.actor.activeRole === "Line Manager" &&
+      Boolean(context.actor.employeeId) &&
+      new EmployeeService().getById(employeeId, SYSTEM_CONTEXT)?.lineManagerId ===
+        context.actor.employeeId;
+    if (!isSelf && !isDirectManager && !this.isReviewerRole(context)) {
+      this.deny(
+        "view this employee's travel requests",
+        employeeId,
+        "You are not authorised to view this employee's travel requests.",
+        context,
+      );
     }
-    return this.repo.list().filter(r => r.employeeId === employeeId);
+    return this.repo.list().filter((r) => r.employeeId === employeeId);
   }
 
   // context is mandatory - a request ID alone must never be enough to read someone else's trip.
@@ -89,18 +119,31 @@ export class TravelService {
     if (!req) return null;
     const isSelf = context.actor.employeeId === req.employeeId;
     if (!isSelf && !this.isReviewerRole(context)) {
-      this.deny("view this travel request", id, "You are not authorised to view this travel request.", context);
+      this.deny(
+        "view this travel request",
+        id,
+        "You are not authorised to view this travel request.",
+        context,
+      );
     }
     return req;
   }
 
-  async getEvidenceBlob(requestId: string, context: ActorContext): Promise<{ blob: Blob; fileName: string }> {
+  async getEvidenceBlob(
+    requestId: string,
+    context: ActorContext,
+  ): Promise<{ blob: Blob; fileName: string }> {
     const req = this.repo.getById(requestId);
     if (!req) throw new Error("Request not found");
     if (!req.evidenceFileId) throw new Error("This request has no supporting evidence.");
     const isSelf = context.actor.employeeId === req.employeeId;
     if (!isSelf && !this.isReviewerRole(context)) {
-      this.deny("view this request's evidence", requestId, "You are not authorised to view this request's evidence.", context);
+      this.deny(
+        "view this request's evidence",
+        requestId,
+        "You are not authorised to view this request's evidence.",
+        context,
+      );
     }
     const { files } = getApplicationDataServices();
     const [metadata, blob] = await Promise.all([
@@ -120,14 +163,23 @@ export class TravelService {
     return { blob, fileName: metadata.name ?? "evidence" };
   }
 
-  async getReceiptBlob(requestId: string, lineId: string, context: ActorContext): Promise<{ blob: Blob; fileName: string }> {
+  async getReceiptBlob(
+    requestId: string,
+    lineId: string,
+    context: ActorContext,
+  ): Promise<{ blob: Blob; fileName: string }> {
     const req = this.repo.getById(requestId);
     if (!req) throw new Error("Request not found");
-    const line = req.expenses?.find(e => e.id === lineId);
+    const line = req.expenses?.find((e) => e.id === lineId);
     if (!line?.receiptFileId) throw new Error("This expense line has no receipt on file.");
     const isSelf = context.actor.employeeId === req.employeeId;
     if (!isSelf && !this.isReviewerRole(context)) {
-      this.deny("view this expense receipt", requestId, "You are not authorised to view this expense receipt.", context);
+      this.deny(
+        "view this expense receipt",
+        requestId,
+        "You are not authorised to view this expense receipt.",
+        context,
+      );
     }
     const { files } = getApplicationDataServices();
     const [metadata, blob] = await Promise.all([
@@ -151,14 +203,23 @@ export class TravelService {
     if (!data.employeeId) {
       throw new Error("Missing required travel information.");
     }
-    this.requireSelfOrHr({ employeeId: data.employeeId }, context, "submit a travel request", "new");
+    this.requireSelfOrHr(
+      { employeeId: data.employeeId },
+      context,
+      "submit a travel request",
+      "new",
+    );
     if (!data.startDate || !data.endDate || !data.purpose || !data.destination || !data.currency) {
       throw new Error("Missing required travel information.");
     }
     if (data.evidenceFileId) {
       const { files } = getApplicationDataServices();
       const meta = await files.getMetadata(data.evidenceFileId);
-      if (!meta || meta.owner.entityType !== "travel-request" || meta.owner.entityId !== data.employeeId) {
+      if (
+        !meta ||
+        meta.owner.entityType !== "travel-request" ||
+        meta.owner.entityId !== data.employeeId
+      ) {
         throw new Error("The uploaded evidence file could not be verified. Please re-upload it.");
       }
     }
@@ -171,14 +232,14 @@ export class TravelService {
     }
 
     // Overlap validation
-    const existing = this.getRequestsForEmployee(data.employeeId!, context).filter(r =>
-      r.status !== "Rejected" && r.status !== "Withdrawn" && r.status !== "Draft"
+    const existing = this.getRequestsForEmployee(data.employeeId!, context).filter(
+      (r) => r.status !== "Rejected" && r.status !== "Withdrawn" && r.status !== "Draft",
     );
 
-    const hasOverlap = existing.some(r => {
+    const hasOverlap = existing.some((r) => {
       const s2 = parseISO(r.startDate);
       const e2 = parseISO(r.endDate);
-      return (s1 <= e2) && (s2 <= e1);
+      return s1 <= e2 && s2 <= e1;
     });
 
     if (hasOverlap) {
@@ -207,7 +268,10 @@ export class TravelService {
       throw new Error("Estimated costs cannot be negative.");
     }
 
-    const payload: Omit<TravelRequest, "id" | "createdAt" | "createdBy" | "updatedAt" | "updatedBy" | "recordVersion"> = {
+    const payload: Omit<
+      TravelRequest,
+      "id" | "createdAt" | "createdBy" | "updatedAt" | "updatedBy" | "recordVersion"
+    > = {
       employeeId: data.employeeId!,
       purpose: data.purpose,
       destination: data.destination,
@@ -226,7 +290,7 @@ export class TravelService {
 
       hrApprovalStatus: "Pending",
       accountsApprovalStatus: "Pending",
-      status: "Pending HR and Accounts"
+      status: "Pending HR and Accounts",
     };
 
     const created = this.repo.create(payload, context);
@@ -251,7 +315,13 @@ export class TravelService {
   hrApprove(id: string, approve: boolean, notes: string, context: ActorContext): TravelRequest {
     const req = this.repo.getById(id);
     if (!req) throw new Error("Not found");
-    this.requireReviewerRole(req, context, ["HR", "Super Admin"], "review this travel request for HR", id);
+    this.requireReviewerRole(
+      req,
+      context,
+      ["HR", "Super Admin"],
+      "review this travel request for HR",
+      id,
+    );
     if (req.status !== "Pending HR and Accounts") throw new Error("Invalid state for approval.");
     if (!approve && (!notes || notes.trim().length < 3)) {
       throw new Error("Rejection requires a detailed reason.");
@@ -267,10 +337,21 @@ export class TravelService {
     return updated;
   }
 
-  accountsApprove(id: string, approve: boolean, notes: string, context: ActorContext): TravelRequest {
+  accountsApprove(
+    id: string,
+    approve: boolean,
+    notes: string,
+    context: ActorContext,
+  ): TravelRequest {
     const req = this.repo.getById(id);
     if (!req) throw new Error("Not found");
-    this.requireReviewerRole(req, context, ["Accounts", "Super Admin"], "review this travel request for budget", id);
+    this.requireReviewerRole(
+      req,
+      context,
+      ["Accounts", "Super Admin"],
+      "review this travel request for budget",
+      id,
+    );
     if (req.status !== "Pending HR and Accounts") throw new Error("Invalid state for approval.");
     if (!approve && (!notes || notes.trim().length < 3)) {
       throw new Error("Rejection requires a detailed reason.");
@@ -281,25 +362,37 @@ export class TravelService {
 
     req.status = this.calculateFinalStatus(req);
     const updated = this.repo.update(req.id, req, context);
-    this.recordEvent(approve ? "travel_accounts_approved" : "travel_accounts_rejected", updated, context);
+    this.recordEvent(
+      approve ? "travel_accounts_approved" : "travel_accounts_rejected",
+      updated,
+      context,
+    );
     this.notifyStatusChange(updated, context);
     return updated;
   }
 
-  async submitExpenses(id: string, expenses: ExpenseLine[], varianceExplanation: string, context: ActorContext): Promise<TravelRequest> {
+  async submitExpenses(
+    id: string,
+    expenses: ExpenseLine[],
+    varianceExplanation: string,
+    context: ActorContext,
+  ): Promise<TravelRequest> {
     const req = this.repo.getById(id);
     if (!req) throw new Error("Not found");
     this.requireSelfOrHr(req, context, "submit expenses for this trip", id);
-    if (req.status !== "Pre-authorised") throw new Error("Only pre-authorised trips can submit expenses.");
+    if (req.status !== "Pre-authorised")
+      throw new Error("Only pre-authorised trips can submit expenses.");
 
     const endDate = parseISO(req.endDate);
     const today = new Date();
     // Reset times to compare strictly calendar days
-    endDate.setHours(0,0,0,0);
-    today.setHours(0,0,0,0);
+    endDate.setHours(0, 0, 0, 0);
+    today.setHours(0, 0, 0, 0);
 
     if (today <= endDate) {
-      throw new Error("Expenses cannot be submitted until the calendar day after the trip has officially concluded.");
+      throw new Error(
+        "Expenses cannot be submitted until the calendar day after the trip has officially concluded.",
+      );
     }
     if (expenses.length === 0) {
       throw new Error("At least one expense line is required.");
@@ -313,16 +406,29 @@ export class TravelService {
         throw new Error(`Expense line "${line.category}" must have a positive amount.`);
       }
       if (!line.reference || !line.reference.trim()) {
-        throw new Error(`Expense line "${line.category}" dated ${line.date} requires a bill/receipt reference.`);
+        throw new Error(
+          `Expense line "${line.category}" dated ${line.date} requires a bill/receipt reference.`,
+        );
       }
       const lineDate = parseISO(line.date);
       if (isBefore(lineDate, tripStart) || isAfter(lineDate, tripEnd)) {
-        throw new Error(`Expense line "${line.category}" is dated ${line.date}, which is outside the trip's travel period (${req.startDate} to ${req.endDate}).`);
+        throw new Error(
+          `Expense line "${line.category}" is dated ${line.date}, which is outside the trip's travel period (${req.startDate} to ${req.endDate}).`,
+        );
+      }
+      if (!line.receiptFileId) {
+        throw new Error(`Upload the receipt or invoice for "${line.category}" dated ${line.date}.`);
       }
       if (line.receiptFileId) {
         const meta = await files.getMetadata(line.receiptFileId);
-        if (!meta || meta.owner.entityType !== "travel-expense-line" || meta.owner.entityId !== line.id) {
-          throw new Error(`The receipt uploaded for "${line.category}" (${line.date}) could not be verified. Please re-upload it.`);
+        if (
+          !meta ||
+          meta.owner.entityType !== "travel-expense-line" ||
+          meta.owner.entityId !== line.id
+        ) {
+          throw new Error(
+            `The receipt uploaded for "${line.category}" (${line.date}) could not be verified. Please re-upload it.`,
+          );
         }
       }
     }
@@ -330,8 +436,13 @@ export class TravelService {
     const actualTotal = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
 
     // Variance check (10%)
-    if (actualTotal > (req.totalEstimate * 1.1) && (!varianceExplanation || varianceExplanation.trim().length < 5)) {
-      throw new Error("Actual expenses exceed the authorised estimate by more than 10%. A detailed explanation is required.");
+    if (
+      actualTotal > req.totalEstimate * 1.1 &&
+      (!varianceExplanation || varianceExplanation.trim().length < 5)
+    ) {
+      throw new Error(
+        "Actual expenses exceed the authorised estimate by more than 10%. A detailed explanation is required.",
+      );
     }
 
     // OMR-equivalent total: this is what payroll/finance must consume, since actualTotal above
@@ -369,7 +480,7 @@ export class TravelService {
         rate = line.exchangeRate;
       } else {
         throw new Error(
-          `Expense line "${line.category}" dated ${line.date} is in ${line.currency} but has no exchange rate to OMR recorded. Enter the exchange rate for this expense before submitting.`
+          `Expense line "${line.category}" dated ${line.date} is in ${line.currency} but has no exchange rate to OMR recorded. Enter the exchange rate for this expense before submitting.`,
         );
       }
 
@@ -377,7 +488,12 @@ export class TravelService {
     }, 0);
   }
 
-  superAdminClose(id: string, approve: boolean, notes: string, context: ActorContext): TravelRequest {
+  superAdminClose(
+    id: string,
+    approve: boolean,
+    notes: string,
+    context: ActorContext,
+  ): TravelRequest {
     const req = this.repo.getById(id);
     if (!req) throw new Error("Not found");
     this.requireReviewerRole(req, context, ["Super Admin"], "close this travel reimbursement", id);
@@ -440,11 +556,13 @@ export class TravelService {
   private notifyReviewers(req: TravelRequest, context: ActorContext): void {
     const { storage, audit } = getApplicationDataServices();
     const notifService = new NotificationService(storage, audit);
-    const employee = new EmployeeService().getById(req.employeeId);
+    const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
     const reviewerRoles = ["HR", "Accounts"];
     const reviewers = storage
       .readCollection<{ id: string; roles: string[]; status: string }>("users")
-      .filter((user) => user.status === "Active" && user.roles.some((r) => reviewerRoles.includes(r)));
+      .filter(
+        (user) => user.status === "Active" && user.roles.some((r) => reviewerRoles.includes(r)),
+      );
     for (const reviewer of reviewers) {
       notifService.create(
         {
@@ -468,7 +586,12 @@ export class TravelService {
   // rejected expense claim is handled separately in superAdminClose, since the status alone
   // would read as approval there, not correction).
   private notifyStatusChange(req: TravelRequest, context: ActorContext): void {
-    const messages: Partial<Record<TravelRequestStatus, { title: string; message: string; type: "Success" | "Warning" | "Info" }>> = {
+    const messages: Partial<
+      Record<
+        TravelRequestStatus,
+        { title: string; message: string; type: "Success" | "Warning" | "Info" }
+      >
+    > = {
       "Pre-authorised": {
         title: "Travel request pre-authorised",
         message: `Your trip to ${req.destination} was pre-authorised by both HR and Accounts.`,
@@ -476,7 +599,8 @@ export class TravelService {
       },
       Rejected: {
         title: "Travel request rejected",
-        message: `Your trip to ${req.destination} was rejected. ${req.hrNotes || req.accountsNotes || ""}`.trim(),
+        message:
+          `Your trip to ${req.destination} was rejected. ${req.hrNotes || req.accountsNotes || ""}`.trim(),
         type: "Warning",
       },
       Closed: {

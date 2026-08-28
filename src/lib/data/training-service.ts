@@ -1,5 +1,5 @@
 import { LocalRepository } from "./repository.ts";
-import type { ActorContext } from "./types.ts";
+import { SYSTEM_CONTEXT, type ActorContext } from "./types.ts";
 import type { TrainingRecord } from "./training-types.ts";
 import { DocumentService } from "./document-service.ts";
 import { getApplicationDataServices } from "./application-data.ts";
@@ -78,7 +78,7 @@ export class TrainingService {
     // request's own upload step) by the time we get here, so we only need to register its
     // metadata as an EmployeeDocument, not upload a new blob.
     if (data.certificateFileId) {
-      this.documentService.getDocumentRepository().create(
+      this.documentService.getDocumentRepository(SYSTEM_CONTEXT).create(
         {
           employeeId: data.employeeId,
           type: "professional_certificate",
@@ -146,7 +146,7 @@ export class TrainingService {
     }
     if (record.certificateFileId) {
       const document = this.documentService
-        .getDocumentRepository()
+        .getDocumentRepository(SYSTEM_CONTEXT)
         .list()
         .find((item) => item.fileId === record.certificateFileId);
       if (document?.status === "Pending Verification") {

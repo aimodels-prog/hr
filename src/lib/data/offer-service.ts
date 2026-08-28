@@ -1,3 +1,4 @@
+import { SYSTEM_CONTEXT } from "./types.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { recordAccessDenied } from "./audit-service.ts";
 import { LocalRepository } from "./repository.ts";
@@ -672,9 +673,9 @@ export class OfferService {
           { ...context, reason: reason || "Offer accepted; automatic onboarding initiated" },
         );
         const employeeService = new EmployeeService();
-        const employee = employeeService.getById(employeeId);
+        const employee = employeeService.getById(employeeId, SYSTEM_CONTEXT);
         const user = employeeService
-          .getUserRepository()
+          .getUserRepository(SYSTEM_CONTEXT)
           .list()
           .find((item) => item.employeeId === employeeId);
         if (!employee || !user) throw new Error("Employee access mapping was not created.");

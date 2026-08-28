@@ -1,11 +1,26 @@
 import type { BaseRecord, RecordId } from "./types";
 
-export type PayrollPeriodStatus = "Draft" | "Collecting Inputs" | "Exceptions" | "Prepared" | "Approved" | "Locked" | "Exported" | "Corrected";
+export type PayrollPeriodStatus =
+  | "Draft"
+  | "Collecting Inputs"
+  | "Exceptions"
+  | "Prepared"
+  | "Approved"
+  | "Locked"
+  | "Exported"
+  | "Corrected";
 
 export interface PayrollException {
   id: string;
   employeeId: RecordId;
-  type: "Missing Timesheet" | "Missing Bank Data" | "Pending Leave" | "Extreme Value" | "Duplicate Input";
+  type:
+    | "Missing Timesheet"
+    | "Missing Bank Data"
+    | "Pending Leave"
+    | "Extreme Value"
+    | "Duplicate Input"
+    | "Unmatched Overtime"
+    | "Unmatched Reimbursement";
   description: string;
   severity: "High" | "Medium" | "Low";
   acknowledged: boolean;
@@ -42,10 +57,10 @@ export interface PayrollPeriod extends BaseRecord {
   paymentDate: string;
   status: PayrollPeriodStatus;
   notes?: string;
-  
+
   exceptions: PayrollException[];
   manualAdjustments: PayrollManualAdjustment[];
-  
+
   // Stored snapshot of the inputs after preparation
   compiledInputs?: PayrollInputReport[];
 }

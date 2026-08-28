@@ -16,12 +16,12 @@ export function OnboardingOffboardingTab({ employeeId }: { employeeId: string })
   const [offbService] = useState(() => new OffboardingService());
 
   const onboardingCase = useMemo(
-    () => obService.getCaseByEmployeeId(employeeId),
-    [obService, employeeId],
+    () => obService.getCaseByEmployeeId(employeeId, currentUser.getActorContext()),
+    [currentUser, obService, employeeId],
   );
   const offboardingCase = useMemo(
-    () => offbService.getCaseByEmployeeId(employeeId),
-    [offbService, employeeId],
+    () => offbService.getCaseByEmployeeId(employeeId, currentUser.getActorContext()),
+    [currentUser, offbService, employeeId],
   );
 
   const canManageOffboarding = can("offboarding:manage_all");

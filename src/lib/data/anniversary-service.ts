@@ -1,3 +1,4 @@
+import { SYSTEM_CONTEXT } from "./types.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { EmployeeService } from "./employee-service.ts";
 import type { ActorContext, Employee } from "./types.ts";
@@ -6,6 +7,12 @@ import type { ActorContext, Employee } from "./types.ts";
 export const MILESTONE_YEARS: readonly number[] = [1, 2, 3, 5, 7, 10, 15, 20, 25, 30, 35, 40];
 
 const REMINDER_THRESHOLDS = [30, 14, 7, 1, 0];
+// How many days after a missed anniversary the engine will still backfill it, matching
+// getUpcomingAnniversaries's own "recently passed" window. Without a bound, a naive `<=`
+// catch-up would keep re-treating a months-old anniversary (this year's now-stale occurrence,
+// since this loop doesn't roll forward to next year the way getUpcomingAnniversaries does) as
+// freshly "reached" for as long as the page went unopened.
+const CATCHUP_WINDOW_DAYS = 14;
 
 export interface UpcomingAnniversary {
   employee: Employee;
@@ -96,7 +103,7 @@ export class AnniversaryService {
    */
   getUpcomingAnniversaries(daysAhead = 90, daysBehind = 14): UpcomingAnniversary[] {
     const employees = this.employeeService
-      .getEmployeeRepository()
+      .getEmployeeRepository(SYSTEM_CONTEXT)
       .list({ includeArchived: false })
       .filter((e) => e.status !== "Archived");
     const today = startOfDay(new Date());
@@ -140,10 +147,10 @@ export class AnniversaryService {
   async runReminderEngine(actorContext: ActorContext): Promise<void> {
     const { notifications } = getApplicationDataServices();
     const employees = this.employeeService
-      .getEmployeeRepository()
+      .getEmployeeRepository(SYSTEM_CONTEXT)
       .list({ includeArchived: false })
       .filter((e) => e.status !== "Archived");
-    const users = this.employeeService.getUserRepository().list();
+    const users = this.employeeService.getUserRepository(SYSTEM_CONTEXT).list();
     const hrUsers = users.filter((u) => u.roles.includes("HR") && u.status === "Active");
     const today = startOfDay(new Date());
 
@@ -154,79 +161,109 @@ export class AnniversaryService {
       if (!MILESTONE_YEARS.includes(yearsOfService)) continue;
 
       const daysRemaining = daysBetween(today, date);
-      const threshold = REMINDER_THRESHOLDS.find((t) => t === daysRemaining);
-      if (threshold === undefined) continue;
+      // Every threshold reached or passed, not just an exact match for today - this app has no
+      // server-side cron, so a run can easily be skipped on the exact calendar day a threshold
+      // is crossed. The lower bound stops a months-old, now-stale occurrence (this loop doesn't
+      // roll forward to next year the way getUpcomingAnniversaries does) from being treated as
+      // freshly "reached" indefinitely. Each (employee, threshold, recipient) notification is
+      // deduplicated below, so re-detecting an already-reached threshold on a later run is a
+      // no-op - safe to backfill in one pass.
+      const reachedThresholds = REMINDER_THRESHOLDS.filter(
+        (t) => daysRemaining <= t && daysRemaining >= -CATCHUP_WINDOW_DAYS,
+      );
+      if (reachedThresholds.length === 0) continue;
 
-      const isToday = threshold === 0;
-      const dateLabel = isToday ? "today" : `in ${threshold} day${threshold === 1 ? "" : "s"}`;
       const yearsLabel = `${yearsOfService} year${yearsOfService === 1 ? "" : "s"}`;
       const milestoneLabel = ordinal(yearsOfService);
+      // Live status, appended to every notification below regardless of which historical
+      // threshold it represents, so a backfilled reminder still tells the reader where things
+      // actually stand today rather than reading as stale/wrong.
+      const currentStatus =
+        daysRemaining < 0
+          ? `Their anniversary was ${Math.abs(daysRemaining)} day${Math.abs(daysRemaining) === 1 ? "" : "s"} ago, on ${toLocalIsoDate(date)}.`
+          : daysRemaining === 0
+            ? `Their anniversary is today, ${toLocalIsoDate(date)}.`
+            : `Their anniversary is in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}, on ${toLocalIsoDate(date)}.`;
 
       const employeeUser = users.find((u) => u.employeeId === employee.id);
       const managerUser = employee.lineManagerId
         ? users.find((u) => u.employeeId === employee.lineManagerId)
         : undefined;
 
-      if (employeeUser) {
-        notifications.create(
-          {
-            recipientUserId: employeeUser.id,
-            type: "work_anniversary",
-            title: isToday
-              ? `Happy ${milestoneLabel} work anniversary!`
-              : `Your ${milestoneLabel} work anniversary is ${dateLabel}`,
-            message: `You joined VIA on ${employee.startDate}. Thank you for ${yearsLabel} of service.`,
-            priority: "Normal",
-            status: "Unread",
-            deduplicationKey: `anniversary_${employee.id}_${yearsOfService}yr_${threshold}d_emp`,
-            link: {
-              entityType: "employee",
-              entityId: employee.id,
-              path: `/staff/employees/${employee.id}`,
-            },
-          },
-          actorContext,
-        );
-      }
+      for (const threshold of reachedThresholds) {
+        // Each backfilled notification describes ITS OWN threshold, not the live day count -
+        // otherwise a long-missed milestone would generate several notifications that all read
+        // identically, which looks like spam rather than distinct missed checkpoints.
+        const isToday = threshold === 0;
+        const title = isToday
+          ? `Happy ${milestoneLabel} work anniversary!`
+          : `${milestoneLabel} work anniversary reminder: ${threshold} day${threshold === 1 ? "" : "s"} to go`;
+        const employeeMilestoneLine = isToday
+          ? `Today marks your ${milestoneLabel} work anniversary.`
+          : `Your ${milestoneLabel} work anniversary was flagged ${threshold} day${threshold === 1 ? "" : "s"} out.`;
+        const hrTitle = isToday
+          ? `${employee.preferredName} reaches their ${milestoneLabel} work anniversary today`
+          : `${employee.preferredName}'s ${milestoneLabel} work anniversary reminder: ${threshold} day${threshold === 1 ? "" : "s"} to go`;
 
-      for (const hr of hrUsers) {
-        notifications.create(
-          {
-            recipientUserId: hr.id,
-            type: "work_anniversary",
-            title: `${employee.preferredName}'s ${milestoneLabel} work anniversary is ${dateLabel}`,
-            message: `${employee.preferredName} ${employee.legalName} (${employee.employeeNumber}) reaches ${yearsLabel} of service on ${toLocalIsoDate(date)}.`,
-            priority: "Normal",
-            status: "Unread",
-            deduplicationKey: `anniversary_${employee.id}_${yearsOfService}yr_${threshold}d_hr_${hr.id}`,
-            link: {
-              entityType: "anniversary",
-              entityId: employee.id,
-              path: "/staff/anniversaries",
+        if (employeeUser) {
+          notifications.create(
+            {
+              recipientUserId: employeeUser.id,
+              type: "work_anniversary",
+              title,
+              message: `${employeeMilestoneLine} You joined VIA on ${employee.startDate}. Thank you for ${yearsLabel} of service. ${currentStatus}`,
+              priority: "Normal",
+              status: "Unread",
+              deduplicationKey: `anniversary_${employee.id}_${yearsOfService}yr_${threshold}d_emp`,
+              link: {
+                entityType: "employee",
+                entityId: employee.id,
+                path: `/staff/employees/${employee.id}`,
+              },
             },
-          },
-          actorContext,
-        );
-      }
+            actorContext,
+          );
+        }
 
-      if (managerUser) {
-        notifications.create(
-          {
-            recipientUserId: managerUser.id,
-            type: "work_anniversary",
-            title: `${employee.preferredName}'s ${milestoneLabel} work anniversary is ${dateLabel}`,
-            message: `Consider recognising ${employee.preferredName}'s ${yearsLabel} milestone with VIA.`,
-            priority: "Normal",
-            status: "Unread",
-            deduplicationKey: `anniversary_${employee.id}_${yearsOfService}yr_${threshold}d_mgr`,
-            link: {
-              entityType: "employee",
-              entityId: employee.id,
-              path: `/staff/employees/${employee.id}`,
+        for (const hr of hrUsers) {
+          notifications.create(
+            {
+              recipientUserId: hr.id,
+              type: "work_anniversary",
+              title: hrTitle,
+              message: `${employee.preferredName} ${employee.legalName} (${employee.employeeNumber}) reaches ${yearsLabel} of service. ${currentStatus}`,
+              priority: "Normal",
+              status: "Unread",
+              deduplicationKey: `anniversary_${employee.id}_${yearsOfService}yr_${threshold}d_hr_${hr.id}`,
+              link: {
+                entityType: "anniversary",
+                entityId: employee.id,
+                path: "/staff/anniversaries",
+              },
             },
-          },
-          actorContext,
-        );
+            actorContext,
+          );
+        }
+
+        if (managerUser) {
+          notifications.create(
+            {
+              recipientUserId: managerUser.id,
+              type: "work_anniversary",
+              title: hrTitle,
+              message: `Consider recognising ${employee.preferredName}'s ${yearsLabel} milestone with VIA. ${currentStatus}`,
+              priority: "Normal",
+              status: "Unread",
+              deduplicationKey: `anniversary_${employee.id}_${yearsOfService}yr_${threshold}d_mgr`,
+              link: {
+                entityType: "employee",
+                entityId: employee.id,
+                path: `/staff/employees/${employee.id}`,
+              },
+            },
+            actorContext,
+          );
+        }
       }
     }
   }

@@ -1,3 +1,4 @@
+import { SYSTEM_CONTEXT } from "./types.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { CandidateService } from "./candidate-service.ts";
 import { OnboardingService } from "./onboarding-service.ts";
@@ -22,7 +23,7 @@ export class ConversionService {
 
   private nextEmployeeNumber(): string {
     const year = new Date().getFullYear();
-    const count = this.empService.getEmployees().length + 1;
+    const count = this.empService.getEmployees(SYSTEM_CONTEXT).length + 1;
     return `VIA-${year}-${String(count).padStart(4, "0")}`;
   }
 
@@ -36,7 +37,7 @@ export class ConversionService {
         .replace(/^\.|\.$/g, "") || "new.employee";
     const used = new Set(
       this.empService
-        .getUserRepository()
+        .getUserRepository(SYSTEM_CONTEXT)
         .list({ includeArchived: true })
         .map((user) => user.workspaceEmail.toLowerCase()),
     );
@@ -92,11 +93,11 @@ export class ConversionService {
       .storage.readCollection<Vacancy>("vacancies")
       .find((item) => item.id === offer.vacancyId);
     const actorIsEmployee = context.actor.employeeId
-      ? this.empService.getById(context.actor.employeeId)
+      ? this.empService.getById(context.actor.employeeId, SYSTEM_CONTEXT)
       : undefined;
     const supervisorId =
       employeeData.lineManagerId || vacancy?.hiringManagerId || actorIsEmployee?.id;
-    if (!supervisorId && this.empService.getEmployees().length > 0) {
+    if (!supervisorId && this.empService.getEmployees(SYSTEM_CONTEXT).length > 0) {
       throw new Error(
         "Assign a supervisor to the vacancy before onboarding the selected candidate.",
       );
@@ -168,7 +169,7 @@ export class ConversionService {
       context,
     );
     this.empService
-      .getEmployeeRepository()
+      .getEmployeeRepository(SYSTEM_CONTEXT)
       .update(
         newEmpId,
         { recommendationIds: recommendations.map((recommendation) => recommendation.id) },

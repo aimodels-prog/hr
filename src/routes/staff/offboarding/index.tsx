@@ -65,6 +65,8 @@ const REASON_CATEGORIES: OffboardingReasonCategory[] = [
 
 const startCaseSchema = z.object({
   employeeId: z.string().min(1, "Select an employee"),
+  templateId: z.string().min(1, "Select an offboarding template"),
+  assignedHRId: z.string().optional(),
   reasonCategory: z.enum([
     "Resignation",
     "Termination",
@@ -76,6 +78,7 @@ const startCaseSchema = z.object({
   noticeDate: z.string().min(1, "Notice date is required"),
   lastWorkingDate: z.string().min(1, "Last working date is required"),
   rehireEligible: z.boolean(),
+  confidentialityLevel: z.enum(["Standard", "Restricted"]),
   confidentialNotes: z.string().optional(),
 });
 
@@ -86,9 +89,9 @@ function OffboardingDashboard() {
   const [isStartOpen, setIsStartOpen] = useState(false);
 
   const [, setRefresh] = useState(0);
-  const cases = obService.getCases();
+  const cases = obService.getCasesForContext(currentUser.getActorContext());
   const activeCases = cases.filter((c) => c.status !== "Completed" && c.status !== "Cancelled");
-  const employees = empService.getEmployees();
+  const employees = empService.getEmployees(currentUser.getActorContext());
   const eligibleEmployees = employees.filter(
     (e) =>
       e.status !== "Archived" &&
@@ -97,15 +100,22 @@ function OffboardingDashboard() {
         (c) => c.employeeId === e.id && c.status !== "Completed" && c.status !== "Cancelled",
       ),
   );
+  const templates = obService.getTemplates(currentUser.getActorContext()).filter((t) => t.isActive);
+  const hrOwners = empService
+    .getUsers(currentUser.getActorContext())
+    .filter((u) => u.status === "Active" && u.roles.includes("HR"));
 
   const form = useForm<z.infer<typeof startCaseSchema>>({
     resolver: zodResolver(startCaseSchema),
     defaultValues: {
       employeeId: "",
+      templateId: "",
+      assignedHRId: "",
       reasonCategory: "Resignation",
       noticeDate: "",
       lastWorkingDate: "",
       rehireEligible: true,
+      confidentialityLevel: "Standard",
       confidentialNotes: "",
     },
   });
@@ -120,6 +130,11 @@ function OffboardingDashboard() {
         values.rehireEligible,
         values.confidentialNotes || undefined,
         currentUser.getActorContext(),
+        {
+          templateId: values.templateId,
+          ...(values.assignedHRId ? { assignedHRId: values.assignedHRId } : {}),
+          confidentialityLevel: values.confidentialityLevel,
+        },
       );
       toast.success("Offboarding case started");
       setIsStartOpen(false);
@@ -168,6 +183,60 @@ function OffboardingDashboard() {
                               {eligibleEmployees.map((e) => (
                                 <SelectItem key={e.id} value={e.id}>
                                   {e.preferredName} — {e.position}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="templateId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Offboarding Template</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select a template" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {templates.map((t) => (
+                                <SelectItem key={t.id} value={t.id}>
+                                  {t.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="assignedHRId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>HR Case Owner</FormLabel>
+                          <Select
+                            onValueChange={(value) =>
+                              field.onChange(value === "automatic" ? "" : value)
+                            }
+                            value={field.value || "automatic"}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="automatic">Assign automatically</SelectItem>
+                              {hrOwners.map((u) => (
+                                <SelectItem key={u.id} value={u.id}>
+                                  {u.displayName}
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -228,6 +297,31 @@ function OffboardingDashboard() {
                         )}
                       />
                     </div>
+                    <FormField
+                      control={form.control}
+                      name="confidentialityLevel"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Confidentiality Level</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="Standard">
+                                Standard - visible to any HR user
+                              </SelectItem>
+                              <SelectItem value="Restricted">
+                                Restricted - notes visible to Super Admin only
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
                     <FormField
                       control={form.control}
                       name="confidentialNotes"

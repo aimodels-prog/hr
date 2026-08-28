@@ -4,7 +4,7 @@ import type { OffboardingCase } from "./offboarding-types.ts";
 import { OnboardingService } from "./onboarding-service.ts";
 import type { OnboardingCase } from "./onboarding-types.ts";
 import { DocumentService } from "./document-service.ts";
-import type { ActorContext, EmployeeDocument } from "./types.ts";
+import { SYSTEM_CONTEXT, type ActorContext, type EmployeeDocument } from "./types.ts";
 
 export type LifecycleWorkflow = "onboarding" | "offboarding";
 
@@ -24,8 +24,8 @@ export class LifecycleTaskService {
   ): Promise<{ blob: Blob; name: string }> {
     const lifecycleCase =
       workflow === "onboarding"
-        ? this.onboarding.getCaseById(caseId)
-        : this.offboarding.getCaseById(caseId);
+        ? this.onboarding.getCaseById(caseId, context)
+        : this.offboarding.getCaseById(caseId, context);
     if (!lifecycleCase) throw new Error("Case not found.");
     if (workflow === "onboarding") {
       this.onboarding.requireCaseAccess(lifecycleCase as OnboardingCase, context);
@@ -35,7 +35,7 @@ export class LifecycleTaskService {
     const task = lifecycleCase.tasks.find((item) => item.id === taskId);
     if (!task?.evidenceFileId) throw new Error("No evidence is attached to this task.");
     const employeeDocument = this.documents
-      .getDocumentRepository()
+      .getDocumentRepository(SYSTEM_CONTEXT)
       .list()
       .find((document) => document.fileId === task.evidenceFileId);
     if (employeeDocument) {
@@ -76,7 +76,7 @@ export class LifecycleTaskService {
     >,
     context: ActorContext,
   ): Promise<OnboardingCase> {
-    const onboardingCase = this.onboarding.getCaseById(caseId);
+    const onboardingCase = this.onboarding.getCaseById(caseId, context);
     if (!onboardingCase || onboardingCase.employeeId !== employeeId) {
       throw new Error("The onboarding case does not belong to this employee.");
     }
@@ -112,7 +112,10 @@ export class LifecycleTaskService {
         { ...metadata, visibility: "Restricted" },
         context,
       );
-      return this.onboarding.updateTaskStatus(
+      // Explicitly awaited (not just returned) so a rejection from updateTaskStatus (now async)
+      // is caught by this try/catch and triggers the document cleanup below, instead of the
+      // rejected promise passing straight through untouched.
+      return await this.onboarding.updateTaskStatus(
         caseId,
         taskId,
         "Completed",
@@ -121,7 +124,7 @@ export class LifecycleTaskService {
       );
     } catch (error) {
       if (document) {
-        this.documents.getDocumentRepository().archive(document.id, {
+        this.documents.getDocumentRepository(SYSTEM_CONTEXT).archive(document.id, {
           ...context,
           reason: "Removed document after onboarding task completion failed",
         });
@@ -152,7 +155,7 @@ export class LifecycleTaskService {
     context: ActorContext,
     evidence?: File | undefined,
   ): Promise<OnboardingCase | OffboardingCase> {
-    const task = this.getTask(workflow, caseId, taskId);
+    const task = this.getTask(workflow, caseId, taskId, context);
     if (!task) throw new Error("Task not found");
     if (task.requiresEvidence && !evidence) {
       throw new Error("Attach the required evidence before completing this task.");
@@ -173,9 +176,20 @@ export class LifecycleTaskService {
         );
         savedFileId = metadata.id;
       }
+      // Explicitly awaited (not just returned) so a rejection from either branch - in
+      // particular offboarding's async evidence-ownership check - is caught by this try/catch
+      // and triggers the file cleanup below, instead of the rejected promise passing straight
+      // through untouched (returning an unawaited promise from inside a try block bypasses its
+      // own catch).
       return workflow === "onboarding"
-        ? this.onboarding.updateTaskStatus(caseId, taskId, "Completed", context, savedFileId)
-        : this.offboarding.updateTaskStatus(caseId, taskId, "Completed", context, savedFileId);
+        ? await this.onboarding.updateTaskStatus(caseId, taskId, "Completed", context, savedFileId)
+        : await this.offboarding.updateTaskStatus(
+            caseId,
+            taskId,
+            "Completed",
+            context,
+            savedFileId,
+          );
     } catch (error) {
       if (savedFileId) await getApplicationDataServices().files.delete(savedFileId, context);
       throw error;
@@ -188,31 +202,36 @@ export class LifecycleTaskService {
     taskId: string,
     reason: string,
     context: ActorContext,
-  ): OnboardingCase;
+  ): Promise<OnboardingCase>;
   waive(
     workflow: "offboarding",
     caseId: string,
     taskId: string,
     reason: string,
     context: ActorContext,
-  ): OffboardingCase;
-  waive(
+  ): Promise<OffboardingCase>;
+  async waive(
     workflow: LifecycleWorkflow,
     caseId: string,
     taskId: string,
     reason: string,
     context: ActorContext,
-  ): OnboardingCase | OffboardingCase {
+  ): Promise<OnboardingCase | OffboardingCase> {
     return workflow === "onboarding"
       ? this.onboarding.updateTaskStatus(caseId, taskId, "Waived", context, undefined, reason)
       : this.offboarding.updateTaskStatus(caseId, taskId, "Waived", context, undefined, reason);
   }
 
-  private getTask(workflow: LifecycleWorkflow, caseId: string, taskId: string) {
+  private getTask(
+    workflow: LifecycleWorkflow,
+    caseId: string,
+    taskId: string,
+    context: ActorContext,
+  ) {
     const lifecycleCase =
       workflow === "onboarding"
-        ? this.onboarding.getCaseById(caseId)
-        : this.offboarding.getCaseById(caseId);
+        ? this.onboarding.getCaseById(caseId, context)
+        : this.offboarding.getCaseById(caseId, context);
     return lifecycleCase?.tasks.find((task) => task.id === taskId);
   }
 

@@ -82,8 +82,8 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
   const [taskActions] = useState(() => new LifecycleTaskService());
   const [, setRefreshKey] = useState(0);
 
-  const employee = empService.getById(employeeId);
-  const obCase = obService.getCaseByEmployeeId(employeeId);
+  const employee = empService.getById(employeeId, getActorContext());
+  const obCase = obService.getCaseByEmployeeId(employeeId, getActorContext());
   const tasks = obService.getSelfServiceTasks(employeeId, getActorContext());
 
   const isTaskDone = (t: OnboardingTask) => t.status === "Completed" || t.status === "Waived";
@@ -96,9 +96,9 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
 
   const refresh = () => setRefreshKey((k) => k + 1);
 
-  const completeTask = (taskId: string, evidenceFileId?: string) => {
+  const completeTask = async (taskId: string, evidenceFileId?: string) => {
     if (!obCase) return;
-    const updated = obService.updateTaskStatus(
+    const updated = await obService.updateTaskStatus(
       obCase.id,
       taskId,
       "Completed",

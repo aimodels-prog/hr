@@ -1,13 +1,14 @@
+import { SYSTEM_CONTEXT } from "./types.ts";
 import { LocalRepository } from "./repository.ts";
 import { getApplicationDataServices } from "./application-data.ts";
-import type { OvertimeClaim, OvertimeClaimStatus } from "./overtime-types.ts";
+import type { OvertimeClaim } from "./overtime-types.ts";
 import type { ActorContext } from "./types.ts";
 import { TimesheetService } from "./timesheet-service.ts";
 import { AttendanceService } from "./attendance-service.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { LeaveService } from "./leave-service.ts";
 import { NotificationService } from "./notification-service.ts";
-import { getProjectRepository } from "./master-data.ts";
+import { getMasterDataRepository, getProjectRepository } from "./master-data.ts";
 import { SYSTEM_ACTOR } from "./types.ts";
 import { getRolePermissions, type Permission } from "../auth/permissions.ts";
 
@@ -20,18 +21,23 @@ export class OvertimeService {
     const { storage, audit } = getApplicationDataServices();
     this.claimRepo = new LocalRepository<OvertimeClaim>("overtimeClaims", storage, audit, {
       module: "overtime",
-      entityType: "claim"
+      entityType: "claim",
     });
   }
 
   private hasAdminOrPayrollView(context: ActorContext): boolean {
-    const permissions = context.actor.activeRole ? getRolePermissions(context.actor.activeRole) : new Set<Permission>();
+    const permissions = context.actor.activeRole
+      ? getRolePermissions(context.actor.activeRole)
+      : new Set<Permission>();
     return permissions.has("overtime:admin_all") || permissions.has("payroll:view");
   }
 
   private isManagerOf(employeeId: string, context: ActorContext): boolean {
     if (context.actor.activeRole !== "Line Manager" || !context.actor.employeeId) return false;
-    return new EmployeeService().getById(employeeId)?.lineManagerId === context.actor.employeeId;
+    return (
+      new EmployeeService().getById(employeeId, SYSTEM_CONTEXT)?.lineManagerId ===
+      context.actor.employeeId
+    );
   }
 
   /** Requires HR/Super Admin (overtime:admin_all) or Accounts (payroll:view, for payroll reconciliation). */
@@ -47,7 +53,7 @@ export class OvertimeService {
     if (!isSelf && !this.hasAdminOrPayrollView(context) && !this.isManagerOf(employeeId, context)) {
       this.denyAccess(context, "view this employee's overtime claims", employeeId);
     }
-    return this.claimRepo.list().filter(c => c.employeeId === employeeId);
+    return this.claimRepo.list().filter((c) => c.employeeId === employeeId);
   }
 
   /** The manager queue for Overtime Approvals: own direct reports, or everything for HR/Accounts/Super Admin. */
@@ -57,7 +63,7 @@ export class OvertimeService {
       this.denyAccess(context, "review team overtime claims", "direct-reports");
     }
     const directReportIds = new EmployeeService()
-      .getEmployees()
+      .getEmployees(SYSTEM_CONTEXT)
       .filter((employee) => employee.lineManagerId === context.actor.employeeId)
       .map((employee) => employee.id);
     return this.claimRepo.list().filter((claim) => directReportIds.includes(claim.employeeId));
@@ -69,23 +75,47 @@ export class OvertimeService {
   private async buildClaimPayload(
     data: Partial<OvertimeClaim>,
     context: ActorContext,
-  ): Promise<Omit<OvertimeClaim, "id" | "createdAt" | "createdBy" | "updatedAt" | "updatedBy" | "recordVersion">> {
-    if (!data.employeeId || !data.date || !data.hours || data.hours <= 0 || !data.reason) {
-      throw new Error("Date, valid hours, and a reason are required.");
+  ): Promise<
+    Omit<
+      OvertimeClaim,
+      "id" | "createdAt" | "createdBy" | "updatedAt" | "updatedBy" | "recordVersion"
+    >
+  > {
+    if (
+      !data.employeeId ||
+      !data.date ||
+      !data.hours ||
+      data.hours <= 0 ||
+      !data.reason ||
+      !data.costCentreId ||
+      !data.activityCodeId ||
+      !data.locationCodeId
+    ) {
+      throw new Error(
+        "Date, valid hours, cost centre, activity, work location and a reason are required.",
+      );
     }
     if (context.actor.employeeId !== data.employeeId) {
-      if (context.actor.activeRole !== "HR" && context.actor.activeRole !== "Super Admin") {
+      if (
+        context.actor.activeRole !== "HR" &&
+        context.actor.activeRole !== "Super Admin" &&
+        !this.isManagerOf(data.employeeId, context)
+      ) {
         this.denyAccess(context, "submit an overtime claim for another employee", data.employeeId);
       }
     }
     if (data.evidenceFileId) {
       const { files } = getApplicationDataServices();
       const meta = await files.getMetadata(data.evidenceFileId);
-      if (!meta || meta.owner.entityType !== "overtime-claim" || meta.owner.entityId !== data.employeeId) {
+      if (
+        !meta ||
+        meta.owner.entityType !== "overtime-claim" ||
+        meta.owner.entityId !== data.employeeId
+      ) {
         throw new Error("The uploaded evidence file could not be verified. Please re-upload it.");
       }
     }
-    const employee = new EmployeeService().getById(data.employeeId);
+    const employee = new EmployeeService().getById(data.employeeId, SYSTEM_CONTEXT);
     if (!employee) {
       throw new Error("The employee for this overtime claim could not be found.");
     }
@@ -104,13 +134,25 @@ export class OvertimeService {
         throw new Error("Selected project is invalid or archived.");
       }
     }
+    for (const [collection, id, label] of [
+      ["costCentres", data.costCentreId, "cost centre"],
+      ["activityCodes", data.activityCodeId, "activity"],
+      ["locations", data.locationCodeId, "work location"],
+    ] as const) {
+      const record = getMasterDataRepository(collection).getById(id);
+      if (!record || !record.isActive) throw new Error(`Selected ${label} is invalid or archived.`);
+    }
 
-    const existing = this.claimRepo.list().find(c =>
-      c.employeeId === data.employeeId &&
-      c.date === date &&
-      c.id !== data.originalClaimId &&
-      (c.status !== "Rejected" && c.status !== "Corrected")
-    );
+    const existing = this.claimRepo
+      .list()
+      .find(
+        (c) =>
+          c.employeeId === data.employeeId &&
+          c.date === date &&
+          c.id !== data.originalClaimId &&
+          c.status !== "Rejected" &&
+          c.status !== "Corrected",
+      );
 
     if (existing) {
       throw new Error("An active overtime claim already exists for this date.");
@@ -124,26 +166,34 @@ export class OvertimeService {
     const warnings: string[] = [];
 
     // Timesheet
-    const allTs = tsService.getAllTimesheets().filter(t => t.employeeId === data.employeeId);
+    const allTs = tsService
+      .getAllTimesheets(SYSTEM_CONTEXT)
+      .filter((t) => t.employeeId === data.employeeId);
     let tsHours = 0;
-    allTs.forEach(ts => {
-      ts.entries.forEach(entry => {
+    allTs.forEach((ts) => {
+      ts.entries.forEach((entry) => {
         if (entry.hours[date]) {
           tsHours += entry.hours[date];
         }
       });
     });
 
-    if (tsHours < (settings.standardDailyHours + hours)) {
-      warnings.push(`Timesheet for ${date} shows only ${tsHours}h logged, which does not cover standard hours plus ${hours}h overtime.`);
+    if (tsHours < settings.standardDailyHours + hours) {
+      warnings.push(
+        `Timesheet for ${date} shows only ${tsHours}h logged, which does not cover standard hours plus ${hours}h overtime.`,
+      );
     }
 
     // Attendance
-    const attRecord = attService.getAllRecords().find(r => r.employeeId === data.employeeId && r.date === date);
+    const attRecord = attService
+      .getAllRecords(SYSTEM_CONTEXT)
+      .find((r) => r.employeeId === data.employeeId && r.date === date);
     const attHours = attRecord?.calculatedHours || 0;
 
-    if (attHours < (settings.standardDailyHours + hours)) {
-      warnings.push(`Physical attendance punch for ${date} shows only ${attHours}h worked, which does not mathematically support ${hours}h overtime.`);
+    if (attHours < settings.standardDailyHours + hours) {
+      warnings.push(
+        `Physical attendance punch for ${date} shows only ${attHours}h worked, which does not mathematically support ${hours}h overtime.`,
+      );
     }
 
     return {
@@ -153,10 +203,13 @@ export class OvertimeService {
       reason: data.reason,
       compensationType: data.compensationType === "TOIL" ? "TOIL" : "Payment",
       ...(data.projectId !== undefined ? { projectId: data.projectId } : {}),
+      costCentreId: data.costCentreId,
+      activityCodeId: data.activityCodeId,
+      locationCodeId: data.locationCodeId,
       ...(data.evidenceFileId !== undefined ? { evidenceFileId: data.evidenceFileId } : {}),
       ...(data.originalClaimId !== undefined ? { originalClaimId: data.originalClaimId } : {}),
       crossCheckWarnings: warnings,
-      status: "Pending Manager"
+      status: "Pending Manager",
     };
   }
 
@@ -173,7 +226,11 @@ export class OvertimeService {
     if (context.actor.employeeId === claim.employeeId) {
       this.denyAccess(context, "approve your own overtime claim", claim.id);
     }
-    this.requireApproveDirectReportOrAdmin(claim.employeeId, context, "approve this overtime claim");
+    this.requireApproveDirectReportOrAdmin(
+      claim.employeeId,
+      context,
+      "approve this overtime claim",
+    );
     if (claim.status !== "Pending Manager") throw new Error("Invalid status");
 
     const tsService = new TimesheetService();
@@ -225,10 +282,17 @@ export class OvertimeService {
     return updated;
   }
 
-  async createCorrection(originalClaimId: string, newHours: number, newReason: string, context: ActorContext): Promise<OvertimeClaim> {
+  async createCorrection(
+    originalClaimId: string,
+    newHours: number,
+    newReason: string,
+    context: ActorContext,
+    replacementEvidenceFileId?: string,
+  ): Promise<OvertimeClaim> {
     const original = this.claimRepo.getById(originalClaimId);
     if (!original) throw new Error("Claim not found");
-    if (original.status !== "Approved") throw new Error("Only approved claims can be corrected. Use normal edits for drafts.");
+    if (original.status !== "Approved")
+      throw new Error("Only approved claims can be corrected. Use normal edits for drafts.");
 
     // Validate and build the replacement's full payload WITHOUT writing anything - only once
     // that succeeds do we commit both the new claim and the original's "Corrected" status, in a
@@ -245,7 +309,12 @@ export class OvertimeService {
         reason: newReason,
         compensationType: original.compensationType,
         ...(original.projectId !== undefined ? { projectId: original.projectId } : {}),
-        ...(original.evidenceFileId !== undefined ? { evidenceFileId: original.evidenceFileId } : {}),
+        costCentreId: original.costCentreId,
+        activityCodeId: original.activityCodeId,
+        locationCodeId: original.locationCodeId,
+        ...((replacementEvidenceFileId ?? original.evidenceFileId) !== undefined
+          ? { evidenceFileId: replacementEvidenceFileId ?? original.evidenceFileId }
+          : {}),
         originalClaimId: original.id,
       },
       context,
@@ -263,22 +332,74 @@ export class OvertimeService {
       throw new Error("This claim was already corrected by another request.");
     }
 
-    const { created } = this.claimRepo.createWithSideEffect(
-      payload,
-      { id: original.id, changes: { status: "Corrected" } },
-      context,
-    );
-    this.notifyManager(created, context);
-    return created;
+    const { storage } = getApplicationDataServices();
+    const snapshot = storage.createRawSnapshot();
+    try {
+      let toilReversedAt: string | undefined;
+      if (original.compensationType === "TOIL" && original.toilCreditedAt) {
+        const systemContext: ActorContext = {
+          actor: { ...SYSTEM_ACTOR, activeRole: "Super Admin" },
+          reason: `Reversed time-off credit before overtime correction ${original.id}: ${newReason}`,
+        };
+        new LeaveService().reverseCompensationLeaveCredit(
+          original.employeeId,
+          original.id,
+          `Time-off credit reversed because overtime claim ${original.id} was corrected.`,
+          systemContext,
+        );
+        toilReversedAt = new Date().toISOString();
+      }
+      const { created } = this.claimRepo.createWithSideEffect(
+        payload,
+        {
+          id: original.id,
+          changes: {
+            status: "Corrected",
+            ...(toilReversedAt ? { toilReversedAt } : {}),
+          },
+        },
+        context,
+      );
+      this.notifyManager(created, context);
+      return created;
+    } catch (error) {
+      storage.restoreRawSnapshot(snapshot);
+      throw error;
+    }
   }
 
-  async getEvidenceBlob(claimId: string, context: ActorContext): Promise<{ blob: Blob; fileName: string }> {
+  markIncludedInPayroll(claimIds: string[], payrollPeriodId: string, context: ActorContext): void {
+    if (!["Accounts", "Super Admin"].includes(context.actor.activeRole ?? "")) {
+      this.denyAccess(context, "mark overtime as included in payroll", payrollPeriodId);
+    }
+    for (const claimId of claimIds) {
+      const claim = this.claimRepo.getById(claimId);
+      if (!claim || claim.status !== "Approved") continue;
+      if (claim.payrollPeriodId && claim.payrollPeriodId !== payrollPeriodId) {
+        throw new Error("An overtime claim is already assigned to another payroll period.");
+      }
+      this.claimRepo.update(
+        claim.id,
+        { payrollPeriodId },
+        { ...context, reason: `Included in payroll period ${payrollPeriodId}` },
+      );
+    }
+  }
+
+  async getEvidenceBlob(
+    claimId: string,
+    context: ActorContext,
+  ): Promise<{ blob: Blob; fileName: string }> {
     const claim = this.claimRepo.getById(claimId);
     if (!claim) throw new Error("Claim not found");
     if (!claim.evidenceFileId) throw new Error("This claim has no supporting evidence.");
 
     const isSelf = context.actor.employeeId === claim.employeeId;
-    if (!isSelf && !this.hasAdminOrPayrollView(context) && !this.isManagerOf(claim.employeeId, context)) {
+    if (
+      !isSelf &&
+      !this.hasAdminOrPayrollView(context) &&
+      !this.isManagerOf(claim.employeeId, context)
+    ) {
       this.denyAccess(context, "view this claim's evidence", claimId);
     }
 
@@ -303,7 +424,7 @@ export class OvertimeService {
   }
 
   private notifyManager(claim: OvertimeClaim, context: ActorContext): void {
-    const employee = new EmployeeService().getById(claim.employeeId);
+    const employee = new EmployeeService().getById(claim.employeeId, SYSTEM_CONTEXT);
     if (!employee?.lineManagerId) return;
     const { storage, audit } = getApplicationDataServices();
     const notifService = new NotificationService(storage, audit);
@@ -326,7 +447,7 @@ export class OvertimeService {
   }
 
   private notifyHr(claim: OvertimeClaim, context: ActorContext): void {
-    const employee = new EmployeeService().getById(claim.employeeId);
+    const employee = new EmployeeService().getById(claim.employeeId, SYSTEM_CONTEXT);
     const { storage, audit } = getApplicationDataServices();
     const notifService = new NotificationService(storage, audit);
     const hrUsers = storage
@@ -352,7 +473,7 @@ export class OvertimeService {
   // Approved - credits the corresponding Compensation Leave days exactly once (guarded by
   // toilCreditedAt so a re-save or duplicate call can never double-credit).
   private notifyDecision(claim: OvertimeClaim, context: ActorContext): void {
-    const employee = new EmployeeService().getById(claim.employeeId);
+    const employee = new EmployeeService().getById(claim.employeeId, SYSTEM_CONTEXT);
     if (!employee) return;
     const { storage, audit } = getApplicationDataServices();
     const notifService = new NotificationService(storage, audit);
@@ -406,7 +527,8 @@ export class OvertimeService {
         {
           recipientUserId: employeeUser.id,
           type: claim.status === "Approved" ? "Success" : "Warning",
-          title: claim.status === "Approved" ? "Overtime claim approved" : "Overtime claim rejected",
+          title:
+            claim.status === "Approved" ? "Overtime claim approved" : "Overtime claim rejected",
           message:
             claim.status === "Approved"
               ? `Your ${claim.hours}h overtime claim for ${claim.date} was approved.`
@@ -420,18 +542,24 @@ export class OvertimeService {
     }
   }
 
-  private requireApproveDirectReportOrAdmin(employeeId: string, context: ActorContext, action: string): void {
+  private requireApproveDirectReportOrAdmin(
+    employeeId: string,
+    context: ActorContext,
+    action: string,
+  ): void {
     // Checked against the actor's currently active role, not the full set of roles they have
     // ever been granted - a dual-role manager/employee who switched to Employee mode must not
     // retain manager-level overtime approval just because a manager role is still assigned.
-    const permissions = context.actor.activeRole ? getRolePermissions(context.actor.activeRole) : new Set<Permission>();
+    const permissions = context.actor.activeRole
+      ? getRolePermissions(context.actor.activeRole)
+      : new Set<Permission>();
 
     if (permissions.has("overtime:admin_all")) {
       return;
     }
 
     if (permissions.has("overtime:approve_direct_reports") && context.actor.employeeId) {
-      const employee = new EmployeeService().getById(employeeId);
+      const employee = new EmployeeService().getById(employeeId, SYSTEM_CONTEXT);
       if (employee?.lineManagerId === context.actor.employeeId) {
         return;
       }
@@ -441,7 +569,9 @@ export class OvertimeService {
   }
 
   private requireAdmin(context: ActorContext, action: string): void {
-    const permissions = context.actor.activeRole ? getRolePermissions(context.actor.activeRole) : new Set<Permission>();
+    const permissions = context.actor.activeRole
+      ? getRolePermissions(context.actor.activeRole)
+      : new Set<Permission>();
     if (permissions.has("overtime:admin_all")) {
       return;
     }

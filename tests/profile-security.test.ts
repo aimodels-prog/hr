@@ -1,3 +1,4 @@
+import { SYSTEM_CONTEXT } from "../src/lib/data/types.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -154,7 +155,7 @@ test("only active HR or Super Admin can decide personal-profile requests", () =>
     /Only HR or a Super Admin/i,
   );
   service.approveProfileChange(request.id, "Identity checked", hr);
-  assert.equal(service.getById("employee-omar")?.preferredName, "Omar R.");
+  assert.equal(service.getById("employee-omar", SYSTEM_CONTEXT)?.preferredName, "Omar R.");
   assert.ok(
     notifications
       .listForUser("user-omar")
@@ -176,11 +177,7 @@ test("HR cannot approve or reject their own profile change request", () => {
     },
   };
 
-  const request = service.requestProfileChange(
-    "employee-rana",
-    { preferredName: "Rana N." },
-    hr,
-  );
+  const request = service.requestProfileChange("employee-rana", { preferredName: "Rana N." }, hr);
 
   assert.throws(
     () => service.approveProfileChange(request.id, "Self-approved", hr),
@@ -193,7 +190,7 @@ test("HR cannot approve or reject their own profile change request", () => {
 
   // A different HR reviewer is unaffected by the self-approval block.
   service.approveProfileChange(request.id, "Verified by a second reviewer", secondHr);
-  assert.equal(service.getById("employee-rana")?.preferredName, "Rana N.");
+  assert.equal(service.getById("employee-rana", SYSTEM_CONTEXT)?.preferredName, "Rana N.");
 });
 
 test("employment and compensation changes enforce separate active roles", () => {
@@ -225,7 +222,7 @@ test("employment and compensation changes enforce separate active roles", () => 
     "Approved payroll change",
     accounts,
   );
-  assert.equal(service.getById("employee-omar")?.salary?.baseMonthly, 2000);
+  assert.equal(service.getById("employee-omar", SYSTEM_CONTEXT)?.salary?.baseMonthly, 2000);
   assert.throws(
     () =>
       service.updateEmploymentRecord(
@@ -336,7 +333,102 @@ test("HR cannot verify or reject their own uploaded document", async () => {
     },
   };
   documents.verifyDocument(doc.id, secondHr);
-  assert.equal(documents.getDocumentRepository().getById(doc.id)?.status, "Valid");
+  assert.equal(documents.getDocumentRepository(SYSTEM_CONTEXT).getById(doc.id)?.status, "Valid");
+});
+
+test("Core HR raw repositories reject page-level actors and scoped reads respect the active role", () => {
+  const { audit } = setup();
+  const service = new EmployeeService();
+
+  assert.throws(
+    () => service.getEmployeeRepository(employee),
+    /trusted system workflows|reserved/i,
+  );
+  assert.throws(() => service.getUserRepository(employee), /trusted system workflows|reserved/i);
+  assert.throws(() => service.getHistoryRepository(employee), /trusted system workflows|reserved/i);
+  assert.throws(
+    () => service.getChangeRequestRepository(employee),
+    /trusted system workflows|reserved/i,
+  );
+
+  assert.deepEqual(
+    service.getEmployees(employee).map((item) => item.id),
+    ["employee-omar"],
+  );
+  assert.deepEqual(
+    service.getEmployees(accounts).map((item) => item.id),
+    ["employee-aisha"],
+    "Accounts uses the sanitised directory for lookups and must not receive full HR records",
+  );
+
+  const multiRoleEmployee: ActorContext = {
+    actor: {
+      ...employee.actor,
+      roles: ["Employee", "Super Admin"],
+      activeRole: "Employee",
+    },
+  };
+  assert.deepEqual(
+    service.getEmployees(multiRoleEmployee).map((item) => item.id),
+    ["employee-omar"],
+    "assigned elevated access must not leak into the Employee role preview",
+  );
+
+  const directory = service.getDirectoryEmployees(employee);
+  assert.ok(directory.length > 1, "the work directory remains available to employees");
+  assert.ok(
+    directory.every(
+      (item) =>
+        item.salary === undefined &&
+        item.bankDetails === undefined &&
+        item.passportNumber === undefined &&
+        item.personalEmail === undefined &&
+        item.address === undefined,
+    ),
+    "directory lookups must never carry private HR or payroll fields",
+  );
+
+  assert.ok(
+    audit.list().filter((event) => event.action === "access-denied").length >= 4,
+    "every raw-repository denial should be audited",
+  );
+});
+
+test("document metadata reads are scoped and raw document storage is system-only", () => {
+  setup();
+  const documents = new DocumentService();
+  documents.getDocumentRepository(SYSTEM_CONTEXT).create(
+    {
+      employeeId: "employee-omar",
+      fileId: "file-omar-public",
+      type: "contract",
+      title: "Employment Contract",
+      status: "Valid",
+      visibility: "Public",
+    },
+    SYSTEM_CONTEXT,
+  );
+  documents.getDocumentRepository(SYSTEM_CONTEXT).create(
+    {
+      employeeId: "employee-rana",
+      fileId: "file-rana-private",
+      type: "passport",
+      title: "Passport",
+      documentNumber: "P-001",
+      status: "Valid",
+      visibility: "Restricted",
+    },
+    SYSTEM_CONTEXT,
+  );
+
+  const employeeDocuments = documents.getDocuments(employee);
+  assert.ok(employeeDocuments.length > 0);
+  assert.ok(employeeDocuments.every((document) => document.employeeId === "employee-omar"));
+  assert.ok(documents.getDocuments(hr).length > employeeDocuments.length);
+  assert.throws(
+    () => documents.getDocumentRepository(employee),
+    /trusted system workflows|reserved/i,
+  );
 });
 
 test.after(() => configureApplicationDataServices(undefined));

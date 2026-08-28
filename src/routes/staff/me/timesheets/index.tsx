@@ -29,7 +29,10 @@ function TimesheetListRoute() {
 
   const periods = tsService.getPeriods();
   const settings = tsService.getSettings();
-  const existingTimesheets = tsService.getTimesheetsForEmployee(currentUser.employeeId);
+  const existingTimesheets = tsService.getTimesheetsForEmployee(
+    currentUser.employeeId,
+    currentUser.getActorContext(),
+  );
   const timesheetByPeriodId = new Map(existingTimesheets.map((ts) => [ts.periodId, ts]));
 
   return (
@@ -58,7 +61,8 @@ function TimesheetListRoute() {
                   // never opened gets a computed preview only - opening $periodId is what
                   // actually creates the record, not viewing this list.
                   const existing = timesheetByPeriodId.get(period.id);
-                  const ts = existing ?? tsService.previewTimesheetSummary(currentUser.employeeId!, period);
+                  const ts =
+                    existing ?? tsService.previewTimesheetSummary(currentUser.employeeId!, period);
                   if (!ts) return null;
 
                   const diff = ts.totalHours - ts.expectedHours;

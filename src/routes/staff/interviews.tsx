@@ -126,12 +126,7 @@ function Interviews() {
 
   const userById = useMemo(() => {
     void refreshKey;
-    const map = new Map(
-      empService
-        .getUserRepository()
-        .list()
-        .map((u) => [u.id, u]),
-    );
+    const map = new Map(empService.getUsers(getActorContext()).map((u) => [u.id, u]));
     return map;
   }, [empService, refreshKey]);
 

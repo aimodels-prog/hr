@@ -107,8 +107,7 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
   const [rejectionReason, setRejectionReason] = useState("");
 
   const allDocs = documentService
-    .getDocumentRepository()
-    .list()
+    .getDocuments(currentUser.getActorContext())
     .filter((document) => document.employeeId === employeeId);
 
   const isHrOrAdmin = currentUser?.activeRole === "HR" || currentUser?.activeRole === "Super Admin";

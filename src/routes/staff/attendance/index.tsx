@@ -108,6 +108,7 @@ function AttendanceAdminContent() {
   const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [statusFilter, setStatusFilter] = useState("All");
   const [manualOpen, setManualOpen] = useState(false);
+  const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
   const [manualEmployeeId, setManualEmployeeId] = useState("");
   const [manualClockIn, setManualClockIn] = useState("09:00");
   const [manualClockOut, setManualClockOut] = useState("18:00");
@@ -142,9 +143,9 @@ function AttendanceAdminContent() {
 
   const actorContext = currentUser.getActorContext();
   const employees = employeeService
-    .getEmployees()
+    .getEmployees(actorContext)
     .filter((employee) => !["Archived", "Inactive"].includes(employee.status));
-  const allRecords = attendanceService.getAllRecords();
+  const allRecords = attendanceService.getAllRecords(actorContext);
   const locations = attendanceService.getLocations();
   const clockInLocations = attendanceService.getClockInLocations();
   const siteVisits = attendanceService.getAllSiteVisits(actorContext);
@@ -157,7 +158,7 @@ function AttendanceAdminContent() {
         (item) => item.employeeId === employee.id && item.date === date,
       );
       if (record) return { employee, ...record };
-      const reconciled = attendanceService.reconcileDailyStatus(employee.id, date);
+      const reconciled = attendanceService.reconcileDailyStatus(employee.id, date, actorContext);
       return {
         employee,
         id: `virtual-${employee.id}-${date}`,
@@ -179,27 +180,36 @@ function AttendanceAdminContent() {
 
   const saveManualRecord = () => {
     try {
-      attendanceService.saveRecord(
-        {
-          employeeId: manualEmployeeId,
-          date,
-          shiftId: manualShiftId || undefined,
-          expectedClockIn: expectedIn,
-          expectedClockOut: expectedOut,
-          clockIn: manualClockIn || undefined,
-          clockOut: manualClockOut || undefined,
-          breakMinutes: Number(manualBreak),
-          location: manualLocation || undefined,
-          source: manualSource,
-          workMode: "Office",
-          status: "Present",
-          calculatedHours: 0,
-          isLate: false,
-          isEarlyDeparture: false,
-        },
-        { ...actorContext, reason: "HR manual attendance entry" },
-      );
+      const recordData: Parameters<AttendanceService["saveRecord"]>[0] = {
+        employeeId: manualEmployeeId,
+        date,
+        shiftId: manualShiftId || undefined,
+        expectedClockIn: expectedIn,
+        expectedClockOut: expectedOut,
+        clockIn: manualClockIn || undefined,
+        clockOut: manualClockOut || undefined,
+        breakMinutes: Number(manualBreak),
+        location: manualLocation || undefined,
+        source: manualSource,
+        workMode: "Office",
+        status: "Present",
+        calculatedHours: 0,
+        isLate: false,
+        isEarlyDeparture: false,
+      };
+      if (editingRecordId) {
+        attendanceService.updateRecord(editingRecordId, recordData, {
+          ...actorContext,
+          reason: "HR corrected an attendance record",
+        });
+      } else {
+        attendanceService.saveRecord(recordData, {
+          ...actorContext,
+          reason: "HR manual attendance entry",
+        });
+      }
       setManualOpen(false);
+      setEditingRecordId(null);
       setRevision((value) => value + 1);
       toast.success("Attendance record saved.");
     } catch (error) {
@@ -374,7 +384,9 @@ function AttendanceAdminContent() {
           <TabsList>
             <TabsTrigger value="daily">Daily Roster</TabsTrigger>
             <TabsTrigger value="site-visits">Site Visits ({pendingSiteVisits.length})</TabsTrigger>
-            <TabsTrigger value="exceptions">Exception Cases ({openExceptionCases.length})</TabsTrigger>
+            <TabsTrigger value="exceptions">
+              Exception Cases ({openExceptionCases.length})
+            </TabsTrigger>
             <TabsTrigger value="import">Import & Manual Entry</TabsTrigger>
             <TabsTrigger value="setup">Office Setup</TabsTrigger>
           </TabsList>
@@ -422,7 +434,9 @@ function AttendanceAdminContent() {
                     "text/csv",
                   );
                 } catch (error) {
-                  toast.error(error instanceof Error ? error.message : "Could not export attendance.");
+                  toast.error(
+                    error instanceof Error ? error.message : "Could not export attendance.",
+                  );
                 }
               }}
             >
@@ -441,6 +455,7 @@ function AttendanceAdminContent() {
                     <TableHead>Hours</TableHead>
                     <TableHead>Location</TableHead>
                     <TableHead>Source</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -470,6 +485,35 @@ function AttendanceAdminContent() {
                       <TableCell>{row.calculatedHours ? `${row.calculatedHours}h` : "—"}</TableCell>
                       <TableCell>{"location" in row ? (row.location ?? "—") : "—"}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{row.source}</TableCell>
+                      <TableCell className="text-right">
+                        {!row.id.startsWith("virtual-") && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              const storedRecord = allRecords.find(
+                                (record) => record.id === row.id,
+                              );
+                              if (!storedRecord) return;
+                              setEditingRecordId(row.id);
+                              setManualEmployeeId(row.employee.id);
+                              setManualClockIn(row.clockIn ?? "");
+                              setManualClockOut(row.clockOut ?? "");
+                              setManualBreak(String(storedRecord.breakMinutes ?? 0));
+                              setManualShiftId(storedRecord.shiftId ?? "Standard Day");
+                              setManualLocation(storedRecord.location ?? "");
+                              setManualSource(
+                                row.source === "Hardware Terminal"
+                                  ? "Hardware Terminal"
+                                  : "Manual Entry",
+                              );
+                              setManualOpen(true);
+                            }}
+                          >
+                            <PencilLine className="mr-1 h-3.5 w-3.5" /> Edit
+                          </Button>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -568,9 +612,9 @@ function AttendanceAdminContent() {
             <MapPin className="h-4 w-4" />
             <AlertTitle>Exception cases</AlertTitle>
             <AlertDescription>
-              An office-origin site visit that ended without a clock-in opens a persistent case
-              here instead of only sending a notification - assign it, add investigation notes,
-              and close it once resolved.
+              An office-origin site visit that ended without a clock-in opens a persistent case here
+              instead of only sending a notification - assign it, add investigation notes, and close
+              it once resolved.
             </AlertDescription>
           </Alert>
           <Card className="overflow-hidden">
@@ -621,7 +665,11 @@ function AttendanceAdminContent() {
                           </TableCell>
                           <TableCell className="text-right whitespace-nowrap">
                             {item.status !== "Resolved" && !item.ownerId && (
-                              <Button variant="outline" size="sm" onClick={() => assignCaseToMe(item)}>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => assignCaseToMe(item)}
+                              >
                                 Assign to me
                               </Button>
                             )}
@@ -699,7 +747,18 @@ function AttendanceAdminContent() {
               <p className="text-sm text-muted-foreground">
                 Create a single audited attendance record for hardware or HR-supplied punches.
               </p>
-              <Button onClick={() => setManualOpen(true)}>New Manual Record</Button>
+              <Button
+                onClick={() => {
+                  setEditingRecordId(null);
+                  setManualEmployeeId("");
+                  setManualClockIn("09:00");
+                  setManualClockOut("18:00");
+                  setManualBreak("60");
+                  setManualOpen(true);
+                }}
+              >
+                New Manual Record
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>
@@ -851,7 +910,9 @@ function AttendanceAdminContent() {
       <Dialog open={manualOpen} onOpenChange={setManualOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Manual Attendance Entry</DialogTitle>
+            <DialogTitle>
+              {editingRecordId ? "Edit Attendance Record" : "Manual Attendance Entry"}
+            </DialogTitle>
             <DialogDescription>
               This action is stored with your identity and reason in the audit history.
             </DialogDescription>
@@ -1000,7 +1061,11 @@ function AttendanceAdminContent() {
             placeholder="Investigation notes, or a resolution note to close the case"
           />
           <DialogFooter>
-            <Button variant="outline" onClick={saveCaseNotes} disabled={caseNotes.trim().length === 0}>
+            <Button
+              variant="outline"
+              onClick={saveCaseNotes}
+              disabled={caseNotes.trim().length === 0}
+            >
               Save Notes
             </Button>
             <Button onClick={resolveCase} disabled={caseNotes.trim().length < 5}>

@@ -51,7 +51,7 @@ export function AccountsDashboard() {
     b.endDate.localeCompare(a.endDate),
   )[0];
   const latestTimesheets = latestTimesheetPeriod
-    ? timesheetService.getTimesheetsForPeriod(latestTimesheetPeriod.id)
+    ? timesheetService.getTimesheetsForPeriod(latestTimesheetPeriod.id, actorContext)
     : [];
   const approvedTimesheets = latestTimesheets.filter((item) =>
     ["Approved", "Payroll Locked"].includes(item.status),
@@ -69,7 +69,7 @@ export function AccountsDashboard() {
         )
     : [];
   const activeEmployees = employeeService
-    .getEmployees()
+    .getDirectoryEmployees(actorContext)
     .filter((employee) => isCurrentWorkforceMember(employee));
 
   const attentionItems: AttentionItem[] = [];
@@ -147,7 +147,7 @@ export function AccountsDashboard() {
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
     .slice(0, 5)
     .map((req) => {
-      const employee = employeeService.getById(req.employeeId);
+      const employee = activeEmployees.find((item) => item.id === req.employeeId);
       return {
         id: req.id,
         requesterName: employee ? employee.preferredName || employee.legalName : "Unknown employee",

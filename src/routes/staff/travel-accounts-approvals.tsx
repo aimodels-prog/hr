@@ -24,6 +24,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { TravelService } from "@/lib/data/travel-service";
+import type { TravelRequest } from "@/lib/data/travel-types";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { getMasterDataRepository, getProjectRepository } from "@/lib/data/master-data";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
@@ -38,19 +39,21 @@ function AccountsTravelApprovalsRoute() {
   const travelService = useMemo(() => new TravelService(), []);
   const empService = useMemo(() => new EmployeeService(), []);
 
-  const [requests, setRequests] = useState(travelService.getAllRequests(currentUser.getActorContext()));
-  const allEmployees = empService.getEmployees();
+  const [requests, setRequests] = useState(
+    travelService.getAllRequests(currentUser.getActorContext()),
+  );
+  const allEmployees = empService.getDirectoryEmployees(currentUser.getActorContext());
 
   const [notes, setNotes] = useState("");
-  const [selectedReq, setSelectedReq] = useState<any>(null);
+  const [selectedReq, setSelectedReq] = useState<TravelRequest | null>(null);
   const [actionType, setActionType] = useState<"approve" | "reject">("approve");
 
   const pendingAccounts = requests.filter(
-    (r) => r.accountsApprovalStatus === "Pending" && r.status !== "Withdrawn",
+    (r) => r.accountsApprovalStatus === "Pending" && r.status === "Pending HR and Accounts",
   );
   const processed = requests.filter((r) => r.accountsApprovalStatus !== "Pending");
 
-  const handleOpenAction = (req: any, type: "approve" | "reject") => {
+  const handleOpenAction = (req: TravelRequest, type: "approve" | "reject") => {
     setSelectedReq(req);
     setActionType(type);
     setNotes("");
@@ -58,7 +61,10 @@ function AccountsTravelApprovalsRoute() {
 
   const viewEvidence = async (requestId: string) => {
     try {
-      const { blob } = await travelService.getEvidenceBlob(requestId, currentUser.getActorContext());
+      const { blob } = await travelService.getEvidenceBlob(
+        requestId,
+        currentUser.getActorContext(),
+      );
       const url = URL.createObjectURL(blob);
       window.open(url, "_blank", "noopener,noreferrer");
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
@@ -74,15 +80,17 @@ function AccountsTravelApprovalsRoute() {
         selectedReq.id,
         actionType === "approve",
         notes,
-        currentUser!.getActorContext(),
+        currentUser.getActorContext(),
       );
       setRequests(travelService.getAllRequests(currentUser.getActorContext()));
       setSelectedReq(null);
       toast.success(
         `Travel budget ${actionType === "approve" ? "approved" : "rejected"} by Accounts.`,
       );
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (error: unknown) {
+      toast.error(
+        error instanceof Error ? error.message : "The travel decision could not be saved.",
+      );
     }
   };
 
@@ -141,7 +149,11 @@ function AccountsTravelApprovalsRoute() {
                           </TableCell>
                           <TableCell className="text-right whitespace-nowrap">
                             {r.evidenceFileId && (
-                              <Button variant="ghost" size="sm" onClick={() => void viewEvidence(r.id)}>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => void viewEvidence(r.id)}
+                              >
                                 <Paperclip className="w-4 h-4" />
                               </Button>
                             )}

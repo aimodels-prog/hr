@@ -8,7 +8,7 @@ import { NotificationService } from "../src/lib/data/notification-service.ts";
 import { initializeSeedData } from "../src/lib/data/seed-service.ts";
 import { MemoryStorageDriver } from "../src/lib/data/storage-driver.ts";
 import { VersionedStorageService } from "../src/lib/data/storage.ts";
-import { TravelService } from "../src/lib/data/travel-service.ts";
+import { calculateTravelVariancePercent, TravelService } from "../src/lib/data/travel-service.ts";
 import type { FileRepository, SaveFileInput } from "../src/lib/data/file-repository.ts";
 import type { ActorContext, FileMetadata } from "../src/lib/data/types.ts";
 
@@ -28,6 +28,16 @@ const otherEmployee: ActorContext = {
     employeeId: "employee-layla",
     displayName: "Layla Al Harthy",
     activeRole: "Employee",
+    roles: ["Employee", "Line Manager"],
+  },
+};
+
+const manager: ActorContext = {
+  actor: {
+    userId: "user-layla",
+    employeeId: "employee-layla",
+    displayName: "Layla Al Harthy",
+    activeRole: "Line Manager",
     roles: ["Employee", "Line Manager"],
   },
 };
@@ -88,7 +98,11 @@ function fakeFileRepository(): FileRepository {
     },
     async listByOwner(owner) {
       return [...files.values()]
-        .filter((f) => f.metadata.owner.entityType === owner.entityType && f.metadata.owner.entityId === owner.entityId)
+        .filter(
+          (f) =>
+            f.metadata.owner.entityType === owner.entityType &&
+            f.metadata.owner.entityId === owner.entityId,
+        )
         .map((f) => f.metadata);
     },
     async delete(id: string) {
@@ -110,7 +124,10 @@ function harness() {
   return { travel: new TravelService(), storage, audit, files };
 }
 
-function submitBasicRequest(travel: TravelService, overrides: Partial<Parameters<TravelService["submitRequest"]>[0]> = {}) {
+function submitBasicRequest(
+  travel: TravelService,
+  overrides: Partial<Parameters<TravelService["submitRequest"]>[0]> = {},
+) {
   return travel.submitRequest(
     {
       employeeId: "employee-omar",
@@ -150,7 +167,10 @@ test("an employee cannot submit a travel request for another employee", async ()
 
 test("negative estimates are rejected", async () => {
   const { travel } = harness();
-  await assert.rejects(() => submitBasicRequest(travel, { estTransport: -50 }), /cannot be negative/);
+  await assert.rejects(
+    () => submitBasicRequest(travel, { estTransport: -50 }),
+    /cannot be negative/,
+  );
 });
 
 test("an invalid/archived project is rejected", async () => {
@@ -159,7 +179,10 @@ test("an invalid/archived project is rejected", async () => {
     { name: "Old Project", code: "OLD", isActive: false, description: "", orderIndex: 0 } as never,
     hr,
   );
-  await assert.rejects(() => submitBasicRequest(travel, { projectId: archived.id }), /invalid or archived/);
+  await assert.rejects(
+    () => submitBasicRequest(travel, { projectId: archived.id }),
+    /invalid or archived/,
+  );
 });
 
 test("an invalid/inactive cost centre is rejected", async () => {
@@ -168,16 +191,16 @@ test("an invalid/inactive cost centre is rejected", async () => {
     { name: "Old CC", code: "OLDCC", isActive: false, description: "", orderIndex: 0 } as never,
     hr,
   );
-  await assert.rejects(() => submitBasicRequest(travel, { costCentreId: inactiveCc.id }), /cost centre is invalid/);
+  await assert.rejects(
+    () => submitBasicRequest(travel, { costCentreId: inactiveCc.id }),
+    /cost centre is invalid/,
+  );
 });
 
 test("no one can read another employee's travel request by ID", async () => {
   const { travel } = harness();
   const req = await submitBasicRequest(travel);
-  assert.throws(
-    () => travel.getRequestById(req.id, otherEmployee),
-    /not authorised/,
-  );
+  assert.throws(() => travel.getRequestById(req.id, otherEmployee), /not authorised/);
   // The owner, and privileged reviewers, can read it.
   assert.ok(travel.getRequestById(req.id, employee));
   assert.ok(travel.getRequestById(req.id, hr));
@@ -192,9 +215,26 @@ test("getAllRequests and getRequestsForEmployee are restricted to reviewers or t
   assert.ok(travel.getAllRequests(hr));
   assert.ok(travel.getAllRequests(accounts));
 
-  assert.throws(() => travel.getRequestsForEmployee("employee-omar", otherEmployee), /not authorised/);
+  assert.throws(
+    () => travel.getRequestsForEmployee("employee-omar", otherEmployee),
+    /not authorised/,
+  );
   assert.ok(travel.getRequestsForEmployee("employee-omar", employee));
   assert.ok(travel.getRequestsForEmployee("employee-omar", hr));
+});
+
+test("a line manager can view travel history only for their direct reports", async () => {
+  const { travel } = harness();
+  const request = await submitBasicRequest(travel);
+  assert.equal(travel.getRequestsForEmployee("employee-omar", manager)[0]?.id, request.id);
+  assert.throws(() => travel.getRequestsForEmployee("employee-mariam", manager), /not authorised/);
+});
+
+test("travel variance remains finite when the authorised estimate is zero", () => {
+  assert.equal(calculateTravelVariancePercent(0, 0), 0);
+  assert.equal(calculateTravelVariancePercent(0, 25), 100);
+  assert.equal(calculateTravelVariancePercent(100, 125), 25);
+  assert.ok(Number.isFinite(calculateTravelVariancePercent(0, 25)));
 });
 
 test("a traveller cannot approve their own request for HR or Accounts", async () => {
@@ -212,7 +252,10 @@ test("a traveller cannot approve their own request for HR or Accounts", async ()
     superAdmin,
   );
   assert.throws(() => travel.hrApprove(req.id, true, "", superAdmin), /cannot review your own/);
-  assert.throws(() => travel.accountsApprove(req.id, true, "", superAdmin), /cannot review your own/);
+  assert.throws(
+    () => travel.accountsApprove(req.id, true, "", superAdmin),
+    /cannot review your own/,
+  );
 });
 
 test("rejecting requires a reason from both HR and Accounts", async () => {
@@ -235,7 +278,12 @@ test("either reviewer rejecting sends the whole request to Rejected", async () =
   const { travel } = harness();
   const req = await submitBasicRequest(travel);
   travel.hrApprove(req.id, true, "Fine", hr);
-  const afterAccounts = travel.accountsApprove(req.id, false, "Over budget for this quarter", accounts);
+  const afterAccounts = travel.accountsApprove(
+    req.id,
+    false,
+    "Over budget for this quarter",
+    accounts,
+  );
   assert.equal(afterAccounts.status, "Rejected");
 });
 
@@ -246,10 +294,16 @@ test("expense lines require a positive amount, a bill reference, and a date insi
   const approved = travel.accountsApprove(req.id, true, "Fine", accounts);
   assert.equal(approved.status, "Pre-authorised");
 
-  const base = { id: "line-1", category: "Transport" as const, currency: "OMR", date: "2020-01-11" };
+  const base = {
+    id: "line-1",
+    category: "Transport" as const,
+    currency: "OMR",
+    date: "2020-01-11",
+  };
 
   await assert.rejects(
-    () => travel.submitExpenses(req.id, [{ ...base, amount: -10, reference: "INV-1" }], "", employee),
+    () =>
+      travel.submitExpenses(req.id, [{ ...base, amount: -10, reference: "INV-1" }], "", employee),
     /positive amount/,
   );
   await assert.rejects(
@@ -278,7 +332,17 @@ test("expense receipt files are verified for existence and ownership before bein
     () =>
       travel.submitExpenses(
         req.id,
-        [{ id: "line-1", category: "Transport", currency: "OMR", date: "2020-01-11", amount: 50, reference: "INV-1", receiptFileId: "does-not-exist" }],
+        [
+          {
+            id: "line-1",
+            category: "Transport",
+            currency: "OMR",
+            date: "2020-01-11",
+            amount: 50,
+            reference: "INV-1",
+            receiptFileId: "does-not-exist",
+          },
+        ],
         "",
         employee,
       ),
@@ -287,14 +351,29 @@ test("expense receipt files are verified for existence and ownership before bein
 
   // A receipt belonging to a different expense line must also be rejected.
   const wrongOwnerReceipt = await files.save(
-    { blob: new Blob(["receipt"]), name: "receipt.pdf", mimeType: "application/pdf", owner: { entityType: "travel-expense-line", entityId: "some-other-line" } },
+    {
+      blob: new Blob(["receipt"]),
+      name: "receipt.pdf",
+      mimeType: "application/pdf",
+      owner: { entityType: "travel-expense-line", entityId: "some-other-line" },
+    },
     employee,
   );
   await assert.rejects(
     () =>
       travel.submitExpenses(
         req.id,
-        [{ id: "line-1", category: "Transport", currency: "OMR", date: "2020-01-11", amount: 50, reference: "INV-1", receiptFileId: wrongOwnerReceipt.id }],
+        [
+          {
+            id: "line-1",
+            category: "Transport",
+            currency: "OMR",
+            date: "2020-01-11",
+            amount: 50,
+            reference: "INV-1",
+            receiptFileId: wrongOwnerReceipt.id,
+          },
+        ],
         "",
         employee,
       ),
@@ -303,12 +382,27 @@ test("expense receipt files are verified for existence and ownership before bein
 
   // A receipt correctly owned by this exact line is accepted.
   const validReceipt = await files.save(
-    { blob: new Blob(["receipt"]), name: "receipt.pdf", mimeType: "application/pdf", owner: { entityType: "travel-expense-line", entityId: "line-1" } },
+    {
+      blob: new Blob(["receipt"]),
+      name: "receipt.pdf",
+      mimeType: "application/pdf",
+      owner: { entityType: "travel-expense-line", entityId: "line-1" },
+    },
     employee,
   );
   const updated = await travel.submitExpenses(
     req.id,
-    [{ id: "line-1", category: "Transport", currency: "OMR", date: "2020-01-11", amount: 50, reference: "INV-1", receiptFileId: validReceipt.id }],
+    [
+      {
+        id: "line-1",
+        category: "Transport",
+        currency: "OMR",
+        date: "2020-01-11",
+        amount: 50,
+        reference: "INV-1",
+        receiptFileId: validReceipt.id,
+      },
+    ],
     "",
     employee,
   );
@@ -318,7 +412,12 @@ test("expense receipt files are verified for existence and ownership before bein
 test("evidence and receipt downloads are restricted to the traveller and reviewers, and are audited", async () => {
   const { travel, files, audit } = harness();
   const evidence = await files.save(
-    { blob: new Blob(["evidence"]), name: "evidence.pdf", mimeType: "application/pdf", owner: { entityType: "travel-request", entityId: "employee-omar" } },
+    {
+      blob: new Blob(["evidence"]),
+      name: "evidence.pdf",
+      mimeType: "application/pdf",
+      owner: { entityType: "travel-request", entityId: "employee-omar" },
+    },
     employee,
   );
   const req = await submitBasicRequest(travel, { evidenceFileId: evidence.id });
@@ -335,14 +434,34 @@ test("evidence and receipt downloads are restricted to the traveller and reviewe
 });
 
 test("closing the reimbursement produces Closed, and rejecting expenses clears stale totals", async () => {
-  const { travel } = harness();
+  const { travel, files } = harness();
   const req = await submitBasicRequest(travel);
   travel.hrApprove(req.id, true, "Fine", hr);
   travel.accountsApprove(req.id, true, "Fine", accounts);
 
+  const firstReceipt = await files.save(
+    {
+      blob: new Blob(["receipt"]),
+      name: "receipt-1.pdf",
+      mimeType: "application/pdf",
+      owner: { entityType: "travel-expense-line", entityId: "line-1" },
+    },
+    employee,
+  );
+
   const withExpenses = await travel.submitExpenses(
     req.id,
-    [{ id: "line-1", category: "Transport", currency: "OMR", date: "2020-01-11", amount: 120, reference: "INV-1" }],
+    [
+      {
+        id: "line-1",
+        category: "Transport",
+        currency: "OMR",
+        date: "2020-01-11",
+        amount: 120,
+        reference: "INV-1",
+        receiptFileId: firstReceipt.id,
+      },
+    ],
     "",
     employee,
   );
@@ -351,12 +470,36 @@ test("closing the reimbursement produces Closed, and rejecting expenses clears s
 
   const rejected = travel.superAdminClose(req.id, false, "Missing itemised receipt", superAdmin);
   assert.equal(rejected.status, "Pre-authorised");
-  assert.equal(rejected.actualTotal, undefined, "actualTotal must be cleared after expense rejection");
+  assert.equal(
+    rejected.actualTotal,
+    undefined,
+    "actualTotal must be cleared after expense rejection",
+  );
   assert.equal(rejected.expenses?.length, 0);
+
+  const secondReceipt = await files.save(
+    {
+      blob: new Blob(["receipt"]),
+      name: "receipt-2.pdf",
+      mimeType: "application/pdf",
+      owner: { entityType: "travel-expense-line", entityId: "line-2" },
+    },
+    employee,
+  );
 
   const resubmitted = await travel.submitExpenses(
     req.id,
-    [{ id: "line-2", category: "Transport", currency: "OMR", date: "2020-01-11", amount: 90, reference: "INV-2" }],
+    [
+      {
+        id: "line-2",
+        category: "Transport",
+        currency: "OMR",
+        date: "2020-01-11",
+        amount: 90,
+        reference: "INV-2",
+        receiptFileId: secondReceipt.id,
+      },
+    ],
     "",
     employee,
   );

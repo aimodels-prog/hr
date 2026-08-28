@@ -20,7 +20,7 @@ export function OverviewTab({
   const currentUser = useCurrentUser();
   const employeeService = new EmployeeService();
   const manager = employee.lineManagerId
-    ? employeeService.getEmployeeRepository().getById(employee.lineManagerId)
+    ? employeeService.getById(employee.lineManagerId, currentUser.getActorContext())
     : null;
   const projects = getProjectRepository().list();
   const project = employee.projectId ? projects.find((p) => p.id === employee.projectId) : null;
@@ -56,7 +56,7 @@ export function OverviewTab({
   try {
     const docService = new DocumentService();
     const expiringDocs = docService
-      .getExpiringDocuments()
+      .getExpiringDocuments(currentUser.getActorContext())
       .filter((d) => d.employeeId === employee.id);
     if (expiringDocs.length > 0) {
       alerts.push({
@@ -71,7 +71,7 @@ export function OverviewTab({
   try {
     const tsService = new TimesheetService();
     const overdueTs = tsService
-      .getTimesheetsForEmployee(employee.id)
+      .getTimesheetsForEmployee(employee.id, currentUser.getActorContext())
       .filter((t) => t.status === "Returned");
     if (overdueTs.length > 0) {
       alerts.push({
@@ -85,7 +85,7 @@ export function OverviewTab({
 
   try {
     const obService = new OnboardingService();
-    const obCase = obService.getCaseByEmployeeId(employee.id);
+    const obCase = obService.getCaseByEmployeeId(employee.id, currentUser.getActorContext());
     if (obCase && obCase.status !== "Completed") {
       const pendingCount = obCase.tasks.filter(
         (t) => t.status === "Pending" || t.status === "Blocked",

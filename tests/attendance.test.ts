@@ -78,7 +78,9 @@ function fakeFileRepository(): FileRepository {
     async listByOwner(owner) {
       return [...files.values()]
         .filter(
-          (f) => f.metadata.owner.entityType === owner.entityType && f.metadata.owner.entityId === owner.entityId,
+          (f) =>
+            f.metadata.owner.entityType === owner.entityType &&
+            f.metadata.owner.entityId === owner.entityId,
         )
         .map((f) => f.metadata);
     },
@@ -144,7 +146,27 @@ test("only HR/Super Admin can export attendance CSV, and the export is audited",
   const csv = service.exportCsv("2026-08-24", hr);
   assert.ok(csv.includes("employee-omar"));
   assert.ok(
-    audit.list().some((event) => event.action === "attendance_data_export" && event.entityId === "2026-08-24"),
+    audit
+      .list()
+      .some(
+        (event) => event.action === "attendance_data_export" && event.entityId === "2026-08-24",
+      ),
+  );
+});
+
+test("attendance reads are enforced inside the service", () => {
+  const { service, audit } = harness();
+  seedRecord(service, "2026-08-24");
+
+  assert.equal(service.getRecordsForEmployee("employee-omar", employee).length, 1);
+  assert.equal(service.getRecordsForEmployee("employee-omar", manager).length, 1);
+  assert.throws(() => service.getRecordsForEmployee("employee-omar", unrelated), /not authorised/);
+  assert.throws(() => service.getAllRecords(employee), /not authorised/);
+  assert.equal(service.getAllRecords(hr).length, 1);
+  assert.ok(
+    audit
+      .list()
+      .some((event) => event.module === "attendance" && event.action === "attendance_read_denied"),
   );
 });
 
@@ -167,12 +189,12 @@ test("attendance correction evidence is restricted to the owner, their line mana
       blob: new Blob(["late arrival proof"]),
       name: "traffic-note.pdf",
       mimeType: "application/pdf",
-      owner: { entityType: "attendance-correction-evidence", entityId: "employee-omar" },
+      owner: { entityType: "attendance-record", entityId: record.id },
     },
     employee,
   );
 
-  const correction = service.requestCorrection(
+  const correction = await service.requestCorrection(
     record.id,
     "09:15",
     "18:00",
@@ -194,9 +216,7 @@ test("attendance correction evidence is restricted to the owner, their line mana
     () => service.getCorrectionEvidence(correction.id, unrelated),
     /not authorised/,
   );
-  assert.ok(
-    audit.list().some((event) => event.action === "attendance_evidence_access_denied"),
-  );
+  assert.ok(audit.list().some((event) => event.action === "attendance_evidence_access_denied"));
 
   const accessEvents = audit
     .list()
@@ -204,10 +224,10 @@ test("attendance correction evidence is restricted to the owner, their line mana
   assert.equal(accessEvents.length, 3);
 });
 
-test("requesting a correction with no evidence file cannot be downloaded", () => {
+test("requesting a correction with no evidence file cannot be downloaded", async () => {
   const { service } = harness();
   const record = seedRecord(service, "2026-08-21");
-  const correction = service.requestCorrection(
+  const correction = await service.requestCorrection(
     record.id,
     "09:10",
     "",
@@ -215,7 +235,10 @@ test("requesting a correction with no evidence file cannot be downloaded", () =>
     employee,
   );
 
-  assert.rejects(() => service.getCorrectionEvidence(correction.id, employee), /no supporting evidence/);
+  assert.rejects(
+    () => service.getCorrectionEvidence(correction.id, employee),
+    /no supporting evidence/,
+  );
 });
 
 test("an office-origin site visit that ends without a clock-in opens a persistent, ownable exception case - not just a notification", () => {
@@ -249,13 +272,18 @@ test("an office-origin site visit that ends without a clock-in opens a persisten
   assert.equal(openCase.siteVisitId, visit.id);
   assert.equal(openCase.ownerId, undefined);
   assert.ok(
-    audit.list().some((event) => event.entityType === "exception-case" && event.action === "create"),
+    audit
+      .list()
+      .some((event) => event.entityType === "exception-case" && event.action === "create"),
     "creating the case must itself be an audited event",
   );
 
   // A plain employee cannot see or act on exception cases.
   assert.throws(() => service.getExceptionCases(employee), /not authorised/);
-  assert.throws(() => service.assignExceptionCase(openCase.id, "user-rana", employee), /not authorised/);
+  assert.throws(
+    () => service.assignExceptionCase(openCase.id, "user-rana", employee),
+    /not authorised/,
+  );
 
   // HR assigns the case to themselves, which also moves it from Open to Investigating.
   const assigned = service.assignExceptionCase(openCase.id, "user-rana", hr);
@@ -274,8 +302,15 @@ test("an office-origin site visit that ends without a clock-in opens a persisten
   assert.equal(resolved.status, "Resolved");
   assert.equal(resolved.resolvedBy, "user-rana");
   assert.ok(resolved.resolvedAt);
-  assert.equal(resolved.resolutionNotes, internalNotes, "the internal notes must still be stored on the case itself");
-  assert.throws(() => service.resolveExceptionCase(openCase.id, "already closed, try again", hr), /already resolved/);
+  assert.equal(
+    resolved.resolutionNotes,
+    internalNotes,
+    "the internal notes must still be stored on the case itself",
+  );
+  assert.throws(
+    () => service.resolveExceptionCase(openCase.id, "already closed, try again", hr),
+    /already resolved/,
+  );
 
   const employeeNotifications = storage.readCollection<{
     recipientUserId: string;
@@ -283,9 +318,13 @@ test("an office-origin site visit that ends without a clock-in opens a persisten
     message: string;
   }>("notifications");
   const resolutionNotification = employeeNotifications.find(
-    (item) => item.recipientUserId === "user-omar" && item.title === "Attendance exception resolved",
+    (item) =>
+      item.recipientUserId === "user-omar" && item.title === "Attendance exception resolved",
   );
-  assert.ok(resolutionNotification, "the employee should be notified once their exception case is resolved");
+  assert.ok(
+    resolutionNotification,
+    "the employee should be notified once their exception case is resolved",
+  );
   assert.ok(
     !resolutionNotification!.message.includes(internalNotes),
     "the employee-facing notification must NOT echo HR's internal investigation notes verbatim",
@@ -296,3 +335,48 @@ test("an office-origin site visit that ends without a clock-in opens a persisten
   );
 });
 
+test("an old open punch is shown as Missing Punch without blocking today's attendance", () => {
+  const now = new Date("2026-08-28T09:30:00");
+  const { service } = harnessWithClock(() => now);
+  for (const [date, clockIn] of [
+    ["2026-08-27", "09:00"],
+    ["2026-08-28", "09:15"],
+  ] as const) {
+    service.saveRecord(
+      {
+        employeeId: "employee-omar",
+        date,
+        expectedClockIn: "09:00",
+        expectedClockOut: "18:00",
+        clockIn,
+        breakMinutes: 60,
+        location: "Muscat Office",
+        source: "Manual Entry",
+        workMode: "Office",
+        status: "Present",
+        calculatedHours: 0,
+        isLate: clockIn > "09:00",
+        isEarlyDeparture: false,
+      },
+      hr,
+    );
+  }
+
+  const records = service.getAllRecords(hr);
+  assert.equal(records.find((record) => record.date === "2026-08-27")?.status, "Missing Punch");
+  assert.equal(service.getOpenRecord("employee-omar", employee)?.date, "2026-08-28");
+  assert.equal(service.getMissedOpenRecord("employee-omar", employee)?.date, "2026-08-27");
+});
+
+test("HR attendance edits cannot create a duplicate employee-and-date record", () => {
+  const { service } = harness();
+  const first = seedRecord(service, "2026-08-20");
+  seedRecord(service, "2026-08-21");
+
+  assert.throws(
+    () => service.updateRecord(first.id, { date: "2026-08-21" }, hr),
+    /already has an attendance record/,
+  );
+  const edited = service.updateRecord(first.id, { clockOut: "19:00" }, hr);
+  assert.equal(edited.clockOut, "19:00");
+});

@@ -11,6 +11,9 @@ import type {
   EmployeeSalary,
   ProfileChangeRequest,
 } from "./types.ts";
+import { getRolePermissions, type CurrentUserContext } from "../auth/permissions.ts";
+import { redactEmployee } from "../auth/redaction.ts";
+import { getScopedEmployeesWithAncestors } from "../auth/record-scope.ts";
 
 const PERSONAL_PROFILE_FIELDS = new Set<keyof Employee>([
   "preferredName",
@@ -56,27 +59,43 @@ function hasOnlyPersonalProfileFields(changes: Partial<Employee>): boolean {
 function validateMasterDataReferences(
   changes: Pick<
     Partial<Employee>,
-    "department" | "position" | "location" | "grade" | "employmentType" | "projectId" | "costCentreId"
+    | "department"
+    | "position"
+    | "location"
+    | "grade"
+    | "employmentType"
+    | "projectId"
+    | "costCentreId"
   >,
 ): void {
   if (changes.department !== undefined) {
-    const match = getMasterDataRepository("departments").list().find((d) => d.name === changes.department && d.isActive);
+    const match = getMasterDataRepository("departments")
+      .list()
+      .find((d) => d.name === changes.department && d.isActive);
     if (!match) throw new Error(`"${changes.department}" is not an active department.`);
   }
   if (changes.position !== undefined) {
-    const match = getMasterDataRepository("positions").list().find((d) => d.name === changes.position && d.isActive);
+    const match = getMasterDataRepository("positions")
+      .list()
+      .find((d) => d.name === changes.position && d.isActive);
     if (!match) throw new Error(`"${changes.position}" is not an active position.`);
   }
   if (changes.location !== undefined) {
-    const match = getMasterDataRepository("locations").list().find((d) => d.name === changes.location && d.isActive);
+    const match = getMasterDataRepository("locations")
+      .list()
+      .find((d) => d.name === changes.location && d.isActive);
     if (!match) throw new Error(`"${changes.location}" is not an active location.`);
   }
   if (changes.grade) {
-    const match = getMasterDataRepository("grades").list().find((d) => d.name === changes.grade && d.isActive);
+    const match = getMasterDataRepository("grades")
+      .list()
+      .find((d) => d.name === changes.grade && d.isActive);
     if (!match) throw new Error(`"${changes.grade}" is not an active grade.`);
   }
   if (changes.employmentType !== undefined) {
-    const match = getMasterDataRepository("employmentTypes").list().find((d) => d.name === changes.employmentType && d.isActive);
+    const match = getMasterDataRepository("employmentTypes")
+      .list()
+      .find((d) => d.name === changes.employmentType && d.isActive);
     if (!match) throw new Error(`"${changes.employmentType}" is not an active employment type.`);
   }
   if (changes.projectId) {
@@ -178,16 +197,131 @@ export class EmployeeService {
     );
   }
 
-  getEmployeeRepository() {
+  private requireSystemRepositoryAccess(context: ActorContext, repository: string): void {
+    if (context.actor.userId === "system" && context.actor.roles.includes("Super Admin")) return;
+    this.denyProfileAction(
+      `open raw ${repository} repository`,
+      context.actor.employeeId ?? context.actor.userId,
+      "Raw Core HR repositories are reserved for trusted system workflows.",
+      context,
+    );
+  }
+
+  private toViewerContext(context: ActorContext): CurrentUserContext {
+    const activeRole = context.actor.activeRole ?? context.actor.roles[0] ?? "Employee";
+    return {
+      userId: context.actor.userId,
+      ...(context.actor.employeeId ? { employeeId: context.actor.employeeId } : {}),
+      displayName: context.actor.displayName,
+      workspaceEmail: "",
+      assignedRoles: context.actor.roles,
+      activeRole,
+      permissions: getRolePermissions(activeRole),
+    };
+  }
+
+  /** Trusted workflow-only repository access. User-facing code must use getEmployees/getById. */
+  getEmployeeRepository(context: ActorContext) {
+    this.requireSystemRepositoryAccess(context, "employee");
     return this.employeeRepo;
   }
 
-  getEmployees(): Employee[] {
-    return this.employeeRepo.list();
+  getEmployees(context: ActorContext, options: { includeArchived?: boolean } = {}): Employee[] {
+    const viewer = this.toViewerContext(context);
+    const repositoryOptions =
+      options.includeArchived === undefined ? {} : { includeArchived: options.includeArchived };
+    const employees = this.employeeRepo.list(repositoryOptions);
+    const scoped =
+      viewer.activeRole === "HR" || viewer.activeRole === "Super Admin"
+        ? employees
+        : viewer.activeRole === "Line Manager" && viewer.employeeId
+          ? employees.filter(
+              (employee) =>
+                employee.id === viewer.employeeId || employee.lineManagerId === viewer.employeeId,
+            )
+          : employees.filter((employee) => employee.id === viewer.employeeId);
+    return scoped.map((employee) => redactEmployee(employee, viewer));
   }
 
-  getById(id: string): Employee | null {
-    return this.employeeRepo.getById(id);
+  /**
+   * Returns the viewer's permitted employees plus the reporting-line ancestors needed to
+   * display their organisational context. Sensitive fields remain redacted for the viewer.
+   */
+  getEmployeesWithReportingLine(
+    context: ActorContext,
+    options: { includeArchived?: boolean } = {},
+  ): Employee[] {
+    const viewer = this.toViewerContext(context);
+    const repositoryOptions =
+      options.includeArchived === undefined ? {} : { includeArchived: options.includeArchived };
+    return getScopedEmployeesWithAncestors(this.employeeRepo.list(repositoryOptions), viewer).map(
+      (employee) => redactEmployee(employee, viewer),
+    );
+  }
+
+  /**
+   * Company directory lookup for screens that only need names and work assignments. It never
+   * returns compensation, identity documents, personal contacts, family data or HR notes.
+   */
+  getDirectoryEmployees(
+    context: ActorContext,
+    options: { includeArchived?: boolean } = {},
+  ): Employee[] {
+    const activeRole = context.actor.activeRole ?? context.actor.roles[0] ?? "Employee";
+    if (!getRolePermissions(activeRole).has("employee:view_directory")) {
+      this.denyProfileAction(
+        "view employee directory",
+        context.actor.employeeId ?? context.actor.userId,
+        "You do not have permission to view the employee directory.",
+        context,
+      );
+    }
+    const repositoryOptions =
+      options.includeArchived === undefined ? {} : { includeArchived: options.includeArchived };
+    return this.employeeRepo.list(repositoryOptions).map((employee) => {
+      const {
+        salary: _salary,
+        bankDetails: _bankDetails,
+        passportNumber: _passportNumber,
+        nationalId: _nationalId,
+        performanceRating: _performanceRating,
+        performanceNotes: _performanceNotes,
+        personalEmail: _personalEmail,
+        phone: _phone,
+        address: _address,
+        emergencyContacts: _emergencyContacts,
+        dependants: _dependants,
+        dateOfBirth: _dateOfBirth,
+        gender: _gender,
+        nationality: _nationality,
+        maritalStatus: _maritalStatus,
+        socialInsuranceNumber: _socialInsuranceNumber,
+        terminationReason: _terminationReason,
+        ...directoryEmployee
+      } = employee;
+      return directoryEmployee;
+    });
+  }
+
+  getById(
+    id: string,
+    context: ActorContext,
+    options: { includeArchived?: boolean } = {},
+  ): Employee | null {
+    const repositoryOptions =
+      options.includeArchived === undefined ? {} : { includeArchived: options.includeArchived };
+    const employee = this.employeeRepo.getById(id, repositoryOptions);
+    if (!employee) return null;
+    const permitted = this.getEmployees(context, options).find((item) => item.id === id);
+    if (!permitted) {
+      this.denyProfileAction(
+        "view employee record",
+        id,
+        "You do not have permission to view this employee record.",
+        context,
+      );
+    }
+    return permitted;
   }
 
   addEmploymentHistory(
@@ -200,16 +334,79 @@ export class EmployeeService {
     return this.historyRepo.create(entry, actorContext);
   }
 
-  getUserRepository() {
+  /** Trusted workflow-only repository access. User-facing code must use getUsers/getUserById. */
+  getUserRepository(context: ActorContext) {
+    this.requireSystemRepositoryAccess(context, "user");
     return this.userRepo;
   }
 
-  getHistoryRepository() {
+  getUsers(context: ActorContext, options: { includeArchived?: boolean } = {}): User[] {
+    const role = context.actor.activeRole ?? context.actor.roles[0] ?? "Employee";
+    const repositoryOptions =
+      options.includeArchived === undefined ? {} : { includeArchived: options.includeArchived };
+    const users = this.userRepo.list(repositoryOptions);
+    if (role === "HR" || role === "Super Admin") return users;
+    return users.filter((user) => user.id === context.actor.userId);
+  }
+
+  getUserById(
+    id: string,
+    context: ActorContext,
+    options: { includeArchived?: boolean } = {},
+  ): User | null {
+    const repositoryOptions =
+      options.includeArchived === undefined ? {} : { includeArchived: options.includeArchived };
+    const user = this.userRepo.getById(id, repositoryOptions);
+    if (!user) return null;
+    if (!this.getUsers(context, options).some((item) => item.id === id)) {
+      this.denyProfileAction(
+        "view user record",
+        user.employeeId ?? id,
+        "You do not have permission to view this user record.",
+        context,
+      );
+    }
+    return user;
+  }
+
+  /** Trusted workflow-only repository access. User-facing code must use getEmploymentHistory. */
+  getHistoryRepository(context: ActorContext) {
+    this.requireSystemRepositoryAccess(context, "employment history");
     return this.historyRepo;
   }
 
-  getChangeRequestRepository() {
+  getEmploymentHistory(employeeId: string, context: ActorContext): EmploymentHistory[] {
+    this.getById(employeeId, context, { includeArchived: true });
+    const activeRole = context.actor.activeRole ?? context.actor.roles[0] ?? "Employee";
+    const canViewCompensation = getRolePermissions(activeRole).has("payroll:view");
+    return this.historyRepo
+      .list()
+      .filter(
+        (record) =>
+          record.employeeId === employeeId &&
+          (record.field !== "salary" ||
+            canViewCompensation ||
+            context.actor.employeeId === employeeId),
+      );
+  }
+
+  /** Trusted workflow-only repository access. User-facing code must use getProfileChangeRequests. */
+  getChangeRequestRepository(context: ActorContext) {
+    this.requireSystemRepositoryAccess(context, "profile change request");
     return this.changeRequestRepo;
+  }
+
+  getProfileChangeRequests(employeeId: string, context: ActorContext): ProfileChangeRequest[] {
+    const role = context.actor.activeRole ?? context.actor.roles[0] ?? "Employee";
+    if (context.actor.employeeId !== employeeId && role !== "HR" && role !== "Super Admin") {
+      this.denyProfileAction(
+        "view profile change requests",
+        employeeId,
+        "You can view only your own profile requests unless you are acting as HR or Super Admin.",
+        context,
+      );
+    }
+    return this.changeRequestRepo.list().filter((request) => request.employeeId === employeeId);
   }
 
   private denyProfileAction(
@@ -711,8 +908,12 @@ export class EmployeeService {
     if (user) {
       let newUserStatus: User["status"] = user.status;
       if (newStatus === "Archived") newUserStatus = "Archived";
-      else if (newStatus === "Inactive" || newStatus === "Notice") newUserStatus = "Suspended";
-      else if (newStatus === "Active" || newStatus === "Probation") newUserStatus = "Active";
+      else if (newStatus === "Inactive") newUserStatus = "Suspended";
+      // Notice means the employee is still actively employed and working through their
+      // notice period - they must keep login access to complete self-service offboarding
+      // tasks (e.g. handover notes) assigned to them before their last working date.
+      else if (newStatus === "Active" || newStatus === "Probation" || newStatus === "Notice")
+        newUserStatus = "Active";
 
       if (newUserStatus !== user.status) {
         this.userRepo.update(

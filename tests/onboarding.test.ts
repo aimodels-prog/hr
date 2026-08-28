@@ -12,10 +12,12 @@ import type {
 import { initializeSeedData } from "../src/lib/data/seed-service.ts";
 import { MemoryStorageDriver } from "../src/lib/data/storage-driver.ts";
 import { VersionedStorageService } from "../src/lib/data/storage.ts";
+import type { FileRepository, SaveFileInput } from "../src/lib/data/file-repository.ts";
 import type {
   ActorContext,
   Employee,
   EmployeeDocument,
+  FileMetadata,
   Role,
   User,
 } from "../src/lib/data/types.ts";
@@ -29,12 +31,55 @@ function actor(userId: string, employeeId: string, activeRole: Role): ActorConte
 const hr = actor("user-rana", "employee-rana", "HR");
 const accounts = actor("user-aisha", "employee-aisha", "Accounts");
 
+function fakeFileRepository(): FileRepository {
+  const files = new Map<string, { metadata: FileMetadata; blob: Blob }>();
+  let counter = 0;
+  return {
+    async save(input: SaveFileInput, context) {
+      const id = `file-${++counter}`;
+      const metadata: FileMetadata = {
+        id,
+        name: input.name,
+        mimeType: input.mimeType ?? "application/octet-stream",
+        size: input.blob.size,
+        owner: input.owner,
+        createdAt: new Date().toISOString(),
+        createdBy: context.actor.userId,
+      } as FileMetadata;
+      files.set(id, { metadata, blob: input.blob });
+      return metadata;
+    },
+    async getMetadata(id: string) {
+      return files.get(id)?.metadata ?? null;
+    },
+    async getBlob(id: string) {
+      return files.get(id)?.blob ?? null;
+    },
+    async listByOwner(owner) {
+      return [...files.values()]
+        .filter(
+          (f) =>
+            f.metadata.owner.entityType === owner.entityType &&
+            f.metadata.owner.entityId === owner.entityId,
+        )
+        .map((f) => f.metadata);
+    },
+    async delete(id: string) {
+      files.delete(id);
+    },
+    async clear() {
+      files.clear();
+    },
+  };
+}
+
 function setup(startDate = "2026-08-30") {
   const storage = new VersionedStorageService(new MemoryStorageDriver());
   initializeSeedData(storage);
   const audit = new AuditService(storage);
   const notifications = new NotificationService(storage, audit);
-  configureApplicationDataServices({ storage, audit, notifications, files: {} as never });
+  const files = fakeFileRepository();
+  configureApplicationDataServices({ storage, audit, notifications, files });
   const sourceEmployee = storage
     .readCollection<Employee>("employees")
     .find((item) => item.id === "employee-omar")!;
@@ -75,7 +120,7 @@ function setup(startDate = "2026-08-30") {
     recordVersion: 1,
   };
   storage.writeCollection("users", [...storage.readCollection<User>("users"), user]);
-  return { storage, audit, notifications, service: new OnboardingService() };
+  return { storage, audit, notifications, files, service: new OnboardingService() };
 }
 
 function template(
@@ -166,6 +211,129 @@ test("each active role sees only its relevant onboarding work", () => {
   assert.equal(superAdminTasks.length, onboardingCase.tasks.length);
 });
 
+test("Line Manager and Employee access is scoped to the actual relationship, not just a shared owner role", async () => {
+  const { service } = setup();
+  // A bare template with no assignedUserId set on its Employee/Line Manager tasks, so
+  // updateTaskStatus must fall back to role-based checks rather than an explicit assignment.
+  const bare = template(service, "bare", [
+    {
+      id: "emp-task",
+      title: "Self-service form",
+      group: "Personal & Legal Documents",
+      checkpoint: "Pre-Arrival",
+      ownerRole: "Employee",
+      offsetDaysFromStart: -7,
+      isMandatory: true,
+      requiresEvidence: false,
+    },
+    {
+      id: "lm-task",
+      title: "30-day check-in",
+      group: "Manager Plan",
+      checkpoint: "Day 30",
+      ownerRole: "Line Manager",
+      offsetDaysFromStart: 30,
+      isMandatory: true,
+      requiresEvidence: false,
+    },
+  ]);
+  const onboardingCase = service.createCaseForEmployee("employee-new", hr, { templateId: bare.id });
+  const empTask = onboardingCase.tasks.find((t) => t.group === "Personal & Legal Documents")!;
+  const lmTask = onboardingCase.tasks.find((t) => t.group === "Manager Plan")!;
+
+  // employee-new's real manager is employee-layla (per setup()). An unrelated Line Manager
+  // must not be able to act on employee-new's Line-Manager-owned task just by holding that
+  // role somewhere else in the company.
+  const unrelatedManager = actor("user-tariq", "employee-tariq", "Line Manager");
+  await assert.rejects(
+    service.updateTaskStatus(onboardingCase.id, lmTask.id, "Completed", unrelatedManager),
+    /assigned to another person or role/i,
+  );
+  const realManager = actor("user-layla", "employee-layla", "Line Manager");
+  const afterLm = await service.updateTaskStatus(
+    onboardingCase.id,
+    lmTask.id,
+    "Completed",
+    realManager,
+  );
+  assert.equal(afterLm.tasks.find((t) => t.id === lmTask.id)?.status, "Completed");
+
+  // An unrelated employee must not be able to complete employee-new's own Employee-owned
+  // task just by holding the base Employee role every employee has.
+  const unrelatedEmployee = actor("user-random", "employee-random", "Employee");
+  await assert.rejects(
+    service.updateTaskStatus(onboardingCase.id, empTask.id, "Completed", unrelatedEmployee),
+    /assigned to another person or role/i,
+  );
+  const self = actor("user-new", "employee-new", "Employee");
+  const afterEmp = await service.updateTaskStatus(onboardingCase.id, empTask.id, "Completed", self);
+  assert.equal(afterEmp.tasks.find((t) => t.id === empTask.id)?.status, "Completed");
+});
+
+test("updateTaskStatus independently verifies generic evidence ownership instead of trusting the caller", async () => {
+  const { service, files } = setup();
+  const bare = template(service, "generic-evidence", [
+    {
+      id: "generic",
+      title: "Sign off induction checklist",
+      group: "HSE & Induction",
+      checkpoint: "Pre-Arrival",
+      ownerRole: "HR",
+      offsetDaysFromStart: -1,
+      isMandatory: true,
+      requiresEvidence: true,
+    },
+  ]);
+  const onboardingCase = service.createCaseForEmployee("employee-new", hr, {
+    templateId: bare.id,
+  });
+  const task = onboardingCase.tasks[0]!;
+
+  // A fileId that was never uploaded/linked to this case at all is rejected outright.
+  await assert.rejects(
+    service.updateTaskStatus(
+      onboardingCase.id,
+      task.id,
+      "Completed",
+      hr,
+      "file-that-does-not-exist",
+    ),
+    /could not be verified/i,
+  );
+
+  // A real file exists but is owned by a DIFFERENT case entirely - still rejected.
+  const foreignFile = await files.save(
+    {
+      blob: new Blob(["x"]),
+      name: "evidence.pdf",
+      owner: { entityType: "onboarding-case", entityId: "some-other-case" },
+    },
+    hr,
+  );
+  await assert.rejects(
+    service.updateTaskStatus(onboardingCase.id, task.id, "Completed", hr, foreignFile.id),
+    /could not be verified/i,
+  );
+
+  // A file genuinely saved against THIS case (the real upload path) is accepted.
+  const realFile = await files.save(
+    {
+      blob: new Blob(["real evidence"]),
+      name: "evidence.pdf",
+      owner: { entityType: "onboarding-case", entityId: onboardingCase.id },
+    },
+    hr,
+  );
+  const updated = await service.updateTaskStatus(
+    onboardingCase.id,
+    task.id,
+    "Completed",
+    hr,
+    realFile.id,
+  );
+  assert.equal(updated.tasks.find((t) => t.id === task.id)?.status, "Completed");
+});
+
 test("template validation rejects dependency loops and malformed offsets", () => {
   const { service } = setup();
   assert.throws(
@@ -214,7 +382,7 @@ test("template validation rejects dependency loops and malformed offsets", () =>
   );
 });
 
-test("bank and verified-document gates validate underlying employee records", () => {
+test("bank and verified-document gates validate underlying employee records", async () => {
   const { service, storage } = setup();
   const custom = template(service, "controlled", [
     {
@@ -273,21 +441,21 @@ test("bank and verified-document gates validate underlying employee records", ()
     recordVersion: 1,
   };
   storage.writeCollection("employee_documents", [document]);
-  service.updateTaskStatus(
+  await service.updateTaskStatus(
     onboardingCase.id,
     upload.id,
     "Completed",
     actor("user-new", "employee-new", "Employee"),
     document.fileId,
   );
-  assert.throws(
-    () => service.updateTaskStatus(onboardingCase.id, verify.id, "Completed", hr),
+  await assert.rejects(
+    service.updateTaskStatus(onboardingCase.id, verify.id, "Completed", hr),
     /Verify the required employee document/i,
   );
   storage.writeCollection("employee_documents", [{ ...document, status: "Valid" }]);
-  service.updateTaskStatus(onboardingCase.id, verify.id, "Completed", hr);
-  assert.throws(
-    () => service.updateTaskStatus(onboardingCase.id, bank.id, "Completed", accounts),
+  await service.updateTaskStatus(onboardingCase.id, verify.id, "Completed", hr);
+  await assert.rejects(
+    service.updateTaskStatus(onboardingCase.id, bank.id, "Completed", accounts),
     /must submit complete bank details/i,
   );
   const employees = storage.readCollection<Employee>("employees");
@@ -302,11 +470,11 @@ test("bank and verified-document gates validate underlying employee records", ()
         : employee,
     ),
   );
-  const updated = service.updateTaskStatus(onboardingCase.id, bank.id, "Completed", accounts);
+  const updated = await service.updateTaskStatus(onboardingCase.id, bank.id, "Completed", accounts);
   assert.equal(updated.status, "Completed");
 });
 
-test("start-date readiness activates the employee while later check-ins remain open", () => {
+test("start-date readiness activates the employee while later check-ins remain open", async () => {
   const { service, storage } = setup("2026-08-20");
   const custom = template(service, "activation", [
     {
@@ -335,7 +503,7 @@ test("start-date readiness activates the employee while later check-ins remain o
     templateId: custom.id,
   });
   const ready = onboardingCase.tasks.find((task) => task.templateTaskId === "ready")!;
-  const updated = service.updateTaskStatus(onboardingCase.id, ready.id, "Completed", hr);
+  const updated = await service.updateTaskStatus(onboardingCase.id, ready.id, "Completed", hr);
   assert.equal(updated.isReadyForStartDate, true);
   assert.equal(updated.status, "In Progress");
   assert.equal(

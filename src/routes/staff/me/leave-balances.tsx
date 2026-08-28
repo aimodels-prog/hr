@@ -188,16 +188,19 @@ function LeaveBalancesRoute() {
 
   const isAdmin = currentUser.activeRole === "Super Admin" || currentUser.activeRole === "HR";
   const allPolicies = leaveService.getPolicies();
-  const policies = employeeId ? leaveService.getEligiblePolicies(employeeId) : [];
-  const balances = employeeId ? leaveService.getAllBalancesForEmployee(employeeId) : [];
+  const actorContext = currentUser.getActorContext();
+  const policies = employeeId ? leaveService.getEligiblePolicies(employeeId, actorContext) : [];
+  const balances = employeeId
+    ? leaveService.getAllBalancesForEmployee(employeeId, actorContext)
+    : [];
   const transactions = employeeId
     ? leaveService
-        .getTransactionsForEmployee(employeeId)
+        .getTransactionsForEmployee(employeeId, undefined, actorContext)
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     : [];
   const requests = employeeId
     ? leaveService
-        .getLeaveRequestsForEmployee(employeeId)
+        .getLeaveRequestsForEmployee(employeeId, actorContext)
         .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     : [];
 
@@ -443,6 +446,11 @@ function LeaveBalancesRoute() {
                             Evidence required
                           </span>
                         )}
+                        {policy.requiresHandoverContact && (
+                          <span className="block font-medium text-foreground">
+                            Covering colleague required
+                          </span>
+                        )}
                       </TableCell>
                     </TableRow>
                   );
@@ -545,7 +553,9 @@ function LeaveBalancesRoute() {
                     {visibleRequests.map((request) => {
                       const policy = policyById.get(request.policyId);
                       const canWithdraw = request.status.startsWith("Pending");
-                      const canCancel = request.status === "Approved";
+                      const canCancel =
+                        request.status === "Approved" &&
+                        request.endDate >= new Date().toISOString().slice(0, 10);
                       const reason =
                         request.status === "Automatically Refused"
                           ? request.refusalReason
@@ -687,7 +697,10 @@ function LeaveBalancesRoute() {
         />
       )}
 
-      <AlertDialog open={!!withdrawTarget} onOpenChange={(open) => !open && setWithdrawTarget(null)}>
+      <AlertDialog
+        open={!!withdrawTarget}
+        onOpenChange={(open) => !open && setWithdrawTarget(null)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Withdraw this leave request?</AlertDialogTitle>
@@ -716,8 +729,8 @@ function LeaveBalancesRoute() {
           <DialogHeader>
             <DialogTitle>Cancel this leave?</DialogTitle>
             <DialogDescription>
-              This approved leave will be sent to HR for cancellation review, and your balance
-              will be restored once approved.
+              This approved leave will be sent to HR for cancellation review, and your balance will
+              be restored once approved.
             </DialogDescription>
           </DialogHeader>
           <Textarea

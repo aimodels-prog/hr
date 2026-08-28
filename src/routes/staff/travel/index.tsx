@@ -24,9 +24,10 @@ export const Route = createFileRoute("/staff/travel/")({
 function MyTravelRoute() {
   const currentUser = useCurrentUser();
   const travelService = useMemo(() => new TravelService(), []);
+  const employeeId = currentUser.employeeId ?? "";
 
   const [requests, setRequests] = useState(
-    travelService.getRequestsForEmployee(currentUser?.employeeId || "", currentUser.getActorContext()),
+    travelService.getRequestsForEmployee(employeeId, currentUser.getActorContext()),
   );
 
   if (!currentUser?.employeeId) {
@@ -35,11 +36,13 @@ function MyTravelRoute() {
 
   const handleWithdraw = (id: string) => {
     try {
-      travelService.withdrawRequest(id, currentUser!.getActorContext());
-      setRequests(travelService.getRequestsForEmployee(currentUser!.employeeId!, currentUser!.getActorContext()));
+      travelService.withdrawRequest(id, currentUser.getActorContext());
+      setRequests(travelService.getRequestsForEmployee(employeeId, currentUser.getActorContext()));
       toast.success("Travel request withdrawn");
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (error: unknown) {
+      toast.error(
+        error instanceof Error ? error.message : "The travel request could not be withdrawn.",
+      );
     }
   };
 

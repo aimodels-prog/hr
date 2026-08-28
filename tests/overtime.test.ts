@@ -8,6 +8,7 @@ import { LeaveService } from "../src/lib/data/leave-service.ts";
 import { getProjectRepository } from "../src/lib/data/master-data.ts";
 import { NotificationService } from "../src/lib/data/notification-service.ts";
 import { OvertimeService } from "../src/lib/data/overtime-service.ts";
+import { PayrollService } from "../src/lib/data/payroll-service.ts";
 import { initializeSeedData } from "../src/lib/data/seed-service.ts";
 import { MemoryStorageDriver } from "../src/lib/data/storage-driver.ts";
 import { VersionedStorageService } from "../src/lib/data/storage.ts";
@@ -101,7 +102,11 @@ function fakeFileRepository(): FileRepository {
     },
     async listByOwner(owner) {
       return [...files.values()]
-        .filter((f) => f.metadata.owner.entityType === owner.entityType && f.metadata.owner.entityId === owner.entityId)
+        .filter(
+          (f) =>
+            f.metadata.owner.entityType === owner.entityType &&
+            f.metadata.owner.entityId === owner.entityId,
+        )
         .map((f) => f.metadata);
     },
     async delete(id: string) {
@@ -121,8 +126,38 @@ function harness() {
   const notifications = new NotificationService(storage, audit);
   const files = fakeFileRepository();
   configureApplicationDataServices({ storage, audit, notifications, files });
-  return { overtime: new OvertimeService(), storage, audit, files, driver };
+  const overtime = new OvertimeService();
+  const submitClaim = overtime.submitClaim.bind(overtime);
+  overtime.submitClaim = (input, context) =>
+    submitClaim(
+      {
+        costCentreId: "cc-operations",
+        activityCodeId: "activity-delivery",
+        locationCodeId: "loc-muscat",
+        ...input,
+      },
+      context,
+    );
+  return { overtime, storage, audit, files, driver };
 }
+
+test("overtime allocations are mandatory and must reference active master data", async () => {
+  harness();
+  const overtime = new OvertimeService();
+  await assert.rejects(
+    () =>
+      overtime.submitClaim(
+        {
+          employeeId: "employee-omar",
+          date: "2026-08-10",
+          hours: 2,
+          reason: "Client escalation",
+        } as never,
+        employee,
+      ),
+    /cost centre, activity, work location/,
+  );
+});
 
 test("an employee cannot submit an overtime claim for another employee", async () => {
   const { overtime } = harness();
@@ -146,11 +181,31 @@ test("HR can submit an overtime claim on behalf of another employee", async () =
   assert.equal(claim.status, "Pending Manager");
 });
 
+test("an assigned line manager can record a fully allocated claim for a direct report", async () => {
+  const { overtime } = harness();
+  const claim = await overtime.submitClaim(
+    {
+      employeeId: "employee-omar",
+      date: "2026-08-09",
+      hours: 1.5,
+      reason: "Supervisor-recorded site support",
+    },
+    manager,
+  );
+  assert.equal(claim.employeeId, "employee-omar");
+  assert.equal(claim.status, "Pending Manager");
+  assert.equal(claim.costCentreId, "cc-operations");
+});
+
 test("a future-dated overtime claim is rejected", async () => {
   const { overtime } = harness();
   const future = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   await assert.rejects(
-    () => overtime.submitClaim({ employeeId: "employee-omar", date: future, hours: 2, reason: "x" }, employee),
+    () =>
+      overtime.submitClaim(
+        { employeeId: "employee-omar", date: future, hours: 2, reason: "x" },
+        employee,
+      ),
     /future date/,
   );
 });
@@ -160,7 +215,12 @@ test("a claim exceeding the maximum daily hours is rejected", async () => {
   await assert.rejects(
     () =>
       overtime.submitClaim(
-        { employeeId: "employee-omar", date: "2026-08-10", hours: 20, reason: "Way too many hours" },
+        {
+          employeeId: "employee-omar",
+          date: "2026-08-10",
+          hours: 20,
+          reason: "Way too many hours",
+        },
         employee,
       ),
     /cannot exceed/,
@@ -211,20 +271,37 @@ test("an evidence file that does not exist or belongs to another employee is rej
   await assert.rejects(
     () =>
       overtime.submitClaim(
-        { employeeId: "employee-omar", date: "2026-08-10", hours: 2, reason: "x", evidenceFileId: "does-not-exist" },
+        {
+          employeeId: "employee-omar",
+          date: "2026-08-10",
+          hours: 2,
+          reason: "x",
+          evidenceFileId: "does-not-exist",
+        },
         employee,
       ),
     /could not be verified/,
   );
 
   const wrongOwnerFile = await files.save(
-    { blob: new Blob(["evidence"]), name: "note.pdf", mimeType: "application/pdf", owner: { entityType: "overtime-claim", entityId: "employee-mariam" } },
+    {
+      blob: new Blob(["evidence"]),
+      name: "note.pdf",
+      mimeType: "application/pdf",
+      owner: { entityType: "overtime-claim", entityId: "employee-mariam" },
+    },
     employee,
   );
   await assert.rejects(
     () =>
       overtime.submitClaim(
-        { employeeId: "employee-omar", date: "2026-08-10", hours: 2, reason: "x", evidenceFileId: wrongOwnerFile.id },
+        {
+          employeeId: "employee-omar",
+          date: "2026-08-10",
+          hours: 2,
+          reason: "x",
+          evidenceFileId: wrongOwnerFile.id,
+        },
         employee,
       ),
     /could not be verified/,
@@ -295,11 +372,89 @@ test("a TOIL claim credits Compensation Leave exactly once when approved", async
   assert.ok(approved.toilCreditedAt, "expected toilCreditedAt to be set after crediting");
 
   const leaveService = new LeaveService();
-  const balances = leaveService.getAllBalancesForEmployee("employee-omar");
+  const balances = leaveService.getAllBalancesForEmployee("employee-omar", employee);
   const compOff = leaveService.getPolicies().find((p) => p.code === "C/OFF");
   const balance = balances.find((b) => b.policyId === compOff!.id);
   assert.ok(balance, "expected a Compensation Leave balance for the employee");
-  assert.ok(balance!.available > 0, "expected a positive Compensation Leave balance after TOIL credit");
+  assert.ok(
+    balance!.available > 0,
+    "expected a positive Compensation Leave balance after TOIL credit",
+  );
+});
+
+test("correcting approved TOIL reverses the original leave credit before reapproval", async () => {
+  const { overtime } = harness();
+  const leave = new LeaveService();
+  const compPolicy = leave.getPolicies().find((policy) => policy.code === "C/OFF");
+  assert.ok(compPolicy);
+  const startingBalance = leave.calculateBalance(
+    "employee-omar",
+    compPolicy.id,
+    employee,
+  ).available;
+  const claim = await overtime.submitClaim(
+    {
+      employeeId: "employee-omar",
+      date: "2026-08-08",
+      hours: 8,
+      reason: "Weekend deployment",
+      compensationType: "TOIL",
+    },
+    employee,
+  );
+  const approved = overtime.managerApprove(claim.id, manager);
+  assert.ok(
+    leave.calculateBalance("employee-omar", compPolicy.id, employee).available > startingBalance,
+  );
+
+  await overtime.createCorrection(approved.id, 4, "Corrected deployment hours", employee);
+  assert.equal(
+    leave.calculateBalance("employee-omar", compPolicy.id, employee).available,
+    startingBalance,
+  );
+  const original = overtime
+    .getClaimsForEmployee("employee-omar", employee)
+    .find((item) => item.id === approved.id);
+  assert.ok(original?.toilReversedAt);
+});
+
+test("an approved claim from an earlier date is carried into the next payroll collection", async () => {
+  const { overtime } = harness();
+  const claim = await overtime.submitClaim(
+    {
+      employeeId: "employee-omar",
+      date: "2026-07-31",
+      hours: 3,
+      reason: "Late-approved month-end support",
+    },
+    employee,
+  );
+  overtime.managerApprove(claim.id, manager);
+
+  const payroll = new PayrollService();
+  const period = payroll.createPeriod(
+    {
+      name: "August 2026",
+      startDate: "2026-08-01",
+      endDate: "2026-08-31",
+      cutoffDate: "2026-08-25",
+      paymentDate: "2026-08-31",
+      notes: "Regression check",
+    },
+    accounts,
+  );
+  const collected = payroll.collectInputs(period.id, accounts);
+  assert.equal(
+    collected.compiledInputs?.find((input) => input.employeeId === "employee-omar")
+      ?.approvedOvertimeHours,
+    3,
+  );
+  assert.ok(collected.exceptions.some((item) => item.type === "Unmatched Overtime"));
+  assert.equal(
+    overtime.getClaimsForEmployee("employee-omar", accounts).find((item) => item.id === claim.id)
+      ?.payrollPeriodId,
+    period.id,
+  );
 });
 
 test("correcting an approved claim only archives the original once the replacement is accepted", async () => {
@@ -317,12 +472,20 @@ test("correcting an approved claim only archives the original once the replaceme
     () => overtime.createCorrection(approved.id, 40, "Too many hours", employee),
     /cannot exceed/,
   );
-  const stillApproved = overtime.getClaimsForEmployee("employee-omar", employee).find((c) => c.id === approved.id);
-  assert.equal(stillApproved?.status, "Approved", "original claim must not be archived when the correction is invalid");
+  const stillApproved = overtime
+    .getClaimsForEmployee("employee-omar", employee)
+    .find((c) => c.id === approved.id);
+  assert.equal(
+    stillApproved?.status,
+    "Approved",
+    "original claim must not be archived when the correction is invalid",
+  );
 
   const corrected = await overtime.createCorrection(approved.id, 3, "Corrected hours", employee);
   assert.equal(corrected.status, "Pending Manager");
-  const original = overtime.getClaimsForEmployee("employee-omar", employee).find((c) => c.id === approved.id);
+  const original = overtime
+    .getClaimsForEmployee("employee-omar", employee)
+    .find((c) => c.id === approved.id);
   assert.equal(original?.status, "Corrected");
 });
 
@@ -349,9 +512,15 @@ test("a valid correction commits the replacement and the original's Corrected st
   // itself: the new replacement claim and the original's "Corrected" status must land in exactly
   // one writeCollection() call against that collection, not two. Two separate create()+update()
   // commits - the old, non-atomic approach - would have produced two writes here instead of one.
-  assert.equal(overtimeClaimsWrites, 1, "expected the replacement and the original's status change to land in a single writeCollection commit against overtimeClaims");
+  assert.equal(
+    overtimeClaimsWrites,
+    1,
+    "expected the replacement and the original's status change to land in a single writeCollection commit against overtimeClaims",
+  );
 
-  const original = overtime.getClaimsForEmployee("employee-omar", employee).find((c) => c.id === approved.id);
+  const original = overtime
+    .getClaimsForEmployee("employee-omar", employee)
+    .find((c) => c.id === approved.id);
   assert.equal(original?.status, "Corrected");
   assert.equal(corrected.status, "Pending Manager");
 });
@@ -375,13 +544,21 @@ test("two concurrent corrections against the same approved claim cannot both suc
   const fulfilled = [first, second].filter((o) => o.status === "fulfilled");
   const rejected = [first, second].filter((o) => o.status === "rejected");
   assert.equal(fulfilled.length, 1, "exactly one of the two concurrent corrections must succeed");
-  assert.equal(rejected.length, 1, "the other must be rejected outright, not silently create a second replacement");
+  assert.equal(
+    rejected.length,
+    1,
+    "the other must be rejected outright, not silently create a second replacement",
+  );
   assert.match((rejected[0] as PromiseRejectedResult).reason.message, /already corrected/);
 
   const replacements = overtime
     .getClaimsForEmployee("employee-omar", employee)
     .filter((c) => c.originalClaimId === approved.id);
-  assert.equal(replacements.length, 1, "only one replacement claim must exist for the original, not two");
+  assert.equal(
+    replacements.length,
+    1,
+    "only one replacement claim must exist for the original, not two",
+  );
 });
 
 test("getAllClaims requires overtime:admin_all or payroll:view, getClaimsForEmployee is self-or-privileged", async () => {
@@ -395,7 +572,10 @@ test("getAllClaims requires overtime:admin_all or payroll:view, getClaimsForEmpl
   assert.ok(overtime.getAllClaims(hr));
   assert.ok(overtime.getAllClaims(accounts));
 
-  assert.throws(() => overtime.getClaimsForEmployee("employee-omar", otherEmployee), /not authorised/);
+  assert.throws(
+    () => overtime.getClaimsForEmployee("employee-omar", otherEmployee),
+    /not authorised/,
+  );
   assert.ok(overtime.getClaimsForEmployee("employee-omar", employee));
   assert.ok(overtime.getClaimsForEmployee("employee-omar", manager));
 });
@@ -403,11 +583,22 @@ test("getAllClaims requires overtime:admin_all or payroll:view, getClaimsForEmpl
 test("evidence downloads are restricted to the employee, their manager, and HR/Accounts, and are audited", async () => {
   const { overtime, files, audit } = harness();
   const evidence = await files.save(
-    { blob: new Blob(["evidence"]), name: "note.pdf", mimeType: "application/pdf", owner: { entityType: "overtime-claim", entityId: "employee-omar" } },
+    {
+      blob: new Blob(["evidence"]),
+      name: "note.pdf",
+      mimeType: "application/pdf",
+      owner: { entityType: "overtime-claim", entityId: "employee-omar" },
+    },
     employee,
   );
   const claim = await overtime.submitClaim(
-    { employeeId: "employee-omar", date: "2026-08-10", hours: 2, reason: "x", evidenceFileId: evidence.id },
+    {
+      employeeId: "employee-omar",
+      date: "2026-08-10",
+      hours: 2,
+      reason: "x",
+      evidenceFileId: evidence.id,
+    },
     employee,
   );
 

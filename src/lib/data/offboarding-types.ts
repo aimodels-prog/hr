@@ -20,11 +20,15 @@ export interface OffboardingTemplateTask {
   title: string;
   group: OffboardingTaskGroup;
   ownerRole: Role;
+  // A specific person to assign this task to on every case created from this template, instead
+  // of leaving it open to "anyone holding ownerRole". Copied onto the case's OffboardingTask at
+  // startCase() time - undefined means "anyone with this responsibility", matching ownerRole alone.
+  assignedUserId?: RecordId | undefined;
   offsetDaysFromLastWorkingDate: number; // e.g. -7 for a week before, 0 for last day, 5 for after
   isMandatory: boolean;
   requiresEvidence: boolean;
-  instructions?: string;
-  dependsOnTaskIds?: string[];
+  instructions?: string | undefined;
+  dependsOnTaskIds?: string[] | undefined;
 }
 
 export interface OffboardingTemplate extends BaseRecord {
@@ -64,6 +68,11 @@ export interface OffboardingTask {
 
 export type OffboardingCaseStatus = "In Progress" | "Pending Clearance" | "Completed" | "Cancelled";
 
+// Standard: visible to any HR user or Super Admin, same as today.
+// Restricted: the case involves matters (e.g. termination for cause, legal dispute) sensitive
+// enough that confidentialNotes should be visible only to a Super Admin, not every HR user.
+export type OffboardingConfidentialityLevel = "Standard" | "Restricted";
+
 export interface OffboardingCase extends BaseRecord {
   employeeId: RecordId;
   templateId?: RecordId;
@@ -71,6 +80,7 @@ export interface OffboardingCase extends BaseRecord {
   reasonCategory: OffboardingReasonCategory;
   noticeDate: string;
   lastWorkingDate: string;
+  confidentialityLevel: OffboardingConfidentialityLevel;
   confidentialNotes?: string;
   rehireEligible: boolean;
 

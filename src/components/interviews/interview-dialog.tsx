@@ -71,14 +71,10 @@ export function InterviewDialog({
   // real interviewer (a senior IC doing a technical round, for example), not only themselves.
   const otherUsers = useMemo(() => {
     const employeeById = new Map(
-      empService
-        .getEmployeeRepository()
-        .list()
-        .map((e) => [e.id, e]),
+      empService.getEmployees(currentUser!.getActorContext()).map((e) => [e.id, e]),
     );
     return empService
-      .getUserRepository()
-      .list()
+      .getUsers(currentUser!.getActorContext())
       .filter((u) => u.id !== currentUser!.userId && u.status === "Active")
       .map((u) => ({ ...u, employee: u.employeeId ? employeeById.get(u.employeeId) : undefined }))
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
@@ -151,11 +147,7 @@ export function InterviewDialog({
         currentUser!.getActorContext(),
       );
 
-      await interviewService.confirmInterview(
-        interview.id,
-        slot,
-        currentUser!.getActorContext(),
-      );
+      await interviewService.confirmInterview(interview.id, slot, currentUser!.getActorContext());
 
       toast.success("Interview scheduled and invitation details saved");
       onOpenChange(false);

@@ -1,3 +1,4 @@
+import { SYSTEM_CONTEXT } from "../src/lib/data/types.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -168,7 +169,7 @@ test("runReminderEngine notifies the employee, their manager, and HR only for mi
 
   await anniversaryService.runReminderEngine(hr);
 
-  const users = employeeService.getUserRepository().list();
+  const users = employeeService.getUserRepository(SYSTEM_CONTEXT).list();
   const employeeUser = users.find((u) => u.employeeId === milestoneEmployee.id)!;
   const managerUser = users.find((u) => u.employeeId === manager.id)!;
   const hrUser = users.find((u) => u.employeeId === "employee-rana")!;
@@ -177,7 +178,10 @@ test("runReminderEngine notifies the employee, their manager, and HR only for mi
   const employeeNotifications = notifications
     .listForUser(employeeUser.id)
     .filter((n) => n.type === "work_anniversary");
-  assert.equal(employeeNotifications.length, 1);
+  // daysRemaining is 7, and this is the first-ever run for this employee, so the 30-day and
+  // 14-day thresholds are backfilled alongside the 7-day one rather than being silently missed
+  // forever (this is exactly the catch-up behaviour the fix adds).
+  assert.equal(employeeNotifications.length, 3);
 
   const managerNotifications = notifications
     .listForUser(managerUser.id)
@@ -200,6 +204,62 @@ test("runReminderEngine notifies the employee, their manager, and HR only for mi
     .listForUser(employeeUser.id)
     .filter((n) => n.type === "work_anniversary");
   assert.equal(employeeNotificationsAfterRerun.length, employeeNotifications.length);
+});
+
+test("runReminderEngine backfills every reminder threshold missed while the page was not opened", async () => {
+  const { notifications } = setup();
+  const employeeService = new EmployeeService();
+  const anniversaryService = new AnniversaryService();
+
+  // Anniversary was 2 days ago - under the old exact-match logic, daysRemaining (-2) would
+  // never equal any of [30, 14, 7, 1, 0], so this milestone would be silently missed forever.
+  const employee = await addEmployee(employeeService, startDateForAnniversary(-2, 5));
+
+  await anniversaryService.runReminderEngine(hr);
+
+  const users = employeeService.getUserRepository(SYSTEM_CONTEXT).list();
+  const employeeUser = users.find((u) => u.employeeId === employee.id)!;
+  const employeeNotifications = notifications
+    .listForUser(employeeUser.id)
+    .filter((n) => n.type === "work_anniversary");
+
+  // All five thresholds (30, 14, 7, 1, 0) are backfilled in one pass.
+  assert.equal(employeeNotifications.length, 5);
+  assert.ok(
+    employeeNotifications.some(
+      (n) => n.deduplicationKey === `anniversary_${employee.id}_5yr_0d_emp`,
+    ),
+    "expected the missed 'day of' reminder to be backfilled",
+  );
+  // Every backfilled notification is distinct, not 5 copies of the same text.
+  const distinctMessages = new Set(employeeNotifications.map((n) => n.message));
+  assert.equal(distinctMessages.size, employeeNotifications.length);
+
+  // Re-running must not create duplicates.
+  await anniversaryService.runReminderEngine(hr);
+  const afterRerun = notifications
+    .listForUser(employeeUser.id)
+    .filter((n) => n.type === "work_anniversary");
+  assert.equal(afterRerun.length, 5);
+});
+
+test("runReminderEngine does not backfill a months-old, now-stale anniversary occurrence", async () => {
+  const { notifications } = setup();
+  const employeeService = new EmployeeService();
+  const anniversaryService = new AnniversaryService();
+
+  // Anniversary was 100 days ago - well outside the 14-day catch-up window, so this year's
+  // (now-stale) occurrence must not be backfilled at all.
+  const employee = await addEmployee(employeeService, startDateForAnniversary(-100, 5));
+
+  await anniversaryService.runReminderEngine(hr);
+
+  const users = employeeService.getUserRepository(SYSTEM_CONTEXT).list();
+  const employeeUser = users.find((u) => u.employeeId === employee.id)!;
+  const employeeNotifications = notifications
+    .listForUser(employeeUser.id)
+    .filter((n) => n.type === "work_anniversary");
+  assert.equal(employeeNotifications.length, 0);
 });
 
 test.after(() => configureApplicationDataServices(undefined));

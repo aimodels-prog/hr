@@ -110,7 +110,9 @@ function NewVacancy() {
   const navigate = useNavigate();
   const vacancyService = useMemo(() => new VacancyService(), []);
   const employeeService = useMemo(() => new EmployeeService(), []);
-  const employees = employeeService.getEmployeeRepository().list({ includeArchived: false });
+  const employees = employeeService.getEmployees(currentUser.getActorContext(), {
+    includeArchived: false,
+  });
 
   const [generating, setGenerating] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);

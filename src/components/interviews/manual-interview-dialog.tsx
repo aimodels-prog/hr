@@ -86,13 +86,11 @@ export function ManualInterviewDialog({
   const otherUsers = useMemo(() => {
     const employeeById = new Map(
       employeeService
-        .getEmployeeRepository()
-        .list()
+        .getEmployees(currentUser.getActorContext())
         .map((employee) => [employee.id, employee]),
     );
     return employeeService
-      .getUserRepository()
-      .list()
+      .getUsers(currentUser.getActorContext())
       .filter((user) => user.id !== currentUser.userId && user.status === "Active")
       .map((user) => ({
         ...user,

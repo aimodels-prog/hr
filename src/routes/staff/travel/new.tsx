@@ -63,6 +63,8 @@ function NewTravelRequestRoute() {
 
   const handleSubmit = async () => {
     setIsSubmitting(true);
+    let uploadedFileId: string | undefined;
+    const actorContext = currentUser.getActorContext();
     try {
       let evidenceFileId: string | undefined;
       if (evidenceFile) {
@@ -74,9 +76,10 @@ function NewTravelRequestRoute() {
             mimeType: evidenceFile.type,
             owner: { entityType: "travel-request", entityId: currentUser!.employeeId! },
           },
-          currentUser!.getActorContext(),
+          actorContext,
         );
         evidenceFileId = saved.id;
+        uploadedFileId = saved.id;
       }
 
       await travelService.submitRequest(
@@ -96,13 +99,20 @@ function NewTravelRequestRoute() {
           notes,
           ...(evidenceFileId ? { evidenceFileId } : {}),
         },
-        currentUser!.getActorContext(),
+        actorContext,
       );
 
+      uploadedFileId = undefined;
       toast.success("Travel request sent for approval");
       navigate({ to: "/staff/travel" });
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (error: unknown) {
+      if (uploadedFileId) {
+        await getApplicationDataServices().files.delete(uploadedFileId, {
+          ...actorContext,
+          reason: "Travel request failed before the evidence was attached",
+        });
+      }
+      toast.error(error instanceof Error ? error.message : "Travel request could not be sent.");
     } finally {
       setIsSubmitting(false);
     }

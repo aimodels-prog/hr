@@ -66,7 +66,7 @@ export function HrDashboard() {
     return d;
   }, []);
 
-  const allEmployees = empService.getEmployees();
+  const allEmployees = empService.getEmployees(currentUser.getActorContext());
   const employeeById = useMemo(() => {
     const map = new Map<string, Employee>();
     for (const e of allEmployees) map.set(e.id, e);
@@ -166,7 +166,7 @@ export function HrDashboard() {
     .slice(0, 5);
 
   // ---------- Documents ----------
-  const allDocs = docService.getDocumentRepository().list();
+  const allDocs = docService.getDocuments(currentUser.getActorContext());
   const relevantDocs = allDocs.filter(
     (d) =>
       activeEmployees.some((employee) => employee.id === d.employeeId) &&
@@ -187,7 +187,7 @@ export function HrDashboard() {
   });
 
   // ---------- Onboarding ----------
-  const allCases = obService.getCases();
+  const allCases = obService.getCasesForContext(currentUser.getActorContext());
   const activeCases = allCases.filter(
     (c) => c.status !== "Completed" && c.status !== "Cancelled" && c.progressPercentage < 100,
   );
@@ -201,14 +201,16 @@ export function HrDashboard() {
     : 100;
 
   // ---------- Leave & Timesheets ----------
-  const allLeaveRequests = leaveService.getAllRequests();
+  const allLeaveRequests = leaveService.getAllRequests(currentUser.getActorContext());
   const pendingLeave = allLeaveRequests.filter(
     (r) =>
       r.status === "Pending Line Manager" ||
       r.status === "Pending HR" ||
       r.status === "Pending Super Admin",
   );
-  const overdueTimesheets = tsService.getAllTimesheets().filter((t) => t.status === "Returned");
+  const overdueTimesheets = tsService
+    .getAllTimesheets(currentUser.getActorContext())
+    .filter((t) => t.status === "Returned");
 
   // ---------- Travel (HR approval half of dual approval workflow) ----------
   const pendingHrTravel = travelService

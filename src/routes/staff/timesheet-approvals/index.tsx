@@ -34,14 +34,16 @@ function TimesheetApprovalsRoute() {
   const empService = useMemo(() => new EmployeeService(), []);
 
   const periods = tsService.getPeriods();
-  const [selectedPeriodId, setSelectedPeriodId] = useState<string>(periods[0]?.id || "");
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string>(
+    tsService.getCurrentPeriod()?.id || "",
+  );
   const [filter, setFilter] = useState<string>("All"); // Missing, Late, Submitted, Returned, Approved
 
   if (!currentUser?.employeeId) {
     return <div>Employee profile required.</div>;
   }
 
-  const allEmployees = empService.getEmployees();
+  const allEmployees = empService.getEmployees(currentUser.getActorContext());
   const isHrReviewer = currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
   const isFinanceViewer = currentUser.activeRole === "Accounts";
   const visibleEmployees = allEmployees.filter(

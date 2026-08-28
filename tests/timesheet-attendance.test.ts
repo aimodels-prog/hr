@@ -140,7 +140,10 @@ test("a meaningful variance explanation is persisted, audited, and permits appro
   const submitted = timesheets.submitTimesheet(saved.id, employee);
 
   assert.equal(submitted.attendanceReconciliationSnapshot?.unresolvedCount, 0);
-  assert.throws(() => timesheets.approveTimesheet(submitted.id, hr), /not authorised/);
+  assert.throws(
+    () => timesheets.approveTimesheet(submitted.id, hr),
+    /reason for completing the unavailable supervisor's review/,
+  );
   assert.equal(timesheets.approveTimesheet(submitted.id, manager).status, "Pending HR");
   assert.equal(timesheets.approveTimesheet(submitted.id, hr).status, "Approved");
   assert.equal(

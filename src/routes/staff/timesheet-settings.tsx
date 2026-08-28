@@ -29,10 +29,18 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Lock } from "lucide-react";
+import { Lock, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { TimesheetService } from "@/lib/data/timesheet-service";
-import { RequirePermission, useCurrentUser } from "@/lib/auth";
+import { RequireAnyPermission, useCurrentUser } from "@/lib/auth";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { TimesheetSettings } from "@/lib/data/timesheet-types";
 
 export const Route = createFileRoute("/staff/timesheet-settings")({
@@ -48,6 +56,8 @@ function TimesheetSettingsRoute() {
   const [genStart, setGenStart] = useState("");
   const [genEnd, setGenEnd] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [reopenPeriodId, setReopenPeriodId] = useState<string | null>(null);
+  const [reopenReason, setReopenReason] = useState("");
   const periods = tsService.getPeriods();
 
   const handleClosePeriod = (periodId: string) => {
@@ -69,6 +79,19 @@ function TimesheetSettingsRoute() {
     }
   };
 
+  const handleReopenPeriod = () => {
+    if (!reopenPeriodId) return;
+    try {
+      tsService.reopenPeriod(reopenPeriodId, reopenReason, currentUser.getActorContext());
+      toast.success("Period reopened. Returned timesheets can now be corrected.");
+      setReopenPeriodId(null);
+      setReopenReason("");
+      setRefreshKey((value) => value + 1);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The period could not be reopened.");
+    }
+  };
+
   const handleGeneratePeriods = () => {
     if (!genStart || !genEnd) {
       toast.error("Please select start and end dates.");
@@ -85,7 +108,10 @@ function TimesheetSettingsRoute() {
   };
 
   return (
-    <RequirePermission permission="system:settings_manage" resourceName="Timesheet Settings">
+    <RequireAnyPermission
+      permissions={["timesheet:admin_all", "system:settings_manage"]}
+      resourceName="Timesheet Settings"
+    >
       <div className="flex flex-col gap-6 max-w-[800px] mx-auto pb-10">
         <PageHeader
           title="Timesheet Settings"
@@ -205,6 +231,18 @@ function TimesheetSettingsRoute() {
               />
               <Label htmlFor="copy-week">Allow employees to copy entries from previous week</Label>
             </div>
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="hr-overtime-verification"
+                checked={settings.requireHrOvertimeVerification}
+                onCheckedChange={(value) =>
+                  setSettings({ ...settings, requireHrOvertimeVerification: value })
+                }
+              />
+              <Label htmlFor="hr-overtime-verification">
+                Require HR verification after supervisor overtime approval
+              </Label>
+            </div>
           </CardContent>
           <CardFooter className="justify-end">
             <Button onClick={handleSaveSettings}>Save Configuration</Button>
@@ -247,8 +285,9 @@ function TimesheetSettingsRoute() {
           <CardHeader>
             <CardTitle>Period Lifecycle</CardTitle>
             <CardDescription>
-              Closing a period stops any employee from creating, editing, or submitting a
-              timesheet inside it. This cannot be undone here.
+              Closing a period stops any employee from creating, editing, or submitting a timesheet
+              inside it. A closed period can be reopened with a recorded reason when corrections are
+              required.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
@@ -273,8 +312,24 @@ function TimesheetSettingsRoute() {
                     </TableCell>
                     <TableCell className="text-right">
                       {period.status === "Open" && (
-                        <Button variant="outline" size="sm" onClick={() => handleClosePeriod(period.id)}>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleClosePeriod(period.id)}
+                        >
                           <Lock className="w-3.5 h-3.5 mr-1" /> Close Period
+                        </Button>
+                      )}
+                      {period.status === "Closed" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setReopenReason("");
+                            setReopenPeriodId(period.id);
+                          }}
+                        >
+                          <RotateCcw className="mr-1 h-3.5 w-3.5" /> Reopen Period
                         </Button>
                       )}
                     </TableCell>
@@ -292,6 +347,33 @@ function TimesheetSettingsRoute() {
           </CardContent>
         </Card>
       </div>
-    </RequirePermission>
+      <Dialog
+        open={Boolean(reopenPeriodId)}
+        onOpenChange={(open) => !open && setReopenPeriodId(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reopen timesheet period</DialogTitle>
+            <DialogDescription>
+              Explain why this period needs to accept corrections again. The decision is recorded in
+              Audit History.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            value={reopenReason}
+            onChange={(event) => setReopenReason(event.target.value)}
+            placeholder="Reason for reopening"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReopenPeriodId(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleReopenPeriod} disabled={reopenReason.trim().length < 5}>
+              Reopen Period
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </RequireAnyPermission>
   );
 }

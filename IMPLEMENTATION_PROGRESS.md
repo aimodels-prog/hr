@@ -758,3 +758,59 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
   - The Playwright recruitment lifecycle passed in installed Google Chrome.
   - Production client, server and Cloudflare worker builds passed.
   - Repository-wide lint still reports the existing formatting backlog: 6,642 findings (6,628 errors and 14 warnings). The dominant findings are established CRLF/Prettier issues and unrelated existing files; this implementation did not bulk-reformat user-owned modules.
+
+### Core HR completion hardening and browser journey verification
+
+- Status: Complete on 2026-08-27 for the browser-local implementation. Production database storage, Workspace authentication and server-side scheduling remain intentionally deferred.
+- Scope:
+  - Closed raw-read paths for employees, users, employment history, personal-profile requests and employee documents. Page code now uses role- and relationship-scoped service methods; trusted raw repositories require the system context.
+  - Added a deliberately limited company-directory lookup for operational screens that need employee names. It excludes compensation, banking, identity documents, personal contact details, family information, HR notes and statutory identifiers.
+  - Made onboarding and offboarding case reads context-required. Employees, supervisors and shared-service roles see only cases or tasks that belong to them; rejected reads create access-denied audit records.
+  - Kept restricted offboarding notes out of page state. Standard notes are available to HR and Super Admin, while Restricted notes are available only to Super Admin.
+  - Kept departing employees' access active during Notice so they can finish handover work. Access is suspended only when employment becomes Inactive and archived when the employee record is archived.
+  - Added offboarding-template selection, a named HR case owner and Standard/Restricted confidentiality when HR starts a case.
+  - Validated onboarding and offboarding templates, protected the last active template and required named task owners to be active users holding the task's role.
+  - Prevented departing employees from approving their own financial or HR clearance and prevented them from finalising their own departure, even when they hold an elevated role.
+  - Prevented offboarding finalisation before the recorded last working date and retained the mandatory-task, financial-clearance and HR-closure gates.
+  - Changed document-expiry reminders to use VIA's editable reminder-day settings and changed work-anniversary reminders to recover recently missed notification dates safely through deduplication.
+  - Verified generic onboarding evidence belongs to the correct onboarding case before completion.
+  - Made employee-document replacement recover as one logical operation: failed metadata/version updates restore browser records and remove the newly orphaned file blob.
+  - Added a Playwright browser journey through Directory, Employee Files, Onboarding and Offboarding, including template selection and Restricted case handling.
+- Decisions:
+  - Active-role permissions are authoritative. Merely having HR or Super Admin among a user's assigned roles does not expose elevated data while that person is acting as Employee.
+  - Company-directory access is separate from full employee-file access. Shared workflows can resolve names and work assignments without receiving the employee's private HR file.
+  - Client-side reminder recovery is complete for the current browser version. A production database and server scheduler will later run reminders even when no one has the portal open.
+- Verification:
+  - Targeted Prettier completed for every changed TypeScript file.
+  - TypeScript typecheck passed.
+  - All 185 service and unit tests passed, including new raw-repository denial, active-role isolation and sanitised-directory coverage.
+  - The Playwright Core HR journey passed in installed Google Chrome.
+  - Production build passed.
+  - Repository-wide lint remains blocked by the established backlog: 8,194 findings (8,172 errors and 22 warnings), predominantly existing Prettier, explicit-`any` and hook-rule findings across older screens and tests. The targeted changed-file run reports 70 existing `any`/hook-rule errors and 11 warnings, concentrated in older payroll, travel, performance and employee-form code rather than the completed Core HR workflow logic.
+
+### Time & Travel audit remediation and lifecycle verification
+
+- Status: Complete on 2026-08-28 for every actionable finding in `Time-and-Travel-Audit.pdf` within the browser-local application. Workspace authentication, production database storage and server-side scheduling remain intentionally deferred.
+- Scope:
+  - Enforced leave negative-balance caps, gave HR direct access to editable leave policies, added reason-controlled HR recovery for unavailable supervisors, and added employee-specific allowances for statutory per-event and once-per-service leave.
+  - Removed the unused Leave placeholder, corrected request filters and status presentation, prevented cancellation of past approved leave, and kept historical approved requests readable as taken leave.
+  - Corrected structured public-holiday prefilling, preserved current work when copying a previous timesheet, blocked closing periods with unfinished records, added reason-controlled period reopening, and repaired payroll-locked correction creation so it cannot duplicate a person and period or carry old dated hours forward.
+  - Made current-period selection date-aware across approvals and monitoring, exposed manual payroll locking even after a settings change, added employee notifications for returned and reopened timesheets, and added audited HR recovery when the assigned supervisor is unavailable.
+  - Changed stale open attendance punches to Missing Punch in every summary, allowed a new day's attendance while retaining the older missed-sign-out correction, added HR supervisor-stage recovery, and added validated HR editing with duplicate employee/date protection.
+  - Moved HR overtime verification into Overtime Approvals, added the setting that controls that stage, made cost centre, activity and work location mandatory, completed HR/Super Admin/line-manager on-behalf recording, protected evidence ownership and access, and removed the unused Draft state.
+  - Made overtime corrections and their original record update one recoverable operation, reversed a previous time-off credit before a corrected TOIL claim is reconsidered, notified every reviewer and employee stage, and carried late-approved overtime into the next payroll collection with a visible exception instead of losing it.
+  - Restricted travel reads to the employee, their actual supervisor or authorised reviewers; corrected sidebar permissions; removed the unused direct-report approval permission; required and ownership-checked every receipt; and kept rejected requests out of the other reviewer's active queue.
+  - Preserved the two independent travel approvals before Pre-authorised status, cleaned rejected reimbursement totals, kept explicit approval/rejection audit events and notifications, and made zero-estimate variance finite and understandable.
+  - Updated deterministic VIA seed employee profiles with the gender data required to demonstrate gender-specific statutory leave eligibility.
+- Decisions:
+  - HR recovery never silently impersonates a supervisor. A meaningful explanation is required and the recovery decision is audited.
+  - Recommended workflow rules are enforced in shared services, not only by hidden buttons or route guards.
+  - Receipts and overtime evidence remain in IndexedDB and structured records retain only verified file references until the production file store is connected.
+  - Browser-local automation is complete for the present build; reminders and automatic jobs can only become independent of an open browser after the deferred server scheduler is connected.
+- Verification:
+  - Targeted Prettier and ESLint passed for every Time & Travel source file and regression test changed in this remediation.
+  - TypeScript typecheck passed.
+  - All 203 service and unit tests passed, including new negative-cap, statutory-allowance, recovery, holiday, copying, attendance, TOIL, payroll carry-over, travel-privacy, receipt and variance coverage.
+  - The Playwright Time & Travel lifecycle passed through Employee, Line Manager, HR, Accounts and Super Admin roles, including leave, attendance correction, timesheet, overtime, travel pre-authorisation, receipt-backed expenses and final reimbursement closure.
+  - Production client, server and worker builds passed.
+  - Repository-wide lint still reports 327 existing findings (308 errors and 19 warnings) in unrelated older performance screens, tests and configuration files. The targeted Time & Travel lint run is clean.

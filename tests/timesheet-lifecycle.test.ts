@@ -9,6 +9,7 @@ import { initializeSeedData } from "../src/lib/data/seed-service.ts";
 import { MemoryStorageDriver } from "../src/lib/data/storage-driver.ts";
 import { VersionedStorageService } from "../src/lib/data/storage.ts";
 import { TimesheetService } from "../src/lib/data/timesheet-service.ts";
+import { getMasterDataRepository } from "../src/lib/data/master-data.ts";
 import type { TimesheetWithEntries } from "../src/lib/data/timesheet-types.ts";
 import type { ActorContext } from "../src/lib/data/types.ts";
 
@@ -90,7 +91,12 @@ function addAttendance(attendance: AttendanceService, date: string) {
   );
 }
 
-function fillEntry(timesheet: TimesheetWithEntries, date: string, hours: number, overrides: Partial<TimesheetWithEntries["entries"][0]> = {}) {
+function fillEntry(
+  timesheet: TimesheetWithEntries,
+  date: string,
+  hours: number,
+  overrides: Partial<TimesheetWithEntries["entries"][0]> = {},
+) {
   timesheet.entries.push({
     id: crypto.randomUUID(),
     projectId: "proj-001",
@@ -106,21 +112,42 @@ function fillEntry(timesheet: TimesheetWithEntries, date: string, hours: number,
 }
 
 test("a closed period rejects creating, saving, or submitting a timesheet", () => {
-  const { timesheets, period } = harness();
+  const { timesheets, period, storage } = harness();
   const ts = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
+  assert.throws(() => timesheets.closePeriod(period.id, hr), /unfinished timesheet/);
+  const records = storage.readCollection<TimesheetWithEntries>("timesheets");
+  storage.writeCollection(
+    "timesheets",
+    records.map((record) =>
+      record.id === ts.id ? { ...record, status: "Corrected" as const } : record,
+    ),
+  );
   timesheets.closePeriod(period.id, hr);
 
-  assert.throws(
-    () => timesheets.saveTimesheetDraft(ts, employee),
-    /closed period/,
-  );
-  assert.throws(
-    () => timesheets.submitTimesheet(ts.id, employee),
-    /closed period/,
-  );
+  assert.throws(() => timesheets.saveTimesheetDraft(ts, employee), /closed period/);
+  assert.throws(() => timesheets.submitTimesheet(ts.id, employee), /closed period/);
   assert.throws(
     () => timesheets.getOrCreateTimesheet("employee-mariam", period.id, accounts),
     /closed period/,
+  );
+});
+
+test("timesheet reads are enforced inside the service", () => {
+  const { timesheets, audit, period } = harness();
+  timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
+
+  assert.equal(timesheets.getTimesheetsForEmployee("employee-omar", employee).length, 1);
+  assert.equal(timesheets.getTimesheetsForEmployee("employee-omar", manager).length, 1);
+  assert.throws(
+    () => timesheets.getTimesheetsForEmployee("employee-mariam", employee),
+    /not authorised/,
+  );
+  assert.throws(() => timesheets.getAllTimesheets(employee), /not authorised/);
+  assert.equal(timesheets.getAllTimesheets(accounts).length, 1);
+  assert.ok(
+    audit
+      .list()
+      .some((event) => event.module === "timesheets" && event.action === "timesheet_access_denied"),
   );
 });
 
@@ -181,7 +208,10 @@ test("a line manager cannot reopen an HR-approved or payroll-locked timesheet", 
   timesheets.approveTimesheet(ts.id, manager);
   const approved = timesheets.approveTimesheet(ts.id, hr);
 
-  assert.throws(() => timesheets.reopenTimesheet(approved.id, "please redo", manager), /not authorised/);
+  assert.throws(
+    () => timesheets.reopenTimesheet(approved.id, "please redo", manager),
+    /not authorised/,
+  );
   const reopened = timesheets.reopenTimesheet(approved.id, "please redo", hr);
   assert.equal(reopened.status, "Returned");
 });
@@ -202,10 +232,16 @@ test("reopening a Payroll Locked timesheet does not carry stale dated hours into
   assert.equal(corrected.status, "Returned");
   assert.equal(corrected.totalHours, 0);
   for (const entry of corrected.entries) {
-    assert.deepEqual(entry.hours, {}, "corrected entries must start with no hours carried over from the old period's dates");
+    assert.deepEqual(
+      entry.hours,
+      {},
+      "corrected entries must start with no hours carried over from the old period's dates",
+    );
   }
 
-  const original = timesheets.getTimesheetsForEmployee("employee-omar").find((t) => t.id === locked.id);
+  const original = timesheets
+    .getTimesheetsForEmployee("employee-omar", employee)
+    .find((t) => t.id === locked.id);
   assert.equal(original?.status, "Corrected");
 });
 
@@ -249,4 +285,51 @@ test("working days are computed from the organisation's configured working week,
 
   const ts = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
   assert.equal(ts.expectedHours, expectedWorkingDays * 8);
+});
+
+test("structured public-holiday dates prefill a holiday row", () => {
+  const { timesheets, period } = harness();
+  getMasterDataRepository("publicHolidays").create(
+    {
+      name: "VIA Operations Day",
+      code: "OPS_DAY",
+      description: "Office holiday",
+      date: period.startDate,
+      isActive: true,
+      orderIndex: 99,
+    } as never,
+    hr,
+  );
+  const timesheet = timesheets.getOrCreateTimesheet("employee-mariam", period.id, accounts);
+  assert.equal(
+    timesheet.entries.find((entry) => entry.isHoliday)?.hours[period.startDate],
+    timesheets.getSettings().standardDailyHours,
+  );
+});
+
+test("copying the previous week keeps work already entered in the current week", () => {
+  const { timesheets, period, nextPeriod } = harness();
+  const previous = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
+  fillEntry(previous, period.startDate, 8);
+  timesheets.saveTimesheetDraft(previous, employee);
+
+  const current = timesheets.getOrCreateTimesheet("employee-omar", nextPeriod.id, employee);
+  fillEntry(current, nextPeriod.startDate, 5);
+  timesheets.saveTimesheetDraft(current, employee);
+  const copied = timesheets.copyPreviousWeek("employee-omar", nextPeriod.id, employee);
+
+  assert.equal(copied.entries.find((entry) => entry.hours[nextPeriod.startDate] === 5)?.total, 5);
+  assert.equal(copied.totalHours, 5);
+});
+
+test("HR can reopen a closed timesheet period with a recorded reason", () => {
+  const { timesheets, period } = harness();
+  const closed = timesheets.closePeriod(period.id, hr);
+  assert.equal(closed.status, "Closed");
+  assert.throws(
+    () => timesheets.reopenPeriod(period.id, "Manager request", manager),
+    /not authorised/,
+  );
+  const reopened = timesheets.reopenPeriod(period.id, "Correction work must be completed", hr);
+  assert.equal(reopened.status, "Open");
 });

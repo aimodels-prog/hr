@@ -1,3 +1,4 @@
+import { SYSTEM_CONTEXT } from "./types.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { LeaveService } from "./leave-service.ts";
@@ -146,22 +147,27 @@ export class AttendanceService {
     );
   }
 
-  getAllRecords(): AttendanceRecord[] {
-    return this.recordRepo.list();
+  getAllRecords(context: ActorContext): AttendanceRecord[] {
+    this.requireAdmin(context, "view all attendance records");
+    return this.recordRepo.list().map((record) => this.presentRecord(record));
   }
 
-  getRecordsForEmployee(employeeId: string): AttendanceRecord[] {
+  getRecordsForEmployee(employeeId: string, context: ActorContext): AttendanceRecord[] {
+    this.requireEmployeeRead(employeeId, context, "view this employee's attendance records");
     return this.recordRepo
       .list()
       .filter((record) => record.employeeId === employeeId)
+      .map((record) => this.presentRecord(record))
       .sort((a, b) => b.date.localeCompare(a.date));
   }
 
   getRecordsForContext(context: ActorContext): AttendanceRecord[] {
-    if (roleIs(context, ADMIN_ROLES)) return this.getAllRecords();
+    if (roleIs(context, ADMIN_ROLES)) {
+      return this.recordRepo.list().map((record) => this.presentRecord(record));
+    }
     if (effectiveRole(context) === "Line Manager" && context.actor.employeeId) {
       const directReportIds = new EmployeeService()
-        .getEmployees()
+        .getEmployees(SYSTEM_CONTEXT)
         .filter((employee) => employee.lineManagerId === context.actor.employeeId)
         .map((employee) => employee.id);
       return this.recordRepo
@@ -170,28 +176,39 @@ export class AttendanceService {
           (record) =>
             record.employeeId === context.actor.employeeId ||
             directReportIds.includes(record.employeeId),
-        );
+        )
+        .map((record) => this.presentRecord(record));
     }
-    return context.actor.employeeId ? this.getRecordsForEmployee(context.actor.employeeId) : [];
+    return context.actor.employeeId
+      ? this.getRecordsForEmployee(context.actor.employeeId, context)
+      : [];
   }
 
-  getAllCorrections(): AttendanceCorrection[] {
+  getAllCorrections(context: ActorContext): AttendanceCorrection[] {
+    this.requireAdmin(context, "view all attendance corrections");
     return this.correctionRepo
       .list()
       .map((correction) => this.normaliseCorrection(correction))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  getCorrectionsForEmployee(employeeId: string): AttendanceCorrection[] {
-    return this.getAllCorrections().filter((correction) => correction.employeeId === employeeId);
+  getCorrectionsForEmployee(employeeId: string, context: ActorContext): AttendanceCorrection[] {
+    this.requireEmployeeRead(employeeId, context, "view this employee's attendance corrections");
+    return this.correctionRepo
+      .list()
+      .map((correction) => this.normaliseCorrection(correction))
+      .filter((correction) => correction.employeeId === employeeId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   getCorrectionsForContext(context: ActorContext): AttendanceCorrection[] {
-    if (roleIs(context, ADMIN_ROLES)) return this.getAllCorrections();
+    if (roleIs(context, ADMIN_ROLES)) return this.getAllCorrections(context);
     if (effectiveRole(context) === "Line Manager") {
       return this.getCorrectionsForDirectReports(context);
     }
-    return context.actor.employeeId ? this.getCorrectionsForEmployee(context.actor.employeeId) : [];
+    return context.actor.employeeId
+      ? this.getCorrectionsForEmployee(context.actor.employeeId, context)
+      : [];
   }
 
   async getCorrectionEvidence(
@@ -230,15 +247,17 @@ export class AttendanceService {
 
   getCorrectionsForDirectReports(context: ActorContext): AttendanceCorrection[] {
     this.requireRole(context, ["Line Manager", "HR", "Super Admin"], "review corrections");
-    if (roleIs(context, ADMIN_ROLES)) return this.getAllCorrections();
+    if (roleIs(context, ADMIN_ROLES)) return this.getAllCorrections(context);
     if (!context.actor.employeeId) return [];
     const directReportIds = new EmployeeService()
-      .getEmployees()
+      .getEmployees(SYSTEM_CONTEXT)
       .filter((employee) => employee.lineManagerId === context.actor.employeeId)
       .map((employee) => employee.id);
-    return this.getAllCorrections().filter((correction) =>
-      directReportIds.includes(correction.employeeId),
-    );
+    return this.correctionRepo
+      .list()
+      .map((correction) => this.normaliseCorrection(correction))
+      .filter((correction) => directReportIds.includes(correction.employeeId))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   getPolicy(): AttendancePolicy {
@@ -403,7 +422,7 @@ export class AttendanceService {
     if (approvedHomeVisit) {
       throw new Error("Your approved home-origin site visit uses automatic attendance today.");
     }
-    const reconciled = this.reconcileDailyStatus(employeeId, date);
+    const reconciled = this.reconcileDailyStatus(employeeId, date, context);
     if (reconciled && ["On Leave", "Holiday", "Rest Day"].includes(reconciled.status ?? "")) {
       throw new Error(`Clock-in is unavailable because today is recorded as ${reconciled.status}.`);
     }
@@ -472,8 +491,26 @@ export class AttendanceService {
     );
   }
 
-  getOpenRecord(employeeId: string): AttendanceRecord | null {
+  getOpenRecord(employeeId: string, context: ActorContext): AttendanceRecord | null {
+    this.requireEmployeeRead(employeeId, context, "view this employee's open attendance record");
     return this.findOpenRecord(employeeId) ?? null;
+  }
+
+  getMissedOpenRecord(employeeId: string, context: ActorContext): AttendanceRecord | null {
+    this.requireEmployeeRead(employeeId, context, "view this employee's missed sign-out record");
+    const today = dateKey(this.now());
+    return (
+      this.recordRepo
+        .list()
+        .filter(
+          (record) =>
+            record.employeeId === employeeId &&
+            Boolean(record.clockIn) &&
+            !record.clockOut &&
+            record.date < today,
+        )
+        .sort((a, b) => b.date.localeCompare(a.date))[0] ?? null
+    );
   }
 
   calculateStatus(record: Partial<AttendanceRecord>, at = this.now()): AttendanceStatus {
@@ -491,7 +528,12 @@ export class AttendanceService {
     return record.isLate ? "Late" : "Present";
   }
 
-  reconcileDailyStatus(employeeId: string, targetDate: string): Partial<AttendanceRecord> | null {
+  reconcileDailyStatus(
+    employeeId: string,
+    targetDate: string,
+    context: ActorContext,
+  ): Partial<AttendanceRecord> | null {
+    this.requireEmployeeRead(employeeId, context, "reconcile this employee's attendance status");
     const existing = this.findRecord(employeeId, targetDate);
     if (existing) return null;
     const day = new Date(`${targetDate}T12:00:00`);
@@ -516,7 +558,7 @@ export class AttendanceService {
     }
 
     const approvedLeave = new LeaveService()
-      .getAllRequests()
+      .getAllRequests(SYSTEM_CONTEXT)
       .some(
         (request) =>
           request.employeeId === employeeId &&
@@ -535,7 +577,7 @@ export class AttendanceService {
     this.requireSelf(employeeId, context, "request an attendance correction");
     const existing = this.findRecord(employeeId, targetDate);
     if (existing) return existing;
-    const status = this.reconcileDailyStatus(employeeId, targetDate)?.status ?? "Absent";
+    const status = this.reconcileDailyStatus(employeeId, targetDate, context)?.status ?? "Absent";
     if (["On Leave", "Holiday", "Rest Day"].includes(status)) {
       throw new Error(`${status} days cannot be changed through a punch correction.`);
     }
@@ -578,17 +620,29 @@ export class AttendanceService {
     context: ActorContext,
   ): AttendanceRecord {
     this.requireAdmin(context, "edit attendance records");
+    const existing = this.recordRepo.getById(id);
+    if (!existing) throw new Error("Attendance record was not found.");
+    const employeeId = data.employeeId ?? existing.employeeId;
+    const date = data.date ?? existing.date;
+    const duplicate = this.recordRepo
+      .list()
+      .some(
+        (record) => record.id !== id && record.employeeId === employeeId && record.date === date,
+      );
+    if (duplicate) {
+      throw new Error("This employee already has an attendance record for the selected date.");
+    }
     return this.updateRecordInternal(id, data, context);
   }
 
-  requestCorrection(
+  async requestCorrection(
     recordId: string,
     proposedIn: string,
     proposedOut: string,
     explanation: string,
     context: ActorContext,
     evidenceFileId?: string,
-  ): AttendanceCorrection {
+  ): Promise<AttendanceCorrection> {
     const record = this.recordRepo.getById(recordId);
     if (!record) throw new Error("Attendance record was not found.");
     this.requireSelf(record.employeeId, context, "request this correction");
@@ -596,6 +650,16 @@ export class AttendanceService {
     if (proposedIn) parseMinutes(proposedIn);
     if (proposedOut) parseMinutes(proposedOut);
     if (!proposedIn && !proposedOut) throw new Error("At least one proposed punch is required.");
+    if (evidenceFileId) {
+      const metadata = await getApplicationDataServices().files.getMetadata(evidenceFileId);
+      if (
+        !metadata ||
+        metadata.owner.entityType !== "attendance-record" ||
+        metadata.owner.entityId !== recordId
+      ) {
+        throw new Error("The uploaded evidence could not be verified. Please attach it again.");
+      }
+    }
     const openCorrection = this.correctionRepo
       .list()
       .find(
@@ -605,7 +669,7 @@ export class AttendanceService {
       );
     if (openCorrection) throw new Error("A correction is already pending for this record.");
 
-    const employee = new EmployeeService().getById(record.employeeId);
+    const employee = new EmployeeService().getById(record.employeeId, SYSTEM_CONTEXT);
     const correction = this.correctionRepo.create(
       {
         attendanceRecordId: recordId,
@@ -754,10 +818,8 @@ export class AttendanceService {
     return visit;
   }
 
-  getSiteVisitsForEmployee(employeeId: string, context?: ActorContext): SiteVisitRequest[] {
-    if (context && !roleIs(context, ADMIN_ROLES)) {
-      this.requireSelf(employeeId, context, "view these site visits");
-    }
+  getSiteVisitsForEmployee(employeeId: string, context: ActorContext): SiteVisitRequest[] {
+    this.requireEmployeeRead(employeeId, context, "view this employee's site visits");
     return this.siteVisitRepo
       .list()
       .filter((visit) => visit.employeeId === employeeId)
@@ -937,7 +999,11 @@ export class AttendanceService {
     );
   }
 
-  updateExceptionCaseNotes(id: string, investigationNotes: string, context: ActorContext): AttendanceExceptionCase {
+  updateExceptionCaseNotes(
+    id: string,
+    investigationNotes: string,
+    context: ActorContext,
+  ): AttendanceExceptionCase {
     this.requireAdmin(context, "update attendance exception cases");
     const item = this.exceptionRepo.getById(id);
     if (!item) throw new Error("Exception case was not found.");
@@ -949,7 +1015,11 @@ export class AttendanceService {
     );
   }
 
-  resolveExceptionCase(id: string, resolutionNotes: string, context: ActorContext): AttendanceExceptionCase {
+  resolveExceptionCase(
+    id: string,
+    resolutionNotes: string,
+    context: ActorContext,
+  ): AttendanceExceptionCase {
     this.requireAdmin(context, "resolve attendance exception cases");
     const item = this.exceptionRepo.getById(id);
     if (!item) throw new Error("Exception case was not found.");
@@ -1063,7 +1133,7 @@ export class AttendanceService {
         errors: [{ row: 1, message: "CSV requires Employee ID/Number/Email and Date columns." }],
       };
     }
-    const employees = new EmployeeService().getEmployees();
+    const employees = new EmployeeService().getEmployees(SYSTEM_CONTEXT);
     const validRows: AttendanceImportRow[] = [];
     const errors: AttendanceImportPreview["errors"] = [];
     lines.slice(1).forEach((line, offset) => {
@@ -1148,7 +1218,7 @@ export class AttendanceService {
 
   exportCsv(date: string, context: ActorContext): string {
     this.requireAdmin(context, "export attendance records");
-    const records = this.getAllRecords().filter((record) => record.date === date);
+    const records = this.recordRepo.list().filter((record) => record.date === date);
 
     getApplicationDataServices().audit.record({
       context,
@@ -1193,8 +1263,8 @@ export class AttendanceService {
     ].join("\n");
   }
 
-  getMonthlySummary(employeeId: string, month: string) {
-    const records = this.getRecordsForEmployee(employeeId).filter((record) =>
+  getMonthlySummary(employeeId: string, month: string, context: ActorContext) {
+    const records = this.getRecordsForEmployee(employeeId, context).filter((record) =>
       record.date.startsWith(month),
     );
     return {
@@ -1207,7 +1277,7 @@ export class AttendanceService {
   }
 
   private createRecord(data: NewRecord<AttendanceRecord>, context: ActorContext): AttendanceRecord {
-    if (!new EmployeeService().getById(data.employeeId)) {
+    if (!new EmployeeService().getById(data.employeeId, SYSTEM_CONTEXT)) {
       throw new Error("Attendance employee was not found.");
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(data.date)) {
@@ -1275,22 +1345,26 @@ export class AttendanceService {
     return this.calculateStatus(record);
   }
 
+  private presentRecord(record: AttendanceRecord): AttendanceRecord {
+    return { ...record, status: this.deriveStatus(record) };
+  }
+
   private managerReviewCorrection(
     correctionId: string,
     approve: boolean,
     notes: string,
     context: ActorContext,
   ): AttendanceCorrection {
-    this.requireRole(context, ["Line Manager", "Super Admin"], "review this correction");
+    this.requireRole(context, ["Line Manager", "HR", "Super Admin"], "review this correction");
     if (notes.trim().length < 3) throw new Error("Manager decision notes are required.");
     const storedCorrection = this.correctionRepo.getById(correctionId);
     const correction = storedCorrection ? this.normaliseCorrection(storedCorrection) : null;
     if (!correction) throw new Error("Correction was not found.");
     if (correction.status !== "Pending Manager")
       throw new Error("Correction is not awaiting a manager.");
-    const employee = new EmployeeService().getById(correction.employeeId);
+    const employee = new EmployeeService().getById(correction.employeeId, SYSTEM_CONTEXT);
     if (
-      effectiveRole(context) !== "Super Admin" &&
+      !["HR", "Super Admin"].includes(effectiveRole(context) ?? "") &&
       (!context.actor.employeeId || employee?.lineManagerId !== context.actor.employeeId)
     ) {
       this.recordDenied("correction_review_denied", correction.id, context);
@@ -1395,6 +1469,16 @@ export class AttendanceService {
     if (context.actor.employeeId === employeeId) return;
     this.recordDenied("self_scope_denied", employeeId, context);
     throw new Error(`You are not authorised to ${action} for another employee.`);
+  }
+
+  private requireEmployeeRead(employeeId: string, context: ActorContext, action: string): void {
+    if (context.actor.employeeId === employeeId || roleIs(context, ADMIN_ROLES)) return;
+    if (effectiveRole(context) === "Line Manager" && context.actor.employeeId) {
+      const employee = new EmployeeService().getById(employeeId, SYSTEM_CONTEXT);
+      if (employee?.lineManagerId === context.actor.employeeId) return;
+    }
+    this.recordDenied("attendance_read_denied", employeeId, context);
+    throw new Error(`You are not authorised to ${action}.`);
   }
 
   private requireAdmin(context: ActorContext, action: string): void {

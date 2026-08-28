@@ -59,11 +59,12 @@ function OnboardingDashboard() {
   const navigate = useNavigate();
   const actorContext = currentUser.getActorContext();
   const cases = onboardingService.getCasesForContext(actorContext);
-  const employees = employeeService.getEmployees();
-  const templates = onboardingService.getTemplates().filter((template) => template.isActive);
+  const employees = employeeService.getEmployees(actorContext);
+  const templates = onboardingService
+    .getTemplates(actorContext)
+    .filter((template) => template.isActive);
   const hrOwners = employeeService
-    .getUserRepository()
-    .list()
+    .getUsers(actorContext)
     .filter((user) => user.status === "Active" && user.roles.includes("HR"));
   const today = new Date().toISOString().slice(0, 10);
   const employeeById = new Map(employees.map((employee) => [employee.id, employee]));

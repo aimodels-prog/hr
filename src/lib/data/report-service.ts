@@ -1,3 +1,4 @@
+import { SYSTEM_CONTEXT } from "./types.ts";
 import { EmployeeService } from "./employee-service";
 import { LeaveService } from "./leave-service";
 import { TimesheetService } from "./timesheet-service";
@@ -9,7 +10,7 @@ import { TravelService } from "./travel-service";
 import { PayrollService } from "./payroll-service";
 import { OnboardingService } from "./onboarding-service";
 import { getApplicationDataServices } from "./application-data";
-import type { Employee, Role } from "./types";
+import type { ActorContext, Employee, Role } from "./types";
 import { SYSTEM_ACTOR } from "./types";
 
 export type ReportColumn = {
@@ -18,12 +19,14 @@ export type ReportColumn = {
   type?: "text" | "number" | "date" | "currency";
 };
 
+export type ReportCellValue = string | number | boolean | null | undefined;
+
 export type ReportData = {
   id: string;
   name: string;
   description: string;
   columns: ReportColumn[];
-  rows: Record<string, any>[];
+  rows: Record<string, ReportCellValue>[];
   containsPersonalData: boolean;
 };
 
@@ -38,6 +41,19 @@ export class ReportService {
     this.currentEmployee = currentEmployee;
   }
 
+  private getActorContext(): ActorContext {
+    return {
+      actor: {
+        userId: this.userId,
+        ...(this.currentEmployee ? { employeeId: this.currentEmployee.id } : {}),
+        displayName: this.currentEmployee?.preferredName ?? "Report viewer",
+        roles: [this.activeRole],
+        activeRole: this.activeRole,
+      },
+      reason: "Viewed an HR report",
+    };
+  }
+
   // Report ids whose content is genuinely payroll/finance-relevant and therefore
   // appropriate for Accounts to see company-wide (matches the "Payroll Inputs
   // Summary" and "Travel Variance" entries Accounts is offered in
@@ -50,7 +66,7 @@ export class ReportService {
 
   private getScopedEmployees(reportId?: string) {
     const empService = new EmployeeService();
-    const allEmployees = empService.getEmployees();
+    const allEmployees = empService.getEmployees(SYSTEM_CONTEXT);
 
     if (this.activeRole === "HR" || this.activeRole === "Super Admin") {
       return allEmployees;
@@ -135,7 +151,7 @@ export class ReportService {
             employmentType: e.employmentType,
             status: e.status,
             startDate: e.startDate,
-            salary: e.salary,
+            salary: e.salary?.baseMonthly,
           })),
         };
 
@@ -158,8 +174,8 @@ export class ReportService {
             })),
           ],
           rows: scopedEmployees.map((e) => {
-            const balances = leaveService.getAllBalancesForEmployee(e.id);
-            const row: Record<string, any> = {
+            const balances = leaveService.getAllBalancesForEmployee(e.id, this.getActorContext());
+            const row: Record<string, ReportCellValue> = {
               employee: e.legalName,
               department: e.department,
             };
@@ -174,7 +190,9 @@ export class ReportService {
 
       case "timesheet_completion": {
         const tsService = new TimesheetService();
-        const timesheets = tsService.getAllTimesheets().filter((t) => scopedIds.has(t.employeeId));
+        const timesheets = tsService
+          .getAllTimesheets(this.getActorContext())
+          .filter((t) => scopedIds.has(t.employeeId));
         return {
           id: "timesheet_completion",
           name: "Timesheet Completion",
@@ -304,7 +322,7 @@ export class ReportService {
       case "documents": {
         const docService = new DocumentService();
         const docs = docService
-          .getDocumentRepository()
+          .getDocumentRepository(SYSTEM_CONTEXT)
           .list()
           .filter((d) => scopedIds.has(d.employeeId) && d.expiryDate);
         return {
@@ -334,7 +352,10 @@ export class ReportService {
       case "travel": {
         const travelService = new TravelService();
         const requests = travelService
-          .getAllRequests({ actor: { ...SYSTEM_ACTOR, activeRole: "Super Admin" }, reason: "Internal report generation" })
+          .getAllRequests({
+            actor: { ...SYSTEM_ACTOR, activeRole: "Super Admin" },
+            reason: "Internal report generation",
+          })
           .filter((r) => scopedIds.has(r.employeeId));
         return {
           id: "travel",
@@ -369,7 +390,9 @@ export class ReportService {
 
       case "onboarding": {
         const obService = new OnboardingService();
-        const cases = obService.getCases().filter((c) => scopedIds.has(c.employeeId));
+        const cases = obService
+          .getCasesForContext(this.getActorContext())
+          .filter((c) => scopedIds.has(c.employeeId));
         return {
           id: "onboarding",
           name: "Onboarding Progress",

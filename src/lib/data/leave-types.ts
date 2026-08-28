@@ -83,6 +83,10 @@ export interface LeavePolicy extends BaseRecord {
   allowNegativeBalance: boolean;
   maxNegativeBalance?: number | undefined;
   requiresAttachment: boolean;
+  // false for leave types that are inherently sudden (medical emergencies, bereavement) or that
+  // are not a real absence at all (Remote, Resignation) - an employee must never be blocked from
+  // submitting an urgent request just because they cannot immediately name a covering colleague.
+  requiresHandoverContact: boolean;
   countsTowardGratuity: boolean; // false for unpaid leave per Art. 80/83 - excluded from end-of-service gratuity service period
   eligibility?: LeaveEligibility | undefined;
   approvalChain: string[]; // e.g. ["Line Manager", "HR"]
@@ -106,6 +110,15 @@ export interface LeaveTransaction extends BaseRecord {
   reason: string;
   referenceId?: string; // ID of the leave request if applicable
   actorUserId: RecordId;
+}
+
+/** An employee-specific statutory/event allowance approved by HR. */
+export interface EmployeeLeaveEntitlementOverride extends BaseRecord {
+  employeeId: RecordId;
+  policyId: RecordId;
+  days: number;
+  reason: string;
+  effectiveFrom: string;
 }
 
 export interface LeaveBalanceReport {

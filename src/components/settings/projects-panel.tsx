@@ -58,13 +58,10 @@ const projectFormSchema = z
     costCentreId: z.string().optional(),
     managerId: z.string().optional(),
   })
-  .refine(
-    (data) => !data.startDate || !data.endDate || data.endDate > data.startDate,
-    {
-      message: "End date must be after the start date",
-      path: ["endDate"],
-    },
-  );
+  .refine((data) => !data.startDate || !data.endDate || data.endDate > data.startDate, {
+    message: "End date must be after the start date",
+    path: ["endDate"],
+  });
 
 type ProjectFormValues = z.infer<typeof projectFormSchema>;
 
@@ -89,13 +86,16 @@ export function ProjectsPanel() {
 
   const locations = useMemo(() => getMasterDataRepository("locations").list(), []);
   const costCentres = useMemo(
-    () => getMasterDataRepository("costCentres").list().filter((c) => c.isActive),
+    () =>
+      getMasterDataRepository("costCentres")
+        .list()
+        .filter((c) => c.isActive),
     [],
   );
   // Includes archived employees so a project's historical manager still resolves to a name.
   const allEmployees = useMemo(
-    () => employeeService.getEmployeeRepository().list({ includeArchived: true }),
-    [employeeService],
+    () => employeeService.getEmployees(getActorContext(), { includeArchived: true }),
+    [employeeService, getActorContext],
   );
   const activeEmployees = useMemo(
     () => allEmployees.filter((e) => e.status !== "Archived"),
@@ -192,10 +192,7 @@ export function ProjectsPanel() {
         repo.update(editingProject.id, payload, getActorContext());
         toast.success("Project updated");
       } else {
-        repo.create(
-          { ...payload, isActive: true, orderIndex: projects.length },
-          getActorContext(),
-        );
+        repo.create({ ...payload, isActive: true, orderIndex: projects.length }, getActorContext());
         toast.success("Project created");
       }
       setIsFormOpen(false);
@@ -281,11 +278,7 @@ export function ProjectsPanel() {
                         <span className="sr-only">Edit</span>
                       </Button>
                       {project.archivedAt ? (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleRestore(project)}
-                        >
+                        <Button variant="ghost" size="icon" onClick={() => handleRestore(project)}>
                           <ArchiveRestore className="h-4 w-4" />
                           <span className="sr-only">Restore</span>
                         </Button>

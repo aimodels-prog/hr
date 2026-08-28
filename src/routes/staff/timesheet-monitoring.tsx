@@ -36,16 +36,17 @@ function TimesheetMonitoringRoute() {
   const empService = useMemo(() => new EmployeeService(), []);
 
   const periods = tsService.getPeriods();
-  const [selectedPeriodId, setSelectedPeriodId] = useState<string>(periods[0]?.id || "");
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string>(
+    tsService.getCurrentPeriod()?.id || "",
+  );
 
   const settings = tsService.getSettings();
   const allEmployees = empService
-    .getEmployees()
+    .getDirectoryEmployees(currentUser.getActorContext())
     .filter((e) => e.status !== "Inactive" && e.status !== "Archived");
 
-  const [refreshKey, setRefreshKey] = useState(0);
-  const canLockPayroll =
-    currentUser.can("timesheet:admin_all") && settings.payrollLockBehaviour === "Manual by HR";
+  const [, setRefreshKey] = useState(0);
+  const canLockPayroll = currentUser.can("timesheet:admin_all");
 
   const handleLockPayroll = (timesheetId: string) => {
     try {
@@ -57,8 +58,7 @@ function TimesheetMonitoringRoute() {
     }
   };
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const timesheets = useMemo(() => tsService.getTimesheetsForContext(currentUser.getActorContext()), [tsService, refreshKey]);
+  const timesheets = tsService.getTimesheetsForContext(currentUser.getActorContext());
   const currentPeriodTimesheets = timesheets.filter((t) => t.periodId === selectedPeriodId);
 
   const selectedPeriod = periods.find((p) => p.id === selectedPeriodId);
@@ -247,7 +247,11 @@ function TimesheetMonitoringRoute() {
                           {canLockPayroll && (
                             <TableCell className="text-right">
                               {row.status === "Approved" && row.ts && (
-                                <Button variant="outline" size="sm" onClick={() => handleLockPayroll(row.ts!.id)}>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleLockPayroll(row.ts!.id)}
+                                >
                                   <Lock className="w-3.5 h-3.5 mr-1" /> Lock for Payroll
                                 </Button>
                               )}

@@ -1,3 +1,4 @@
+import { SYSTEM_CONTEXT } from "../src/lib/data/types.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -176,12 +177,52 @@ test("resolveBatch resolves a manager by existing employee number and requires o
     employeeService,
   );
 
-  const rana = employeeService.getEmployeeRepository().getById("employee-rana")!;
+  const rana = employeeService.getEmployeeRepository(SYSTEM_CONTEXT).getById("employee-rana")!;
   assert.equal(resolved[0]!.lineManagerId, rana.id);
   assert.equal(resolved[0]!.blockingErrors.length, 0);
 
-  assert.ok(resolved[1]!.blockingErrors.some((e) => /manager's employee number is required/i.test(e)));
-  assert.ok(resolved[2]!.blockingErrors.some((e) => /was not found among existing employees/.test(e)));
+  assert.ok(
+    resolved[1]!.blockingErrors.some((e) => /manager's employee number is required/i.test(e)),
+  );
+  assert.ok(
+    resolved[2]!.blockingErrors.some((e) => /was not found among existing employees/.test(e)),
+  );
+});
+
+test("resolveBatch validates department/position/location/employment type against active master data, correcting case rather than rejecting a cosmetic mismatch", () => {
+  setup();
+  const importService = new EmployeeImportService();
+  const employeeService = new EmployeeService();
+
+  // "operations"/"coordinator"/"full-time" differ only in case from the real active master-data
+  // records ("Operations"/"Coordinator"/"Full-time") - these should be corrected, not rejected,
+  // since createEmployee's own check is an exact match and HR should not have to fix a
+  // spreadsheet over pure capitalization.
+  const caseMismatch = row({
+    employeeNumber: "VIA-8001",
+    managerEmployeeNumber: "VIA-0001",
+    department: "operations",
+    position: "coordinator",
+    employmentType: "full-time",
+  });
+  // A department that genuinely does not exist in master data at all must still block the row.
+  const genuinelyInvalid = row({
+    employeeNumber: "VIA-8002",
+    managerEmployeeNumber: "VIA-0001",
+    department: "Department That Does Not Exist",
+  });
+
+  const resolved = importService.resolveBatch([caseMismatch, genuinelyInvalid], employeeService);
+
+  assert.equal(resolved[0]!.blockingErrors.length, 0);
+  assert.equal(resolved[0]!.row.department, "Operations");
+  assert.equal(resolved[0]!.row.position, "Coordinator");
+  assert.equal(resolved[0]!.row.employmentType, "Full-time");
+
+  assert.ok(
+    resolved[1]!.blockingErrors.some((e) => /is not an active department/.test(e)),
+    "expected a department with no matching master-data record at all to be rejected",
+  );
 });
 
 test("commitImportBatch creates a forward-referenced manager before their report, in one pass", async () => {
@@ -216,13 +257,15 @@ test("commitImportBatch creates a forward-referenced manager before their report
   assert.equal(result.created, 2);
   assert.equal(result.skipped.length, 0);
 
-  const created = employeeService.getEmployeeRepository().list();
+  const created = employeeService.getEmployeeRepository(SYSTEM_CONTEXT).list();
   const report = created.find((e) => e.employeeNumber === "VIA-6002")!;
   const manager = created.find((e) => e.employeeNumber === "VIA-6001")!;
   assert.equal(report.lineManagerId, manager.id);
   assert.equal(report.status, "Onboarding");
 
-  const cases = onboardingService.getCases().filter((c) => c.employeeId === report.id);
+  const cases = onboardingService
+    .getCasesForContext(SYSTEM_CONTEXT)
+    .filter((c) => c.employeeId === report.id);
   assert.equal(cases.length, 1);
   assert.equal(cases[0]?.status, "In Progress");
 });

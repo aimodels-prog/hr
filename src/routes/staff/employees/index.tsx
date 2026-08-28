@@ -3,12 +3,7 @@ import { useState, useMemo } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Search, Download, Plus, FilterX, Upload } from "lucide-react";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
-import { getScopedEmployees } from "@/lib/auth/record-scope";
-import {
-  canViewSensitiveField,
-  redactEmployee,
-  redactSensitiveExportField,
-} from "@/lib/auth/redaction";
+import { canViewSensitiveField, redactSensitiveExportField } from "@/lib/auth/redaction";
 import { PageHeader } from "@/components/ui/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,7 +28,7 @@ import { FilterBar } from "@/components/ui/filter-bar";
 import { EmptyState } from "@/components/ui/empty-state";
 import { getApplicationDataServices } from "@/lib/data/application-data";
 import { getMasterDataRepository, getProjectRepository } from "@/lib/data/master-data";
-import { LocalRepository } from "@/lib/data/repository";
+import { EmployeeService } from "@/lib/data/employee-service";
 import type { Employee, EmployeeStatus } from "@/lib/data/types";
 import { z } from "zod";
 
@@ -70,27 +65,18 @@ function EmployeesRoute() {
   const navigate = Route.useNavigate();
   const searchParams = Route.useSearch();
   const userContext = useCurrentUser();
-  const { storage, audit } = getApplicationDataServices();
-
-  // Memoize repository and base data
-  const repo = useMemo(
+  const { audit } = getApplicationDataServices();
+  const employeeService = useMemo(() => new EmployeeService(), []);
+  const allEmployees = useMemo(
     () =>
-      new LocalRepository<Employee>("employees", storage, audit, {
-        module: "core-hr",
-        entityType: "employee",
+      employeeService.getDirectoryEmployees(userContext.getActorContext(), {
+        includeArchived: true,
       }),
-    [storage, audit],
-  );
-  const allEmployees = useMemo(() => repo.list({ includeArchived: true }), [repo]);
-
-  // Apply Role Scoping and Redaction
-  const scopedEmployees = useMemo(
-    () => getScopedEmployees(allEmployees, userContext),
-    [allEmployees, userContext],
+    [employeeService, userContext],
   );
   const safeEmployees = useMemo(
-    () => scopedEmployees.map((emp) => redactEmployee(emp, userContext)),
-    [scopedEmployees, userContext],
+    () => employeeService.getEmployees(userContext.getActorContext(), { includeArchived: true }),
+    [employeeService, userContext],
   );
 
   // Derive filter options based on scoped data (so users don't see departments they have no people in)
@@ -104,12 +90,18 @@ function EmployeesRoute() {
   );
   // Active projects only - a completed/archived project isn't a useful filter option going forward.
   const activeProjects = useMemo(
-    () => getProjectRepository().list().filter((p) => p.isActive),
+    () =>
+      getProjectRepository()
+        .list()
+        .filter((p) => p.isActive),
     [],
   );
   // Active employment types only, mirroring the same "don't offer dead options" convention.
   const activeEmploymentTypes = useMemo(
-    () => getMasterDataRepository("employmentTypes").list().filter((t) => t.isActive),
+    () =>
+      getMasterDataRepository("employmentTypes")
+        .list()
+        .filter((t) => t.isActive),
     [],
   );
   // Only active employees who are actually someone's manager within the current viewer's scoped

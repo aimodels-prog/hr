@@ -34,7 +34,7 @@ export function EmployeeDashboard({ employee, userId }: { employee: Employee; us
   const trainingService = useMemo(() => new TrainingService(), []);
 
   // Leave
-  const balances = leaveService.getAllBalancesForEmployee(employee.id);
+  const balances = leaveService.getAllBalancesForEmployee(employee.id, actorContext);
   const annualBalance =
     balances.find((b) =>
       leaveService
@@ -44,11 +44,11 @@ export function EmployeeDashboard({ employee, userId }: { employee: Employee; us
     )?.available || 0;
   const upcomingLeave = sortByStartDate(
     leaveService
-      .getLeaveRequestsForEmployee(employee.id)
+      .getLeaveRequestsForEmployee(employee.id, actorContext)
       .filter((r) => r.status === "Approved" && new Date(r.startDate) > new Date()),
   );
   const leaveRequests = leaveService
-    .getLeaveRequestsForEmployee(employee.id)
+    .getLeaveRequestsForEmployee(employee.id, actorContext)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const pendingLeaveRequests = leaveRequests.filter((request) =>
     ["Pending Line Manager", "Pending HR", "Pending Super Admin"].includes(request.status),
@@ -56,7 +56,7 @@ export function EmployeeDashboard({ employee, userId }: { employee: Employee; us
 
   // Timesheet
   const employeeTimesheets = tsService
-    .getTimesheetsForEmployee(employee.id)
+    .getTimesheetsForEmployee(employee.id, actorContext)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const overdueTs = employeeTimesheets.filter((t) => t.status === "Returned");
   const latestTimesheet = employeeTimesheets[0] || null;
@@ -72,8 +72,7 @@ export function EmployeeDashboard({ employee, userId }: { employee: Employee; us
   const in90 = new Date(today);
   in90.setDate(in90.getDate() + 90);
   const expiringDocs = docService
-    .getDocumentRepository()
-    .list()
+    .getDocuments(actorContext)
     .filter(
       (d) =>
         d.employeeId === employee.id &&
@@ -86,7 +85,7 @@ export function EmployeeDashboard({ employee, userId }: { employee: Employee; us
 
   // Tasks (Onboarding, Performance, Training)
   const obCase = obService
-    .getCases()
+    .getCasesForContext(actorContext)
     .find((c) => c.employeeId === employee.id && c.progressPercentage < 100);
   const myObTasks =
     obCase?.tasks.filter((t) => t.assignedUserId === userId && t.status === "Pending") || [];
@@ -100,7 +99,7 @@ export function EmployeeDashboard({ employee, userId }: { employee: Employee; us
     .getRequestsForEmployee(employee.id, actorContext)
     .filter((r) => r.status !== "Closed" && r.status !== "Rejected" && r.status !== "Draft");
   const attendanceExceptions = attendanceService
-    .getRecordsForEmployee(employee.id)
+    .getRecordsForEmployee(employee.id, actorContext)
     .filter(
       (record) =>
         ["Absent", "Late", "Missing Punch", "Correction Pending"].includes(record.status) &&

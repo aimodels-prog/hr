@@ -306,8 +306,7 @@ function CandidateProfile() {
   const hrUsers = useMemo(
     () =>
       empService
-        .getUserRepository()
-        .list()
+        .getUsers(currentUser.getActorContext())
         .filter((u) => u.roles.includes("HR") || u.roles.includes("Super Admin")),
     [empService],
   );

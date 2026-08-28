@@ -52,7 +52,9 @@ function OnboardingCaseRoute() {
   const [onboardingService] = useState(() => new OnboardingService());
   const [employeeService] = useState(() => new EmployeeService());
   const [taskActions] = useState(() => new LifecycleTaskService());
-  const [onboardingCase, setOnboardingCase] = useState(() => onboardingService.getCaseById(caseId));
+  const [onboardingCase, setOnboardingCase] = useState(() =>
+    onboardingService.getCaseForViewer(caseId, currentUser.getActorContext()),
+  );
   const [selectedTask, setSelectedTask] = useState<OnboardingTask | null>(null);
   const [waiverReason, setWaiverReason] = useState("");
   const [evidenceFiles, setEvidenceFiles] = useState<Record<string, File>>({});
@@ -74,7 +76,9 @@ function OnboardingCaseRoute() {
   }, [actorContext, hasAccess, onboardingCase, onboardingService]);
 
   const employee = onboardingCase
-    ? employeeService.getEmployeeRepository().getById(onboardingCase.employeeId)
+    ? employeeService
+        .getDirectoryEmployees(actorContext)
+        .find((item) => item.id === onboardingCase.employeeId)
     : null;
   const visibleTasks = useMemo(
     () =>
@@ -155,10 +159,10 @@ function OnboardingCaseRoute() {
     }
   };
 
-  const handleWaive = () => {
+  const handleWaive = async () => {
     if (!selectedTask) return;
     try {
-      const updated = taskActions.waive(
+      const updated = await taskActions.waive(
         "onboarding",
         onboardingCase.id,
         selectedTask.id,

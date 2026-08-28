@@ -31,16 +31,16 @@ export function LeaveTab({ employeeId }: { employeeId: string }) {
         : "Open My Leave";
 
   const balances = useMemo(
-    () => leaveService.getAllBalancesForEmployee(employeeId),
-    [leaveService, employeeId],
+    () => leaveService.getAllBalancesForEmployee(employeeId, currentUser.getActorContext()),
+    [currentUser, leaveService, employeeId],
   );
   const policies = useMemo(() => leaveService.getPolicies(), [leaveService]);
   const requests = useMemo(
     () =>
       leaveService
-        .getLeaveRequestsForEmployee(employeeId)
+        .getLeaveRequestsForEmployee(employeeId, currentUser.getActorContext())
         .sort((a, b) => b.startDate.localeCompare(a.startDate)),
-    [leaveService, employeeId],
+    [currentUser, leaveService, employeeId],
   );
 
   const upcoming = requests.filter(

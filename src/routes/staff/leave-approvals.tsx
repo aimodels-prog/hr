@@ -51,21 +51,32 @@ function LeaveApprovalsRoute() {
     { open: false, request: null },
   );
   const [rejectReason, setRejectReason] = useState("");
+  const [recoveryRequest, setRecoveryRequest] = useState<LeaveRequest | null>(null);
+  const [recoveryReason, setRecoveryReason] = useState("");
 
   const loadData = useCallback(() => {
     if (currentUser.employeeId) {
-      setManagerQueue(leaveService.getPendingRequestsForManager(currentUser.employeeId));
+      if (currentUser.activeRole === "Line Manager") {
+        setManagerQueue(leaveService.getPendingRequestsForManager(currentUser.getActorContext()));
+      } else {
+        setManagerQueue([]);
+      }
     }
     if (canCompleteHrReview) {
-      setAdminQueue(leaveService.getPendingRequestsForHr());
+      setAdminQueue(leaveService.getPendingRequestsForHr(currentUser.getActorContext()));
     }
-  }, [canCompleteHrReview, currentUser.employeeId, leaveService]);
+  }, [canCompleteHrReview, currentUser, leaveService]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
   const handleApprove = (req: LeaveRequest) => {
+    if (canCompleteHrReview && req.status === "Pending Line Manager") {
+      setRecoveryRequest(req);
+      setRecoveryReason("");
+      return;
+    }
     try {
       leaveService.approveRequest(req.id, currentUser.getActorContext());
       toast.success("Leave request approved.");
@@ -78,11 +89,10 @@ function LeaveApprovalsRoute() {
   const handleReject = () => {
     if (!rejectDialog.request) return;
     try {
-      leaveService.rejectRequest(
-        rejectDialog.request.id,
-        rejectReason,
-        currentUser.getActorContext(),
-      );
+      leaveService.rejectRequest(rejectDialog.request.id, rejectReason, {
+        ...currentUser.getActorContext(),
+        reason: rejectReason.trim(),
+      });
       toast.success("Leave request declined.");
       setRejectDialog({ open: false, request: null });
       setRejectReason("");
@@ -92,9 +102,27 @@ function LeaveApprovalsRoute() {
     }
   };
 
+  const confirmRecoveryApproval = () => {
+    if (!recoveryRequest) return;
+    try {
+      leaveService.approveRequest(recoveryRequest.id, {
+        ...currentUser.getActorContext(),
+        reason: recoveryReason.trim(),
+      });
+      toast.success("Supervisor review completed and sent to HR confirmation.");
+      setRecoveryRequest(null);
+      loadData();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The recovery approval failed.");
+    }
+  };
+
   const openAttachment = async (requestId: string) => {
     try {
-      const { blob } = await leaveService.getAttachmentBlob(requestId, currentUser.getActorContext());
+      const { blob } = await leaveService.getAttachmentBlob(
+        requestId,
+        currentUser.getActorContext(),
+      );
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -120,10 +148,15 @@ function LeaveApprovalsRoute() {
     return (
       <div className="space-y-4">
         {requests.map((req) => {
-          const emp = empService.getById(req.employeeId);
+          const emp = empService.getById(req.employeeId, currentUser.getActorContext());
           const policy = policies.find((p) => p.id === req.policyId);
           const overlaps = leaveService
-            .getTeamOverlaps(emp?.department || "", req.startDate, req.endDate)
+            .getTeamOverlaps(
+              emp?.department || "",
+              req.startDate,
+              req.endDate,
+              currentUser.getActorContext(),
+            )
             .filter((overlapReq) => overlapReq.id !== req.id); // exclude self
 
           return (
@@ -162,7 +195,12 @@ function LeaveApprovalsRoute() {
                     {req.handoverContactId && (
                       <div className="grid grid-cols-[100px_1fr] gap-1">
                         <span className="text-muted-foreground">Handover:</span>
-                        <span>{empService.getById(req.handoverContactId)?.preferredName}</span>
+                        <span>
+                          {
+                            empService.getById(req.handoverContactId, currentUser.getActorContext())
+                              ?.preferredName
+                          }
+                        </span>
                       </div>
                     )}
                     {req.attachmentFileId && (
@@ -188,8 +226,11 @@ function LeaveApprovalsRoute() {
                           <ul className="list-disc pl-4 mt-1">
                             {overlaps.map((o) => (
                               <li key={o.id}>
-                                {empService.getById(o.employeeId)?.preferredName} (Off:{" "}
-                                {o.startDate} to {o.endDate})
+                                {
+                                  empService.getById(o.employeeId, currentUser.getActorContext())
+                                    ?.preferredName
+                                }{" "}
+                                (Off: {o.startDate} to {o.endDate})
                               </li>
                             ))}
                           </ul>
@@ -197,7 +238,7 @@ function LeaveApprovalsRoute() {
                       </div>
                     )}
 
-                    {isFinal && (
+                    {isFinal && req.status !== "Pending Line Manager" && (
                       <div className="bg-blue-50 border border-blue-200 text-blue-800 p-2 rounded-md text-xs flex gap-2">
                         <Info className="h-4 w-4 shrink-0" />
                         <div>
@@ -206,6 +247,13 @@ function LeaveApprovalsRoute() {
                             ? `Approval will return ${req.workingDaysRequested} days to the employee's available balance.`
                             : `Approval will deduct ${req.workingDaysRequested} days from the employee's ${policy?.name} balance.`}
                         </div>
+                      </div>
+                    )}
+                    {isFinal && req.status === "Pending Line Manager" && (
+                      <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+                        <AlertTriangle className="h-4 w-4 shrink-0" />
+                        This request is waiting for its assigned supervisor. HR may complete that
+                        step only as a documented recovery action.
                       </div>
                     )}
 
@@ -308,6 +356,33 @@ function LeaveApprovalsRoute() {
                 disabled={rejectReason.trim().length < 3}
               >
                 Confirm Rejection
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog
+          open={Boolean(recoveryRequest)}
+          onOpenChange={(open) => !open && setRecoveryRequest(null)}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Complete unavailable supervisor review</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-2">
+              <Label htmlFor="leave-recovery-reason">Reason for HR recovery</Label>
+              <Textarea
+                id="leave-recovery-reason"
+                value={recoveryReason}
+                onChange={(event) => setRecoveryReason(event.target.value)}
+                placeholder="For example: assigned supervisor is inactive and the request cannot wait."
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setRecoveryRequest(null)}>
+                Cancel
+              </Button>
+              <Button disabled={recoveryReason.trim().length < 5} onClick={confirmRecoveryApproval}>
+                Complete Supervisor Step
               </Button>
             </DialogFooter>
           </DialogContent>

@@ -18,6 +18,7 @@ import { DataManagement } from "@/components/settings/data-management";
 import { toast } from "sonner";
 import { LeavePolicyConfig } from "@/components/settings/leave-policy-config";
 import { OnboardingTemplatesPanel } from "@/components/settings/onboarding-templates-panel";
+import { OffboardingTemplatesPanel } from "@/components/settings/offboarding-templates-panel";
 import { InterviewTemplatesPanel } from "@/components/settings/interview-templates-panel";
 import { PerformanceTemplatesPanel } from "@/components/settings/performance-templates-panel";
 import {
@@ -32,6 +33,21 @@ export const Route = createFileRoute("/staff/settings")({
 });
 
 function SettingsRoute() {
+  const currentUser = useCurrentUser();
+  if (!currentUser.can("system:settings_manage")) {
+    return (
+      <RequirePermission permission="leave:admin_all" resourceName="Leave Policies">
+        <div className="flex max-w-7xl flex-col gap-6 mx-auto">
+          <PageHeader
+            title="Leave Policies"
+            description="Manage leave allowances, evidence requirements and notice rules."
+            breadcrumbs={[{ label: "Time & Travel" }, { label: "Leave Policies" }]}
+          />
+          <LeavePolicyConfig />
+        </div>
+      </RequirePermission>
+    );
+  }
   return (
     <RequirePermission permission="system:settings_manage" resourceName="Settings">
       <div className="flex flex-col gap-6 max-w-7xl mx-auto">
@@ -79,6 +95,9 @@ function SettingsRoute() {
               </TabsTrigger>
               <TabsTrigger value="onboardingTemplates" className="gap-2">
                 Onboarding Templates
+              </TabsTrigger>
+              <TabsTrigger value="offboardingTemplates" className="gap-2">
+                Offboarding Templates
               </TabsTrigger>
               <TabsTrigger value="interviewTemplates" className="gap-2">
                 Interview Scorecards
@@ -139,6 +158,10 @@ function SettingsRoute() {
 
             <TabsContent value="onboardingTemplates">
               <OnboardingTemplatesPanel />
+            </TabsContent>
+
+            <TabsContent value="offboardingTemplates">
+              <OffboardingTemplatesPanel />
             </TabsContent>
 
             <TabsContent value="interviewTemplates">

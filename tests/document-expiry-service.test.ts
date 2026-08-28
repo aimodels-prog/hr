@@ -1,3 +1,4 @@
+import { SYSTEM_CONTEXT } from "../src/lib/data/types.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -7,6 +8,7 @@ import { DocumentExpiryService } from "../src/lib/data/document-expiry-service.t
 import { DocumentService } from "../src/lib/data/document-service.ts";
 import { EmployeeService } from "../src/lib/data/employee-service.ts";
 import { NotificationService } from "../src/lib/data/notification-service.ts";
+import { SettingsService } from "../src/lib/data/settings-service.ts";
 import { initializeSeedData } from "../src/lib/data/seed-service.ts";
 import { MemoryStorageDriver } from "../src/lib/data/storage-driver.ts";
 import { VersionedStorageService } from "../src/lib/data/storage.ts";
@@ -85,7 +87,7 @@ test("runReminderEngine backfills every threshold a long-overdue document has cr
 
   // Expired 100 days ago - well past every threshold in REMINDER_THRESHOLDS, including the
   // most negative one (-90), so every threshold should be considered "reached".
-  const doc = documentService.getDocumentRepository().create(
+  const doc = documentService.getDocumentRepository(SYSTEM_CONTEXT).create(
     {
       employeeId: employee.id,
       type: "passport",
@@ -99,7 +101,7 @@ test("runReminderEngine backfills every threshold a long-overdue document has cr
 
   await documentExpiryService.runReminderEngine(hr);
 
-  const users = employeeService.getUserRepository().list();
+  const users = employeeService.getUserRepository(SYSTEM_CONTEXT).list();
   const employeeUser = users.find((u) => u.employeeId === employee.id)!;
   const managerUser = users.find((u) => u.employeeId === manager.id)!;
 
@@ -122,7 +124,8 @@ test("runReminderEngine backfills every threshold a long-overdue document has cr
   const hrNotifications = notifications
     .listForUser("user-rana")
     .filter(
-      (n) => n.type === "document_expiry" && n.deduplicationKey?.startsWith(`doc_expiry_${doc.id}_`),
+      (n) =>
+        n.type === "document_expiry" && n.deduplicationKey?.startsWith(`doc_expiry_${doc.id}_`),
     );
   assert.equal(hrNotifications.length, 13);
 
@@ -131,6 +134,28 @@ test("runReminderEngine backfills every threshold a long-overdue document has cr
     .listForUser(managerUser.id)
     .filter((n) => n.type === "document_expiry");
   assert.equal(managerNotifications.length, 11);
+
+  // Each backfilled notification must describe ITS OWN threshold, not just repeat the live
+  // day count 13 times - otherwise a long-overdue document reads as 13 duplicate/spam messages
+  // instead of 13 distinct missed milestones.
+  const distinctMessages = new Set(employeeNotifications.map((n) => n.message));
+  assert.equal(
+    distinctMessages.size,
+    employeeNotifications.length,
+    "expected every backfilled notification to have distinct wording, not repeated text",
+  );
+  const fourteenDayNotification = employeeNotifications.find(
+    (n) => n.deduplicationKey === `doc_expiry_${doc.id}_14days_emp`,
+  )!;
+  const oneDayNotification = employeeNotifications.find(
+    (n) => n.deduplicationKey === `doc_expiry_${doc.id}_1days_emp`,
+  )!;
+  assert.ok(/14 days from expiring/.test(fourteenDayNotification.message));
+  assert.ok(/1 day from expiring/.test(oneDayNotification.message));
+  // Every notification also states the real current status, regardless of which historical
+  // threshold it represents, so a backfilled reminder never reads as if it were still current.
+  assert.ok(/100 days past its/.test(fourteenDayNotification.message));
+  assert.ok(/100 days past its/.test(oneDayNotification.message));
 
   // Re-running must not create duplicates - every (doc, threshold, recipient) combination is
   // deduplicated via deduplicationKey, so a second run backfilling the same thresholds is a no-op.
@@ -142,9 +167,54 @@ test("runReminderEngine backfills every threshold a long-overdue document has cr
   const hrNotificationsAfterRerun = notifications
     .listForUser("user-rana")
     .filter(
-      (n) => n.type === "document_expiry" && n.deduplicationKey?.startsWith(`doc_expiry_${doc.id}_`),
+      (n) =>
+        n.type === "document_expiry" && n.deduplicationKey?.startsWith(`doc_expiry_${doc.id}_`),
     );
   assert.equal(hrNotificationsAfterRerun.length, 13);
+});
+
+test("runReminderEngine reads the organisation's configured reminder days instead of a hardcoded list", async () => {
+  const { notifications } = setup();
+  const employeeService = new EmployeeService();
+  const documentService = new DocumentService();
+  const documentExpiryService = new DocumentExpiryService();
+  const settingsService = new SettingsService();
+
+  const employee = await addEmployee(employeeService);
+
+  // Replace the org's configured advance-notice days with a single, distinctive value that
+  // was never part of the old hardcoded list ([90, 60, 30, 14, 7, 1]).
+  const currentSettings = settingsService.getAppSettings();
+  settingsService.saveAppSettings({ ...currentSettings, documentReminderDays: [45] }, hr);
+
+  const doc = documentService.getDocumentRepository(SYSTEM_CONTEXT).create(
+    {
+      employeeId: employee.id,
+      type: "passport",
+      fileId: "file-test-doc-custom",
+      visibility: "Restricted",
+      status: "Valid",
+      expiryDate: dateOffsetFromToday(45),
+    },
+    hr,
+  );
+
+  await documentExpiryService.runReminderEngine(hr);
+
+  const users = employeeService.getUserRepository(SYSTEM_CONTEXT).list();
+  const employeeUser = users.find((u) => u.employeeId === employee.id)!;
+  const employeeNotifications = notifications
+    .listForUser(employeeUser.id)
+    .filter((n) => n.type === "document_expiry");
+
+  // Only the org's custom 45-day threshold has been reached (daysRemaining === 45) - the old
+  // hardcoded 90/60/30/14/7/1 values are gone from the configured schedule entirely, proving
+  // the engine reads the setting rather than the previous hardcoded constant.
+  assert.equal(employeeNotifications.length, 1);
+  assert.ok(
+    employeeNotifications.some((n) => n.deduplicationKey === `doc_expiry_${doc.id}_45days_emp`),
+    "expected the org's custom 45-day threshold to fire",
+  );
 });
 
 test("assignOwner rejects an owner that is not an active HR user", async () => {
@@ -154,7 +224,7 @@ test("assignOwner rejects an owner that is not an active HR user", async () => {
   const documentExpiryService = new DocumentExpiryService();
 
   const employee = await addEmployee(employeeService);
-  const doc = documentService.getDocumentRepository().create(
+  const doc = documentService.getDocumentRepository(SYSTEM_CONTEXT).create(
     {
       employeeId: employee.id,
       type: "passport",
@@ -175,11 +245,11 @@ test("assignOwner rejects an owner that is not an active HR user", async () => {
   // Create an HR user who is Suspended (not Active) and confirm they're rejected too.
   const suspendedHrEmployee = await addEmployee(employeeService);
   const suspendedHrUser = employeeService
-    .getUserRepository()
+    .getUserRepository(SYSTEM_CONTEXT)
     .list()
     .find((u) => u.employeeId === suspendedHrEmployee.id)!;
   employeeService
-    .getUserRepository()
+    .getUserRepository(SYSTEM_CONTEXT)
     .update(suspendedHrUser.id, { roles: ["Employee", "HR"], status: "Suspended" }, hr);
 
   assert.throws(
@@ -190,7 +260,7 @@ test("assignOwner rejects an owner that is not an active HR user", async () => {
   // A genuinely active HR user is accepted.
   documentExpiryService.assignOwner(doc.id, "user-rana", hr);
   assert.equal(
-    documentService.getDocumentRepository().getById(doc.id)?.assignedOwnerId,
+    documentService.getDocumentRepository(SYSTEM_CONTEXT).getById(doc.id)?.assignedOwnerId,
     "user-rana",
   );
 });
@@ -202,7 +272,7 @@ test("snoozeDocument rejects an unparseable snooze date and a too-short reason",
   const documentExpiryService = new DocumentExpiryService();
 
   const employee = await addEmployee(employeeService);
-  const doc = documentService.getDocumentRepository().create(
+  const doc = documentService.getDocumentRepository(SYSTEM_CONTEXT).create(
     {
       employeeId: employee.id,
       type: "passport",
@@ -236,7 +306,7 @@ test("snoozeDocument rejects an unparseable snooze date and a too-short reason",
     "Awaiting renewal appointment",
     hr,
   );
-  const updated = documentService.getDocumentRepository().getById(doc.id);
+  const updated = documentService.getDocumentRepository(SYSTEM_CONTEXT).getById(doc.id);
   assert.equal(updated?.snoozedUntil, dateOffsetFromToday(30));
   assert.equal(updated?.snoozeReason, "Awaiting renewal appointment");
 });
@@ -248,7 +318,7 @@ test("waiveDocument rejects a too-short reason", async () => {
   const documentExpiryService = new DocumentExpiryService();
 
   const employee = await addEmployee(employeeService);
-  const doc = documentService.getDocumentRepository().create(
+  const doc = documentService.getDocumentRepository(SYSTEM_CONTEXT).create(
     {
       employeeId: employee.id,
       type: "passport",
@@ -264,7 +334,7 @@ test("waiveDocument rejects a too-short reason", async () => {
 
   documentExpiryService.waiveDocument(doc.id, "Employee separated, no longer required", hr);
   assert.equal(
-    documentService.getDocumentRepository().getById(doc.id)?.waiverReason,
+    documentService.getDocumentRepository(SYSTEM_CONTEXT).getById(doc.id)?.waiverReason,
     "Employee separated, no longer required",
   );
 });

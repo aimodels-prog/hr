@@ -4,10 +4,23 @@ import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { getScopedEmployees, getScopedDocuments } from "@/lib/auth/record-scope";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Search, FolderOpen } from "lucide-react";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { DocumentService } from "@/lib/data/document-service";
@@ -19,19 +32,33 @@ export const Route = createFileRoute("/staff/files")({
 });
 
 const DOCUMENT_TYPES: DocumentType[] = [
-  "contract", "passport", "visa", "national_id", "work_permit",
-  "driving_licence", "medical", "education_certificate", "professional_certificate", "bank_evidence", "other",
+  "contract",
+  "passport",
+  "visa",
+  "national_id",
+  "work_permit",
+  "driving_licence",
+  "medical",
+  "education_certificate",
+  "professional_certificate",
+  "bank_evidence",
+  "other",
 ];
 
-const DOCUMENT_STATUSES: DocumentStatus[] = ["Pending Verification", "Valid", "Rejected", "Replaced"];
+const DOCUMENT_STATUSES: DocumentStatus[] = [
+  "Pending Verification",
+  "Valid",
+  "Rejected",
+  "Replaced",
+];
 
 function EmployeeFilesRoute() {
   const currentUser = useCurrentUser();
   const employeeService = useMemo(() => new EmployeeService(), []);
   const documentService = useMemo(() => new DocumentService(), []);
 
-  const allEmployees = employeeService.getEmployeeRepository().list({ includeArchived: false });
-  const allDocs = documentService.getDocumentRepository().list();
+  const allEmployees = employeeService.getEmployees(currentUser.getActorContext());
+  const allDocs = documentService.getDocuments(currentUser.getActorContext());
 
   const employees = useMemo(
     () => getScopedEmployees(allEmployees, currentUser),
@@ -48,11 +75,11 @@ function EmployeeFilesRoute() {
 
   const rows = useMemo(() => {
     return scopedDocs
-      .map(doc => ({ doc, employee: employees.find(e => e.id === doc.employeeId) }))
-      .filter(r => r.employee)
-      .filter(r => typeFilter === "all" || r.doc.type === typeFilter)
-      .filter(r => statusFilter === "all" || r.doc.status === statusFilter)
-      .filter(r => {
+      .map((doc) => ({ doc, employee: employees.find((e) => e.id === doc.employeeId) }))
+      .filter((r) => r.employee)
+      .filter((r) => typeFilter === "all" || r.doc.type === typeFilter)
+      .filter((r) => statusFilter === "all" || r.doc.status === statusFilter)
+      .filter((r) => {
         if (!searchQuery) return true;
         const q = searchQuery.toLowerCase();
         return (
@@ -92,8 +119,10 @@ function EmployeeFilesRoute() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Types</SelectItem>
-              {DOCUMENT_TYPES.map(t => (
-                <SelectItem key={t} value={t} className="capitalize">{t.replace(/_/g, " ")}</SelectItem>
+              {DOCUMENT_TYPES.map((t) => (
+                <SelectItem key={t} value={t} className="capitalize">
+                  {t.replace(/_/g, " ")}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -103,7 +132,11 @@ function EmployeeFilesRoute() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Statuses</SelectItem>
-              {DOCUMENT_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              {DOCUMENT_STATUSES.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {s}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -133,21 +166,33 @@ function EmployeeFilesRoute() {
                   <TableRow key={doc.id}>
                     <TableCell>
                       <div className="font-medium">{employee!.preferredName}</div>
-                      <div className="text-xs text-muted-foreground">{employee!.employeeNumber} &bull; {employee!.department}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {employee!.employeeNumber} &bull; {employee!.department}
+                      </div>
                     </TableCell>
                     <TableCell className="capitalize">{doc.type.replace(/_/g, " ")}</TableCell>
                     <TableCell className="text-sm">
-                      {doc.visibility === "Restricted" && !canViewRestricted ? "***REDACTED***" : (doc.documentNumber || "—")}
+                      {doc.visibility === "Restricted" && !canViewRestricted
+                        ? "***REDACTED***"
+                        : doc.documentNumber || "—"}
                     </TableCell>
                     <TableCell className="text-sm">
                       {doc.expiryDate ? format(new Date(doc.expiryDate), "MMM d, yyyy") : "—"}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={
-                        doc.status === "Valid" ? "default" :
-                        doc.status === "Rejected" ? "destructive" :
-                        doc.status === "Replaced" ? "outline" : "secondary"
-                      }>{doc.status}</Badge>
+                      <Badge
+                        variant={
+                          doc.status === "Valid"
+                            ? "default"
+                            : doc.status === "Rejected"
+                              ? "destructive"
+                              : doc.status === "Replaced"
+                                ? "outline"
+                                : "secondary"
+                        }
+                      >
+                        {doc.status}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-right">
                       <Link

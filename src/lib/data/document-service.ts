@@ -85,17 +85,66 @@ export class DocumentService {
     }
   }
 
-  getDocumentRepository() {
+  /** Trusted workflow-only repository access. User-facing code must use getDocuments. */
+  getDocumentRepository(context: ActorContext) {
+    if (context.actor.userId !== "system" || !context.actor.roles.includes("Super Admin")) {
+      this.deny(
+        "open raw document repository",
+        context.actor.employeeId ?? context.actor.userId,
+        context,
+        "Raw document storage is reserved for trusted system workflows.",
+      );
+    }
     return this.documentRepo;
   }
 
-  getExpiringDocuments() {
+  getDocuments(
+    context: ActorContext,
+    options: { includeArchived?: boolean } = {},
+  ): EmployeeDocument[] {
+    const repositoryOptions =
+      options.includeArchived === undefined ? {} : { includeArchived: options.includeArchived };
+    const employees = this.employeeRepo.list({ includeArchived: true });
+    return this.documentRepo.list(repositoryOptions).filter((document) => {
+      if (context.actor.activeRole === "HR" || context.actor.activeRole === "Super Admin") {
+        return true;
+      }
+      if (context.actor.employeeId === document.employeeId) return true;
+      const employee = employees.find((item) => item.id === document.employeeId);
+      return (
+        context.actor.activeRole === "Line Manager" &&
+        employee?.lineManagerId === context.actor.employeeId &&
+        document.visibility === "Public"
+      );
+    });
+  }
+
+  getDocumentById(
+    documentId: string,
+    context: ActorContext,
+    options: { includeArchived?: boolean } = {},
+  ): EmployeeDocument | null {
+    const document = this.documentRepo.getById(documentId, options);
+    if (!document) return null;
+    const permitted = this.getDocuments(context, options).find((item) => item.id === documentId);
+    if (!permitted) {
+      this.deny(
+        "view document record",
+        document.employeeId,
+        context,
+        "You do not have permission to view this document.",
+      );
+    }
+    return permitted;
+  }
+
+  getExpiringDocuments(context: ActorContext) {
     const now = new Date();
     now.setHours(0, 0, 0, 0);
     const thirtyDaysFromNow = new Date(now);
     thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
 
-    return this.documentRepo.list().filter((doc) => {
+    return this.getDocuments(context).filter((doc) => {
       if (
         !doc.expiryDate ||
         doc.status === "Replaced" ||
@@ -196,26 +245,43 @@ export class DocumentService {
     if (!oldDoc) throw new Error("Document to replace not found.");
     this.assertCanManage(oldDoc.employeeId, actorContext);
 
-    // Upload new document
-    const newDoc = await this.uploadDocument(
-      oldDoc.employeeId,
-      fileBlob,
-      filename,
-      metadata,
-      actorContext,
-    );
+    // Uploading the new document and marking the old one Replaced are two separate writes - if
+    // the second fails, the old document must not be left looking Valid/current alongside the
+    // new one, with no version chain linking them.
+    const { storage, files } = getApplicationDataServices();
+    const snapshot = storage.exportState();
+    let newDoc: EmployeeDocument | undefined;
+    try {
+      // Upload new document
+      newDoc = await this.uploadDocument(
+        oldDoc.employeeId,
+        fileBlob,
+        filename,
+        metadata,
+        actorContext,
+      );
 
-    // Update old document status to replaced and link it
-    this.documentRepo.update(
-      oldDoc.id,
-      {
-        status: "Replaced",
-        replacedById: newDoc.id,
-      },
-      actorContext,
-    );
+      // Update old document status to replaced and link it
+      this.documentRepo.update(
+        oldDoc.id,
+        {
+          status: "Replaced",
+          replacedById: newDoc.id,
+        },
+        actorContext,
+      );
 
-    return newDoc;
+      return newDoc;
+    } catch (err) {
+      storage.replaceState(snapshot);
+      // The new document's record is reverted by the snapshot restore above, but its file blob
+      // lives outside storage's snapshot scope - it must be deleted explicitly, or it becomes an
+      // orphaned file with no document record pointing to it.
+      if (newDoc) await files.delete(newDoc.fileId, actorContext);
+      throw new Error(
+        `Failed to replace document: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   verifyDocument(documentId: string, actorContext: ActorContext) {

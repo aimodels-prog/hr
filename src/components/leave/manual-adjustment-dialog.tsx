@@ -45,10 +45,11 @@ export function ManualAdjustmentDialog({
   defaultPolicyId,
 }: ManualAdjustmentDialogProps) {
   const currentUser = useCurrentUser();
+  const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
   const leaveService = useMemo(() => new LeaveService(), []);
   const employeeService = useMemo(() => new EmployeeService(), []);
   const employees = employeeService
-    .getEmployees()
+    .getEmployees(currentUser.getActorContext())
     .filter((employee) => !["Inactive", "Archived"].includes(employee.status));
 
   const [employeeId, setEmployeeId] = useState(defaultEmployeeId ?? "");
@@ -59,16 +60,24 @@ export function ManualAdjustmentDialog({
 
   const policies = employeeId
     ? leaveService
-        .getEligiblePolicies(employeeId)
-        .filter((policy) => policy.scope === "Annual" || policy.scope === "Ledger")
+        .getEligiblePolicies(employeeId, actorContext)
+        .filter((policy) =>
+          ["Annual", "Ledger", "Per Event", "Once Per Service"].includes(policy.scope),
+        )
     : [];
   const employee = employees.find((record) => record.id === employeeId);
   const policy = policies.find((record) => record.id === policyId);
   const balance =
-    employeeId && policyId ? leaveService.calculateBalance(employeeId, policyId) : null;
+    employeeId && policyId
+      ? leaveService.calculateBalance(employeeId, policyId, actorContext)
+      : null;
+  const isIndividualLimit = policy?.scope === "Per Event" || policy?.scope === "Once Per Service";
+  const currentValue =
+    employeeId && policyId && isIndividualLimit
+      ? leaveService.getEmployeeEntitlementLimit(employeeId, policyId, actorContext)
+      : (balance?.available ?? 0);
   const parsedBalance = Number(newBalance);
-  const adjustment =
-    balance && Number.isFinite(parsedBalance) ? parsedBalance - balance.available : 0;
+  const adjustment = balance && Number.isFinite(parsedBalance) ? parsedBalance - currentValue : 0;
 
   useEffect(() => {
     if (!open) return;
@@ -82,8 +91,17 @@ export function ManualAdjustmentDialog({
       setNewBalance("");
       return;
     }
-    setNewBalance(String(leaveService.calculateBalance(employeeId, policyId).available));
-  }, [employeeId, leaveService, open, policyId]);
+    const selectedPolicy = leaveService
+      .getEligiblePolicies(employeeId, actorContext)
+      .find((item) => item.id === policyId);
+    setNewBalance(
+      String(
+        selectedPolicy?.scope === "Per Event" || selectedPolicy?.scope === "Once Per Service"
+          ? leaveService.getEmployeeEntitlementLimit(employeeId, policyId, actorContext)
+          : leaveService.calculateBalance(employeeId, policyId, actorContext).available,
+      ),
+    );
+  }, [actorContext, employeeId, leaveService, open, policyId]);
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -101,7 +119,9 @@ export function ManualAdjustmentDialog({
         reason,
         currentUser.getActorContext(),
       );
-      toast.success(`${policy?.name ?? "Leave"} balance updated for ${employee?.preferredName}.`);
+      toast.success(
+        `${policy?.name ?? "Leave"} ${isIndividualLimit ? "allowance" : "balance"} updated for ${employee?.preferredName}.`,
+      );
       onOpenChange(false);
       onSuccess?.();
     } catch (error) {
@@ -120,8 +140,9 @@ export function ManualAdjustmentDialog({
             Edit Leave Balance
           </DialogTitle>
           <DialogDescription>
-            Set the employee&apos;s correct available balance. VIA will record the difference as an
-            adjustment while keeping the previous history available for review.
+            {isIndividualLimit
+              ? "Set the employee-specific allowance for this leave type. The reason and previous decision remain available for review."
+              : "Set the employee's correct available balance. VIA will record the difference while keeping the previous history available for review."}
           </DialogDescription>
         </DialogHeader>
 
@@ -174,9 +195,11 @@ export function ManualAdjustmentDialog({
           {balance && (
             <div className="grid grid-cols-2 gap-3 rounded-xl border bg-muted/30 p-4 text-sm">
               <div>
-                <p className="text-muted-foreground">Current available</p>
+                <p className="text-muted-foreground">
+                  {isIndividualLimit ? "Current allowance" : "Current available"}
+                </p>
                 <p className="mt-1 text-xl font-semibold tabular-nums">
-                  {formatDays(balance.available)} days
+                  {formatDays(currentValue)} days
                 </p>
               </div>
               <div>
@@ -194,7 +217,9 @@ export function ManualAdjustmentDialog({
           )}
 
           <div className="space-y-2">
-            <Label htmlFor="new-balance">New available balance</Label>
+            <Label htmlFor="new-balance">
+              {isIndividualLimit ? "New individual allowance" : "New available balance"}
+            </Label>
             <Input
               id="new-balance"
               type="number"

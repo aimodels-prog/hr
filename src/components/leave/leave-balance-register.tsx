@@ -23,6 +23,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { EmployeeService } from "@/lib/data/employee-service";
+import { useCurrentUser } from "@/lib/auth";
 import { LeaveService } from "@/lib/data/leave-service";
 import type { LeaveBalanceReport, LeavePolicy } from "@/lib/data/leave-types";
 import type { Employee } from "@/lib/data/types";
@@ -33,6 +34,7 @@ interface BalanceRow {
   employee: Employee;
   policy: LeavePolicy;
   balance: LeaveBalanceReport;
+  displayedAllowance: number;
 }
 
 function formatDays(value: number): string {
@@ -40,6 +42,7 @@ function formatDays(value: number): string {
 }
 
 export function LeaveBalanceRegister() {
+  const currentUser = useCurrentUser();
   const leaveService = useMemo(() => new LeaveService(), []);
   const employeeService = useMemo(() => new EmployeeService(), []);
   const [, setRevision] = useState(0);
@@ -50,18 +53,33 @@ export function LeaveBalanceRegister() {
   const [selectedRow, setSelectedRow] = useState<BalanceRow | null>(null);
 
   const employees = employeeService
-    .getEmployees()
+    .getEmployees(currentUser.getActorContext())
     .filter((employee) => !["Inactive", "Archived"].includes(employee.status))
     .sort((a, b) => a.preferredName.localeCompare(b.preferredName));
 
   const rows = employees.flatMap((employee) =>
     leaveService
-      .getEligiblePolicies(employee.id)
-      .filter((policy) => policy.scope === "Annual" || policy.scope === "Ledger")
+      .getEligiblePolicies(employee.id, currentUser.getActorContext())
+      .filter((policy) =>
+        ["Annual", "Ledger", "Per Event", "Once Per Service"].includes(policy.scope),
+      )
       .map((policy) => ({
         employee,
         policy,
-        balance: leaveService.calculateBalance(employee.id, policy.id),
+        balance: leaveService.calculateBalance(
+          employee.id,
+          policy.id,
+          currentUser.getActorContext(),
+        ),
+        displayedAllowance:
+          policy.scope === "Per Event" || policy.scope === "Once Per Service"
+            ? leaveService.getEmployeeEntitlementLimit(
+                employee.id,
+                policy.id,
+                currentUser.getActorContext(),
+              )
+            : leaveService.calculateBalance(employee.id, policy.id, currentUser.getActorContext())
+                .entitlement,
       })),
   );
 
@@ -173,7 +191,7 @@ export function LeaveBalanceRegister() {
                       <p className="text-xs text-muted-foreground">{row.policy.code}</p>
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {formatDays(row.balance.entitlement)}
+                      {formatDays(row.displayedAllowance)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {formatDays(row.balance.carriedForward)}

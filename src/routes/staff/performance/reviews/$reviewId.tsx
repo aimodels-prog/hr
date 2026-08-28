@@ -52,7 +52,7 @@ function PerformanceReviewDetailRoute() {
 
   if (!review || !cycle || !template) return <div className="p-8">Review not found</div>;
 
-  const employee = empService.getEmployeeRepository().getById(review.employeeId);
+  const employee = empService.getById(review.employeeId, currentUser.getActorContext());
   if (!employee) return <div className="p-8">Employee not found</div>;
 
   const isSelf = currentUser?.employeeId === employee.id;

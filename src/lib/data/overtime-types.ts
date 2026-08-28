@@ -1,6 +1,7 @@
 import type { BaseRecord, RecordId } from "./types";
 
-export type OvertimeClaimStatus = "Draft" | "Pending Manager" | "Pending HR" | "Approved" | "Rejected" | "Corrected";
+export type OvertimeClaimStatus =
+  "Pending Manager" | "Pending HR" | "Approved" | "Rejected" | "Corrected";
 
 // Whether the employee wants this overtime paid, or converted to a Compensation Leave
 // (Off-in-Lieu) day credited once the claim is fully approved.
@@ -11,11 +12,16 @@ export interface OvertimeClaim extends BaseRecord {
   date: string; // YYYY-MM-DD
   hours: number;
   projectId?: string;
+  costCentreId: string;
+  activityCodeId: string;
+  locationCodeId: string;
   reason: string;
   evidenceFileId?: string;
   compensationType: OvertimeCompensationType;
   /** Set once TOIL compensation has actually been credited to the employee's leave balance, so approving twice (or re-processing) can never double-credit. */
   toilCreditedAt?: string;
+  toilReversedAt?: string;
+  payrollPeriodId?: string;
 
   crossCheckWarnings: string[];
 
