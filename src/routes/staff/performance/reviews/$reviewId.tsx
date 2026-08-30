@@ -1,503 +1,523 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
-import { PageHeader } from "@/components/ui/page-header";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { useMemo, useState } from "react";
+import { ArrowLeft, CheckCircle2, Lock, MessageSquareText } from "lucide-react";
+import { toast } from "sonner";
+
+import { AuditViewer } from "@/components/audit-viewer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { PageHeader } from "@/components/ui/page-header";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
-import { PerformanceService } from "@/lib/data/performance-service";
 import { EmployeeService } from "@/lib/data/employee-service";
-import { ArrowLeft, CheckCircle2, Lock, Edit2 } from "lucide-react";
-import { toast } from "sonner";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import type { ReviewSectionInstance } from "@/lib/data/performance-types";
-import { AuditViewer } from "@/components/audit-viewer";
-import { format } from "date-fns";
+import { PerformanceService } from "@/lib/data/performance-service";
+import type { PerformanceReview, ReviewSectionInstance } from "@/lib/data/performance-types";
 
 export const Route = createFileRoute("/staff/performance/reviews/$reviewId")({
   component: PerformanceReviewDetailRoute,
 });
 
 function PerformanceReviewDetailRoute() {
+  return (
+    <RequirePermission permission="performance:view_self" resourceName="Performance Review">
+      <PerformanceReviewPage />
+    </RequirePermission>
+  );
+}
+
+function PerformanceReviewPage() {
   const { reviewId } = Route.useParams();
   const navigate = useNavigate();
   const currentUser = useCurrentUser();
-
-  const [perfService] = useState(() => new PerformanceService());
-  const [empService] = useState(() => new EmployeeService());
-
-  const [review, setReview] = useState(() => perfService.getReviewById(reviewId));
-  const [cycle, setCycle] = useState(() =>
-    review ? perfService.getCycleById(review.cycleId) : undefined,
-  );
-  const [template, setTemplate] = useState(() =>
-    review ? perfService.getTemplateById(review.templateId) : undefined,
-  );
-
-  // Forms
+  const context = currentUser.getActorContext();
+  const service = useMemo(() => new PerformanceService(), []);
+  const employeeService = useMemo(() => new EmployeeService(), []);
+  const initialReview = service.getReviewById(reviewId, context);
+  const [review, setReview] = useState<PerformanceReview | null>(initialReview);
   const [sections, setSections] = useState<ReviewSectionInstance[]>(() =>
-    review ? JSON.parse(JSON.stringify(review.sections)) : [],
+    structuredClone(initialReview?.sections ?? []),
   );
-  const [managerSummary, setManagerSummary] = useState(review?.managerSummaryComment || "");
-  const [ackComment, setAckComment] = useState("");
-  const [correctReason, setCorrectReason] = useState("");
+  const [managerSummary, setManagerSummary] = useState(initialReview?.managerSummaryComment ?? "");
+  const [developmentPlan, setDevelopmentPlan] = useState(initialReview?.developmentPlan ?? "");
+  const [moderationComment, setModerationComment] = useState("");
+  const [discussionDate, setDiscussionDate] = useState(new Date().toISOString().slice(0, 10));
+  const [discussionNotes, setDiscussionNotes] = useState("");
+  const [agrees, setAgrees] = useState<"yes" | "no">("yes");
+  const [acknowledgementComment, setAcknowledgementComment] = useState("");
+  const [correctionReason, setCorrectionReason] = useState("");
 
-  if (!review || !cycle || !template) return <div className="p-8">Review not found</div>;
-
-  const employee = empService.getById(review.employeeId, currentUser.getActorContext());
-  if (!employee) return <div className="p-8">Employee not found</div>;
-
-  const isSelf = currentUser?.employeeId === employee.id;
-  const isManager = employee.lineManagerId === currentUser?.employeeId;
-  const isHR = currentUser?.roles.includes("HR") || currentUser?.roles.includes("Super Admin");
-
-  // Accounts should not see sensitive info unless it's their own team
-  if (currentUser?.roles.includes("Accounts") && !isManager && !isSelf && !isHR) {
+  if (!review)
     return (
-      <div className="p-8 text-center text-rose-600">
-        You do not have permission to view this review.
+      <div className="mx-auto max-w-3xl rounded-xl border p-10 text-center">
+        This performance review was not found or is not available to you.
       </div>
     );
-  }
+  const cycle = service.getCycleById(review.cycleId, context);
+  const template = service.getTemplateById(review.templateId, context);
+  const employee = employeeService.getById(review.employeeId, context);
+  if (!cycle || !template || !employee)
+    return (
+      <div className="mx-auto max-w-3xl rounded-xl border p-10 text-center">
+        The review details could not be loaded.
+      </div>
+    );
 
-  const handleSelfSubmit = () => {
+  const isEmployee =
+    currentUser.activeRole === "Employee" && currentUser.employeeId === review.employeeId;
+  const isManager =
+    currentUser.activeRole === "Line Manager" && currentUser.employeeId === employee.lineManagerId;
+  const isHr = currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
+  const showManagerAssessment =
+    !isEmployee ||
+    template.employeeCanSeeManagerRatings ||
+    ["Acknowledgement Pending", "Acknowledged", "Locked", "Corrected"].includes(review.status);
+  const updateItem = (
+    sectionIndex: number,
+    itemIndex: number,
+    field: "selfRating" | "selfComment" | "managerRating" | "managerComment",
+    value: number | string,
+  ) =>
+    setSections((current) =>
+      current.map((section, currentSection) =>
+        currentSection !== sectionIndex
+          ? section
+          : {
+              ...section,
+              items: section.items.map((item, currentItem) =>
+                currentItem !== itemIndex ? item : { ...item, [field]: value },
+              ),
+            },
+      ),
+    );
+  const act = (action: () => PerformanceReview, message: string) => {
     try {
-      const updated = perfService.submitSelfAssessment(review.id, sections, {
-        actor: {
-          userId: currentUser!.userId,
-          displayName: currentUser!.displayName,
-          roles: currentUser!.roles,
-        },
-      });
+      const updated = action();
       setReview(updated);
-      toast.success("Self-assessment sent");
-    } catch (e: any) {
-      toast.error(e.message);
+      setSections(structuredClone(updated.sections));
+      setManagerSummary(updated.managerSummaryComment ?? "");
+      setDevelopmentPlan(updated.developmentPlan ?? "");
+      toast.success(message);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The review could not be updated.");
     }
-  };
-
-  const handleManagerSubmit = () => {
-    try {
-      const updated = perfService.submitManagerReview(review.id, sections, managerSummary, {
-        actor: {
-          userId: currentUser!.userId,
-          displayName: currentUser!.displayName,
-          roles: currentUser!.roles,
-        },
-      });
-      setReview(updated);
-      toast.success("Manager review sent");
-    } catch (e: any) {
-      toast.error(e.message);
-    }
-  };
-
-  const handleAcknowledge = () => {
-    try {
-      const updated = perfService.acknowledgeReview(review.id, ackComment, {
-        actor: {
-          userId: currentUser!.userId,
-          displayName: currentUser!.displayName,
-          roles: currentUser!.roles,
-        },
-      });
-      setReview(updated);
-      toast.success("Review acknowledged");
-    } catch (e: any) {
-      toast.error(e.message);
-    }
-  };
-
-  const handleApproveModeration = () => {
-    try {
-      const updated = perfService.approveModeration(review.id, {
-        actor: {
-          userId: currentUser!.userId,
-          displayName: currentUser!.displayName,
-          roles: currentUser!.roles,
-        },
-      });
-      setReview(updated);
-      toast.success("Moderation approved");
-    } catch (e: any) {
-      toast.error(e.message);
-    }
-  };
-
-  const handleLock = () => {
-    try {
-      const updated = perfService.lockReview(review.id, {
-        actor: {
-          userId: currentUser!.userId,
-          displayName: currentUser!.displayName,
-          roles: currentUser!.roles,
-        },
-      });
-      setReview(updated);
-      toast.success("Review locked");
-    } catch (e: any) {
-      toast.error(e.message);
-    }
-  };
-
-  const handleCorrect = () => {
-    try {
-      const newReview = perfService.correctReview(
-        review.id,
-        sections,
-        managerSummary,
-        correctReason,
-        {
-          actor: {
-            userId: currentUser!.userId,
-            displayName: currentUser!.displayName,
-            roles: currentUser!.roles,
-          },
-        },
-      );
-      toast.success("Review corrected. Old record archived.");
-      navigate({ to: `/staff/performance/reviews/${newReview.id}`, replace: true });
-      window.location.reload();
-    } catch (e: any) {
-      toast.error(e.message);
-    }
-  };
-
-  const updateSelfRating = (sectionIdx: number, itemIdx: number, val: number) => {
-    const next = [...sections];
-    next[sectionIdx]!.items[itemIdx]!.selfRating = val;
-    setSections(next);
-  };
-  const updateSelfComment = (sectionIdx: number, itemIdx: number, val: string) => {
-    const next = [...sections];
-    next[sectionIdx]!.items[itemIdx]!.selfComment = val;
-    setSections(next);
-  };
-  const updateManagerRating = (sectionIdx: number, itemIdx: number, val: number) => {
-    const next = [...sections];
-    next[sectionIdx]!.items[itemIdx]!.managerRating = val;
-    setSections(next);
-  };
-  const updateManagerComment = (sectionIdx: number, itemIdx: number, val: string) => {
-    const next = [...sections];
-    next[sectionIdx]!.items[itemIdx]!.managerComment = val;
-    setSections(next);
   };
 
   return (
-    <div className="flex flex-col gap-6 max-w-[1000px] mx-auto pb-10">
-      <div className="flex items-center gap-2 mb-2">
-        <Button variant="ghost" size="sm" onClick={() => window.history.back()}>
-          <ArrowLeft className="w-4 h-4 mr-2" /> Back
-        </Button>
+    <div className="mx-auto max-w-[1050px] space-y-6 pb-10">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() =>
+          navigate({
+            to: isManager
+              ? "/staff/performance/team"
+              : isHr
+                ? "/staff/performance/cycles"
+                : "/staff/me/performance",
+          })
+        }
+      >
+        <ArrowLeft className="mr-2 h-4 w-4" />
+        Back
+      </Button>
+      <PageHeader
+        title={`${employee.preferredName || employee.legalName} · ${cycle.name}`}
+        description="A structured record of objectives, feedback, discussion and acknowledgement."
+      />
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Card>
+          <CardContent className="pt-5">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Status</p>
+            <Badge className="mt-2" variant="outline">
+              {review.status}
+            </Badge>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-5">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Self score</p>
+            <p className="mt-1 text-2xl font-semibold">
+              {review.overallSelfScore?.toFixed(1) ?? "—"}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-5">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Supervisor score
+            </p>
+            <p className="mt-1 text-2xl font-semibold">
+              {showManagerAssessment && review.overallManagerScore !== undefined
+                ? review.overallManagerScore.toFixed(1)
+                : "—"}
+            </p>
+          </CardContent>
+        </Card>
       </div>
 
-      <PageHeader
-        title={`${cycle.name}: ${employee.legalName}`}
-        description={`Status: ${review.status} ${review.correctedReason ? "(Corrected)" : ""}`}
-        actions={
-          <div className="flex items-center gap-2">
-            {isHR && review.status === "Acknowledged" && (
-              <Button onClick={handleLock} className="bg-emerald-600 hover:bg-emerald-700">
-                <Lock className="w-4 h-4 mr-2" /> Lock Review
-              </Button>
-            )}
-            {isHR && review.status === "Locked" && (
-              <Dialog>
-                <DialogTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="border-rose-200 text-rose-700 hover:bg-rose-50"
-                  >
-                    <Edit2 className="w-4 h-4 mr-2" /> Correct Record
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="max-w-3xl">
-                  <DialogHeader>
-                    <DialogTitle>Correct Locked Review</DialogTitle>
-                    <CardDescription>
-                      This will archive the current record and create a new instance with your
-                      changes. Both records will be preserved in the audit trail.
-                    </CardDescription>
-                  </DialogHeader>
-                  <div className="py-4 space-y-4 max-h-[60vh] overflow-y-auto">
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Correction Reason (Required)</label>
-                      <Input
-                        value={correctReason}
-                        onChange={(e) => setCorrectReason(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Override Manager Summary</label>
-                      <Textarea
-                        value={managerSummary}
-                        onChange={(e) => setManagerSummary(e.target.value)}
-                      />
-                    </div>
-                    {/* For MVP correction, they can just edit summary. In full app, we'd render all rating sliders here too */}
-                    <p className="text-sm text-muted-foreground italic">
-                      Update any fields below, then confirm correction.
+      {sections.map((section, sectionIndex) => (
+        <Card key={section.templateSectionId}>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg">{section.title}</CardTitle>
+              <Badge variant="secondary">{section.weight}%</Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {section.items.map((item, itemIndex) => (
+              <div key={item.templateItemId} className="rounded-xl border p-4">
+                <div className="mb-4">
+                  <p className="font-medium">{item.title}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{item.description}</p>
+                  {item.evidencePrompt && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Evidence to consider: {item.evidencePrompt}
                     </p>
+                  )}
+                </div>
+                <div className="grid gap-5 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Employee rating (1–{template.maxRating})</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={template.maxRating}
+                      disabled={!isEmployee || review.status !== "Self Assessment Pending"}
+                      value={item.selfRating ?? ""}
+                      onChange={(event) =>
+                        updateItem(
+                          sectionIndex,
+                          itemIndex,
+                          "selfRating",
+                          Number(event.target.value),
+                        )
+                      }
+                    />
+                    <Textarea
+                      disabled={!isEmployee || review.status !== "Self Assessment Pending"}
+                      value={item.selfComment ?? ""}
+                      onChange={(event) =>
+                        updateItem(sectionIndex, itemIndex, "selfComment", event.target.value)
+                      }
+                      placeholder="Describe results and evidence"
+                    />
                   </div>
-                  <div className="flex justify-end pt-4">
-                    <Button onClick={handleCorrect} disabled={!correctReason}>
-                      Apply Correction
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-            )}
-          </div>
-        }
-      />
-
-      {(review.overallSelfScore !== undefined || review.overallManagerScore !== undefined) && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Card>
-            <CardContent className="py-4 text-center">
-              <div className="text-3xl font-bold">
-                {review.overallSelfScore ? review.overallSelfScore.toFixed(1) : "-"}{" "}
-                <span className="text-lg text-muted-foreground">/ {template.maxRating}</span>
+                  {showManagerAssessment && (
+                    <div className="space-y-2">
+                      <Label>Supervisor rating (1–{template.maxRating})</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={template.maxRating}
+                        disabled={!isManager || review.status !== "Manager Review Pending"}
+                        value={item.managerRating ?? ""}
+                        onChange={(event) =>
+                          updateItem(
+                            sectionIndex,
+                            itemIndex,
+                            "managerRating",
+                            Number(event.target.value),
+                          )
+                        }
+                      />
+                      <Textarea
+                        disabled={!isManager || review.status !== "Manager Review Pending"}
+                        value={item.managerComment ?? ""}
+                        onChange={(event) =>
+                          updateItem(sectionIndex, itemIndex, "managerComment", event.target.value)
+                        }
+                        placeholder="Give specific, constructive feedback"
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="text-sm text-muted-foreground mt-1">Self Score</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="py-4 text-center bg-muted/20">
-              <div className="text-3xl font-bold">
-                {review.overallManagerScore ? review.overallManagerScore.toFixed(1) : "-"}{" "}
-                <span className="text-lg text-muted-foreground">/ {template.maxRating}</span>
-              </div>
-              <div className="text-sm text-muted-foreground mt-1">Manager Score</div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+            ))}
+          </CardContent>
+        </Card>
+      ))}
 
-      {isHR && review.status === "Moderation Pending" && (
-        <Card className="border-amber-200 bg-amber-50">
-          <CardContent className="py-4 flex justify-between items-center">
+      {isEmployee && review.status === "Self Assessment Pending" && (
+        <Card>
+          <CardContent className="flex items-center justify-between gap-4 pt-6">
             <div>
-              <p className="font-semibold text-amber-800">HR Moderation Required</p>
-              <p className="text-sm text-amber-700">
-                Please review the manager's ratings and comments before releasing it for discussion.
+              <p className="font-medium">Ready to send your assessment?</p>
+              <p className="text-sm text-muted-foreground">
+                All ratings and comments are required.
               </p>
             </div>
-            <Button onClick={handleApproveModeration}>Approve & Release</Button>
+            <Button
+              onClick={() =>
+                act(
+                  () => service.submitSelfAssessment(review.id, sections, context),
+                  "Self-assessment sent to your supervisor",
+                )
+              }
+            >
+              Submit self-assessment
+            </Button>
           </CardContent>
         </Card>
       )}
-
-      <div className="space-y-8">
-        {sections.map((sec, secIdx) => (
-          <div key={sec.templateSectionId} className="space-y-4">
-            <h3 className="text-lg font-semibold border-b pb-2 flex justify-between">
-              {sec.title}
-              <Badge variant="outline">{sec.weight}% Weight</Badge>
-            </h3>
-            <div className="grid grid-cols-1 gap-4">
-              {sec.items.map((item, itemIdx) => (
-                <Card key={item.templateItemId}>
-                  <CardContent className="p-4 space-y-4">
-                    <div className="flex justify-between">
-                      <div>
-                        <div className="font-medium">{item.title}</div>
-                        <div className="text-sm text-muted-foreground">{item.description}</div>
-                        {item.evidencePrompt && (
-                          <div className="text-xs text-muted-foreground italic mt-1">
-                            Evidence requested: {item.evidencePrompt}
-                          </div>
-                        )}
-                      </div>
-                      <Badge variant="secondary">{item.weight}% of section</Badge>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
-                      {/* Self Assessment Column */}
-                      <div className="bg-muted/30 p-4 rounded-lg space-y-3">
-                        <div className="font-medium text-sm flex justify-between">
-                          Self Assessment
-                          {review.status !== "Self Assessment Pending" && item.selfRating && (
-                            <span>
-                              {item.selfRating} / {template.maxRating}
-                            </span>
-                          )}
-                        </div>
-                        {isSelf && review.status === "Self Assessment Pending" ? (
-                          <>
-                            <div className="flex items-center gap-4">
-                              <label className="text-xs font-medium">
-                                Rating (1-{template.maxRating})
-                              </label>
-                              <Input
-                                type="number"
-                                min={1}
-                                max={template.maxRating}
-                                step={1}
-                                className="w-20"
-                                value={item.selfRating || ""}
-                                onChange={(e) =>
-                                  updateSelfRating(secIdx, itemIdx, parseInt(e.target.value))
-                                }
-                              />
-                            </div>
-                            <Textarea
-                              placeholder="Comments/Evidence..."
-                              className="text-sm"
-                              value={item.selfComment || ""}
-                              onChange={(e) => updateSelfComment(secIdx, itemIdx, e.target.value)}
-                            />
-                          </>
-                        ) : (
-                          <div className="text-sm text-muted-foreground">
-                            {item.selfComment || (
-                              <span className="italic">No comment provided.</span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Manager Assessment Column */}
-                      <div className="bg-muted/10 border p-4 rounded-lg space-y-3">
-                        <div className="font-medium text-sm flex justify-between">
-                          Manager Review
-                          {review.status !== "Self Assessment Pending" &&
-                            review.status !== "Manager Review Pending" &&
-                            item.managerRating && (
-                              <span>
-                                {item.managerRating} / {template.maxRating}
-                              </span>
-                            )}
-                        </div>
-                        {(isManager || (isHR && review.status === "Locked")) &&
-                        (review.status === "Manager Review Pending" ||
-                          review.status === "Locked") ? (
-                          <>
-                            <div className="flex items-center gap-4">
-                              <label className="text-xs font-medium">
-                                Rating (1-{template.maxRating})
-                              </label>
-                              <Input
-                                type="number"
-                                min={1}
-                                max={template.maxRating}
-                                step={1}
-                                className="w-20"
-                                value={item.managerRating || ""}
-                                onChange={(e) =>
-                                  updateManagerRating(secIdx, itemIdx, parseInt(e.target.value))
-                                }
-                              />
-                            </div>
-                            <Textarea
-                              placeholder="Comments..."
-                              className="text-sm"
-                              value={item.managerComment || ""}
-                              onChange={(e) =>
-                                updateManagerComment(secIdx, itemIdx, e.target.value)
-                              }
-                            />
-                          </>
-                        ) : (
-                          <div className="text-sm text-muted-foreground">
-                            {item.managerComment || <span className="italic">Pending/Hidden</span>}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+      {(isManager || managerSummary || developmentPlan) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Supervisor summary and development plan</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>Overall summary</Label>
+              <Textarea
+                disabled={!isManager || review.status !== "Manager Review Pending"}
+                value={managerSummary}
+                onChange={(event) => setManagerSummary(event.target.value)}
+                placeholder="Summarise performance, strengths and priorities"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Development plan</Label>
+              <Textarea
+                disabled={!isManager || review.status !== "Manager Review Pending"}
+                value={developmentPlan}
+                onChange={(event) => setDevelopmentPlan(event.target.value)}
+                placeholder="Record development actions, support and expected timing"
+              />
+            </div>
+            {isManager && review.status === "Manager Review Pending" && (
+              <div className="flex justify-end">
+                <Button
+                  onClick={() =>
+                    act(
+                      () =>
+                        service.submitManagerReview(
+                          review.id,
+                          sections,
+                          managerSummary,
+                          developmentPlan,
+                          context,
+                        ),
+                      "Supervisor assessment submitted",
+                    )
+                  }
+                >
+                  Submit supervisor assessment
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+      {isHr && review.status === "Moderation Pending" && (
+        <ActionCard
+          icon={<CheckCircle2 className="h-5 w-5" />}
+          title="HR moderation"
+          description="Review scoring consistency and record the moderation outcome."
+        >
+          <Textarea
+            value={moderationComment}
+            onChange={(event) => setModerationComment(event.target.value)}
+            placeholder="Moderation outcome and any calibration decision"
+          />
+          <Button
+            onClick={() =>
+              act(
+                () => service.approveModeration(review.id, moderationComment, context),
+                "Moderation completed",
+              )
+            }
+          >
+            Complete moderation
+          </Button>
+        </ActionCard>
+      )}
+      {isManager && review.status === "Discussion Pending" && (
+        <ActionCard
+          icon={<MessageSquareText className="h-5 w-5" />}
+          title="Record the review discussion"
+          description="Record when the conversation happened and the key points agreed."
+        >
+          <div className="grid gap-4 md:grid-cols-[220px_1fr]">
+            <div className="space-y-2">
+              <Label htmlFor="discussion-date">Discussion date</Label>
+              <Input
+                id="discussion-date"
+                type="date"
+                max={new Date().toISOString().slice(0, 10)}
+                value={discussionDate}
+                onChange={(event) => setDiscussionDate(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="discussion-notes">Discussion notes</Label>
+              <Textarea
+                id="discussion-notes"
+                value={discussionNotes}
+                onChange={(event) => setDiscussionNotes(event.target.value)}
+              />
             </div>
           </div>
-        ))}
-
-        {/* Manager Summary */}
-        {(review.status === "Manager Review Pending" && isManager) ||
-        review.managerSummaryComment ? (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Manager Summary</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {isManager && review.status === "Manager Review Pending" ? (
-                <Textarea
-                  placeholder="Overall feedback and goals for next period..."
-                  value={managerSummary}
-                  onChange={(e) => setManagerSummary(e.target.value)}
-                />
-              ) : (
-                <div className="text-sm">{review.managerSummaryComment}</div>
-              )}
-            </CardContent>
-          </Card>
-        ) : null}
-
-        {/* Acknowledgement */}
-        {review.status === "Discussion Pending" && isSelf && (
-          <Card className="border-blue-200 bg-blue-50">
-            <CardHeader>
-              <CardTitle className="text-lg text-blue-800">Employee Acknowledgement</CardTitle>
-              <CardDescription className="text-blue-700">
-                Acknowledge that you have received and discussed this review. Acknowledgement does
-                not indicate agreement with the contents.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Textarea
-                placeholder="Optional comments regarding the discussion..."
-                value={ackComment}
-                onChange={(e) => setAckComment(e.target.value)}
-              />
-              <Button onClick={handleAcknowledge} className="bg-blue-600 hover:bg-blue-700">
-                Sign & Acknowledge
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        {review.employeeAcknowledgedAt && (
-          <Card className="border-emerald-200 bg-emerald-50">
-            <CardContent className="py-4 flex items-center gap-3">
-              <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-              <div>
-                <div className="font-medium text-emerald-800">Acknowledged by Employee</div>
-                <div className="text-sm text-emerald-700">
-                  {format(new Date(review.employeeAcknowledgedAt), "MMM d, yyyy HH:mm")}
-                </div>
-                {review.employeeAcknowledgementComment && (
-                  <div className="text-sm text-emerald-600 mt-1 italic">
-                    "{review.employeeAcknowledgementComment}"
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Action Buttons */}
-        <div className="flex justify-end pt-4 mb-4">
-          {isSelf && review.status === "Self Assessment Pending" && (
-            <Button onClick={handleSelfSubmit}>Submit Self Assessment</Button>
-          )}
-          {isManager && review.status === "Manager Review Pending" && (
-            <Button onClick={handleManagerSubmit}>Submit Manager Review</Button>
-          )}
-        </div>
-
-        <div className="mt-8 min-h-[400px]">
-          <AuditViewer entityId={review.id} entityType="performanceReview" />
-        </div>
-      </div>
+          <Button
+            onClick={() =>
+              act(
+                () => service.recordDiscussion(review.id, discussionDate, discussionNotes, context),
+                "Discussion recorded; employee acknowledgement requested",
+              )
+            }
+          >
+            Record discussion
+          </Button>
+        </ActionCard>
+      )}
+      {review.discussionNotes && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Review discussion</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="whitespace-pre-wrap text-sm">{review.discussionNotes}</p>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Held{" "}
+              {review.discussionHeldAt
+                ? new Date(review.discussionHeldAt).toLocaleDateString()
+                : "—"}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+      {isEmployee && review.status === "Acknowledgement Pending" && (
+        <ActionCard
+          icon={<CheckCircle2 className="h-5 w-5" />}
+          title="Acknowledge your review"
+          description="Acknowledgement confirms receipt; you may record that you do not agree."
+        >
+          <RadioGroup value={agrees} onValueChange={(value) => setAgrees(value as "yes" | "no")}>
+            <label className="flex items-center gap-2">
+              <RadioGroupItem value="yes" />I agree with the review
+            </label>
+            <label className="flex items-center gap-2">
+              <RadioGroupItem value="no" />I do not agree with the review
+            </label>
+          </RadioGroup>
+          <Textarea
+            value={acknowledgementComment}
+            onChange={(event) => setAcknowledgementComment(event.target.value)}
+            placeholder={agrees === "no" ? "Explain your concern" : "Optional comment"}
+          />
+          <Button
+            onClick={() =>
+              act(
+                () =>
+                  service.acknowledgeReview(
+                    review.id,
+                    agrees === "yes",
+                    acknowledgementComment || undefined,
+                    context,
+                  ),
+                "Review acknowledged",
+              )
+            }
+          >
+            Submit acknowledgement
+          </Button>
+        </ActionCard>
+      )}
+      {review.employeeAcknowledgedAt && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Employee acknowledgement</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Badge variant={review.employeeAgreesWithReview ? "secondary" : "destructive"}>
+              {review.employeeAgreesWithReview ? "Agreed" : "Did not agree"}
+            </Badge>
+            {review.employeeAcknowledgementComment && (
+              <p className="mt-3 text-sm">{review.employeeAcknowledgementComment}</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+      {isHr && review.status === "Acknowledged" && (
+        <ActionCard
+          icon={<Lock className="h-5 w-5" />}
+          title="Finalise this review"
+          description="Lock the acknowledged review as the official record."
+        >
+          <Button
+            onClick={() =>
+              act(() => service.lockReview(review.id, context), "Review finalised and locked")
+            }
+          >
+            Finalise and lock
+          </Button>
+        </ActionCard>
+      )}
+      {isHr && review.status === "Locked" && (
+        <ActionCard
+          icon={<Lock className="h-5 w-5" />}
+          title="Correct a locked review"
+          description="A correction preserves this record and creates a linked corrected version."
+        >
+          <Textarea
+            value={correctionReason}
+            onChange={(event) => setCorrectionReason(event.target.value)}
+            placeholder="Detailed reason for the correction"
+          />
+          <Button
+            variant="outline"
+            onClick={() => {
+              try {
+                const corrected = service.correctReview(
+                  review.id,
+                  sections,
+                  managerSummary,
+                  developmentPlan,
+                  correctionReason,
+                  context,
+                );
+                toast.success("Corrected review created");
+                navigate({ to: `/staff/performance/reviews/${corrected.id}`, replace: true });
+                setReview(corrected);
+              } catch (error) {
+                toast.error(
+                  error instanceof Error ? error.message : "The correction could not be saved.",
+                );
+              }
+            }}
+          >
+            Create corrected record
+          </Button>
+        </ActionCard>
+      )}
+      <AuditViewer entityType="performance-review" entityId={review.id} />
     </div>
+  );
+}
+
+function ActionCard({
+  icon,
+  title,
+  description,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-lg">
+          {icon}
+          {title}
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </CardHeader>
+      <CardContent className="space-y-4">{children}</CardContent>
+    </Card>
   );
 }

@@ -1,7 +1,11 @@
 import { SYSTEM_CONTEXT } from "./types.ts";
 import { LocalRepository } from "./repository.ts";
 import { getApplicationDataServices } from "./application-data.ts";
-import type { OvertimeClaim } from "./overtime-types.ts";
+import type {
+  OvertimeClaim,
+  PayrollOvertimeLedgerFilters,
+  PayrollOvertimeLedgerRow,
+} from "./overtime-types.ts";
 import type { ActorContext } from "./types.ts";
 import { TimesheetService } from "./timesheet-service.ts";
 import { AttendanceService } from "./attendance-service.ts";
@@ -11,8 +15,14 @@ import { NotificationService } from "./notification-service.ts";
 import { getMasterDataRepository, getProjectRepository } from "./master-data.ts";
 import { SYSTEM_ACTOR } from "./types.ts";
 import { getRolePermissions, type Permission } from "../auth/permissions.ts";
+import type { PayrollPeriod } from "./payroll-types.ts";
 
 const MAX_CLAIM_HOURS_PER_DAY = 12;
+
+function escapeCsvCell(value: string): string {
+  const safeValue = /^[=+\-@]/.test(value.trimStart()) ? `'${value}` : value;
+  return `"${safeValue.replace(/"/g, '""')}"`;
+}
 
 export class OvertimeService {
   private claimRepo: LocalRepository<OvertimeClaim>;
@@ -30,6 +40,13 @@ export class OvertimeService {
       ? getRolePermissions(context.actor.activeRole)
       : new Set<Permission>();
     return permissions.has("overtime:admin_all") || permissions.has("payroll:view");
+  }
+
+  private hasPayrollView(context: ActorContext): boolean {
+    const permissions = context.actor.activeRole
+      ? getRolePermissions(context.actor.activeRole)
+      : new Set<Permission>();
+    return permissions.has("payroll:view");
   }
 
   private isManagerOf(employeeId: string, context: ActorContext): boolean {
@@ -67,6 +84,209 @@ export class OvertimeService {
       .filter((employee) => employee.lineManagerId === context.actor.employeeId)
       .map((employee) => employee.id);
     return this.claimRepo.list().filter((claim) => directReportIds.includes(claim.employeeId));
+  }
+
+  /**
+   * Finance-safe overtime view. Unlike getAllClaims(), this is deliberately unavailable to HR:
+   * HR completes policy verification on the approvals page, while payroll information remains
+   * restricted to Accounts and Super Admin.
+   */
+  getPayrollOvertimeLedger(
+    context: ActorContext,
+    filters: PayrollOvertimeLedgerFilters = {},
+  ): PayrollOvertimeLedgerRow[] {
+    if (!this.hasPayrollView(context)) {
+      this.denyAccess(context, "view the overtime payroll ledger", "payroll-ledger");
+    }
+
+    const rows = this.buildPayrollLedgerRows(filters);
+    getApplicationDataServices().audit.record({
+      context,
+      action: "payroll_overtime_ledger_viewed",
+      module: "payroll",
+      entityType: "overtime-ledger",
+      entityId: "all",
+      reason: `Viewed the overtime ledger (${rows.length} matching record${rows.length === 1 ? "" : "s"}).`,
+      riskLevel: "Medium",
+    });
+    return rows;
+  }
+
+  exportPayrollOvertimeLedgerCsv(
+    context: ActorContext,
+    filters: PayrollOvertimeLedgerFilters = {},
+  ): string {
+    if (!this.hasPayrollView(context)) {
+      this.denyAccess(context, "export the overtime payroll ledger", "payroll-ledger-export");
+    }
+
+    const rows = this.buildPayrollLedgerRows(filters);
+    const csvRows = [
+      [
+        "Employee Number",
+        "Employee",
+        "Overtime Date",
+        "Approved Hours",
+        "Compensation",
+        "Project",
+        "Cost Centre",
+        "Activity",
+        "Work Location",
+        "Reason",
+        "Approved Date",
+        "Payroll Period",
+        "Ledger Status",
+        "Cross-check Warnings",
+        "Manager Notes",
+        "HR Notes",
+        "Evidence Attached",
+      ],
+      ...rows.map((row) => [
+        row.employeeNumber,
+        row.employeeName,
+        row.date,
+        String(row.hours),
+        row.compensationType === "TOIL" ? "Time off in lieu" : "Payment",
+        row.projectName,
+        row.costCentreName,
+        row.activityName,
+        row.locationName,
+        row.reason,
+        row.approvedAt,
+        row.payrollPeriodName ?? "",
+        row.state,
+        row.crossCheckWarnings.join(" | "),
+        row.managerNotes ?? "",
+        row.hrNotes ?? "",
+        row.hasEvidence ? "Yes" : "No",
+      ]),
+    ];
+
+    const csv = csvRows.map((row) => row.map(escapeCsvCell).join(",")).join("\n");
+    getApplicationDataServices().audit.record({
+      context,
+      action: "payroll_overtime_ledger_exported",
+      module: "payroll",
+      entityType: "overtime-ledger",
+      entityId: "all",
+      reason: `Exported ${rows.length} overtime ledger record${rows.length === 1 ? "" : "s"} to CSV.`,
+      riskLevel: "High",
+      after: {
+        rowCount: rows.length,
+        filters: {
+          view: filters.view ?? "all",
+          searchApplied: Boolean(filters.search?.trim()),
+          dateFrom: filters.dateFrom,
+          dateTo: filters.dateTo,
+          payrollPeriodId: filters.payrollPeriodId,
+        },
+      },
+    });
+    return csv;
+  }
+
+  private buildPayrollLedgerRows(
+    filters: PayrollOvertimeLedgerFilters,
+  ): PayrollOvertimeLedgerRow[] {
+    const { storage } = getApplicationDataServices();
+    const employees = new EmployeeService().getEmployees(SYSTEM_CONTEXT);
+    const projects = getProjectRepository().list({ includeArchived: true });
+    const costCentres = getMasterDataRepository("costCentres").list({ includeArchived: true });
+    const activities = getMasterDataRepository("activityCodes").list({ includeArchived: true });
+    const locations = getMasterDataRepository("locations").list({ includeArchived: true });
+    const periods = storage.readCollection<PayrollPeriod>("payrollPeriods");
+
+    const rows = this.claimRepo
+      .list()
+      .filter((claim) => claim.status === "Approved")
+      .map((claim): PayrollOvertimeLedgerRow => {
+        const employee = employees.find((item) => item.id === claim.employeeId);
+        const period = claim.payrollPeriodId
+          ? periods.find((item) => item.id === claim.payrollPeriodId)
+          : undefined;
+        let state: PayrollOvertimeLedgerRow["state"];
+        if (claim.compensationType === "TOIL" && claim.payrollPeriodId) {
+          state = "Review Needed";
+        } else if (claim.compensationType === "TOIL" && claim.toilCreditedAt) {
+          state = "Time Off Credited";
+        } else if (claim.compensationType === "TOIL") {
+          state = "Time Off Pending";
+        } else if (claim.payrollPeriodId) {
+          state = "Included in Payroll";
+        } else {
+          state = "Ready for Payroll";
+        }
+
+        return {
+          claimId: claim.id,
+          employeeId: claim.employeeId,
+          employeeName: employee?.preferredName || employee?.legalName || "Employee unavailable",
+          employeeNumber: employee?.employeeNumber || "—",
+          date: claim.date,
+          hours: claim.hours,
+          compensationType: claim.compensationType,
+          projectName:
+            projects.find((item) => item.id === claim.projectId)?.name || "General operations",
+          costCentreName:
+            costCentres.find((item) => item.id === claim.costCentreId)?.name ||
+            "Cost centre unavailable",
+          activityName:
+            activities.find((item) => item.id === claim.activityCodeId)?.name ||
+            "Activity unavailable",
+          locationName:
+            locations.find((item) => item.id === claim.locationCodeId)?.name ||
+            "Location unavailable",
+          reason: claim.reason,
+          hasEvidence: Boolean(claim.evidenceFileId),
+          crossCheckWarnings: [...(claim.crossCheckWarnings || [])],
+          ...(claim.managerNotes ? { managerNotes: claim.managerNotes } : {}),
+          ...(claim.hrNotes ? { hrNotes: claim.hrNotes } : {}),
+          approvedAt: claim.approvedAt || claim.updatedAt,
+          ...(claim.approvedBy ? { approvedBy: claim.approvedBy } : {}),
+          ...(claim.payrollPeriodId ? { payrollPeriodId: claim.payrollPeriodId } : {}),
+          ...(period?.name ? { payrollPeriodName: period.name } : {}),
+          ...(period?.status ? { payrollPeriodStatus: period.status } : {}),
+          state,
+        };
+      });
+
+    const search = filters.search?.trim().toLocaleLowerCase();
+    return rows
+      .filter((row) => !filters.dateFrom || row.date >= filters.dateFrom)
+      .filter((row) => !filters.dateTo || row.date <= filters.dateTo)
+      .filter((row) => {
+        if (!filters.payrollPeriodId) return true;
+        if (filters.payrollPeriodId === "unassigned") return !row.payrollPeriodId;
+        return row.payrollPeriodId === filters.payrollPeriodId;
+      })
+      .filter((row) => {
+        switch (filters.view) {
+          case "ready":
+            return row.state === "Ready for Payroll";
+          case "included":
+            return row.state === "Included in Payroll";
+          case "time-off":
+            return row.compensationType === "TOIL";
+          case "exceptions":
+            return row.state === "Review Needed" || row.crossCheckWarnings.length > 0;
+          default:
+            return true;
+        }
+      })
+      .filter((row) => {
+        if (!search) return true;
+        return [
+          row.employeeName,
+          row.employeeNumber,
+          row.projectName,
+          row.costCentreName,
+          row.activityName,
+          row.locationName,
+          row.reason,
+          row.payrollPeriodName,
+        ].some((value) => value?.toLocaleLowerCase().includes(search));
+      })
+      .sort((a, b) => b.date.localeCompare(a.date) || a.employeeName.localeCompare(b.employeeName));
   }
 
   // Validates a claim submission and builds its full payload WITHOUT writing anything - shared by
@@ -244,6 +464,8 @@ export class OvertimeService {
     }
 
     claim.status = "Approved";
+    claim.approvedAt = new Date().toISOString();
+    claim.approvedBy = context.actor.userId;
     const updated = this.claimRepo.update(claim.id, claim, context);
     this.notifyDecision(updated, context);
     return updated;
@@ -277,6 +499,10 @@ export class OvertimeService {
 
     claim.status = approve ? "Approved" : "Rejected";
     claim.hrNotes = notes;
+    if (approve) {
+      claim.approvedAt = new Date().toISOString();
+      claim.approvedBy = context.actor.userId;
+    }
     const updated = this.claimRepo.update(claim.id, claim, context);
     this.notifyDecision(updated, context);
     return updated;
@@ -372,12 +598,24 @@ export class OvertimeService {
     if (!["Accounts", "Super Admin"].includes(context.actor.activeRole ?? "")) {
       this.denyAccess(context, "mark overtime as included in payroll", payrollPeriodId);
     }
-    for (const claimId of claimIds) {
+    const uniqueClaimIds = [...new Set(claimIds)];
+    const claims = uniqueClaimIds.map((claimId) => {
       const claim = this.claimRepo.getById(claimId);
-      if (!claim || claim.status !== "Approved") continue;
+      if (!claim) throw new Error("An overtime claim selected for payroll could not be found.");
+      if (claim.status !== "Approved") {
+        throw new Error("Only approved overtime can be included in payroll.");
+      }
+      if (claim.compensationType !== "Payment") {
+        throw new Error("Time off in lieu cannot be included as payable overtime.");
+      }
       if (claim.payrollPeriodId && claim.payrollPeriodId !== payrollPeriodId) {
         throw new Error("An overtime claim is already assigned to another payroll period.");
       }
+      return claim;
+    });
+
+    for (const claim of claims) {
+      if (claim.payrollPeriodId === payrollPeriodId) continue;
       this.claimRepo.update(
         claim.id,
         { payrollPeriodId },

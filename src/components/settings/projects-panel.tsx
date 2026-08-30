@@ -5,7 +5,7 @@ import * as z from "zod";
 import { Archive, ArchiveRestore, Edit2, FolderKanban, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { useCurrentUser } from "@/lib/auth";
-import { getMasterDataRepository, getProjectRepository } from "@/lib/data/master-data";
+import { getMasterDataRepository, MasterDataService } from "@/lib/data/master-data";
 import { EmployeeService } from "@/lib/data/employee-service";
 import type { Project } from "@/lib/data/types";
 import { Button } from "@/components/ui/button";
@@ -45,6 +45,16 @@ import { DataTableShell } from "@/components/ui/data-table-shell";
 import { FilterBar } from "@/components/ui/filter-bar";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { EmptyState } from "@/components/ui/empty-state";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const projectFormSchema = z
   .object({
@@ -80,18 +90,13 @@ const emptyFormValues: ProjectFormValues = {
 export function ProjectsPanel() {
   const { getActorContext } = useCurrentUser();
   const employeeService = useMemo(() => new EmployeeService(), []);
+  const masterDataService = useMemo(() => new MasterDataService(), []);
 
-  const repo = useMemo(() => getProjectRepository(), []);
-  const [projects, setProjects] = useState<Project[]>(() => repo.list({ includeArchived: true }));
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [locations, setLocations] = useState<any[]>([]);
+  const [costCentres, setCostCentres] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const locations = useMemo(() => getMasterDataRepository("locations").list(), []);
-  const costCentres = useMemo(
-    () =>
-      getMasterDataRepository("costCentres")
-        .list()
-        .filter((c) => c.isActive),
-    [],
-  );
   // Includes archived employees so a project's historical manager still resolves to a name.
   const allEmployees = useMemo(
     () => employeeService.getEmployees(getActorContext(), { includeArchived: true }),
@@ -102,6 +107,28 @@ export function ProjectsPanel() {
     [allEmployees],
   );
 
+  const refresh = async () => {
+    setIsLoading(true);
+    try {
+      const [p, l, c] = await Promise.all([
+        masterDataService.listProjectsAsync(true),
+        masterDataService.listAsync("locations", true),
+        masterDataService.listAsync("costCentres", true),
+      ]);
+      setProjects(p);
+      setLocations(l);
+      setCostCentres(c.filter((cc) => cc.isActive));
+    } catch (error) {
+      toast.error("Failed to load project data");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
   const employeeName = (id?: string) => {
     if (!id) return "-";
     const employee = allEmployees.find((e) => e.id === id);
@@ -110,6 +137,7 @@ export function ProjectsPanel() {
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [projectToArchive, setProjectToArchive] = useState<Project | null>(null);
 
   const form = useForm<ProjectFormValues>({
     resolver: zodResolver(projectFormSchema),
@@ -135,8 +163,6 @@ export function ProjectsPanel() {
     }
   }, [isFormOpen, editingProject, form]);
 
-  const refresh = () => setProjects(repo.list({ includeArchived: true }));
-
   const handleAdd = () => {
     setEditingProject(null);
     setIsFormOpen(true);
@@ -148,33 +174,32 @@ export function ProjectsPanel() {
   };
 
   const handleArchive = (project: Project) => {
-    if (
-      !confirm(
-        `Are you sure you want to archive "${project.name}"? It will no longer be available for new assignments.`,
-      )
-    ) {
-      return;
-    }
+    setProjectToArchive(project);
+  };
+
+  const confirmArchive = async () => {
+    if (!projectToArchive) return;
     try {
-      repo.archive(project.id, getActorContext());
+      await masterDataService.archiveProject(projectToArchive.id, getActorContext());
       toast.success("Project archived");
-      refresh();
+      setProjectToArchive(null);
+      await refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to archive project");
     }
   };
 
-  const handleRestore = (project: Project) => {
+  const handleRestore = async (project: Project) => {
     try {
-      repo.restore(project.id, getActorContext());
+      await masterDataService.restoreProject(project.id, getActorContext());
       toast.success("Project restored");
-      refresh();
+      await refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to restore project");
     }
   };
 
-  const onSubmit = (values: ProjectFormValues) => {
+  const onSubmit = async (values: ProjectFormValues) => {
     try {
       const payload = {
         name: values.name.trim(),
@@ -189,14 +214,17 @@ export function ProjectsPanel() {
       };
 
       if (editingProject) {
-        repo.update(editingProject.id, payload, getActorContext());
+        await masterDataService.updateProject(editingProject.id, payload, getActorContext());
         toast.success("Project updated");
       } else {
-        repo.create({ ...payload, isActive: true, orderIndex: projects.length }, getActorContext());
+        await masterDataService.createProject(
+          { ...payload, isActive: true, orderIndex: projects.length } as any,
+          getActorContext(),
+        );
         toast.success("Project created");
       }
       setIsFormOpen(false);
-      refresh();
+      await refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to save project");
     }
@@ -478,6 +506,25 @@ export function ProjectsPanel() {
           </Form>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={Boolean(projectToArchive)}
+        onOpenChange={(open) => !open && setProjectToArchive(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Archive {projectToArchive?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This project will no longer be available for new assignments or timesheets. VIA HR
+              will stop the action while active employees still depend on it.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmArchive}>Archive</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

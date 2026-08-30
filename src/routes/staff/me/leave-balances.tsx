@@ -44,6 +44,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { LeaveService } from "@/lib/data/leave-service";
 import type { LeavePolicy, LeaveRequest, LeaveTransaction } from "@/lib/data/leave-types";
@@ -67,6 +68,8 @@ const ACTIVE_OR_USED_STATUSES = [
   "Pending Line Manager",
   "Pending HR",
   "Pending Super Admin",
+  "Amendment Pending Line Manager",
+  "Amendment Pending HR",
 ];
 const HISTORY_PAGE_SIZE = 5;
 
@@ -86,7 +89,8 @@ function requestVariant(
   status: LeaveRequest["status"],
 ): "default" | "secondary" | "destructive" | "outline" {
   if (status === "Approved") return "default";
-  if (status === "Taken" || status.startsWith("Pending")) return "secondary";
+  if (status === "Taken" || status.startsWith("Pending") || status.startsWith("Amendment"))
+    return "secondary";
   if (status.startsWith("Cancellation")) return "outline";
   return "destructive";
 }
@@ -106,6 +110,7 @@ function activityLabel(type: LeaveTransaction["transactionType"]): string {
     "Carry-Forward": "Unused leave carried over",
     Accrual: "Leave added",
     "Approved Leave": "Leave used",
+    "Leave Amendment": "Approved leave changed",
     "Cancellation Restoration": "Leave returned",
     Expiry: "Unused leave expired",
     "Manual Adjustment": "HR correction",
@@ -185,6 +190,8 @@ function LeaveBalancesRoute() {
   const [withdrawTarget, setWithdrawTarget] = useState<LeaveRequest | null>(null);
   const [cancelTarget, setCancelTarget] = useState<LeaveRequest | null>(null);
   const [cancellationReason, setCancellationReason] = useState("");
+  const [amendTarget, setAmendTarget] = useState<LeaveRequest | null>(null);
+  const [amendment, setAmendment] = useState({ startDate: "", endDate: "", reason: "" });
 
   const isAdmin = currentUser.activeRole === "Super Admin" || currentUser.activeRole === "HR";
   const allPolicies = leaveService.getPolicies();
@@ -208,7 +215,9 @@ function LeaveBalancesRoute() {
   const policyById = new Map(allPolicies.map((policy) => [policy.id, policy]));
   const annualPolicy = policies.find((policy) => policy.type === "Annual");
   const annualBalance = annualPolicy ? balanceByPolicy.get(annualPolicy.id) : undefined;
-  const pendingRequests = requests.filter((request) => request.status.startsWith("Pending"));
+  const pendingRequests = requests.filter(
+    (request) => request.status.startsWith("Pending") || request.status.startsWith("Amendment"),
+  );
   const nextApprovedRequest = requests
     .filter(
       (request) =>
@@ -269,6 +278,25 @@ function LeaveBalancesRoute() {
     } finally {
       setCancelTarget(null);
       setCancellationReason("");
+    }
+  };
+
+  const confirmAmendment = () => {
+    if (!amendTarget) return;
+    try {
+      leaveService.requestAmendment(
+        amendTarget.id,
+        amendment.startDate,
+        amendment.endDate,
+        amendment.reason,
+        currentUser.getActorContext(),
+      );
+      refreshData();
+      setAmendTarget(null);
+      setAmendment({ startDate: "", endDate: "", reason: "" });
+      toast.success("Leave date change sent for approval");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The leave dates could not be changed.");
     }
   };
 
@@ -556,12 +584,17 @@ function LeaveBalancesRoute() {
                       const canCancel =
                         request.status === "Approved" &&
                         request.endDate >= new Date().toISOString().slice(0, 10);
+                      const canAmend =
+                        request.status === "Approved" &&
+                        request.startDate > new Date().toISOString().slice(0, 10);
                       const reason =
                         request.status === "Automatically Refused"
                           ? request.refusalReason
                           : request.status === "Cancellation Pending"
                             ? `Cancellation: ${request.cancellationReason}`
-                            : request.reason;
+                            : request.status.startsWith("Amendment") && request.pendingAmendment
+                              ? `Date change: ${request.pendingAmendment.proposedStartDate} to ${request.pendingAmendment.proposedEndDate}. ${request.pendingAmendment.reason}`
+                              : request.reason;
                       return (
                         <TableRow key={request.id}>
                           <TableCell className="whitespace-nowrap">
@@ -588,6 +621,22 @@ function LeaveBalancesRoute() {
                                 onClick={() => setWithdrawTarget(request)}
                               >
                                 Withdraw
+                              </Button>
+                            )}
+                            {canAmend && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setAmendTarget(request);
+                                  setAmendment({
+                                    startDate: request.startDate,
+                                    endDate: request.endDate,
+                                    reason: "",
+                                  });
+                                }}
+                              >
+                                Change dates
                               </Button>
                             )}
                             {canCancel && (
@@ -748,6 +797,74 @@ function LeaveBalancesRoute() {
               onClick={confirmCancellation}
             >
               Request Cancellation
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={!!amendTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setAmendTarget(null);
+            setAmendment({ startDate: "", endDate: "", reason: "" });
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Change approved leave dates</DialogTitle>
+            <DialogDescription>
+              Your current approval remains in place until your supervisor and HR approve the new
+              dates. Your leave balance will be adjusted only after final approval.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="amend-start-date">
+                New start date
+              </label>
+              <Input
+                id="amend-start-date"
+                type="date"
+                value={amendment.startDate}
+                onChange={(event) =>
+                  setAmendment((value) => ({ ...value, startDate: event.target.value }))
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="amend-end-date">
+                New end date
+              </label>
+              <Input
+                id="amend-end-date"
+                type="date"
+                min={amendment.startDate}
+                value={amendment.endDate}
+                onChange={(event) =>
+                  setAmendment((value) => ({ ...value, endDate: event.target.value }))
+                }
+              />
+            </div>
+          </div>
+          <Textarea
+            value={amendment.reason}
+            onChange={(event) =>
+              setAmendment((value) => ({ ...value, reason: event.target.value }))
+            }
+            placeholder="Why do the approved dates need to change?"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAmendTarget(null)}>
+              Keep current dates
+            </Button>
+            <Button
+              disabled={
+                !amendment.startDate || !amendment.endDate || amendment.reason.trim().length < 3
+              }
+              onClick={confirmAmendment}
+            >
+              Request Date Change
             </Button>
           </DialogFooter>
         </DialogContent>

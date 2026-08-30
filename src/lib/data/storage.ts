@@ -1,7 +1,7 @@
 import type { StorageDriver } from "./storage-driver.ts";
 
 export const VIA_HR_STORAGE_PREFIX = "via_hr";
-export const VIA_HR_SCHEMA_VERSION = 1;
+export const VIA_HR_SCHEMA_VERSION = 2;
 
 const META_SUFFIX = "meta";
 const COLLECTION_SEGMENT = "collection";

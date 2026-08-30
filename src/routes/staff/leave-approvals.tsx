@@ -34,6 +34,14 @@ export const Route = createFileRoute("/staff/leave-approvals")({
 });
 
 function LeaveApprovalsRoute() {
+  return (
+    <RequirePermission permission="leave:approve_direct_reports" resourceName="Leave Approvals">
+      <LeaveApprovalsContent />
+    </RequirePermission>
+  );
+}
+
+function LeaveApprovalsContent() {
   const currentUser = useCurrentUser();
   const leaveService = useMemo(() => new LeaveService(), []);
   const empService = useMemo(() => new EmployeeService(), []);
@@ -72,7 +80,10 @@ function LeaveApprovalsRoute() {
   }, [loadData]);
 
   const handleApprove = (req: LeaveRequest) => {
-    if (canCompleteHrReview && req.status === "Pending Line Manager") {
+    if (
+      canCompleteHrReview &&
+      (req.status === "Pending Line Manager" || req.status === "Amendment Pending Line Manager")
+    ) {
       setRecoveryRequest(req);
       setRecoveryReason("");
       return;
@@ -150,11 +161,14 @@ function LeaveApprovalsRoute() {
         {requests.map((req) => {
           const emp = empService.getById(req.employeeId, currentUser.getActorContext());
           const policy = policies.find((p) => p.id === req.policyId);
+          const reviewStartDate = req.pendingAmendment?.proposedStartDate ?? req.startDate;
+          const reviewEndDate = req.pendingAmendment?.proposedEndDate ?? req.endDate;
+          const reviewDays = req.pendingAmendment?.proposedWorkingDays ?? req.workingDaysRequested;
           const overlaps = leaveService
             .getTeamOverlaps(
               emp?.department || "",
-              req.startDate,
-              req.endDate,
+              reviewStartDate,
+              reviewEndDate,
               currentUser.getActorContext(),
             )
             .filter((overlapReq) => overlapReq.id !== req.id); // exclude self
@@ -166,7 +180,7 @@ function LeaveApprovalsRoute() {
                   <div>
                     <CardTitle className="text-lg">{emp?.preferredName}</CardTitle>
                     <CardDescription>
-                      {policy?.name} &bull; {req.workingDaysRequested} working days
+                      {policy?.name} &bull; {reviewDays} working days
                     </CardDescription>
                   </div>
                   <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
@@ -180,17 +194,27 @@ function LeaveApprovalsRoute() {
                     <div className="grid grid-cols-[100px_1fr] gap-1">
                       <span className="text-muted-foreground">Dates:</span>
                       <span className="font-medium">
-                        {new Date(req.startDate).toLocaleDateString()}
-                        {req.startDate !== req.endDate
-                          ? ` - ${new Date(req.endDate).toLocaleDateString()}`
+                        {new Date(reviewStartDate).toLocaleDateString()}
+                        {reviewStartDate !== reviewEndDate
+                          ? ` - ${new Date(reviewEndDate).toLocaleDateString()}`
                           : req.isHalfDay
                             ? " (Half Day)"
                             : ""}
                       </span>
                     </div>
+                    {req.pendingAmendment && (
+                      <div className="grid grid-cols-[100px_1fr] gap-1">
+                        <span className="text-muted-foreground">Current leave:</span>
+                        <span>
+                          {req.startDate} to {req.endDate} ({req.workingDaysRequested} days)
+                        </span>
+                      </div>
+                    )}
                     <div className="grid grid-cols-[100px_1fr] gap-1">
-                      <span className="text-muted-foreground">Reason:</span>
-                      <span>{req.reason}</span>
+                      <span className="text-muted-foreground">
+                        {req.pendingAmendment ? "Change reason:" : "Reason:"}
+                      </span>
+                      <span>{req.pendingAmendment?.reason ?? req.reason}</span>
                     </div>
                     {req.handoverContactId && (
                       <div className="grid grid-cols-[100px_1fr] gap-1">
@@ -238,24 +262,30 @@ function LeaveApprovalsRoute() {
                       </div>
                     )}
 
-                    {isFinal && req.status !== "Pending Line Manager" && (
-                      <div className="bg-blue-50 border border-blue-200 text-blue-800 p-2 rounded-md text-xs flex gap-2">
-                        <Info className="h-4 w-4 shrink-0" />
-                        <div>
-                          <strong>Final approval:</strong>{" "}
-                          {req.status === "Cancellation Pending"
-                            ? `Approval will return ${req.workingDaysRequested} days to the employee's available balance.`
-                            : `Approval will deduct ${req.workingDaysRequested} days from the employee's ${policy?.name} balance.`}
+                    {isFinal &&
+                      req.status !== "Pending Line Manager" &&
+                      req.status !== "Amendment Pending Line Manager" && (
+                        <div className="bg-blue-50 border border-blue-200 text-blue-800 p-2 rounded-md text-xs flex gap-2">
+                          <Info className="h-4 w-4 shrink-0" />
+                          <div>
+                            <strong>Final approval:</strong>{" "}
+                            {req.status === "Cancellation Pending"
+                              ? `Approval will return ${req.workingDaysRequested} days to the employee's available balance.`
+                              : req.pendingAmendment
+                                ? `Approval will replace the current dates with ${reviewStartDate} to ${reviewEndDate} and adjust the balance by ${reviewDays - req.workingDaysRequested} day(s).`
+                                : `Approval will deduct ${req.workingDaysRequested} days from the employee's ${policy?.name} balance.`}
+                          </div>
                         </div>
-                      </div>
-                    )}
-                    {isFinal && req.status === "Pending Line Manager" && (
-                      <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
-                        <AlertTriangle className="h-4 w-4 shrink-0" />
-                        This request is waiting for its assigned supervisor. HR may complete that
-                        step only as a documented recovery action.
-                      </div>
-                    )}
+                      )}
+                    {isFinal &&
+                      (req.status === "Pending Line Manager" ||
+                        req.status === "Amendment Pending Line Manager") && (
+                        <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+                          <AlertTriangle className="h-4 w-4 shrink-0" />
+                          This request is waiting for its assigned supervisor. HR may complete that
+                          step only as a documented recovery action.
+                        </div>
+                      )}
 
                     <div className="flex gap-2 justify-end pt-2">
                       <Button
@@ -283,111 +313,109 @@ function LeaveApprovalsRoute() {
   };
 
   return (
-    <RequirePermission permission="leave:approve_direct_reports" resourceName="Leave Approvals">
-      <div className="flex flex-col gap-6 max-w-[1000px] mx-auto pb-10">
-        <PageHeader
-          title="Leave Approvals"
-          description="Review and process pending time-off requests."
-        />
+    <div className="flex flex-col gap-6 max-w-[1000px] mx-auto pb-10">
+      <PageHeader
+        title="Leave Approvals"
+        description="Review and process pending time-off requests."
+      />
 
-        <Tabs
-          defaultValue={managerQueue.length > 0 || !canCompleteHrReview ? "manager" : "admin"}
-          className="w-full"
-        >
-          <TabsList className="mb-4">
-            <TabsTrigger value="manager" className="flex gap-2">
-              My Team
-              {managerQueue.length > 0 && (
+      <Tabs
+        defaultValue={managerQueue.length > 0 || !canCompleteHrReview ? "manager" : "admin"}
+        className="w-full"
+      >
+        <TabsList className="mb-4">
+          <TabsTrigger value="manager" className="flex gap-2">
+            My Team
+            {managerQueue.length > 0 && (
+              <Badge variant="secondary" className="ml-1">
+                {managerQueue.length}
+              </Badge>
+            )}
+          </TabsTrigger>
+          {canCompleteHrReview && (
+            <TabsTrigger value="admin" className="flex gap-2">
+              HR Confirmation
+              {adminQueue.length > 0 && (
                 <Badge variant="secondary" className="ml-1">
-                  {managerQueue.length}
+                  {adminQueue.length}
                 </Badge>
               )}
             </TabsTrigger>
-            {canCompleteHrReview && (
-              <TabsTrigger value="admin" className="flex gap-2">
-                HR Confirmation
-                {adminQueue.length > 0 && (
-                  <Badge variant="secondary" className="ml-1">
-                    {adminQueue.length}
-                  </Badge>
-                )}
-              </TabsTrigger>
-            )}
-          </TabsList>
-
-          <TabsContent value="manager">{renderQueue(managerQueue, false)}</TabsContent>
-
-          {canCompleteHrReview && (
-            <TabsContent value="admin">{renderQueue(adminQueue, true)}</TabsContent>
           )}
-        </Tabs>
+        </TabsList>
 
-        <Dialog
-          open={rejectDialog.open}
-          onOpenChange={(open) => !open && setRejectDialog({ open: false, request: null })}
-        >
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Reject Leave Request</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label>
-                  Rejection Reason <span className="text-destructive">*</span>
-                </Label>
-                <Textarea
-                  value={rejectReason}
-                  onChange={(e) => setRejectReason(e.target.value)}
-                  placeholder="Explain why this request is being declined..."
-                  rows={4}
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => setRejectDialog({ open: false, request: null })}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={handleReject}
-                disabled={rejectReason.trim().length < 3}
-              >
-                Confirm Rejection
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-        <Dialog
-          open={Boolean(recoveryRequest)}
-          onOpenChange={(open) => !open && setRecoveryRequest(null)}
-        >
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Complete unavailable supervisor review</DialogTitle>
-            </DialogHeader>
+        <TabsContent value="manager">{renderQueue(managerQueue, false)}</TabsContent>
+
+        {canCompleteHrReview && (
+          <TabsContent value="admin">{renderQueue(adminQueue, true)}</TabsContent>
+        )}
+      </Tabs>
+
+      <Dialog
+        open={rejectDialog.open}
+        onOpenChange={(open) => !open && setRejectDialog({ open: false, request: null })}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reject Leave Request</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="leave-recovery-reason">Reason for HR recovery</Label>
+              <Label>
+                Rejection Reason <span className="text-destructive">*</span>
+              </Label>
               <Textarea
-                id="leave-recovery-reason"
-                value={recoveryReason}
-                onChange={(event) => setRecoveryReason(event.target.value)}
-                placeholder="For example: assigned supervisor is inactive and the request cannot wait."
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Explain why this request is being declined..."
+                rows={4}
               />
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setRecoveryRequest(null)}>
-                Cancel
-              </Button>
-              <Button disabled={recoveryReason.trim().length < 5} onClick={confirmRecoveryApproval}>
-                Complete Supervisor Step
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
-    </RequirePermission>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setRejectDialog({ open: false, request: null })}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleReject}
+              disabled={rejectReason.trim().length < 3}
+            >
+              Confirm Rejection
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={Boolean(recoveryRequest)}
+        onOpenChange={(open) => !open && setRecoveryRequest(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Complete unavailable supervisor review</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="leave-recovery-reason">Reason for HR recovery</Label>
+            <Textarea
+              id="leave-recovery-reason"
+              value={recoveryReason}
+              onChange={(event) => setRecoveryReason(event.target.value)}
+              placeholder="For example: assigned supervisor is inactive and the request cannot wait."
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRecoveryRequest(null)}>
+              Cancel
+            </Button>
+            <Button disabled={recoveryReason.trim().length < 5} onClick={confirmRecoveryApproval}>
+              Complete Supervisor Step
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

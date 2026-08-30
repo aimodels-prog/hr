@@ -81,7 +81,11 @@ test("if the audit write for the update half fails, the data write is rolled bac
   );
 
   const after = storage.readCollection<Widget>("widgets");
-  assert.deepEqual(after, before, "the widgets collection must be restored to exactly its pre-operation state");
+  assert.deepEqual(
+    after,
+    before,
+    "the widgets collection must be restored to exactly its pre-operation state",
+  );
   assert.equal(after.length, 1, "the replacement record must not exist after rollback");
   assert.equal(after[0]!.status, "Active", "the original must not have been left as Superseded");
 });

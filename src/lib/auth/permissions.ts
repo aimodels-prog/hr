@@ -67,6 +67,8 @@ export const ALL_PERMISSIONS = [
   "performance:view_self",
   "performance:view_direct_reports",
   "performance:manage_all",
+  "training:view_self",
+  "training:view_direct_reports",
   "training:view_all",
   "training:manage_all",
 
@@ -96,7 +98,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     "document:view_self",
     "onboarding:view_self",
     "performance:view_self",
-    "training:view_all",
+    "training:view_self",
     "recruitment:score_interviews_assigned",
   ],
 
@@ -118,7 +120,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     "document:view_self",
     "onboarding:view_self",
     "performance:view_self",
-    "training:view_all",
+    "training:view_self",
     "recruitment:score_interviews_assigned",
   ],
 
@@ -147,7 +149,8 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     "onboarding:view_self",
     "performance:view_self",
     "performance:view_direct_reports",
-    "training:view_all",
+    "training:view_self",
+    "training:view_direct_reports",
     "recruitment:score_interviews_assigned",
   ],
 
@@ -196,6 +199,8 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     "performance:view_self",
     "performance:view_direct_reports",
     "performance:manage_all",
+    "training:view_self",
+    "training:view_direct_reports",
     "training:view_all",
     "training:manage_all",
     "system:users_manage",
@@ -225,7 +230,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     "document:view_self",
     "onboarding:view_self",
     "performance:view_self",
-    "training:view_all",
+    "training:view_self",
     "recruitment:score_interviews_assigned",
   ],
 

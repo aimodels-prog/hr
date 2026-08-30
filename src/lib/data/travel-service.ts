@@ -10,7 +10,9 @@ import { SYSTEM_CONTEXT, type ActorContext } from "./types.ts";
 import { getProjectRepository, getMasterDataRepository } from "./master-data.ts";
 import { NotificationService } from "./notification-service.ts";
 import { EmployeeService } from "./employee-service.ts";
-import { parseISO, isAfter, isBefore } from "date-fns";
+import { parseISO, isAfter, isBefore, isValid } from "date-fns";
+
+const LEGACY_SUPPORTED_CURRENCIES = new Set(["OMR", "GBP", "USD", "EUR"]);
 
 export function calculateTravelVariancePercent(estimate: number, actual: number): number {
   if (estimate > 0) return ((actual - estimate) / estimate) * 100;
@@ -80,6 +82,29 @@ export class TravelService {
       context.actor.activeRole === "Accounts" ||
       context.actor.activeRole === "Super Admin"
     );
+  }
+
+  private requireValidDate(value: string, label: string): Date {
+    const parsed = parseISO(value);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !isValid(parsed)) {
+      throw new Error(`${label} must be a valid calendar date.`);
+    }
+    return parsed;
+  }
+
+  private requireActiveCurrency(value: string): string {
+    const currency = value.trim().toUpperCase();
+    const configured = getMasterDataRepository("currencies").list();
+    const isConfigured = configured.some(
+      (item) => item.isActive && (item.code === currency || item.name === currency),
+    );
+    if (
+      (configured.length > 0 && !isConfigured) ||
+      (configured.length === 0 && !LEGACY_SUPPORTED_CURRENCIES.has(currency))
+    ) {
+      throw new Error("Select an active currency from VIA's currency list.");
+    }
+    return currency;
   }
 
   /** Requires HR/Accounts/Super Admin - reviewer dashboards, payroll reconciliation, reports. */
@@ -209,7 +234,13 @@ export class TravelService {
       "submit a travel request",
       "new",
     );
-    if (!data.startDate || !data.endDate || !data.purpose || !data.destination || !data.currency) {
+    if (
+      !data.startDate ||
+      !data.endDate ||
+      !data.purpose?.trim() ||
+      !data.destination?.trim() ||
+      !data.currency?.trim()
+    ) {
       throw new Error("Missing required travel information.");
     }
     if (data.evidenceFileId) {
@@ -224,8 +255,9 @@ export class TravelService {
       }
     }
 
-    const s1 = parseISO(data.startDate);
-    const e1 = parseISO(data.endDate);
+    const s1 = this.requireValidDate(data.startDate, "Start date");
+    const e1 = this.requireValidDate(data.endDate, "End date");
+    const currency = this.requireActiveCurrency(data.currency);
 
     if (isAfter(s1, e1)) {
       throw new Error("End date cannot be before start date.");
@@ -264,8 +296,10 @@ export class TravelService {
     const accom = data.estAccommodation || 0;
     const perDiem = data.estPerDiem || 0;
     const other = data.estOther || 0;
-    if (transport < 0 || accom < 0 || perDiem < 0 || other < 0) {
-      throw new Error("Estimated costs cannot be negative.");
+    if (
+      [transport, accom, perDiem, other].some((amount) => !Number.isFinite(amount) || amount < 0)
+    ) {
+      throw new Error("Estimated costs cannot be negative and must be valid amounts.");
     }
 
     const payload: Omit<
@@ -273,8 +307,8 @@ export class TravelService {
       "id" | "createdAt" | "createdBy" | "updatedAt" | "updatedBy" | "recordVersion"
     > = {
       employeeId: data.employeeId!,
-      purpose: data.purpose,
-      destination: data.destination,
+      purpose: data.purpose.trim(),
+      destination: data.destination.trim(),
       startDate: data.startDate,
       endDate: data.endDate,
       ...(data.projectId !== undefined ? { projectId: data.projectId } : {}),
@@ -284,7 +318,7 @@ export class TravelService {
       estPerDiem: perDiem,
       estOther: other,
       totalEstimate: transport + accom + perDiem + other,
-      currency: data.currency,
+      currency,
       ...(data.notes !== undefined ? { notes: data.notes } : {}),
       ...(data.evidenceFileId !== undefined ? { evidenceFileId: data.evidenceFileId } : {}),
 
@@ -329,8 +363,13 @@ export class TravelService {
 
     req.hrApprovalStatus = approve ? "Approved" : "Rejected";
     req.hrNotes = notes;
+    if (approve) {
+      req.hrApprovedAt = new Date().toISOString();
+      req.hrApprovedBy = context.actor.userId;
+    }
 
     req.status = this.calculateFinalStatus(req);
+    this.capturePreAuthorisation(req);
     const updated = this.repo.update(req.id, req, context);
     this.recordEvent(approve ? "travel_hr_approved" : "travel_hr_rejected", updated, context);
     this.notifyStatusChange(updated, context);
@@ -359,8 +398,13 @@ export class TravelService {
 
     req.accountsApprovalStatus = approve ? "Approved" : "Rejected";
     req.accountsNotes = notes;
+    if (approve) {
+      req.accountsApprovedAt = new Date().toISOString();
+      req.accountsApprovedBy = context.actor.userId;
+    }
 
     req.status = this.calculateFinalStatus(req);
+    this.capturePreAuthorisation(req);
     const updated = this.repo.update(req.id, req, context);
     this.recordEvent(
       approve ? "travel_accounts_approved" : "travel_accounts_rejected",
@@ -383,7 +427,7 @@ export class TravelService {
     if (req.status !== "Pre-authorised")
       throw new Error("Only pre-authorised trips can submit expenses.");
 
-    const endDate = parseISO(req.endDate);
+    const endDate = this.requireValidDate(req.endDate, "Trip end date");
     const today = new Date();
     // Reset times to compare strictly calendar days
     endDate.setHours(0, 0, 0, 0);
@@ -401,7 +445,22 @@ export class TravelService {
     const { files } = getApplicationDataServices();
     const tripStart = parseISO(req.startDate);
     const tripEnd = parseISO(req.endDate);
+    if (new Set(expenses.map((line) => line.id)).size !== expenses.length) {
+      throw new Error("Every expense line must have a unique reference ID.");
+    }
     for (const line of expenses) {
+      if (!line.id?.trim()) throw new Error("Every expense line requires a unique reference ID.");
+      if (
+        !(["Transport", "Accommodation", "Per Diem", "Other"] as string[]).includes(line.category)
+      ) {
+        throw new Error("Select a valid expense category.");
+      }
+      const lineCurrency = this.requireActiveCurrency(line.currency);
+      if (lineCurrency !== req.currency) {
+        throw new Error(
+          `Expense lines must use the pre-authorised trip currency (${req.currency}).`,
+        );
+      }
       if (!Number.isFinite(line.amount) || line.amount <= 0) {
         throw new Error(`Expense line "${line.category}" must have a positive amount.`);
       }
@@ -410,7 +469,7 @@ export class TravelService {
           `Expense line "${line.category}" dated ${line.date} requires a bill/receipt reference.`,
         );
       }
-      const lineDate = parseISO(line.date);
+      const lineDate = this.requireValidDate(line.date, "Expense date");
       if (isBefore(lineDate, tripStart) || isAfter(lineDate, tripEnd)) {
         throw new Error(
           `Expense line "${line.category}" is dated ${line.date}, which is outside the trip's travel period (${req.startDate} to ${req.endDate}).`,
@@ -436,8 +495,9 @@ export class TravelService {
     const actualTotal = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
 
     // Variance check (10%)
+    const authorisedEstimate = req.authorisedBudget?.totalEstimate ?? req.totalEstimate;
     if (
-      actualTotal > req.totalEstimate * 1.1 &&
+      actualTotal > authorisedEstimate * 1.1 &&
       (!varianceExplanation || varianceExplanation.trim().length < 5)
     ) {
       throw new Error(
@@ -511,6 +571,8 @@ export class TravelService {
     const changes: Record<string, unknown> = { closureNotes: notes };
     if (approve) {
       changes["status"] = "Closed";
+      changes["closedAt"] = new Date().toISOString();
+      changes["closedBy"] = context.actor.userId;
     } else {
       // Rejecting the *expenses*, not the *trip* itself. Send it back to Pre-authorised so they
       // can fix and resubmit - and clear every actuals field, not just the expense lines, so a
@@ -536,6 +598,54 @@ export class TravelService {
       );
     }
     return updated;
+  }
+
+  markIncludedInPayroll(
+    requestIds: string[],
+    payrollPeriodId: string,
+    context: ActorContext,
+  ): void {
+    if (!["Accounts", "Super Admin"].includes(context.actor.activeRole ?? "")) {
+      this.deny(
+        "include travel reimbursements in payroll",
+        payrollPeriodId,
+        "Only Accounts or Super Admin can include reimbursements in payroll.",
+        context,
+      );
+    }
+    const requests = [...new Set(requestIds)].map((id) => {
+      const request = this.repo.getById(id);
+      if (!request) throw new Error("A reimbursement selected for payroll could not be found.");
+      if (request.status !== "Closed") {
+        throw new Error("Only closed reimbursements can be included in payroll.");
+      }
+      if (request.payrollPeriodId && request.payrollPeriodId !== payrollPeriodId) {
+        throw new Error("A reimbursement is already included in another payroll period.");
+      }
+      if (request.actualTotalOmr === undefined) {
+        throw new Error("A reimbursement has no verified OMR total and cannot enter payroll.");
+      }
+      return request;
+    });
+    for (const request of requests) {
+      if (request.payrollPeriodId === payrollPeriodId) continue;
+      this.repo.update(request.id, { payrollPeriodId }, context);
+    }
+  }
+
+  private capturePreAuthorisation(request: TravelRequest): void {
+    if (request.status !== "Pre-authorised" || request.authorisedBudget) return;
+    const capturedAt = new Date().toISOString();
+    request.preAuthorisedAt = capturedAt;
+    request.authorisedBudget = {
+      estTransport: request.estTransport,
+      estAccommodation: request.estAccommodation,
+      estPerDiem: request.estPerDiem,
+      estOther: request.estOther,
+      totalEstimate: request.totalEstimate,
+      currency: request.currency,
+      capturedAt,
+    };
   }
 
   // A single, explicit audit action per decision (rather than relying on LocalRepository's

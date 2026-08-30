@@ -612,3 +612,216 @@ test("evidence downloads are restricted to the employee, their manager, and HR/A
   const accessEvents = audit.list().filter((e) => e.action === "overtime_evidence_accessed");
   assert.equal(accessEvents.length, 3);
 });
+
+test("the Finance overtime ledger is restricted to Accounts and Super Admin and records every view", async () => {
+  const { overtime, audit } = harness();
+  const claim = await overtime.submitClaim(
+    {
+      employeeId: "employee-omar",
+      date: "2026-08-10",
+      hours: 2,
+      reason: "Client escalation",
+      projectId: "proj-001",
+    },
+    employee,
+  );
+  const approved = overtime.managerApprove(claim.id, manager);
+
+  assert.ok(approved.approvedAt);
+  assert.equal(approved.approvedBy, manager.actor.userId);
+  assert.throws(() => overtime.getPayrollOvertimeLedger(hr), /not authorised/);
+  assert.throws(() => overtime.getPayrollOvertimeLedger(employee), /not authorised/);
+
+  const accountsRows = overtime.getPayrollOvertimeLedger(accounts);
+  assert.equal(accountsRows.find((row) => row.claimId === claim.id)?.state, "Ready for Payroll");
+  assert.equal(
+    accountsRows.find((row) => row.claimId === claim.id)?.projectName,
+    "Al Mouj Phase 3",
+  );
+  assert.ok(overtime.getPayrollOvertimeLedger(superAdmin));
+
+  assert.equal(
+    audit.list().filter((event) => event.action === "payroll_overtime_ledger_viewed").length,
+    2,
+  );
+  assert.equal(audit.list().filter((event) => event.action === "overtime_access_denied").length, 2);
+});
+
+test("TOIL is never compiled or assigned as payable overtime", async () => {
+  const { overtime } = harness();
+  const payment = await overtime.submitClaim(
+    {
+      employeeId: "employee-omar",
+      date: "2026-08-11",
+      hours: 2,
+      reason: "Paid port support",
+      compensationType: "Payment",
+    },
+    employee,
+  );
+  const toil = await overtime.submitClaim(
+    {
+      employeeId: "employee-omar",
+      date: "2026-08-12",
+      hours: 8,
+      reason: "Weekend deployment for time off",
+      compensationType: "TOIL",
+    },
+    employee,
+  );
+  overtime.managerApprove(payment.id, manager);
+  overtime.managerApprove(toil.id, manager);
+
+  const payroll = new PayrollService();
+  const period = payroll.createPeriod(
+    {
+      name: "August 2026",
+      startDate: "2026-08-01",
+      endDate: "2026-08-31",
+      cutoffDate: "2026-08-25",
+      paymentDate: "2026-08-31",
+      notes: "TOIL exclusion test",
+    },
+    accounts,
+  );
+  const collected = payroll.collectInputs(period.id, accounts);
+  assert.equal(
+    collected.compiledInputs?.find((input) => input.employeeId === "employee-omar")
+      ?.approvedOvertimeHours,
+    2,
+  );
+
+  const claims = overtime.getClaimsForEmployee("employee-omar", accounts);
+  assert.equal(claims.find((item) => item.id === payment.id)?.payrollPeriodId, period.id);
+  assert.equal(claims.find((item) => item.id === toil.id)?.payrollPeriodId, undefined);
+
+  const ledger = overtime.getPayrollOvertimeLedger(accounts);
+  assert.equal(ledger.find((row) => row.claimId === payment.id)?.state, "Included in Payroll");
+  assert.equal(ledger.find((row) => row.claimId === toil.id)?.state, "Time Off Credited");
+});
+
+test("payroll assignment pre-validates every claim and cannot partially include a mixed Payment and TOIL batch", async () => {
+  const { overtime } = harness();
+  const payment = overtime.managerApprove(
+    (
+      await overtime.submitClaim(
+        {
+          employeeId: "employee-omar",
+          date: "2026-08-13",
+          hours: 2,
+          reason: "Paid support",
+          compensationType: "Payment",
+        },
+        employee,
+      )
+    ).id,
+    manager,
+  );
+  const toil = overtime.managerApprove(
+    (
+      await overtime.submitClaim(
+        {
+          employeeId: "employee-omar",
+          date: "2026-08-14",
+          hours: 2,
+          reason: "Time-off support",
+          compensationType: "TOIL",
+        },
+        employee,
+      )
+    ).id,
+    manager,
+  );
+
+  assert.throws(
+    () => overtime.markIncludedInPayroll([payment.id, toil.id], "period-test", accounts),
+    /Time off in lieu cannot be included/,
+  );
+  assert.equal(
+    overtime.getClaimsForEmployee("employee-omar", accounts).find((item) => item.id === payment.id)
+      ?.payrollPeriodId,
+    undefined,
+  );
+});
+
+test("overtime ledger export applies service filters, protects spreadsheet cells and is audited", async () => {
+  const { overtime, audit } = harness();
+  const claim = await overtime.submitClaim(
+    {
+      employeeId: "employee-omar",
+      date: "2026-08-15",
+      hours: 1.5,
+      reason: "=SUM(1,1)",
+      compensationType: "Payment",
+    },
+    employee,
+  );
+  overtime.managerApprove(claim.id, manager);
+
+  assert.throws(() => overtime.exportPayrollOvertimeLedgerCsv(hr), /not authorised/);
+  const csv = overtime.exportPayrollOvertimeLedgerCsv(accounts, {
+    view: "ready",
+    search: "Omar",
+    dateFrom: "2026-08-01",
+    dateTo: "2026-08-31",
+  });
+  assert.match(csv, /Employee Number/);
+  assert.match(csv, /"'=SUM\(1,1\)"/);
+  assert.equal(
+    audit.list().filter((event) => event.action === "payroll_overtime_ledger_exported").length,
+    1,
+  );
+});
+
+test("payroll collection restores both the period and overtime assignment when the second collection write fails", async () => {
+  const { overtime, storage, audit } = harness();
+  const claim = await overtime.submitClaim(
+    {
+      employeeId: "employee-omar",
+      date: "2026-08-16",
+      hours: 2,
+      reason: "Atomic payroll collection",
+      compensationType: "Payment",
+    },
+    employee,
+  );
+  overtime.managerApprove(claim.id, manager);
+  const payroll = new PayrollService();
+  const period = payroll.createPeriod(
+    {
+      name: "August 2026",
+      startDate: "2026-08-01",
+      endDate: "2026-08-31",
+      cutoffDate: "2026-08-25",
+      paymentDate: "2026-08-31",
+      notes: "Atomicity test",
+    },
+    accounts,
+  );
+
+  const originalWrite = storage.writeCollection.bind(storage);
+  let failOvertimeWrite = true;
+  storage.writeCollection = ((collection: string, items: readonly unknown[]) => {
+    if (collection === "overtimeClaims" && failOvertimeWrite) {
+      failOvertimeWrite = false;
+      throw new Error("Injected overtime storage failure");
+    }
+    originalWrite(collection, items);
+  }) as typeof storage.writeCollection;
+
+  assert.throws(
+    () => payroll.collectInputs(period.id, accounts),
+    /Injected overtime storage failure/,
+  );
+  storage.writeCollection = originalWrite;
+
+  const restoredPeriod = payroll.getPeriodById(period.id, accounts);
+  assert.equal(restoredPeriod?.status, "Draft");
+  assert.equal(restoredPeriod?.compiledInputs, undefined);
+  assert.equal(
+    overtime.getClaimsForEmployee("employee-omar", accounts).find((item) => item.id === claim.id)
+      ?.payrollPeriodId,
+    undefined,
+  );
+  assert.ok(audit.list().some((event) => event.action === "payroll_input_collection_rolled_back"));
+});

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,7 +24,7 @@ export interface MasterDataFormProps<T extends MasterRecord> {
   showCode?: boolean;
   children?: (props: {
     formData: Partial<T>;
-    updateField: (key: keyof T, value: any) => void;
+    updateField: (key: keyof T, value: unknown) => void;
   }) => React.ReactNode;
 }
 
@@ -50,8 +49,8 @@ export function MasterDataForm<T extends MasterRecord>({
     }
   }, [isOpen, initialData]);
 
-  const updateField = (key: keyof T, value: any) => {
-    setFormData((prev) => ({ ...prev, [key]: value }));
+  const updateField = (key: keyof T, value: unknown) => {
+    setFormData((prev) => ({ ...prev, [key]: value }) as Partial<T>);
   };
 
   const handleSubmit = (e: React.FormEvent) => {

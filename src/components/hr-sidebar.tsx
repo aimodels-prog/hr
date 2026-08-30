@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/sidebar";
 import { useCurrentUser } from "@/lib/auth";
 import type { Permission } from "@/lib/auth/permissions";
+import type { Role } from "@/lib/data/types";
 
 interface NavItem {
   title: string;
@@ -50,6 +51,7 @@ interface NavItem {
   requiredPermission?: Permission;
   /** Visible if the user holds ANY of these permissions (used instead of requiredPermission). */
   requiredAnyPermission?: Permission[];
+  requiredRoles?: Role[];
 }
 
 interface NavGroup {
@@ -267,7 +269,7 @@ const navGroups: NavGroup[] = [
         title: "Overtime Ledger",
         url: "/staff/payroll/overtime",
         icon: Calculator,
-        requiredAnyPermission: ["payroll:view", "overtime:admin_all"],
+        requiredPermission: "payroll:view",
       },
       {
         title: "Accounts Travel Approvals",
@@ -295,20 +297,26 @@ const navGroups: NavGroup[] = [
       {
         title: "Team Performance",
         url: "/staff/performance/team",
-        icon: Users, // Using Users icon
-        requiredPermission: "performance:view_self", // General permission, filtered in route
+        icon: Users,
+        requiredPermission: "performance:view_direct_reports",
       },
       {
         title: "Performance Cycles",
         url: "/staff/performance/cycles",
         icon: ClipboardCheck,
-        requiredPermission: "system:settings_manage",
+        requiredPermission: "performance:manage_all",
       },
       {
         title: "My Certifications",
         url: "/staff/me/training",
         icon: GraduationCap,
-        requiredPermission: "training:view_all",
+        requiredPermission: "training:view_self",
+      },
+      {
+        title: "Training Records",
+        url: "/staff/training",
+        icon: GraduationCap,
+        requiredAnyPermission: ["training:manage_all", "training:view_direct_reports"],
       },
     ],
   },
@@ -333,7 +341,7 @@ const navGroups: NavGroup[] = [
         title: "Audit History",
         url: "/staff/audit",
         icon: Shield,
-        requiredPermission: "system:audit_view",
+        requiredRoles: ["Super Admin"],
       },
       {
         title: "Settings & Master Data",
@@ -378,6 +386,7 @@ export function HrSidebar() {
       <SidebarContent className="px-1 py-2">
         {navGroups.map((group) => {
           const visibleItems = group.items.filter((item) => {
+            if (item.requiredRoles && !item.requiredRoles.includes(activeRole)) return false;
             if (item.requiredAnyPermission) {
               return item.requiredAnyPermission.some((perm) => checkCan(perm));
             }
@@ -395,7 +404,7 @@ export function HrSidebar() {
               <SidebarGroupContent>
                 <SidebarMenu>
                   {visibleItems.map((item) => (
-                    <SidebarMenuItem key={item.url}>
+                    <SidebarMenuItem key={`${item.title}:${item.url}`}>
                       <SidebarMenuButton
                         asChild
                         isActive={pathname === item.url || pathname.startsWith(item.url + "/")}

@@ -34,7 +34,7 @@ export class DocumentExpiryService {
     // The organisation's own configured advance-notice days (e.g. 90/60/30/14/7/1), not a
     // hardcoded list - HR can tune how much warning employees and HR get before a document
     // expires without a code change.
-    const configuredDays = [...new Set(this.settingsService.getAppSettings().documentReminderDays)]
+    const configuredDays = [...new Set(this.settingsService.getAppSettingsSync().documentReminderDays)]
       .filter((day) => Number.isFinite(day) && day > 0)
       .sort((a, b) => b - a);
     const reminderThresholds = [...configuredDays, ...OVERDUE_THRESHOLDS];

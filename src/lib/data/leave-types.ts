@@ -6,6 +6,7 @@ export type LeaveTransactionType =
   | "Carry-Forward"
   | "Accrual"
   | "Approved Leave"
+  | "Leave Amendment"
   | "Cancellation Restoration"
   | "Expiry"
   | "Manual Adjustment";
@@ -146,7 +147,38 @@ export type LeaveRequestStatus =
   | "Automatically Refused"
   | "Cancelled"
   | "Cancellation Pending"
-  | "Cancellation Approved";
+  | "Cancellation Approved"
+  | "Amendment Pending Line Manager"
+  | "Amendment Pending HR";
+
+export interface LeaveAmendmentRequest {
+  proposedStartDate: string;
+  proposedEndDate: string;
+  proposedWorkingDays: number;
+  reason: string;
+  requestedAt: string;
+  requestedBy: RecordId;
+  chainApprovals: Array<{
+    role: string;
+    approvedBy?: RecordId;
+    date?: string;
+    status: "Pending" | "Approved" | "Declined";
+  }>;
+}
+
+export interface LeaveAmendmentHistory {
+  previousStartDate: string;
+  previousEndDate: string;
+  previousWorkingDays: number;
+  newStartDate: string;
+  newEndDate: string;
+  newWorkingDays: number;
+  reason: string;
+  decidedAt: string;
+  decidedBy: RecordId;
+  outcome: "Approved" | "Declined";
+  decisionReason?: string;
+}
 
 export interface LeaveRequest extends BaseRecord {
   employeeId: RecordId;
@@ -163,6 +195,8 @@ export interface LeaveRequest extends BaseRecord {
   status: LeaveRequestStatus;
   refusalReason?: string; // used if Automatically Refused
   cancellationReason?: string;
+  pendingAmendment?: LeaveAmendmentRequest;
+  amendmentHistory?: LeaveAmendmentHistory[];
   // Sick-leave pay-percentage tier breakdown at the time this request was submitted, from
   // LeaveService.getSickLeavePayBreakdown. Only populated for requests against a policy that
   // defines payTiers (i.e. Sick Leave). Consumed by payroll to apply the correct declining

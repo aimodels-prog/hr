@@ -139,6 +139,10 @@ function TimesheetSettingsRoute() {
                   <SelectContent>
                     <SelectItem value="0">Sunday</SelectItem>
                     <SelectItem value="1">Monday</SelectItem>
+                    <SelectItem value="2">Tuesday</SelectItem>
+                    <SelectItem value="3">Wednesday</SelectItem>
+                    <SelectItem value="4">Thursday</SelectItem>
+                    <SelectItem value="5">Friday</SelectItem>
                     <SelectItem value="6">Saturday</SelectItem>
                   </SelectContent>
                 </Select>

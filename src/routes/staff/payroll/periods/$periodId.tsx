@@ -16,6 +16,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { PayrollService } from "@/lib/data/payroll-service";
+import type { PayrollException, PayrollManualAdjustment } from "@/lib/data/payroll-types";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { ArrowLeft, Download, Lock, Play, AlertTriangle, CheckCircle, Plus } from "lucide-react";
@@ -29,29 +30,47 @@ import {
 } from "@/components/ui/dialog";
 import { AuditViewer } from "@/components/audit-viewer";
 
+type ManualAdjustmentDraft = Pick<
+  PayrollManualAdjustment,
+  "employeeId" | "type" | "amount" | "currency" | "reason"
+>;
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Something went wrong. Please try again.";
+}
+
 export const Route = createFileRoute("/staff/payroll/periods/$periodId")({
   component: PayrollWorkbenchRoute,
 });
 
 function PayrollWorkbenchRoute() {
+  return (
+    <RequirePermission permission="payroll:view" resourceName="Payroll Workbench">
+      <PayrollWorkbenchContent />
+    </RequirePermission>
+  );
+}
+
+function PayrollWorkbenchContent() {
   const { periodId } = Route.useParams();
   const navigate = useNavigate();
   const currentUser = useCurrentUser();
   const payrollService = useMemo(() => new PayrollService(), []);
+  const actorContext = currentUser.getActorContext();
   const empService = useMemo(() => new EmployeeService(), []);
   const allEmployees = useMemo(
     () => empService.getDirectoryEmployees(currentUser.getActorContext()),
     [currentUser, empService],
   );
 
-  const [period, setPeriod] = useState(payrollService.getPeriodById(periodId));
+  const [period, setPeriod] = useState(() => payrollService.getPeriodById(periodId, actorContext));
 
   const [activeTab, setActiveTab] = useState("aggregation");
-  const [showAckDialog, setShowAckDialog] = useState<any>(null);
+  const [showAckDialog, setShowAckDialog] = useState<PayrollException | null>(null);
   const [ackNotes, setAckNotes] = useState("");
 
   const [showManualDialog, setShowManualDialog] = useState(false);
-  const [manualAdj, setManualAdj] = useState({
+  const [manualAdj, setManualAdj] = useState<ManualAdjustmentDraft>({
     employeeId: "",
     type: "Allowance",
     amount: 0,
@@ -71,39 +90,32 @@ function PayrollWorkbenchRoute() {
 
   const handleCollect = () => {
     try {
-      const updated = payrollService.collectInputs(period.id, {
-        actor: {
-          userId: currentUser!.userId,
-          displayName: currentUser!.displayName,
-          roles: currentUser!.roles,
-        },
-      });
+      const updated = payrollService.collectInputs(period.id, actorContext);
       setPeriod(updated);
       toast.success("Inputs collected and exceptions refreshed.");
       if (updated.status === "Exceptions") {
         setActiveTab("exceptions");
         toast.warning("Exceptions detected requiring attention.");
       }
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error));
     }
   };
 
   const handleAcknowledge = () => {
     if (!showAckDialog) return;
     try {
-      const updated = payrollService.acknowledgeException(period.id, showAckDialog.id, ackNotes, {
-        actor: {
-          userId: currentUser!.userId,
-          displayName: currentUser!.displayName,
-          roles: currentUser!.roles,
-        },
-      });
+      const updated = payrollService.acknowledgeException(
+        period.id,
+        showAckDialog.id,
+        ackNotes,
+        actorContext,
+      );
       setPeriod(updated);
       setShowAckDialog(null);
       toast.success("Exception acknowledged.");
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error));
     }
   };
 
@@ -118,49 +130,31 @@ function PayrollWorkbenchRoute() {
         toast.error("Please fill all required fields correctly.");
         return;
       }
-      const updated = payrollService.addManualAdjustment(period.id, manualAdj as any, {
-        actor: {
-          userId: currentUser!.userId,
-          displayName: currentUser!.displayName,
-          roles: currentUser!.roles,
-        },
-      });
+      const updated = payrollService.addManualAdjustment(period.id, manualAdj, actorContext);
       setPeriod(updated);
       setShowManualDialog(false);
       setManualAdj({ employeeId: "", type: "Allowance", amount: 0, currency: "", reason: "" });
       toast.success(
         "Payroll correction added. Collect the payroll information again to include it.",
       );
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error));
     }
   };
 
   const handleLock = () => {
     try {
-      const updated = payrollService.lockPeriod(period.id, {
-        actor: {
-          userId: currentUser!.userId,
-          displayName: currentUser!.displayName,
-          roles: currentUser!.roles,
-        },
-      });
+      const updated = payrollService.lockPeriod(period.id, actorContext);
       setPeriod(updated);
       toast.success("Payroll period locked");
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error));
     }
   };
 
   const handleExport = () => {
     try {
-      const csv = payrollService.exportCsv(period.id, {
-        actor: {
-          userId: currentUser!.userId,
-          displayName: currentUser!.displayName,
-          roles: currentUser!.roles,
-        },
-      });
+      const csv = payrollService.exportCsv(period.id, actorContext);
       const blob = new Blob([csv], { type: "text/csv" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -170,10 +164,10 @@ function PayrollWorkbenchRoute() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      setPeriod(payrollService.getPeriodById(period.id));
+      setPeriod(payrollService.getPeriodById(period.id, actorContext));
       toast.success("Export successful.");
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error));
     }
   };
 
@@ -183,377 +177,382 @@ function PayrollWorkbenchRoute() {
     period.status === "Exceptions";
 
   return (
-    <RequirePermission permission="payroll:view" resourceName="Payroll Workbench">
-      <div className="flex flex-col gap-6 max-w-[1200px] mx-auto pb-10">
-        <div className="flex items-center gap-2 mb-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate({ to: "/staff/payroll/periods" })}
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Periods
-          </Button>
-        </div>
+    <div className="flex flex-col gap-6 max-w-[1200px] mx-auto pb-10">
+      <div className="flex items-center gap-2 mb-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => navigate({ to: "/staff/payroll/periods" })}
+        >
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          Back to Periods
+        </Button>
+      </div>
 
-        <PageHeader
-          title={`Workbench: ${period.name}`}
-          description={`Dates: ${period.startDate} to ${period.endDate} | Cutoff: ${period.cutoffDate}`}
-          actions={
-            <div className="flex gap-2 items-center">
+      <PageHeader
+        title={`Workbench: ${period.name}`}
+        description={`Dates: ${period.startDate} to ${period.endDate} | Cutoff: ${period.cutoffDate}`}
+        actions={
+          <div className="flex gap-2 items-center">
+            <Badge
+              className="text-sm px-3 py-1 mr-4"
+              variant={
+                period.status === "Locked" || period.status === "Exported"
+                  ? "default"
+                  : period.status === "Exceptions"
+                    ? "destructive"
+                    : "secondary"
+              }
+            >
+              {period.status}
+            </Badge>
+
+            {isEditable && (
+              <Button onClick={handleCollect} variant="outline">
+                <Play className="w-4 h-4 mr-2" /> Collect Inputs
+              </Button>
+            )}
+            {period.status === "Prepared" && (
+              <Button onClick={handleLock}>
+                <Lock className="w-4 h-4 mr-2" /> Lock Period
+              </Button>
+            )}
+            {(period.status === "Locked" || period.status === "Exported") && (
+              <Button onClick={handleExport}>
+                <Download className="w-4 h-4 mr-2" /> Export CSV
+              </Button>
+            )}
+          </div>
+        }
+      />
+
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="mb-4">
+          <TabsTrigger value="aggregation">Compiled Inputs</TabsTrigger>
+          <TabsTrigger value="manual">
+            Manual Adjustments ({period.manualAdjustments.length})
+          </TabsTrigger>
+          <TabsTrigger value="exceptions">
+            Exceptions
+            {period.exceptions.filter((e) => !e.acknowledged).length > 0 && (
               <Badge
-                className="text-sm px-3 py-1 mr-4"
-                variant={
-                  period.status === "Locked" || period.status === "Exported"
-                    ? "default"
-                    : period.status === "Exceptions"
-                      ? "destructive"
-                      : "secondary"
-                }
+                variant="destructive"
+                className="ml-2 h-5 w-5 p-0 flex items-center justify-center rounded-full"
               >
-                {period.status}
+                {period.exceptions.filter((e) => !e.acknowledged).length}
               </Badge>
+            )}
+          </TabsTrigger>
+        </TabsList>
 
+        <TabsContent value="aggregation">
+          <Card>
+            <CardHeader className="pb-3 border-b">
+              <CardTitle className="text-base">Payroll Input Aggregation</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/30">
+                    <th className="text-left p-3 font-medium">Employee</th>
+                    <th className="text-right p-3 font-medium">Approved Overtime (Hrs)</th>
+                    <th className="text-right p-3 font-medium">Unpaid Leave (Days)</th>
+                    <th className="text-right p-3 font-medium">Travel Reimbursements</th>
+                    <th className="text-right p-3 font-medium">Manual Adj.</th>
+                    <th className="text-right p-3 font-medium">Currencies</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {period.compiledInputs?.map((row, idx) => {
+                    const emp = allEmployees.find((e) => e.id === row.employeeId);
+                    return (
+                      <tr key={idx} className="hover:bg-muted/10">
+                        <td className="p-3 font-medium">
+                          {emp?.preferredName}{" "}
+                          <span className="text-muted-foreground text-xs block">{emp?.id}</span>
+                        </td>
+                        <td className="p-3 text-right">
+                          {row.approvedOvertimeHours > 0 ? (
+                            <Badge variant="secondary">{row.approvedOvertimeHours}</Badge>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+                        <td className="p-3 text-right">
+                          {row.unpaidLeaveDays > 0 ? (
+                            <Badge variant="outline">{row.unpaidLeaveDays}</Badge>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+                        <td className="p-3 text-right">
+                          {row.reimbursementsTotal > 0
+                            ? `${row.reimbursementsTotal.toLocaleString()} ${row.reimbursementsCurrency || "OMR"}`
+                            : "-"}
+                        </td>
+                        <td className="p-3 text-right">
+                          {row.manualAdjustmentsTotal !== 0
+                            ? row.manualAdjustmentsTotal.toLocaleString()
+                            : "-"}
+                        </td>
+                        <td className="p-3 text-right text-muted-foreground">
+                          Adjustments: {row.currency}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {(!period.compiledInputs || period.compiledInputs.length === 0) && (
+                    <tr>
+                      <td colSpan={6} className="text-center p-8 text-muted-foreground">
+                        No inputs compiled yet. Click 'Collect Inputs' to aggregate data from
+                        modules.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="manual">
+          <Card>
+            <CardHeader className="pb-3 border-b flex flex-row items-center justify-between">
+              <CardTitle className="text-base">Manual Allowances & Deductions</CardTitle>
               {isEditable && (
-                <Button onClick={handleCollect} variant="outline">
-                  <Play className="w-4 h-4 mr-2" /> Collect Inputs
+                <Button size="sm" onClick={() => setShowManualDialog(true)}>
+                  <Plus className="w-4 h-4 mr-1" /> Add
                 </Button>
               )}
-              {period.status === "Prepared" && (
-                <Button onClick={handleLock}>
-                  <Lock className="w-4 h-4 mr-2" /> Lock Period
-                </Button>
-              )}
-              {(period.status === "Locked" || period.status === "Exported") && (
-                <Button onClick={handleExport}>
-                  <Download className="w-4 h-4 mr-2" /> Export CSV
-                </Button>
-              )}
-            </div>
-          }
-        />
-
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-4">
-            <TabsTrigger value="aggregation">Compiled Inputs</TabsTrigger>
-            <TabsTrigger value="manual">
-              Manual Adjustments ({period.manualAdjustments.length})
-            </TabsTrigger>
-            <TabsTrigger value="exceptions">
-              Exceptions
-              {period.exceptions.filter((e) => !e.acknowledged).length > 0 && (
-                <Badge
-                  variant="destructive"
-                  className="ml-2 h-5 w-5 p-0 flex items-center justify-center rounded-full"
-                >
-                  {period.exceptions.filter((e) => !e.acknowledged).length}
-                </Badge>
-              )}
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="aggregation">
-            <Card>
-              <CardHeader className="pb-3 border-b">
-                <CardTitle className="text-base">Payroll Input Aggregation</CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-muted/30">
-                      <th className="text-left p-3 font-medium">Employee</th>
-                      <th className="text-right p-3 font-medium">Approved Overtime (Hrs)</th>
-                      <th className="text-right p-3 font-medium">Unpaid Leave (Days)</th>
-                      <th className="text-right p-3 font-medium">Travel Reimbursements</th>
-                      <th className="text-right p-3 font-medium">Manual Adj.</th>
-                      <th className="text-right p-3 font-medium">Currency</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {period.compiledInputs?.map((row, idx) => {
-                      const emp = allEmployees.find((e) => e.id === row.employeeId);
-                      return (
-                        <tr key={idx} className="hover:bg-muted/10">
-                          <td className="p-3 font-medium">
-                            {emp?.preferredName}{" "}
-                            <span className="text-muted-foreground text-xs block">{emp?.id}</span>
-                          </td>
-                          <td className="p-3 text-right">
-                            {row.approvedOvertimeHours > 0 ? (
-                              <Badge variant="secondary">{row.approvedOvertimeHours}</Badge>
-                            ) : (
-                              "-"
-                            )}
-                          </td>
-                          <td className="p-3 text-right">
-                            {row.unpaidLeaveDays > 0 ? (
-                              <Badge variant="outline">{row.unpaidLeaveDays}</Badge>
-                            ) : (
-                              "-"
-                            )}
-                          </td>
-                          <td className="p-3 text-right">
-                            {row.reimbursementsTotal > 0
-                              ? row.reimbursementsTotal.toLocaleString()
-                              : "-"}
-                          </td>
-                          <td className="p-3 text-right">
-                            {row.manualAdjustmentsTotal !== 0
-                              ? row.manualAdjustmentsTotal.toLocaleString()
-                              : "-"}
-                          </td>
-                          <td className="p-3 text-right text-muted-foreground">{row.currency}</td>
-                        </tr>
-                      );
-                    })}
-                    {(!period.compiledInputs || period.compiledInputs.length === 0) && (
-                      <tr>
-                        <td colSpan={6} className="text-center p-8 text-muted-foreground">
-                          No inputs compiled yet. Click 'Collect Inputs' to aggregate data from
-                          modules.
+            </CardHeader>
+            <CardContent className="p-0">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/30">
+                    <th className="text-left p-3 font-medium">Employee</th>
+                    <th className="text-left p-3 font-medium">Type</th>
+                    <th className="text-left p-3 font-medium">Reason</th>
+                    <th className="text-right p-3 font-medium">Amount</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {period.manualAdjustments.map((adj) => {
+                    const emp = allEmployees.find((e) => e.id === adj.employeeId);
+                    return (
+                      <tr key={adj.id}>
+                        <td className="p-3">{emp?.preferredName}</td>
+                        <td className="p-3">
+                          <Badge variant="outline">{adj.type}</Badge>
+                        </td>
+                        <td className="p-3 text-muted-foreground">{adj.reason}</td>
+                        <td
+                          className={`p-3 text-right font-medium ${adj.type === "Deduction" ? "text-destructive" : "text-emerald-600"}`}
+                        >
+                          {adj.type === "Deduction" ? "-" : "+"}
+                          {adj.amount.toLocaleString()} {adj.currency}
                         </td>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="manual">
-            <Card>
-              <CardHeader className="pb-3 border-b flex flex-row items-center justify-between">
-                <CardTitle className="text-base">Manual Allowances & Deductions</CardTitle>
-                {isEditable && (
-                  <Button size="sm" onClick={() => setShowManualDialog(true)}>
-                    <Plus className="w-4 h-4 mr-1" /> Add
-                  </Button>
-                )}
-              </CardHeader>
-              <CardContent className="p-0">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-muted/30">
-                      <th className="text-left p-3 font-medium">Employee</th>
-                      <th className="text-left p-3 font-medium">Type</th>
-                      <th className="text-left p-3 font-medium">Reason</th>
-                      <th className="text-right p-3 font-medium">Amount</th>
+                    );
+                  })}
+                  {period.manualAdjustments.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="text-center p-8 text-muted-foreground">
+                        No manual adjustments.
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {period.manualAdjustments.map((adj) => {
-                      const emp = allEmployees.find((e) => e.id === adj.employeeId);
-                      return (
-                        <tr key={adj.id}>
-                          <td className="p-3">{emp?.preferredName}</td>
-                          <td className="p-3">
-                            <Badge variant="outline">{adj.type}</Badge>
-                          </td>
-                          <td className="p-3 text-muted-foreground">{adj.reason}</td>
-                          <td
-                            className={`p-3 text-right font-medium ${adj.type === "Deduction" ? "text-destructive" : "text-emerald-600"}`}
-                          >
-                            {adj.type === "Deduction" ? "-" : "+"}
-                            {adj.amount.toLocaleString()} {adj.currency}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {period.manualAdjustments.length === 0 && (
-                      <tr>
-                        <td colSpan={4} className="text-center p-8 text-muted-foreground">
-                          No manual adjustments.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </CardContent>
-            </Card>
-          </TabsContent>
+                  )}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-          <TabsContent value="exceptions">
-            <div className="space-y-4">
-              {period.exceptions.length === 0 ? (
-                <Card>
-                  <CardContent className="p-8 text-center text-muted-foreground">
-                    No exceptions detected.
-                  </CardContent>
-                </Card>
-              ) : (
-                period.exceptions.map((ex) => {
-                  const emp = allEmployees.find((e) => e.id === ex.employeeId);
-                  return (
-                    <Card
-                      key={ex.id}
-                      className={
-                        !ex.acknowledged
-                          ? "border-amber-200 bg-amber-50/50"
-                          : "bg-muted/10 opacity-70"
-                      }
-                    >
-                      <CardContent className="p-4 flex items-start justify-between">
-                        <div className="flex gap-4">
-                          <div className="mt-1">
-                            {!ex.acknowledged ? (
-                              <AlertTriangle className="w-5 h-5 text-amber-500" />
-                            ) : (
-                              <CheckCircle className="w-5 h-5 text-muted-foreground" />
-                            )}
-                          </div>
-                          <div>
-                            <div className="font-medium">{ex.type}</div>
-                            <div className="text-sm text-muted-foreground mb-1">
-                              Employee: {emp?.preferredName}
-                            </div>
-                            <p className="text-sm">{ex.description}</p>
-                            {ex.acknowledged && ex.acknowledgementNotes && (
-                              <div className="mt-2 text-xs bg-white p-2 rounded border">
-                                Admin note: {ex.acknowledgementNotes}
-                              </div>
-                            )}
-                          </div>
+        <TabsContent value="exceptions">
+          <div className="space-y-4">
+            {period.exceptions.length === 0 ? (
+              <Card>
+                <CardContent className="p-8 text-center text-muted-foreground">
+                  No exceptions detected.
+                </CardContent>
+              </Card>
+            ) : (
+              period.exceptions.map((ex) => {
+                const emp = allEmployees.find((e) => e.id === ex.employeeId);
+                return (
+                  <Card
+                    key={ex.id}
+                    className={
+                      !ex.acknowledged
+                        ? "border-amber-200 bg-amber-50/50"
+                        : "bg-muted/10 opacity-70"
+                    }
+                  >
+                    <CardContent className="p-4 flex items-start justify-between">
+                      <div className="flex gap-4">
+                        <div className="mt-1">
+                          {!ex.acknowledged ? (
+                            <AlertTriangle className="w-5 h-5 text-amber-500" />
+                          ) : (
+                            <CheckCircle className="w-5 h-5 text-muted-foreground" />
+                          )}
                         </div>
                         <div>
-                          {!ex.acknowledged && isEditable && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="bg-white"
-                              onClick={() => {
-                                setAckNotes("");
-                                setShowAckDialog(ex);
-                              }}
-                            >
-                              Acknowledge
-                            </Button>
+                          <div className="font-medium">{ex.type}</div>
+                          <div className="text-sm text-muted-foreground mb-1">
+                            Employee: {emp?.preferredName}
+                          </div>
+                          <p className="text-sm">{ex.description}</p>
+                          {ex.acknowledged && ex.acknowledgementNotes && (
+                            <div className="mt-2 text-xs bg-white p-2 rounded border">
+                              Admin note: {ex.acknowledgementNotes}
+                            </div>
                           )}
-                          {ex.acknowledged && <Badge variant="secondary">Acknowledged</Badge>}
                         </div>
-                      </CardContent>
-                    </Card>
-                  );
-                })
-              )}
-            </div>
-          </TabsContent>
-        </Tabs>
+                      </div>
+                      <div>
+                        {!ex.acknowledged && isEditable && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="bg-white"
+                            onClick={() => {
+                              setAckNotes("");
+                              setShowAckDialog(ex);
+                            }}
+                          >
+                            Acknowledge
+                          </Button>
+                        )}
+                        {ex.acknowledged && <Badge variant="secondary">Acknowledged</Badge>}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })
+            )}
+          </div>
+        </TabsContent>
+      </Tabs>
 
-        {/* Acknowledge Dialog */}
-        <Dialog open={!!showAckDialog} onOpenChange={(o) => !o && setShowAckDialog(null)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Acknowledge Exception</DialogTitle>
-              <DialogDescription>
-                By acknowledging this exception, you certify that it has been reviewed and requires
-                no further system changes for this period.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-2 mt-2">
-              <label className="text-sm font-medium">Resolution Notes / Explanation</label>
-              <Textarea
-                value={ackNotes}
-                onChange={(e) => setAckNotes(e.target.value)}
-                placeholder="e.g. Discussed with manager, approved to proceed..."
-              />
-            </div>
-            <DialogFooter className="mt-4">
-              <Button variant="outline" onClick={() => setShowAckDialog(null)}>
-                Cancel
-              </Button>
-              <Button onClick={handleAcknowledge} disabled={ackNotes.trim().length < 2}>
-                Confirm Acknowledgment
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+      {/* Acknowledge Dialog */}
+      <Dialog open={!!showAckDialog} onOpenChange={(o) => !o && setShowAckDialog(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Acknowledge Exception</DialogTitle>
+            <DialogDescription>
+              By acknowledging this exception, you certify that it has been reviewed and requires no
+              further system changes for this period.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 mt-2">
+            <label className="text-sm font-medium">Resolution Notes / Explanation</label>
+            <Textarea
+              value={ackNotes}
+              onChange={(e) => setAckNotes(e.target.value)}
+              placeholder="e.g. Discussed with manager, approved to proceed..."
+            />
+          </div>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setShowAckDialog(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleAcknowledge} disabled={ackNotes.trim().length < 2}>
+              Confirm Acknowledgment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-        {/* Manual Adj Dialog */}
-        <Dialog open={showManualDialog} onOpenChange={setShowManualDialog}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add Manual Adjustment</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 mt-2">
+      {/* Manual Adj Dialog */}
+      <Dialog open={showManualDialog} onOpenChange={setShowManualDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Manual Adjustment</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Employee</label>
+              <Select value={manualAdj.employeeId} onValueChange={handleManualEmployeeChange}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select employee" />
+                </SelectTrigger>
+                <SelectContent>
+                  {allEmployees.map((e) => (
+                    <SelectItem key={e.id} value={e.id}>
+                      {e.preferredName} ({e.id})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
-                <label className="text-sm font-medium">Employee</label>
-                <Select value={manualAdj.employeeId} onValueChange={handleManualEmployeeChange}>
+                <label className="text-sm font-medium">Type</label>
+                <Select
+                  value={manualAdj.type}
+                  onValueChange={(value) =>
+                    setManualAdj({
+                      ...manualAdj,
+                      type: value as ManualAdjustmentDraft["type"],
+                    })
+                  }
+                >
                   <SelectTrigger>
-                    <SelectValue placeholder="Select employee" />
+                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {allEmployees.map((e) => (
-                      <SelectItem key={e.id} value={e.id}>
-                        {e.preferredName} ({e.id})
-                      </SelectItem>
-                    ))}
+                    <SelectItem value="Allowance">Allowance</SelectItem>
+                    <SelectItem value="Deduction">Deduction</SelectItem>
+                    <SelectItem value="Correction">Correction</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">Type</label>
-                  <Select
-                    value={manualAdj.type}
-                    onValueChange={(v) => setManualAdj({ ...manualAdj, type: v })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Allowance">Allowance</SelectItem>
-                      <SelectItem value="Deduction">Deduction</SelectItem>
-                      <SelectItem value="Correction">Correction</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">Amount</label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={manualAdj.amount || ""}
-                    onChange={(e) =>
-                      setManualAdj({ ...manualAdj, amount: parseFloat(e.target.value) || 0 })
-                    }
-                  />
-                </div>
-              </div>
               <div className="space-y-1">
-                <label className="text-sm font-medium">Currency</label>
+                <label className="text-sm font-medium">Amount</label>
                 <Input
-                  value={manualAdj.currency}
-                  readOnly
-                  disabled
-                  placeholder="Select an employee first"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Follows the employee's actual salary currency and cannot be edited.
-                </p>
-              </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium">Reason</label>
-                <Input
-                  value={manualAdj.reason}
-                  onChange={(e) => setManualAdj({ ...manualAdj, reason: e.target.value })}
-                  placeholder="e.g. Sign-on bonus, hardware deduction..."
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={manualAdj.amount || ""}
+                  onChange={(e) =>
+                    setManualAdj({ ...manualAdj, amount: parseFloat(e.target.value) || 0 })
+                  }
                 />
               </div>
             </div>
-            <DialogFooter className="mt-4">
-              <Button variant="outline" onClick={() => setShowManualDialog(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleAddManual}>Add Adjustment</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Currency</label>
+              <Input
+                value={manualAdj.currency}
+                readOnly
+                disabled
+                placeholder="Select an employee first"
+              />
+              <p className="text-xs text-muted-foreground">
+                Follows the employee's actual salary currency and cannot be edited.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Reason</label>
+              <Input
+                value={manualAdj.reason}
+                onChange={(e) => setManualAdj({ ...manualAdj, reason: e.target.value })}
+                placeholder="e.g. Sign-on bonus, hardware deduction..."
+              />
+            </div>
+          </div>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setShowManualDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleAddManual}>Add Adjustment</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-        <div className="mt-8 min-h-[400px]">
-          <AuditViewer entityId={period.id} entityType="payrollPeriod" />
-        </div>
+      <div className="mt-8 min-h-[400px]">
+        <AuditViewer entityId={period.id} entityType="payrollPeriod" />
       </div>
-    </RequirePermission>
+    </div>
   );
 }

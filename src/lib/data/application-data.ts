@@ -12,7 +12,8 @@ import { NotificationService } from "./notification-service.ts";
 import { resetStructuredDemoData, initializeSeedData, type SeedResult } from "./seed-service.ts";
 import { getBrowserStorageDriver } from "./storage-driver.ts";
 import { VersionedStorageService } from "./storage.ts";
-import { SYSTEM_ACTOR, type ActorContext } from "./types.ts";
+import { VIA_HR_STORAGE_MIGRATIONS } from "./storage-migrations.ts";
+import type { ActorContext } from "./types.ts";
 
 export interface ApplicationDataServices {
   storage: VersionedStorageService;
@@ -32,7 +33,9 @@ export function configureApplicationDataServices(
 
 export function getApplicationDataServices(): ApplicationDataServices {
   if (browserServices) return browserServices;
-  const storage = new VersionedStorageService(getBrowserStorageDriver());
+  const storage = new VersionedStorageService(getBrowserStorageDriver(), {
+    migrations: VIA_HR_STORAGE_MIGRATIONS,
+  });
   const audit = new AuditService(storage);
   browserServices = {
     storage,
@@ -48,7 +51,23 @@ export function initializeApplicationData(): SeedResult | null {
   return initializeSeedData(getApplicationDataServices().storage);
 }
 
-export function exportApplicationBackup(context: ActorContext = { actor: SYSTEM_ACTOR }): string {
+function requireBackupAdministrator(context: ActorContext, action: string): void {
+  if (context.actor.activeRole === "Super Admin") return;
+  const { audit } = getApplicationDataServices();
+  audit.record({
+    context,
+    action: "access-denied",
+    module: "data-management",
+    entityType: "structured-backup",
+    entityId: action,
+    reason: `Only a Super Admin can ${action}.`,
+    riskLevel: "Critical",
+  });
+  throw new Error(`Only a Super Admin can ${action}.`);
+}
+
+export function exportApplicationBackup(context: ActorContext): string {
+  requireBackupAdministrator(context, "download a system backup");
   const { storage, audit } = getApplicationDataServices();
   audit.record({
     context,
@@ -69,8 +88,9 @@ export function previewApplicationRestore(input: string | unknown): RestorePrevi
 
 export function restoreApplicationBackup(
   input: string | unknown,
-  context: ActorContext = { actor: SYSTEM_ACTOR },
+  context: ActorContext,
 ): RestoreResult {
+  requireBackupAdministrator(context, "restore a system backup");
   const { storage, audit } = getApplicationDataServices();
   const result = restoreStructuredBackup(storage, input);
   audit.record({
@@ -85,9 +105,8 @@ export function restoreApplicationBackup(
   return result;
 }
 
-export async function resetApplicationDemoData(
-  context: ActorContext = { actor: SYSTEM_ACTOR },
-): Promise<SeedResult> {
+export async function resetApplicationDemoData(context: ActorContext): Promise<SeedResult> {
+  requireBackupAdministrator(context, "reset the sample workspace");
   const { storage, files, audit } = getApplicationDataServices();
   await files.clear();
   const result = resetStructuredDemoData(storage);

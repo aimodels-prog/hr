@@ -30,6 +30,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { parseISO, isAfter } from "date-fns";
+import { AuditViewer } from "@/components/audit-viewer";
 
 const generateId = () => Math.random().toString(36).substring(2, 9);
 
@@ -289,6 +290,11 @@ function TravelDetailRoute() {
                 <div>
                   <div className="font-medium">HR Policy & Dates</div>
                   <div className="text-sm text-muted-foreground">{request.hrApprovalStatus}</div>
+                  {request.hrApprovedAt && (
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      Approved {new Date(request.hrApprovedAt).toLocaleString()}
+                    </div>
+                  )}
                   {request.hrNotes && (
                     <div className="text-sm mt-1 bg-muted/50 p-2 rounded">{request.hrNotes}</div>
                   )}
@@ -302,6 +308,11 @@ function TravelDetailRoute() {
                   <div className="text-sm text-muted-foreground">
                     {request.accountsApprovalStatus}
                   </div>
+                  {request.accountsApprovedAt && (
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      Approved {new Date(request.accountsApprovedAt).toLocaleString()}
+                    </div>
+                  )}
                   {request.accountsNotes && (
                     <div className="text-sm mt-1 bg-muted/50 p-2 rounded">
                       {request.accountsNotes}
@@ -318,6 +329,11 @@ function TravelDetailRoute() {
                     <div className="text-sm mt-1 bg-muted/50 p-2 rounded">
                       {request.closureNotes}
                     </div>
+                    {request.closedAt && (
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        Closed {new Date(request.closedAt).toLocaleString()}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -379,6 +395,14 @@ function TravelDetailRoute() {
                   </tr>
                 </tbody>
               </table>
+              {request.authorisedBudget && (
+                <div className="border-t bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+                  Pre-authorised budget locked at{" "}
+                  {request.authorisedBudget.totalEstimate.toLocaleString()}{" "}
+                  {request.authorisedBudget.currency} on{" "}
+                  {new Date(request.authorisedBudget.capturedAt).toLocaleString()}.
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -538,6 +562,7 @@ function TravelDetailRoute() {
               )}
             </Card>
           )}
+          <AuditViewer entityId={request.id} entityType="travel-request" />
         </div>
       </div>
     </RequirePermission>

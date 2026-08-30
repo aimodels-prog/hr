@@ -179,12 +179,17 @@ test("record-scope selector getScopedDocuments restricts document access to the 
 
   // Employee (Omar) sees only their own document.
   const employeeDocs = getScopedDocuments(documents, employees, employeeCtx);
-  assert.deepEqual(employeeDocs.map((d) => d.id), ["doc-omar"]);
+  assert.deepEqual(
+    employeeDocs.map((d) => d.id),
+    ["doc-omar"],
+  );
 
   // A document belonging to an employee outside scope never leaks through, even if it
   // exists in the underlying collection passed in.
   assert.equal(
-    getScopedDocuments(documents, employees, employeeCtx).some((d) => d.employeeId !== "employee-omar"),
+    getScopedDocuments(documents, employees, employeeCtx).some(
+      (d) => d.employeeId !== "employee-omar",
+    ),
     false,
   );
 });

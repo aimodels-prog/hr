@@ -10,6 +10,7 @@ export function PerformanceTab({ employeeId }: { employeeId: string }) {
   const performanceService = useMemo(() => new PerformanceService(), []);
   const goalService = useMemo(() => new GoalService(), []);
   const currentUser = useCurrentUser();
+  const context = currentUser.getActorContext();
   const performanceDestination =
     currentUser.activeRole === "Line Manager" ||
     currentUser.activeRole === "HR" ||
@@ -26,14 +27,17 @@ export function PerformanceTab({ employeeId }: { employeeId: string }) {
   const reviews = useMemo(
     () =>
       performanceService
-        .getReviewsForEmployee(employeeId)
+        .getReviewsForEmployee(employeeId, context)
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [performanceService, employeeId],
+    [performanceService, employeeId, context],
   );
-  const cycles = useMemo(() => performanceService.getCycles(), [performanceService]);
+  const cycles = useMemo(
+    () => performanceService.getCyclesForEmployee(employeeId, context),
+    [performanceService, employeeId, context],
+  );
   const goals = useMemo(
-    () => goalService.getGoalsForEmployee(employeeId),
-    [goalService, employeeId],
+    () => goalService.getGoalsForEmployee(employeeId, context),
+    [goalService, employeeId, context],
   );
   const activeGoals = goals.filter((g) => g.status === "Active");
 

@@ -9,6 +9,8 @@ import { initializeSeedData } from "../src/lib/data/seed-service.ts";
 import { MemoryStorageDriver } from "../src/lib/data/storage-driver.ts";
 import { VersionedStorageService } from "../src/lib/data/storage.ts";
 import { calculateTravelVariancePercent, TravelService } from "../src/lib/data/travel-service.ts";
+import { PayrollService } from "../src/lib/data/payroll-service.ts";
+import type { Employee } from "../src/lib/data/types.ts";
 import type { FileRepository, SaveFileInput } from "../src/lib/data/file-repository.ts";
 import type { ActorContext, FileMetadata } from "../src/lib/data/types.ts";
 
@@ -173,6 +175,15 @@ test("negative estimates are rejected", async () => {
   );
 });
 
+test("invalid calendar dates and unsupported currencies are rejected by the service", async () => {
+  const { travel } = harness();
+  await assert.rejects(
+    () => submitBasicRequest(travel, { startDate: "2026-02-31" }),
+    /valid calendar date/,
+  );
+  await assert.rejects(() => submitBasicRequest(travel, { currency: "XYZ" }), /active currency/);
+});
+
 test("an invalid/archived project is rejected", async () => {
   const { travel } = harness();
   const archived = getProjectRepository().create(
@@ -272,6 +283,57 @@ test("a request only reaches Pre-authorised once BOTH HR and Accounts approve", 
   assert.equal(afterHr.status, "Pending HR and Accounts");
   const afterAccounts = travel.accountsApprove(req.id, true, "Within budget", accounts);
   assert.equal(afterAccounts.status, "Pre-authorised");
+  assert.equal(afterAccounts.hrApprovedBy, hr.actor.userId);
+  assert.equal(afterAccounts.accountsApprovedBy, accounts.actor.userId);
+  assert.ok(afterAccounts.hrApprovedAt);
+  assert.ok(afterAccounts.accountsApprovedAt);
+  assert.ok(afterAccounts.preAuthorisedAt);
+  assert.deepEqual(afterAccounts.authorisedBudget, {
+    estTransport: 100,
+    estAccommodation: 200,
+    estPerDiem: 50,
+    estOther: 0,
+    totalEstimate: 350,
+    currency: "OMR",
+    capturedAt: afterAccounts.preAuthorisedAt,
+  });
+});
+
+test("expense lines cannot change the currency of the pre-authorised trip", async () => {
+  const { travel, files } = harness();
+  const req = await submitBasicRequest(travel);
+  travel.hrApprove(req.id, true, "Fine", hr);
+  travel.accountsApprove(req.id, true, "Fine", accounts);
+  const receipt = await files.save(
+    {
+      blob: new Blob(["receipt"]),
+      name: "receipt.pdf",
+      mimeType: "application/pdf",
+      owner: { entityType: "travel-expense-line", entityId: "line-currency" },
+    },
+    employee,
+  );
+  await assert.rejects(
+    () =>
+      travel.submitExpenses(
+        req.id,
+        [
+          {
+            id: "line-currency",
+            category: "Transport",
+            amount: 100,
+            currency: "GBP",
+            exchangeRate: 0.5,
+            reference: "GBP-1",
+            date: "2020-01-11",
+            receiptFileId: receipt.id,
+          },
+        ],
+        "",
+        employee,
+      ),
+    /pre-authorised trip currency/,
+  );
 });
 
 test("either reviewer rejecting sends the whole request to Rejected", async () => {
@@ -505,4 +567,119 @@ test("closing the reimbursement produces Closed, and rejecting expenses clears s
   );
   const closed = travel.superAdminClose(resubmitted.id, true, "Looks correct", superAdmin);
   assert.equal(closed.status, "Closed");
+  assert.ok(closed.closedAt);
+  assert.equal(closed.closedBy, superAdmin.actor.userId);
+});
+
+test("late-closed reimbursement carries into the next payroll and keeps OMR separate from salary currency", async () => {
+  const { travel, files, storage } = harness();
+  const employees = storage.readCollection<Employee>("employees");
+  storage.writeCollection(
+    "employees",
+    employees.map((item) =>
+      item.id === "employee-omar"
+        ? { ...item, salary: { ...(item.salary ?? { baseMonthly: 0 }), currency: "GBP" } }
+        : item,
+    ),
+  );
+  const req = await submitBasicRequest(travel);
+  travel.hrApprove(req.id, true, "Fine", hr);
+  travel.accountsApprove(req.id, true, "Fine", accounts);
+  const receipt = await files.save(
+    {
+      blob: new Blob(["receipt"]),
+      name: "receipt.pdf",
+      mimeType: "application/pdf",
+      owner: { entityType: "travel-expense-line", entityId: "late-line" },
+    },
+    employee,
+  );
+  await travel.submitExpenses(
+    req.id,
+    [
+      {
+        id: "late-line",
+        category: "Transport",
+        amount: 90,
+        currency: "OMR",
+        reference: "LATE-90",
+        date: "2020-01-11",
+        receiptFileId: receipt.id,
+      },
+    ],
+    "",
+    employee,
+  );
+  travel.superAdminClose(req.id, true, "Receipt checked", superAdmin);
+
+  const payroll = new PayrollService();
+  assert.throws(() => payroll.getAllPeriods(employee), /not authorised/);
+  const period = payroll.createPeriod(
+    {
+      name: "September 2026",
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      cutoffDate: "2026-09-25",
+      paymentDate: "2026-09-30",
+      notes: "Carry-forward regression",
+    },
+    accounts,
+  );
+  const collected = payroll.collectInputs(period.id, accounts);
+  const row = collected.compiledInputs?.find((item) => item.employeeId === "employee-omar");
+  assert.equal(row?.reimbursementsTotal, 90);
+  assert.equal(row?.reimbursementsCurrency, "OMR");
+  assert.equal(row?.currency, "GBP");
+  assert.equal(travel.getRequestById(req.id, accounts)?.payrollPeriodId, period.id);
+  assert.ok(
+    collected.exceptions.some(
+      (item) =>
+        item.type === "Unmatched Reimbursement" &&
+        item.description.includes("automatically carried"),
+    ),
+  );
+});
+
+test("every payroll operation is protected inside the service and denials are audited", () => {
+  const { audit } = harness();
+  const payroll = new PayrollService();
+  const period = payroll.createPeriod(
+    {
+      name: "October 2026",
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      cutoffDate: "2026-10-25",
+      paymentDate: "2026-10-31",
+    },
+    accounts,
+  );
+
+  assert.throws(() => payroll.getAllPeriods(employee), /not authorised/);
+  assert.throws(() => payroll.getPeriodById(period.id, employee), /not authorised/);
+  assert.throws(
+    () =>
+      payroll.createPeriod(
+        {
+          name: "Employee-created period",
+          startDate: "2026-11-01",
+          endDate: "2026-11-30",
+          cutoffDate: "2026-11-25",
+          paymentDate: "2026-11-30",
+        },
+        employee,
+      ),
+    /not authorised/,
+  );
+  assert.throws(() => payroll.collectInputs(period.id, employee), /not authorised/);
+  assert.throws(
+    () => payroll.acknowledgeException(period.id, "missing", "Resolved correctly", employee),
+    /not authorised/,
+  );
+  assert.throws(() => payroll.lockPeriod(period.id, employee), /not authorised/);
+  assert.throws(() => payroll.exportCsv(period.id, employee), /not authorised/);
+
+  const denials = audit
+    .list()
+    .filter((event) => event.module === "payroll" && event.action.toLowerCase().includes("denied"));
+  assert.equal(denials.length, 7);
 });

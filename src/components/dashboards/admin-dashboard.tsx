@@ -31,7 +31,9 @@ export function AdminDashboard() {
   const travelService = useMemo(() => new TravelService(), []);
 
   const pendingLeave = leaveService.getPendingRequestsForSuperAdmin(currentUser.getActorContext());
-  const pendingPayroll = payrollService.getAllPeriods().filter((p) => p.status === "Prepared");
+  const pendingPayroll = payrollService
+    .getAllPeriods(currentUser.getActorContext())
+    .filter((p) => p.status === "Prepared");
   const activeEmployees = employeeService
     .getEmployees(currentUser.getActorContext())
     .filter((employee) => isCurrentWorkforceMember(employee));

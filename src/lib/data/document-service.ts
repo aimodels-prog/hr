@@ -1,5 +1,6 @@
 import { getApplicationDataServices } from "./application-data.ts";
 import { LocalRepository } from "./repository.ts";
+import { SYSTEM_CONTEXT } from "./types.ts";
 import type {
   Employee,
   EmployeeDocument,
@@ -156,6 +157,85 @@ export class DocumentService {
       const expiry = new Date(doc.expiryDate);
       return expiry <= thirtyDaysFromNow;
     });
+  }
+
+  reconcileExpiryNotifications(context: ActorContext): number {
+    const { storage, notifications } = getApplicationDataServices();
+    let created = 0;
+
+    // Using SYSTEM_CONTEXT here because we need to check across all employees.
+    // Ensure this method is only called by trusted background or admin processes.
+    const allExpiring = this.getExpiringDocuments(SYSTEM_CONTEXT);
+
+    const existingKeys = new Set(
+      notifications
+        .list()
+        .map((n) => n.deduplicationKey)
+        .filter((key): key is string => Boolean(key)),
+    );
+
+    const users = storage
+      .readCollection<{ id: string; employeeId: string; status: string; roles: string[] }>("users")
+      .filter((u) => u.status === "Active");
+    const hrUsers = users.filter((u) => u.roles.includes("HR") || u.roles.includes("Super Admin"));
+
+    for (const doc of allExpiring) {
+      // Find employee to notify them
+      const employeeUser = users.find((u) => u.employeeId === doc.employeeId);
+
+      if (employeeUser) {
+        const employeeKey = `doc-expiry-employee-${doc.id}-${doc.expiryDate}`;
+        if (!existingKeys.has(employeeKey)) {
+          notifications.create(
+            {
+              recipientUserId: employeeUser.id,
+              type: "Warning",
+              title: "Document Expiring Soon",
+              message: `Your ${doc.type.replace("_", " ")} is expiring on ${doc.expiryDate}. Please upload a renewal.`,
+              priority: "High",
+              status: "Unread",
+              deduplicationKey: employeeKey,
+              link: {
+                entityType: "employee_document",
+                entityId: doc.id,
+                path: "/staff/me/profile?tab=documents",
+              },
+            },
+            context,
+          );
+          existingKeys.add(employeeKey);
+          created++;
+        }
+      }
+
+      // Notify HR
+      for (const hrUser of hrUsers) {
+        const hrKey = `doc-expiry-hr-${hrUser.id}-${doc.id}-${doc.expiryDate}`;
+        if (!existingKeys.has(hrKey)) {
+          notifications.create(
+            {
+              recipientUserId: hrUser.id,
+              type: "Warning",
+              title: "Employee Document Expiring",
+              message: `A ${doc.type.replace("_", " ")} for employee is expiring on ${doc.expiryDate}.`,
+              priority: "Normal",
+              status: "Unread",
+              deduplicationKey: hrKey,
+              link: {
+                entityType: "employee_document",
+                entityId: doc.id,
+                path: "/staff/document-expiry",
+              },
+            },
+            context,
+          );
+          existingKeys.add(hrKey);
+          created++;
+        }
+      }
+    }
+
+    return created;
   }
 
   async uploadDocument(

@@ -1,30 +1,24 @@
-import { ReportData } from "@/lib/data/report-service";
+import type { ReportData } from "@/lib/data/report-service";
+
+function csvCell(value: unknown): string {
+  const raw = value === null || value === undefined ? "" : String(value);
+  const formulaSafe = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
+  return `"${formulaSafe.replace(/"/g, '""')}"`;
+}
 
 export function exportToCsv(report: ReportData) {
-  // 1. Build headers
-  const headers = report.columns.map(c => `"${c.label.replace(/"/g, '""')}"`).join(",");
-  
-  // 2. Build rows
-  const csvRows = report.rows.map(row => {
-    return report.columns.map(col => {
-      let val = row[col.key];
-      if (val === null || val === undefined) {
-        val = "";
-      }
-      return `"${String(val).replace(/"/g, '""')}"`;
-    }).join(",");
-  });
-
-  // 3. Combine
-  const csvContent = [headers, ...csvRows].join("\n");
-  
-  // 4. Trigger download
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const headers = report.columns.map((column) => csvCell(column.label)).join(",");
+  const csvRows = report.rows.map((row) =>
+    report.columns.map((column) => csvCell(row[column.key])).join(","),
+  );
+  const csvContent = `\uFEFF${[headers, ...csvRows].join("\r\n")}`;
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", `${report.name.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.csv`);
+  link.href = url;
+  link.download = `${report.name.replace(/[^a-z0-9]+/gi, "_")}_${new Date().toISOString().slice(0, 10)}.csv`;
   document.body.appendChild(link);
   link.click();
-  document.body.removeChild(link);
+  link.remove();
+  URL.revokeObjectURL(url);
 }

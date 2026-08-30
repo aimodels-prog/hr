@@ -9,7 +9,12 @@ import {
   ShieldAlert,
   Archive,
   Upload,
+  LayoutGrid,
+  List,
 } from "lucide-react";
+
+import { CandidateKanban } from "@/components/candidates/candidate-kanban";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 import {
   AlertDialog,
@@ -44,6 +49,7 @@ import { CandidateService } from "@/lib/data/candidate-service";
 import { VacancyService } from "@/lib/data/vacancy-service";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { getProjectRepository } from "@/lib/data/master-data";
+import type { Candidate } from "@/lib/data/types";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { toast } from "sonner";
 
@@ -153,6 +159,7 @@ function CandidatesIndex() {
   }, [candidatesWithApps]);
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [viewMode, setViewMode] = useState<"list" | "board">("list");
   const [stageFilter, setStageFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
   const [projectFilter, setProjectFilter] = useState("all");
@@ -173,6 +180,15 @@ function CandidatesIndex() {
   const [hideDoNotContact, setHideDoNotContact] = useState(false);
 
   const [archiveTarget, setArchiveTarget] = useState<{ id: string; name: string } | null>(null);
+
+  const handleStageChange = (candidateId: string, newStage: Candidate["stage"]) => {
+    try {
+      candidateService.updateCandidateStage(candidateId, newStage, currentUser.getActorContext());
+      setRefreshKey((k) => k + 1);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update candidate stage");
+    }
+  };
 
   const confirmArchiveCandidate = () => {
     if (!archiveTarget) return;
@@ -307,6 +323,18 @@ function CandidatesIndex() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <ToggleGroup
+            type="single"
+            value={viewMode}
+            onValueChange={(v) => v && setViewMode(v as "list" | "board")}
+          >
+            <ToggleGroupItem value="list" aria-label="List view">
+              <List className="h-4 w-4" />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="board" aria-label="Board view">
+              <LayoutGrid className="h-4 w-4" />
+            </ToggleGroupItem>
+          </ToggleGroup>
           <Button variant="outline" onClick={exportCsv}>
             <Download className="mr-2 h-4 w-4" /> Export CSV
           </Button>
@@ -551,135 +579,148 @@ function CandidatesIndex() {
         )}
       </div>
 
-      <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Candidate Name</TableHead>
-              <TableHead>Project</TableHead>
-              <TableHead>Stage</TableHead>
-              <TableHead>Experience</TableHead>
-              <TableHead>Active Applications</TableHead>
-              <TableHead>Location</TableHead>
-              <TableHead>Source</TableHead>
-              <TableHead>Owner</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredCandidates.length === 0 ? (
+      <div
+        className={`rounded-xl border bg-card shadow-sm overflow-hidden ${viewMode === "board" ? "p-4 bg-transparent border-0" : ""}`}
+      >
+        {viewMode === "board" ? (
+          <CandidateKanban
+            candidates={filteredCandidates}
+            projectNameById={projectNameById}
+            vacancies={vacancies}
+            userById={userById}
+            onStageChange={handleStageChange}
+            onArchive={(c) => setArchiveTarget({ id: c.id, name: `${c.firstName} ${c.lastName}` })}
+          />
+        ) : (
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={9} className="h-32 text-center text-muted-foreground">
-                  No candidates found matching your criteria.
-                </TableCell>
+                <TableHead>Candidate Name</TableHead>
+                <TableHead>Project</TableHead>
+                <TableHead>Stage</TableHead>
+                <TableHead>Experience</TableHead>
+                <TableHead>Active Applications</TableHead>
+                <TableHead>Location</TableHead>
+                <TableHead>Source</TableHead>
+                <TableHead>Owner</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
-            ) : (
-              filteredCandidates.map((candidate) => {
-                const recentApp = candidate.applications.sort((a, b) =>
-                  b.createdAt.localeCompare(a.createdAt),
-                )[0];
-                const vacancy = recentApp
-                  ? vacancies.find((v) => v.id === recentApp.vacancyId)
-                  : null;
+            </TableHeader>
+            <TableBody>
+              {filteredCandidates.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={9} className="h-32 text-center text-muted-foreground">
+                    No candidates found matching your criteria.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filteredCandidates.map((candidate) => {
+                  const recentApp = candidate.applications.sort((a, b) =>
+                    b.createdAt.localeCompare(a.createdAt),
+                  )[0];
+                  const vacancy = recentApp
+                    ? vacancies.find((v) => v.id === recentApp.vacancyId)
+                    : null;
 
-                return (
-                  <TableRow
-                    key={candidate.id}
-                    className={`cursor-pointer hover:bg-muted/50 ${candidate.doNotContact ? "bg-red-500/5 hover:bg-red-500/10" : ""}`}
-                    onClick={() => navigate({ to: `/staff/candidates/${candidate.id}` })}
-                  >
-                    <TableCell>
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 font-semibold text-primary">
-                          {candidate.firstName[0]}
-                          {candidate.lastName[0]}
+                  return (
+                    <TableRow
+                      key={candidate.id}
+                      className={`cursor-pointer hover:bg-muted/50 ${candidate.doNotContact ? "bg-red-500/5 hover:bg-red-500/10" : ""}`}
+                      onClick={() => navigate({ to: `/staff/candidates/${candidate.id}` })}
+                    >
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 font-semibold text-primary">
+                            {candidate.firstName[0]}
+                            {candidate.lastName[0]}
+                          </div>
+                          <div>
+                            <div className="font-medium flex items-center gap-2">
+                              {candidate.firstName} {candidate.lastName}
+                              {candidate.doNotContact && (
+                                <span title="Do Not Contact">
+                                  <ShieldAlert className="h-4 w-4 text-destructive" />
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {candidate.currentTitle || "No title provided"}
+                            </div>
+                          </div>
                         </div>
-                        <div>
-                          <div className="font-medium flex items-center gap-2">
-                            {candidate.firstName} {candidate.lastName}
-                            {candidate.doNotContact && (
-                              <span title="Do Not Contact">
-                                <ShieldAlert className="h-4 w-4 text-destructive" />
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {candidate.projectId ? (
+                          projectNameById.get(candidate.projectId) || "Unknown"
+                        ) : (
+                          <span className="text-muted-foreground">&mdash;</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={
+                            candidate.stage === "Hired"
+                              ? "default"
+                              : candidate.stage === "Applied"
+                                ? "secondary"
+                                : candidate.stage === "Archived"
+                                  ? "outline"
+                                  : "default"
+                          }
+                        >
+                          {candidate.stage}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{candidate.yearsOfExperience} yrs</TableCell>
+                      <TableCell>
+                        {candidate.applications.length > 0 ? (
+                          <div className="flex flex-col text-sm">
+                            <span className="font-medium">
+                              {candidate.applications.length} application(s)
+                            </span>
+                            {vacancy && (
+                              <span className="text-xs text-muted-foreground truncate max-w-[150px]">
+                                {vacancy.title}
                               </span>
                             )}
                           </div>
-                          <div className="text-xs text-muted-foreground">
-                            {candidate.currentTitle || "No title provided"}
-                          </div>
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {candidate.projectId ? (
-                        projectNameById.get(candidate.projectId) || "Unknown"
-                      ) : (
-                        <span className="text-muted-foreground">&mdash;</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          candidate.stage === "Hired"
-                            ? "default"
-                            : candidate.stage === "Applied"
-                              ? "secondary"
-                              : candidate.stage === "Archived"
-                                ? "outline"
-                                : "default"
-                        }
-                      >
-                        {candidate.stage}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{candidate.yearsOfExperience} yrs</TableCell>
-                    <TableCell>
-                      {candidate.applications.length > 0 ? (
-                        <div className="flex flex-col text-sm">
-                          <span className="font-medium">
-                            {candidate.applications.length} application(s)
-                          </span>
-                          {vacancy && (
-                            <span className="text-xs text-muted-foreground truncate max-w-[150px]">
-                              {vacancy.title}
-                            </span>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground">None</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-sm">{candidate.location}</TableCell>
-                    <TableCell className="text-sm">{candidate.source || "Unknown"}</TableCell>
-                    <TableCell className="text-sm">
-                      {candidate.hrOwnerId ? (
-                        userById.get(candidate.hrOwnerId) || "Unknown"
-                      ) : (
-                        <span className="text-muted-foreground">Unassigned</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {candidate.stage !== "Archived" && candidate.stage !== "Hired" && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setArchiveTarget({
-                              id: candidate.id,
-                              name: `${candidate.firstName} ${candidate.lastName}`,
-                            });
-                          }}
-                        >
-                          <Archive className="mr-1.5 h-3.5 w-3.5" /> Archive
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })
-            )}
-          </TableBody>
-        </Table>
+                        ) : (
+                          <span className="text-muted-foreground">None</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm">{candidate.location}</TableCell>
+                      <TableCell className="text-sm">{candidate.source || "Unknown"}</TableCell>
+                      <TableCell className="text-sm">
+                        {candidate.hrOwnerId ? (
+                          userById.get(candidate.hrOwnerId) || "Unknown"
+                        ) : (
+                          <span className="text-muted-foreground">Unassigned</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {candidate.stage !== "Archived" && candidate.stage !== "Hired" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setArchiveTarget({
+                                id: candidate.id,
+                                name: `${candidate.firstName} ${candidate.lastName}`,
+                              });
+                            }}
+                          >
+                            <Archive className="mr-1.5 h-3.5 w-3.5" /> Archive
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        )}
       </div>
 
       <AlertDialog open={!!archiveTarget} onOpenChange={(open) => !open && setArchiveTarget(null)}>

@@ -7,6 +7,48 @@ export type OvertimeClaimStatus =
 // (Off-in-Lieu) day credited once the claim is fully approved.
 export type OvertimeCompensationType = "Payment" | "TOIL";
 
+export type PayrollOvertimeLedgerState =
+  | "Ready for Payroll"
+  | "Included in Payroll"
+  | "Time Off Credited"
+  | "Time Off Pending"
+  | "Review Needed";
+
+export type PayrollOvertimeLedgerView = "all" | "ready" | "included" | "time-off" | "exceptions";
+
+export interface PayrollOvertimeLedgerFilters {
+  search?: string;
+  view?: PayrollOvertimeLedgerView;
+  dateFrom?: string;
+  dateTo?: string;
+  payrollPeriodId?: string;
+}
+
+export interface PayrollOvertimeLedgerRow {
+  claimId: RecordId;
+  employeeId: RecordId;
+  employeeName: string;
+  employeeNumber: string;
+  date: string;
+  hours: number;
+  compensationType: OvertimeCompensationType;
+  projectName: string;
+  costCentreName: string;
+  activityName: string;
+  locationName: string;
+  reason: string;
+  hasEvidence: boolean;
+  crossCheckWarnings: string[];
+  managerNotes?: string;
+  hrNotes?: string;
+  approvedAt: string;
+  approvedBy?: string;
+  payrollPeriodId?: string;
+  payrollPeriodName?: string;
+  payrollPeriodStatus?: string;
+  state: PayrollOvertimeLedgerState;
+}
+
 export interface OvertimeClaim extends BaseRecord {
   employeeId: RecordId;
   date: string; // YYYY-MM-DD
@@ -28,6 +70,8 @@ export interface OvertimeClaim extends BaseRecord {
   status: OvertimeClaimStatus;
   managerNotes?: string;
   hrNotes?: string;
+  approvedAt?: string;
+  approvedBy?: string;
 
   // Auditing for corrections
   originalClaimId?: string;

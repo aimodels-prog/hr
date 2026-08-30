@@ -55,12 +55,14 @@ const extraAccess: Array<{ role: Role; description: string }> = [
 ];
 
 export function UserManagementPanel() {
-  const { userId, activeRole, getActorContext } = useCurrentUser();
+  const { userId, activeRole, getActorContext, refreshRecords } = useCurrentUser();
   const [service] = useState(() => new EmployeeService());
   const [users, setUsers] = useState(() =>
     service.getUsers(getActorContext(), { includeArchived: true }),
   );
   const [query, setQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState<Role | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<User["status"] | "all">("all");
   const [selected, setSelected] = useState<User | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
   const [status, setStatus] = useState<User["status"]>("Active");
@@ -77,9 +79,13 @@ export function UserManagementPanel() {
         const employee = employees.find((item) => item.id === user.employeeId);
         const searchText =
           `${user.displayName} ${user.workspaceEmail} ${employee?.position ?? ""} ${employee?.department ?? ""}`.toLowerCase();
-        return searchText.includes(query.trim().toLowerCase());
+        return (
+          searchText.includes(query.trim().toLowerCase()) &&
+          (roleFilter === "all" || user.roles.includes(roleFilter)) &&
+          (statusFilter === "all" || user.status === statusFilter)
+        );
       }),
-    [employees, query, users],
+    [employees, query, roleFilter, statusFilter, users],
   );
 
   const open = (user: User) => {
@@ -102,6 +108,7 @@ export function UserManagementPanel() {
       toast.success(`${selected.displayName}'s access has been updated`);
       setSelected(null);
       setUsers(service.getUsers(getActorContext(), { includeArchived: true }));
+      refreshRecords();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not update this user");
     } finally {
@@ -119,14 +126,48 @@ export function UserManagementPanel() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="relative max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search by name, email or job..."
-            className="pl-8"
-          />
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search by name, email or job..."
+              className="pl-8"
+            />
+          </div>
+          <Select
+            value={roleFilter}
+            onValueChange={(value) => setRoleFilter(value as Role | "all")}
+          >
+            <SelectTrigger aria-label="Filter users by access">
+              <SelectValue placeholder="All access" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All access</SelectItem>
+              {(["Employee", "Line Manager", "HR", "Accounts", "IT", "Super Admin"] as Role[]).map(
+                (role) => (
+                  <SelectItem key={role} value={role}>
+                    {role}
+                  </SelectItem>
+                ),
+              )}
+            </SelectContent>
+          </Select>
+          <Select
+            value={statusFilter}
+            onValueChange={(value) => setStatusFilter(value as User["status"] | "all")}
+          >
+            <SelectTrigger aria-label="Filter users by status">
+              <SelectValue placeholder="All statuses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="Active">Active</SelectItem>
+              <SelectItem value="Suspended">Suspended</SelectItem>
+              <SelectItem value="Archived">Archived</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         <div className="overflow-x-auto rounded-lg border">
           <Table>
@@ -150,7 +191,9 @@ export function UserManagementPanel() {
               ) : (
                 rows.map((user) => {
                   const employee = employees.find((item) => item.id === user.employeeId);
-                  const locked = activeRole === "HR" && user.roles.includes("Super Admin");
+                  const locked =
+                    user.id === userId ||
+                    (activeRole === "HR" && user.roles.includes("Super Admin"));
                   return (
                     <TableRow key={user.id}>
                       <TableCell className="font-medium">
@@ -182,7 +225,13 @@ export function UserManagementPanel() {
                           variant="ghost"
                           size="sm"
                           disabled={locked}
-                          title={locked ? "Only a Super Admin can change this account" : undefined}
+                          title={
+                            user.id === userId
+                              ? "Ask another authorised administrator to change your access"
+                              : locked
+                                ? "Only a Super Admin can change this account"
+                                : undefined
+                          }
                           onClick={() => open(user)}
                         >
                           <UserRoundCog className="mr-1.5 h-4 w-4" />

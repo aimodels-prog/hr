@@ -1,6 +1,7 @@
 import type { BaseRecord, RecordId } from "./types";
 
-export type AssetType = "Laptop" | "Desktop" | "Monitor" | "Phone" | "SIM Card" | "Access Card" | "Vehicle" | "Other";
+export type AssetType =
+  "Laptop" | "Desktop" | "Monitor" | "Phone" | "SIM Card" | "Access Card" | "Vehicle" | "Other";
 export type AssetCondition = "New" | "Good" | "Fair" | "Damaged";
 export type AssetAssignmentStatus = "Assigned" | "Returned" | "Lost" | "Damaged";
 

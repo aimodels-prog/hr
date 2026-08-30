@@ -105,7 +105,7 @@ export function ManagerDashboard({ employee, userId }: { employee: Employee; use
 
   // Performance reviews awaiting this manager's input
   const pendingReviews = perfService
-    .getReviews()
+    .getReviews(currentUser.getActorContext())
     .filter((r) => teamIds.has(r.employeeId) && r.status === "Manager Review Pending");
 
   // ---------- Attention Queue ----------

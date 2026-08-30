@@ -619,6 +619,47 @@ const employeeDocuments: EmployeeDocument[] = [
   },
 ];
 
+export const trainingCourses = [
+  {
+    id: "course-first-aid",
+    code: "HSE-001",
+    title: "Basic First Aid & CPR",
+    description: "Mandatory first aid certification for site workers.",
+    provider: "Oman Safety Institute",
+    category: "HSE",
+    deliveryType: "Classroom",
+    durationHours: 8,
+    cost: 50,
+    currency: "OMR",
+    validityMonths: 24,
+    requiredRoles: [],
+    requiredLocations: ["loc_2", "loc_3"],
+    requiredProjects: [],
+    isMandatory: true,
+    isActive: true,
+    createdAt: SEED_TIMESTAMP,
+    updatedAt: SEED_TIMESTAMP,
+    createdBy: "system",
+    updatedBy: "system",
+    recordVersion: 1,
+  }
+];
+
+const trainingRequests = [
+  {
+    id: "training-request-omar-first-aid",
+    employeeId: "employee-omar",
+    courseId: "course-first-aid",
+    justification: "Required for new site assignment.",
+    status: "Pending Supervisor",
+    createdAt: "2026-09-15T08:00:00.000Z",
+    updatedAt: "2026-09-15T08:00:00.000Z",
+    createdBy: "employee-omar",
+    updatedBy: "employee-omar",
+    recordVersion: 1,
+  }
+];
+
 export function createSeedCollections(): CollectionState {
   return structuredClone({
     appSettings: settings,
@@ -642,5 +683,10 @@ export function createSeedCollections(): CollectionState {
     candidates: [],
     applications: [],
     employee_documents: employeeDocuments,
+    training_courses: trainingCourses,
+    training_requests: trainingRequests,
+    training_sessions: [],
+    training_enrollments: [],
+    training_records: [],
   });
 }

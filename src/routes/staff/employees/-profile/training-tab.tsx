@@ -52,7 +52,7 @@ export function TrainingTab({ employeeId }: { employeeId: string }) {
 
   const [records, setRecords] = useState(() =>
     trainingService
-      .getRecordsForUser(employeeId)
+      .getRecordsForUser(employeeId, currentUser.getActorContext())
       .sort((a, b) => b.completionDate.localeCompare(a.completionDate)),
   );
   const today = new Date();
@@ -108,7 +108,7 @@ export function TrainingTab({ employeeId }: { employeeId: string }) {
       );
       setRecords(
         trainingService
-          .getRecordsForUser(employeeId)
+          .getRecordsForUser(employeeId, currentUser.getActorContext())
           .sort((a, b) => b.completionDate.localeCompare(a.completionDate)),
       );
       setForm(emptyForm);

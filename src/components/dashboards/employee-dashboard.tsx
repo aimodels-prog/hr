@@ -91,7 +91,7 @@ export function EmployeeDashboard({ employee, userId }: { employee: Employee; us
     obCase?.tasks.filter((t) => t.assignedUserId === userId && t.status === "Pending") || [];
 
   const myReviews = perfService
-    .getReviewsForEmployee(employee.id)
+    .getReviewsForEmployee(employee.id, actorContext)
     .filter((r) => r.status === "Self Assessment Pending");
 
   // Travel
@@ -112,7 +112,7 @@ export function EmployeeDashboard({ employee, userId }: { employee: Employee; us
   const approvedOvertimeHours = overtimeClaims
     .filter((claim) => claim.status === "Approved")
     .reduce((sum, claim) => sum + claim.hours, 0);
-  const trainingRecords = trainingService.getRecordsForUser(employee.id);
+  const trainingRecords = trainingService.getRecordsForUser(employee.id, actorContext);
 
   // ---------- Attention Queue ----------
   const attentionItems: AttentionItem[] = [];

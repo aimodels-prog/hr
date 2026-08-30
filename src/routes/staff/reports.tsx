@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { AccessDenied, useCurrentUser } from "@/lib/auth";
-import { ReportService, ReportData } from "@/lib/data/report-service";
+import { ReportService, type ReportData, type ReportSavedView } from "@/lib/data/report-service";
 import { exportToCsv } from "@/components/reports/report-exporter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,26 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Download, Printer, Filter, ChevronRight, BarChart3 } from "lucide-react";
+import { Bookmark, Download, Printer, Filter, ChevronRight, BarChart3, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { SettingsService } from "@/lib/data/settings-service";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/staff/reports")({
   component: ReportsRoute,
@@ -24,13 +42,8 @@ export const Route = createFileRoute("/staff/reports")({
 });
 
 function ReportsRoute() {
-  const { canAny } = useCurrentUser();
-
-  // HR/Super Admin reach the full Reports Centre via system:audit_view.
-  // Accounts reaches a payroll-scoped subset via payroll:view - ReportService
-  // restricts what data Accounts can actually see/list once inside (see
-  // ReportService.getScopedEmployees and getAvailableReports).
-  const hasAccess = canAny(["system:audit_view", "payroll:view"]);
+  const { activeRole } = useCurrentUser();
+  const hasAccess = ["HR", "Accounts", "Super Admin"].includes(activeRole);
 
   if (!hasAccess) {
     return <AccessDenied resourceName="Reports" requiredPermission="system:audit_view" />;
@@ -52,29 +65,127 @@ function ReportsDashboard() {
   const [activeReportId, setActiveReportId] = useState<string | null>(null);
   const [reportData, setReportData] = useState<ReportData | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [departmentFilter, setDepartmentFilter] = useState("all");
+  const [loadError, setLoadError] = useState("");
+  const [savedViews, setSavedViews] = useState<ReportSavedView[]>([]);
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [viewName, setViewName] = useState("");
+  const currency = useMemo(() => {
+    return new SettingsService().getAppSettings().baseCurrency;
+  }, []);
 
   const loadReport = (id: string) => {
-    setActiveReportId(id);
-    const data = reportService.generateReport(id);
-    setReportData(data);
-    setFilterQuery(""); // Reset filter on new report load
+    try {
+      setLoadError("");
+      setActiveReportId(id);
+      setReportData(reportService.generateReport(id));
+      setFilterQuery("");
+      setDateFrom("");
+      setDateTo("");
+      setStatusFilter("all");
+      setDepartmentFilter("all");
+      setSavedViews(reportService.getSavedViews(id));
+    } catch (error) {
+      setReportData(null);
+      setLoadError(error instanceof Error ? error.message : "The report could not be loaded.");
+    }
+  };
+
+  const applySavedView = (view: ReportSavedView) => {
+    setFilterQuery(view.filters.search);
+    setDateFrom(view.filters.dateFrom);
+    setDateTo(view.filters.dateTo);
+    setDepartmentFilter(view.filters.department);
+    setStatusFilter(view.filters.status);
+  };
+
+  const saveCurrentView = () => {
+    if (!activeReportId) return;
+    try {
+      reportService.saveView(activeReportId, viewName, {
+        search: filterQuery,
+        dateFrom,
+        dateTo,
+        department: departmentFilter,
+        status: statusFilter,
+      });
+      setSavedViews(reportService.getSavedViews(activeReportId));
+      setSaveDialogOpen(false);
+      setViewName("");
+      toast.success("Report view saved");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The view could not be saved.");
+    }
+  };
+
+  const deleteView = (view: ReportSavedView) => {
+    try {
+      reportService.deleteSavedView(view.id);
+      setSavedViews((current) => current.filter((item) => item.id !== view.id));
+      toast.success("Saved view removed");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The view could not be removed.");
+    }
   };
 
   const handleExport = () => {
     if (reportData && activeReportId) {
-      exportToCsv(reportData);
-      reportService.logReportExport(activeReportId, "CSV");
+      const exported = { ...reportData, rows: filteredRows };
+      exportToCsv(exported);
+      reportService.logReportExport(activeReportId, "CSV", filteredRows.length);
     }
   };
 
   const filteredRows = useMemo(() => {
     if (!reportData) return [];
-    if (!filterQuery) return reportData.rows;
     const q = filterQuery.toLowerCase();
-    return reportData.rows.filter((row) =>
-      Object.values(row).some((val) => String(val).toLowerCase().includes(q)),
-    );
-  }, [reportData, filterQuery]);
+    const dateKeys = reportData.columns
+      .filter((column) => column.type === "date")
+      .map((c) => c.key);
+    return reportData.rows.filter((row) => {
+      if (q && !Object.values(row).some((value) => String(value).toLowerCase().includes(q))) {
+        return false;
+      }
+      if (statusFilter !== "all" && String(row["status"] ?? "") !== statusFilter) return false;
+      if (departmentFilter !== "all" && String(row["department"] ?? "") !== departmentFilter) {
+        return false;
+      }
+      if (dateFrom || dateTo) {
+        const values = dateKeys.map((key) => String(row[key] ?? "")).filter(Boolean);
+        if (!values.length) return false;
+        if (dateFrom && !values.some((value) => value >= dateFrom)) return false;
+        if (dateTo && !values.some((value) => value <= dateTo)) return false;
+      }
+      return true;
+    });
+  }, [dateFrom, dateTo, departmentFilter, filterQuery, reportData, statusFilter]);
+
+  const statuses = useMemo(
+    () =>
+      Array.from(new Set((reportData?.rows ?? []).map((row) => String(row["status"] ?? ""))))
+        .filter(Boolean)
+        .sort(),
+    [reportData],
+  );
+  const departments = useMemo(
+    () =>
+      Array.from(new Set((reportData?.rows ?? []).map((row) => String(row["department"] ?? ""))))
+        .filter(Boolean)
+        .sort(),
+    [reportData],
+  );
+  const attentionCount = useMemo(
+    () =>
+      filteredRows.filter((row) =>
+        /pending|missing|expired|returned|rejected|exception|overdue/i.test(
+          String(row["status"] ?? row["warnings"] ?? ""),
+        ),
+      ).length,
+    [filteredRows],
+  );
 
   // Group reports by category
   const categories = useMemo(() => {
@@ -126,6 +237,12 @@ function ReportsDashboard() {
 
         {/* Report Content area */}
         <div>
+          {loadError && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertTitle>Report unavailable</AlertTitle>
+              <AlertDescription>{loadError}</AlertDescription>
+            </Alert>
+          )}
           {reportData ? (
             <Card className="border-t-4 border-t-primary shadow-sm">
               <CardHeader className="pb-4">
@@ -140,6 +257,9 @@ function ReportsDashboard() {
                     </CardDescription>
                   </div>
                   <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setSaveDialogOpen(true)}>
+                      <Bookmark className="w-4 h-4 mr-2" /> Save View
+                    </Button>
                     <Button variant="outline" size="sm" onClick={() => window.print()}>
                       <Printer className="w-4 h-4 mr-2" /> Print
                     </Button>
@@ -148,9 +268,56 @@ function ReportsDashboard() {
                     </Button>
                   </div>
                 </div>
+
+                {savedViews.length > 0 && (
+                  <div className="mb-4 flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-medium text-muted-foreground">Saved views:</span>
+                    {savedViews.map((view) => (
+                      <div key={view.id} className="inline-flex rounded-md border bg-background">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="rounded-r-none"
+                          onClick={() => applySavedView(view)}
+                        >
+                          {view.name}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 rounded-l-none text-muted-foreground hover:text-destructive"
+                          aria-label={`Remove saved view ${view.name}`}
+                          onClick={() => deleteView(view)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardHeader>
               <CardContent>
-                <div className="mb-4 flex items-center max-w-sm">
+                <div className="mb-4 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-lg border bg-muted/20 p-4">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Matching Records
+                    </p>
+                    <p className="mt-1 text-2xl font-semibold">{filteredRows.length}</p>
+                  </div>
+                  <div className="rounded-lg border bg-muted/20 p-4">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Recorded Statuses
+                    </p>
+                    <p className="mt-1 text-2xl font-semibold">{statuses.length}</p>
+                  </div>
+                  <div className="rounded-lg border bg-muted/20 p-4">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Needs Attention
+                    </p>
+                    <p className="mt-1 text-2xl font-semibold">{attentionCount}</p>
+                  </div>
+                </div>
+                <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                   <div className="relative w-full">
                     <Filter className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input
@@ -160,6 +327,44 @@ function ReportsDashboard() {
                       className="pl-8"
                     />
                   </div>
+                  <Input
+                    type="date"
+                    aria-label="From date"
+                    value={dateFrom}
+                    onChange={(event) => setDateFrom(event.target.value)}
+                  />
+                  <Input
+                    type="date"
+                    aria-label="To date"
+                    value={dateTo}
+                    onChange={(event) => setDateTo(event.target.value)}
+                  />
+                  <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
+                    <SelectTrigger aria-label="Department filter">
+                      <SelectValue placeholder="All departments" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All departments</SelectItem>
+                      {departments.map((department) => (
+                        <SelectItem key={department} value={department}>
+                          {department}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger aria-label="Status filter">
+                      <SelectValue placeholder="All statuses" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All statuses</SelectItem>
+                      {statuses.map((status) => (
+                        <SelectItem key={status} value={status}>
+                          {status}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div className="rounded-md border overflow-x-auto">
@@ -180,7 +385,7 @@ function ReportsDashboard() {
                             {reportData.columns.map((col) => {
                               let val = row[col.key];
                               if (col.type === "currency" && typeof val === "number") {
-                                val = val.toLocaleString() + " OMR";
+                                val = `${val.toLocaleString()} ${currency}`;
                               }
                               return (
                                 <TableCell key={col.key} className="whitespace-nowrap">
@@ -222,6 +427,31 @@ function ReportsDashboard() {
           )}
         </div>
       </div>
+      <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Save this report view</DialogTitle>
+            <DialogDescription>
+              Save the current search, date, department and status filters for your own use.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            autoFocus
+            value={viewName}
+            onChange={(event) => setViewName(event.target.value)}
+            placeholder="For example: Monthly exceptions"
+            maxLength={60}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSaveDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={saveCurrentView} disabled={viewName.trim().length < 2}>
+              Save View
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

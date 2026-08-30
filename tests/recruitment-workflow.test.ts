@@ -93,13 +93,9 @@ function harness() {
   );
   storage.writeCollection(
     "grades",
-    ["G5", "G6", "G7", "G9"].map((name, index) =>
-      masterRecord(`test-grade-${index + 1}`, name),
-    ),
+    ["G5", "G6", "G7", "G9"].map((name, index) => masterRecord(`test-grade-${index + 1}`, name)),
   );
-  storage.writeCollection("employmentTypes", [
-    masterRecord("test-employment-type-1", "Full-time"),
-  ]);
+  storage.writeCollection("employmentTypes", [masterRecord("test-employment-type-1", "Full-time")]);
   const audit = new AuditService(storage);
   const storedFiles = new Map<string, { metadata: Record<string, unknown>; blob: Blob }>();
   configureApplicationDataServices({

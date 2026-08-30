@@ -265,7 +265,7 @@ export class AttendanceService {
     if (stored) return stored;
     let standardDailyHours = 8;
     try {
-      standardDailyHours = new SettingsService().getAppSettings().standardDailyHours;
+      standardDailyHours = new SettingsService().getAppSettingsSync().standardDailyHours;
     } catch {
       // Deterministic fallback for an uninitialised test store.
     }
@@ -538,7 +538,7 @@ export class AttendanceService {
     if (existing) return null;
     const day = new Date(`${targetDate}T12:00:00`);
     if (Number.isNaN(day.getTime())) throw new Error("Invalid attendance date.");
-    const settings = new SettingsService().getAppSettings();
+    const settings = new SettingsService().getAppSettingsSync();
     if (!settings.workingDays.includes(day.getDay())) return { status: "Rest Day" };
 
     const holidays = getMasterDataRepository("publicHolidays")

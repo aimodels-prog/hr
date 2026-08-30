@@ -260,6 +260,24 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   await overtimeDialog.getByRole("button", { name: "Confirm Verification" }).click();
   await expect(overtimeDialog).toBeHidden();
 
+  // Finance receives only the fully approved paid claim. The dedicated ledger resolves allocation
+  // names, exposes the review details and remains unavailable to HR by navigation or direct URL.
+  await previewAs(page, "user-mariam", "Accounts", "/staff/payroll/overtime");
+  await expect(page.getByRole("heading", { name: "Overtime Payroll Ledger" })).toBeVisible();
+  const payrollOvertimeRow = page.getByRole("row").filter({ hasText: labels.overtime });
+  await expect(payrollOvertimeRow).toContainText("Payment");
+  await expect(payrollOvertimeRow).toContainText("Ready for payroll");
+  await expect(payrollOvertimeRow).toContainText("Al Mouj Phase 3");
+  await payrollOvertimeRow.getByRole("button", { name: "Details" }).click();
+  await expect(page.getByRole("dialog", { name: "Overtime Record" })).toContainText(
+    "Payroll status",
+  );
+  await page.keyboard.press("Escape");
+
+  await previewAs(page, "user-rana", "HR", "/staff/payroll/overtime");
+  await expect(page.getByText("Access Denied", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overtime Payroll Ledger" })).toHaveCount(0);
+
   await previewAs(page, "user-rana", "HR", `/staff/timesheet-approvals/${records.timesheetId}`);
   await page.getByRole("button", { name: "Approve Timesheet" }).click();
   await expect(page.getByText("Approved", { exact: true }).first()).toBeVisible();

@@ -2,16 +2,43 @@ import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Plus, Trash2 } from "lucide-react";
 import { PerformanceService } from "@/lib/data/performance-service";
 import { toast } from "sonner";
 import { useCurrentUser } from "@/lib/auth";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 export function PerformanceTemplatesPanel() {
-  const { currentUser, activeRole } = useCurrentUser();
+  const userContext = useCurrentUser();
+  const { currentUser, activeRole } = userContext;
+  const context = userContext.getActorContext();
   const [perfService] = useState(() => new PerformanceService());
-  const [templates, setTemplates] = useState(() => perfService.getTemplates());
+  const [templates, setTemplates] = useState(() => perfService.getTemplates(context));
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [objectiveWeight, setObjectiveWeight] = useState(60);
+  const [competencies, setCompetencies] = useState(
+    "Collaboration\nQuality and accountability\nCustomer focus",
+  );
 
   const currentActor = currentUser
     ? {
@@ -23,7 +50,7 @@ export function PerformanceTemplatesPanel() {
       }
     : { userId: "system", displayName: "System", roles: [] };
 
-  const refresh = () => setTemplates(perfService.getTemplates());
+  const refresh = () => setTemplates(perfService.getTemplates(context));
 
   const deleteTemplate = (id: string) => {
     try {
@@ -32,6 +59,71 @@ export function PerformanceTemplatesPanel() {
       refresh();
     } catch {
       toast.error("Failed to delete template");
+    }
+  };
+
+  const createTemplate = () => {
+    const competencyItems = competencies
+      .split("\n")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (
+      !name.trim() ||
+      !description.trim() ||
+      objectiveWeight < 10 ||
+      objectiveWeight > 90 ||
+      competencyItems.length === 0
+    ) {
+      toast.error("Complete the template name, description, weighting and competencies.");
+      return;
+    }
+    try {
+      perfService.saveTemplate(
+        {
+          name,
+          description,
+          isActive: true,
+          maxRating: 5,
+          employeeCanSeeManagerRatings: true,
+          sections: [
+            {
+              id: crypto.randomUUID(),
+              title: "Objectives",
+              weight: objectiveWeight,
+              items: [
+                {
+                  id: crypto.randomUUID(),
+                  title: "Approved objectives",
+                  description:
+                    "Assess delivery against approved objectives and supporting evidence.",
+                  evidencePrompt: "Refer to objective check-ins and recorded results.",
+                  weight: 100,
+                },
+              ],
+            },
+            {
+              id: crypto.randomUUID(),
+              title: "Core behaviours",
+              weight: 100 - objectiveWeight,
+              items: competencyItems.map((item) => ({
+                id: crypto.randomUUID(),
+                title: item,
+                description: `Assess demonstrated ${item.toLowerCase()} during the review period.`,
+                evidencePrompt: "Give a specific example.",
+                weight: 100 / competencyItems.length,
+              })),
+            },
+          ],
+        },
+        context,
+      );
+      setOpen(false);
+      setName("");
+      setDescription("");
+      refresh();
+      toast.success("Performance template created");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The template could not be created.");
     }
   };
 
@@ -44,10 +136,66 @@ export function PerformanceTemplatesPanel() {
             Manage review templates, sections, rating scales, and weights.
           </p>
         </div>
-        <Button>
+        <Button onClick={() => setOpen(true)}>
           <Plus className="w-4 h-4 mr-2" /> Create Template
         </Button>
       </div>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create performance template</DialogTitle>
+            <DialogDescription>
+              Define the balance between approved objectives and VIA behaviours.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Template name</Label>
+              <Input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Annual performance review"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Textarea
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder="Explain when this template should be used."
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Objectives weighting (%)</Label>
+              <Input
+                type="number"
+                min={10}
+                max={90}
+                value={objectiveWeight}
+                onChange={(event) => setObjectiveWeight(Number(event.target.value))}
+              />
+              <p className="text-xs text-muted-foreground">
+                Core behaviours will carry the remaining {100 - objectiveWeight}%.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Core behaviours (one per line)</Label>
+              <Textarea
+                value={competencies}
+                onChange={(event) => setCompetencies(event.target.value)}
+                rows={5}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={createTemplate}>Create template</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="grid grid-cols-1 gap-6">
         {templates.map((tmpl) => (
@@ -101,7 +249,9 @@ export function PerformanceTemplatesPanel() {
                       {sec.items.map((item) => (
                         <TableRow key={item.id}>
                           <TableCell className="font-medium">{item.title}</TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{item.description}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {item.description}
+                          </TableCell>
                           <TableCell className="text-sm italic text-muted-foreground">
                             {item.evidencePrompt || "-"}
                           </TableCell>
@@ -116,7 +266,9 @@ export function PerformanceTemplatesPanel() {
           </Card>
         ))}
         {templates.length === 0 && (
-          <div className="p-8 text-center border rounded-lg text-muted-foreground">No templates found.</div>
+          <div className="p-8 text-center border rounded-lg text-muted-foreground">
+            No templates found.
+          </div>
         )}
       </div>
     </div>

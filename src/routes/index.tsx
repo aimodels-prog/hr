@@ -82,7 +82,10 @@ function CareerPortal() {
   const [openVacancies, setOpenVacancies] = useState<Vacancy[]>([]);
   useEffect(() => {
     setOpenVacancies(
-      vacancyService.getVacancyRepository().list().filter((vacancy) => vacancy.status === "Open"),
+      vacancyService
+        .getVacancyRepository()
+        .list()
+        .filter((vacancy) => vacancy.status === "Open"),
     );
   }, [vacancyService]);
   const [query, setQuery] = useState("");

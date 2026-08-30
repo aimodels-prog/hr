@@ -7,6 +7,7 @@ import { LocalRepository } from "../src/lib/data/repository.ts";
 import { initializeSeedData, resetStructuredDemoData } from "../src/lib/data/seed-service.ts";
 import { MemoryStorageDriver } from "../src/lib/data/storage-driver.ts";
 import { VersionedStorageService } from "../src/lib/data/storage.ts";
+import { VIA_HR_STORAGE_MIGRATIONS } from "../src/lib/data/storage-migrations.ts";
 import type { ActorContext, BaseRecord } from "../src/lib/data/types.ts";
 
 const fixedNow = () => "2026-08-16T09:00:00.000Z";
@@ -100,6 +101,42 @@ test("registered migrations transform persisted collections", () => {
   assert.deepEqual(versionTwo.readCollection("examples"), [
     { id: "example-1", name: "Original", migrated: true },
   ]);
+});
+
+test("the VIA version 2 migration preserves records and adds the training foundation", () => {
+  const driver = new MemoryStorageDriver();
+  const versionOne = new VersionedStorageService(driver, {
+    schemaVersion: 1,
+    now: fixedNow,
+  });
+  versionOne.initialize();
+  versionOne.writeCollection("employees", [
+    { id: "existing-manager" },
+    { id: "existing-employee", lineManagerId: "existing-manager" },
+  ]);
+  versionOne.writeCollection("users", [
+    { id: "existing-user", employeeId: "existing-manager", roles: ["Employee"] },
+  ]);
+
+  const versionTwo = new VersionedStorageService(driver, {
+    schemaVersion: 2,
+    migrations: VIA_HR_STORAGE_MIGRATIONS,
+    now: fixedNow,
+  });
+  assert.equal(versionTwo.initialize().schemaVersion, 2);
+  assert.deepEqual(versionTwo.readCollection("employees"), [
+    { id: "existing-manager" },
+    { id: "existing-employee", lineManagerId: "existing-manager" },
+  ]);
+  assert.deepEqual(versionTwo.readCollection("users"), [
+    {
+      id: "existing-user",
+      employeeId: "existing-manager",
+      roles: ["Employee", "Line Manager"],
+    },
+  ]);
+  assert.equal(versionTwo.readCollection("training_courses").length, 1);
+  assert.deepEqual(versionTwo.readCollection("training_requests"), []);
 });
 
 test("repository create and archive persist records and audit each mutation", () => {

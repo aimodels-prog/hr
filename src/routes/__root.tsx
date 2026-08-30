@@ -15,6 +15,7 @@ import { initializeApplicationData } from "../lib/data/application-data";
 import { CandidatePreparationService } from "../lib/data/candidate-preparation-service";
 import { CurrentUserProvider } from "../lib/auth";
 import { ApplicationBootScreen } from "../components/layout/application-boot-screen";
+import { Toaster } from "../components/ui/sonner";
 
 function NotFoundComponent() {
   return (
@@ -172,6 +173,7 @@ function RootComponent() {
       ) : (
         <Outlet />
       )}
+      <Toaster richColors position="top-right" />
     </QueryClientProvider>
   );
 }

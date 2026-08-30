@@ -138,6 +138,45 @@ export function OfferDialog({
     }
   };
 
+  const handleGeneratePDF = () => {
+    if (!offer) return;
+    const content = `
+      OFFICIAL JOB OFFER
+      ------------------
+      Date: ${new Date().toLocaleDateString()}
+      Position: ${offer.position}
+      Grade: ${offer.grade}
+      Location: ${offer.location}
+      
+      Start Date: ${offer.startDate}
+      Probation: ${offer.probation}
+      
+      COMPENSATION
+      ------------
+      Base Salary: ${offer.salary.toLocaleString()} ${offer.currency || "OMR"}
+      Allowances: ${offer.allowances}
+      Benefits: ${offer.benefits}
+      
+      CONDITIONS
+      ----------
+      ${offer.conditions}
+      
+      Please respond by: ${offer.responseDeadline}
+    `
+      .trim()
+      .replace(/^\s+/gm, "");
+
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `Job_Offer_${offer.position.replace(/\s+/g, "_")}.txt`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success("Offer document generated");
+  };
+
   const handleStatusChange = async (newStatus: JobOfferStatus, reason?: string) => {
     if (!offer) return;
     setIsSaving(true);
@@ -416,6 +455,16 @@ export function OfferDialog({
                   <CheckCircle className="h-4 w-4" /> Accept & Start Onboarding
                 </Button>
               </>
+            )}
+            {offer && ["Approved", "Ready to Send", "Sent", "Accepted"].includes(offer.status) && (
+              <Button
+                variant="outline"
+                disabled={isSaving}
+                onClick={handleGeneratePDF}
+                className="gap-2"
+              >
+                <FileText className="h-4 w-4" /> Download Document
+              </Button>
             )}
             {offer &&
               !isWithdrawing &&

@@ -23,6 +23,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { LeaveService } from "@/lib/data/leave-service";
 import type { LeavePolicy } from "@/lib/data/leave-types";
 import { useCurrentUser } from "@/lib/auth";
@@ -224,6 +231,177 @@ export function LeavePolicyConfig() {
                       setEditingPolicy({
                         ...editingPolicy,
                         carryForwardLimit: Number(e.target.value),
+                      })
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-4 rounded-md border bg-muted/20 p-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Balance Method</Label>
+                  <Select
+                    value={editingPolicy.accrualMode}
+                    onValueChange={(value: LeavePolicy["accrualMode"]) =>
+                      setEditingPolicy({ ...editingPolicy, accrualMode: value })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Upfront">Granted at the start of the year</SelectItem>
+                      <SelectItem value="Monthly">Earned each month</SelectItem>
+                      <SelectItem value="Per Pay Period">Earned each pay period</SelectItem>
+                      <SelectItem value="Not Applicable">Does not use accrual</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center justify-between rounded-md border bg-background p-3">
+                  <div>
+                    <Label>Paid Leave</Label>
+                    <p className="text-xs text-muted-foreground">Included as paid time away.</p>
+                  </div>
+                  <Switch
+                    checked={editingPolicy.isPaid}
+                    onCheckedChange={(isPaid) => setEditingPolicy({ ...editingPolicy, isPaid })}
+                  />
+                </div>
+                <div className="flex items-center justify-between rounded-md border bg-background p-3">
+                  <div>
+                    <Label>Deduct From Balance</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Turn off for attendance-only leave types.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={editingPolicy.consumesBalance}
+                    onCheckedChange={(consumesBalance) =>
+                      setEditingPolicy({ ...editingPolicy, consumesBalance })
+                    }
+                  />
+                </div>
+                <div className="flex items-center justify-between rounded-md border bg-background p-3">
+                  <div>
+                    <Label>Allow Negative Balance</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Allow approved leave in advance.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={editingPolicy.allowNegativeBalance}
+                    onCheckedChange={(allowNegativeBalance) =>
+                      setEditingPolicy({ ...editingPolicy, allowNegativeBalance })
+                    }
+                  />
+                </div>
+                {editingPolicy.allowNegativeBalance && (
+                  <div className="space-y-2">
+                    <Label>Maximum Advance Days</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={editingPolicy.maxNegativeBalance ?? 0}
+                      onChange={(event) =>
+                        setEditingPolicy({
+                          ...editingPolicy,
+                          maxNegativeBalance: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3 rounded-md border p-4">
+                <div>
+                  <Label className="text-base font-semibold">Request Requirements</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Choose what employees must provide before this leave can be submitted.
+                  </p>
+                </div>
+                <div className="flex items-center justify-between rounded-md bg-muted/30 p-3">
+                  <Label>Supporting Document Required</Label>
+                  <Switch
+                    checked={editingPolicy.requiresAttachment}
+                    onCheckedChange={(requiresAttachment) =>
+                      setEditingPolicy({ ...editingPolicy, requiresAttachment })
+                    }
+                  />
+                </div>
+                <div className="flex items-center justify-between rounded-md bg-muted/30 p-3">
+                  <Label>Handover Contact Required</Label>
+                  <Switch
+                    checked={editingPolicy.requiresHandoverContact}
+                    onCheckedChange={(requiresHandoverContact) =>
+                      setEditingPolicy({ ...editingPolicy, requiresHandoverContact })
+                    }
+                  />
+                </div>
+                <div className="rounded-md bg-primary/5 p-3 text-sm">
+                  Approval route: Employee submits, Supervisor reviews, then HR confirms.
+                </div>
+              </div>
+
+              <div className="space-y-3 rounded-md border p-4">
+                <div>
+                  <Label className="text-base font-semibold">Who Qualifies</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Leave blank when the policy applies to every employee.
+                  </p>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Gender Requirement</Label>
+                    <Select
+                      value={editingPolicy.eligibility?.genderRestriction ?? "Any"}
+                      onValueChange={(value) =>
+                        setEditingPolicy({
+                          ...editingPolicy,
+                          eligibility: {
+                            ...editingPolicy.eligibility,
+                            genderRestriction:
+                              value === "Any" ? undefined : (value as "Male" | "Female"),
+                          },
+                        })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Any">Everyone</SelectItem>
+                        <SelectItem value="Female">Female employees</SelectItem>
+                        <SelectItem value="Male">Male employees</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Minimum Service (Months)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={editingPolicy.eligibility?.minimumServiceMonths ?? 0}
+                      onChange={(event) =>
+                        setEditingPolicy({
+                          ...editingPolicy,
+                          eligibility: {
+                            ...editingPolicy.eligibility,
+                            minimumServiceMonths: Number(event.target.value) || undefined,
+                          },
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between rounded-md bg-muted/30 p-3">
+                  <Label>Omani Employees Only</Label>
+                  <Switch
+                    checked={editingPolicy.eligibility?.omaniOnly ?? false}
+                    onCheckedChange={(omaniOnly) =>
+                      setEditingPolicy({
+                        ...editingPolicy,
+                        eligibility: { ...editingPolicy.eligibility, omaniOnly },
                       })
                     }
                   />

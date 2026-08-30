@@ -752,3 +752,137 @@ test("employees cannot run the annual rollover directly, but the automatic syste
     .filter((event) => event.action === "create" && event.entityType === "leave_transaction");
   assert.ok(rolloverEvents.some((event) => event.actor.userId === "system"));
 });
+
+test("approved leave date changes follow supervisor then HR and adjust the ledger only at final approval", async () => {
+  const { service: leave, storage } = harness();
+  const annual = leave
+    .getEligiblePolicies("employee-omar", employee)
+    .find((item) => item.type === "Annual");
+  assert.ok(annual);
+  const request = await leave.submitLeaveRequest(
+    {
+      employeeId: "employee-omar",
+      policyId: annual.id,
+      startDate: "2027-11-08",
+      endDate: "2027-11-08",
+      reason: "Family appointment",
+      handoverContactId: "employee-layla",
+    },
+    employee,
+  );
+  leave.approveRequest(request.id, manager);
+  const approved = leave.approveRequest(request.id, hr);
+  const balanceBefore = leave.calculateBalance("employee-omar", annual.id, employee).available;
+
+  const amendment = leave.requestAmendment(
+    approved.id,
+    "2027-11-14",
+    "2027-11-15",
+    "Family appointment moved by the provider",
+    employee,
+  );
+  assert.equal(amendment.status, "Amendment Pending Line Manager");
+  assert.equal(
+    leave.calculateBalance("employee-omar", annual.id, employee).available,
+    balanceBefore,
+    "the approved balance must remain unchanged while the amendment is pending",
+  );
+  const managerApproved = leave.approveRequest(amendment.id, manager);
+  assert.equal(managerApproved.status, "Amendment Pending HR");
+  const final = leave.approveRequest(amendment.id, hr);
+  assert.equal(final.status, "Approved");
+  assert.equal(final.startDate, "2027-11-14");
+  assert.equal(final.endDate, "2027-11-15");
+  assert.equal(final.workingDaysRequested, 2);
+  assert.equal(final.pendingAmendment, undefined);
+  assert.equal(final.amendmentHistory?.at(-1)?.outcome, "Approved");
+  assert.equal(
+    leave.calculateBalance("employee-omar", annual.id, employee).available,
+    balanceBefore - 1,
+  );
+  assert.ok(
+    storage
+      .readCollection<{ transactionType: string; referenceId?: string }>("leave_transactions")
+      .some(
+        (item) =>
+          item.transactionType === "Leave Amendment" &&
+          item.referenceId?.startsWith(`amendment:${request.id}:`),
+      ),
+  );
+});
+
+test("a declined leave date change preserves the original approved dates and balance", async () => {
+  const { service: leave } = harness();
+  const annual = leave
+    .getEligiblePolicies("employee-omar", employee)
+    .find((item) => item.type === "Annual");
+  assert.ok(annual);
+  const request = await leave.submitLeaveRequest(
+    {
+      employeeId: "employee-omar",
+      policyId: annual.id,
+      startDate: "2027-12-05",
+      endDate: "2027-12-05",
+      reason: "Family commitment",
+      handoverContactId: "employee-layla",
+    },
+    employee,
+  );
+  leave.approveRequest(request.id, manager);
+  const approved = leave.approveRequest(request.id, hr);
+  const balanceBefore = leave.calculateBalance("employee-omar", annual.id, employee).available;
+  leave.requestAmendment(approved.id, "2027-12-12", "2027-12-13", "Dates need to move", employee);
+  const declined = leave.rejectRequest(request.id, "Team coverage is unavailable", manager);
+  assert.equal(declined.status, "Approved");
+  assert.equal(declined.startDate, "2027-12-05");
+  assert.equal(declined.endDate, "2027-12-05");
+  assert.equal(declined.pendingAmendment, undefined);
+  assert.equal(declined.amendmentHistory?.at(-1)?.outcome, "Declined");
+  assert.equal(
+    leave.calculateBalance("employee-omar", annual.id, employee).available,
+    balanceBefore,
+  );
+});
+
+test("HR cannot approve a stale leave change after the available balance has changed", async () => {
+  const { service: leave } = harness();
+  const annual = leave
+    .getEligiblePolicies("employee-omar", employee)
+    .find((item) => item.type === "Annual");
+  assert.ok(annual);
+  const request = await leave.submitLeaveRequest(
+    {
+      employeeId: "employee-omar",
+      policyId: annual.id,
+      startDate: "2027-10-03",
+      endDate: "2027-10-03",
+      reason: "Family appointment",
+      handoverContactId: "employee-layla",
+    },
+    employee,
+  );
+  leave.approveRequest(request.id, manager);
+  leave.approveRequest(request.id, hr);
+  leave.requestAmendment(
+    request.id,
+    "2027-10-10",
+    "2027-10-21",
+    "The appointment and family support dates changed",
+    employee,
+  );
+  leave.approveRequest(request.id, manager);
+
+  leave.setEmployeeAvailableBalance(
+    "employee-omar",
+    annual.id,
+    0,
+    "A later verified leave adjustment reduced the remaining balance.",
+    hr,
+  );
+  assert.throws(() => leave.approveRequest(request.id, hr), /no longer has enough leave/);
+  const unchanged = leave
+    .getLeaveRequestsForEmployee("employee-omar", employee)
+    .find((item) => item.id === request.id);
+  assert.equal(unchanged?.status, "Amendment Pending HR");
+  assert.equal(unchanged?.startDate, "2027-10-03");
+});

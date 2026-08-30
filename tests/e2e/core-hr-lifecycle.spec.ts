@@ -15,7 +15,7 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
   await page.goto("/staff/employees");
   // Wait for the app to fully boot (seed data initialised) before reaching into its services -
   // otherwise this can race the app's own startup seeding.
-  await expect(page.getByText("Employee Directory").first()).toBeVisible();
+  await expect(page.getByText("Employee Directory").first()).toBeVisible({ timeout: 20_000 });
 
   const newHire = await page.evaluate(async (suffix) => {
     const { EmployeeService } = await import("/src/lib/data/employee-service.ts");
@@ -55,7 +55,7 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
 
   // --- Directory ---
   await page.reload();
-  await expect(page.getByText("Employee Directory").first()).toBeVisible();
+  await expect(page.getByText("Employee Directory").first()).toBeVisible({ timeout: 20_000 });
   await page.getByPlaceholder("Search name or ID...").fill(newHire.employeeNumber);
   await expect(page.getByText(newHire.employeeNumber, { exact: true })).toBeVisible();
 

@@ -18,6 +18,8 @@ import {
   isSameDay,
   format,
   eachDayOfInterval,
+  differenceInCalendarDays,
+  startOfDay,
 } from "date-fns";
 import { getMasterDataRepository, getProjectRepository } from "./master-data.ts";
 import type { ActorContext, User } from "./types.ts";
@@ -63,6 +65,45 @@ export class TimesheetService {
 
   saveSettings(settings: TimesheetSettings, context: ActorContext) {
     this.requireTimesheetAdmin(context, "change timesheet settings");
+    if (
+      !Number.isInteger(settings.weeklyPeriodStartDay) ||
+      settings.weeklyPeriodStartDay < 0 ||
+      settings.weeklyPeriodStartDay > 6
+    ) {
+      throw new Error("Timesheet week start must be a valid day of the week.");
+    }
+    if (
+      !Number.isInteger(settings.submissionDeadlineDays) ||
+      settings.submissionDeadlineDays < 0 ||
+      settings.submissionDeadlineDays > 30
+    ) {
+      throw new Error("Submission deadline must be between 0 and 30 days after period end.");
+    }
+    if (
+      !Number.isFinite(settings.standardDailyHours) ||
+      settings.standardDailyHours <= 0 ||
+      settings.standardDailyHours > 24
+    ) {
+      throw new Error("Standard daily hours must be greater than 0 and no more than 24.");
+    }
+    if (
+      !Number.isFinite(settings.overtimeThresholdWeekly) ||
+      settings.overtimeThresholdWeekly <= 0 ||
+      settings.overtimeThresholdWeekly > 168
+    ) {
+      throw new Error(
+        "The weekly overtime threshold must be greater than 0 and no more than 168 hours.",
+      );
+    }
+    if (!["Manual by HR", "Automatic on Approval"].includes(settings.payrollLockBehaviour)) {
+      throw new Error("Select a valid payroll lock option.");
+    }
+    if (
+      typeof settings.allowCopyPreviousWeek !== "boolean" ||
+      typeof settings.requireHrOvertimeVerification !== "boolean"
+    ) {
+      throw new Error("Timesheet workflow choices must be switched on or off.");
+    }
     if (
       !Number.isFinite(settings.attendanceVarianceToleranceHours) ||
       settings.attendanceVarianceToleranceHours < 0 ||
@@ -171,6 +212,106 @@ export class TimesheetService {
     return this.timesheetRepo.list().filter((t) => t.employeeId === employeeId);
   }
 
+  /**
+   * Recovers all submission reminders that should already have been sent. This remains safe to
+   * call every minute because each employee/period/stage has a permanent deduplication key.
+   */
+  reconcileSubmissionReminders(at = new Date()): number {
+    const { storage, notifications } = getApplicationDataServices();
+    const settings = this.getSettings();
+    const today = startOfDay(at);
+    const existingKeys = new Set(
+      notifications
+        .list()
+        .map((notification) => notification.deduplicationKey)
+        .filter((key): key is string => Boolean(key)),
+    );
+    const users = storage.readCollection<User>("users").filter((user) => user.status === "Active");
+    const employees = new EmployeeService()
+      .getEmployees(SYSTEM_CONTEXT)
+      .filter((employee) => ["Active", "Probation", "Notice"].includes(employee.status));
+    const sheets = this.timesheetRepo.list();
+    let created = 0;
+
+    for (const period of this.periodRepo.list().filter((item) => item.status === "Open")) {
+      const deadline = addDays(parseISO(period.endDate), settings.submissionDeadlineDays);
+      const daysUntilDeadline = differenceInCalendarDays(deadline, today);
+      if (daysUntilDeadline > 2 || daysUntilDeadline < -30) continue;
+
+      const stages = [
+        ...(daysUntilDeadline <= 2
+          ? [{ key: "upcoming", title: "Timesheet due soon", priority: "Normal" as const }]
+          : []),
+        ...(daysUntilDeadline <= 0
+          ? [{ key: "due", title: "Timesheet due today", priority: "High" as const }]
+          : []),
+        ...(daysUntilDeadline < 0
+          ? [{ key: "overdue", title: "Timesheet overdue", priority: "High" as const }]
+          : []),
+      ];
+
+      for (const employee of employees) {
+        const sheet = sheets.find(
+          (item) => item.employeeId === employee.id && item.periodId === period.id,
+        );
+        if (sheet && !["Draft", "Returned"].includes(sheet.status)) continue;
+        const employeeUser = users.find((user) => user.employeeId === employee.id);
+        if (!employeeUser) continue;
+
+        for (const stage of stages) {
+          const key = `timesheet-reminder-${period.id}-${employee.id}-${stage.key}`;
+          if (existingKeys.has(key)) continue;
+          notifications.create(
+            {
+              recipientUserId: employeeUser.id,
+              type: stage.key === "overdue" ? "Warning" : "Info",
+              title: stage.title,
+              message: `Complete and submit your timesheet for ${period.startDate} to ${period.endDate}. The deadline is ${format(deadline, "dd MMM yyyy")}.`,
+              priority: stage.priority,
+              status: "Unread",
+              deduplicationKey: key,
+              link: {
+                entityType: "timesheet-period",
+                entityId: period.id,
+                path: "/staff/me/timesheets",
+              },
+            },
+            SYSTEM_CONTEXT,
+          );
+          existingKeys.add(key);
+          created += 1;
+        }
+
+        if (daysUntilDeadline < 0 && employee.lineManagerId) {
+          const managerUser = users.find((user) => user.employeeId === employee.lineManagerId);
+          const managerKey = `timesheet-overdue-manager-${period.id}-${employee.id}`;
+          if (managerUser && !existingKeys.has(managerKey)) {
+            notifications.create(
+              {
+                recipientUserId: managerUser.id,
+                type: "Approval",
+                title: "Direct-report timesheet overdue",
+                message: `${employee.preferredName || employee.legalName} has not submitted the timesheet for ${period.startDate} to ${period.endDate}.`,
+                priority: "High",
+                status: "Unread",
+                deduplicationKey: managerKey,
+                link: {
+                  entityType: "timesheet-period",
+                  entityId: period.id,
+                  path: "/staff/timesheet-approvals",
+                },
+              },
+              SYSTEM_CONTEXT,
+            );
+            existingKeys.add(managerKey);
+            created += 1;
+          }
+        }
+      }
+    }
+    return created;
+  }
+
   reconcileAttendance(timesheet: TimesheetWithEntries): TimesheetAttendanceReconciliation {
     const period = this.periodRepo.getById(timesheet.periodId);
     if (!period) throw new Error("Timesheet period was not found.");
@@ -271,7 +412,7 @@ export class TimesheetService {
     if (existing) return null;
 
     const settings = this.getSettings();
-    const workingDays = new SettingsService().getAppSettings().workingDays;
+    const workingDays = new SettingsService().getAppSettingsSync().workingDays;
     const interval = eachDayOfInterval({
       start: parseISO(period.startDate),
       end: parseISO(period.endDate),
@@ -303,7 +444,7 @@ export class TimesheetService {
     }
 
     const settings = this.getSettings();
-    const workingDays = new SettingsService().getAppSettings().workingDays;
+    const workingDays = new SettingsService().getAppSettingsSync().workingDays;
     const start = parseISO(period.startDate);
     const end = parseISO(period.endDate);
     const interval = eachDayOfInterval({ start, end });

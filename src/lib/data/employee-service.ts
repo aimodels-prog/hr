@@ -457,6 +457,22 @@ export class EmployeeService {
     }
 
     const roles = Array.from(new Set<Role>(["Employee", ...requestedRoles]));
+    const changesAccess =
+      target.status !== status ||
+      [...target.roles].sort().join("|") !== [...roles].sort().join("|");
+    if (!changesAccess) return target;
+    if (target.id === actorContext.actor.userId) {
+      getApplicationDataServices().audit.record({
+        context: actorContext,
+        action: "access-denied",
+        module: "user-management",
+        entityType: "user",
+        entityId: userId,
+        reason: "A user attempted to change their own access or sign-in status.",
+        riskLevel: "Critical",
+      });
+      throw new Error("Ask another authorised administrator to change your access.");
+    }
     if (actorRole === "HR" && target.roles.includes("Super Admin")) {
       getApplicationDataServices().audit.record({
         context: actorContext,
@@ -495,11 +511,57 @@ export class EmployeeService {
       }
     }
 
-    return this.userRepo.update(
-      userId,
-      { roles, status },
-      { actor: actorContext.actor, reason: trimmedReason },
-    );
+    const employee = target.employeeId
+      ? this.employeeRepo.getById(target.employeeId, { includeArchived: true })
+      : null;
+    if (status === "Active" && employee && ["Inactive", "Archived"].includes(employee.status)) {
+      throw new Error("An inactive or archived employee cannot be given active system access.");
+    }
+    const activeReports = target.employeeId
+      ? this.employeeRepo
+          .list()
+          .filter(
+            (item) =>
+              item.lineManagerId === target.employeeId &&
+              !["Inactive", "Archived"].includes(item.status),
+          )
+      : [];
+    if (activeReports.length > 0 && (!roles.includes("Line Manager") || status !== "Active")) {
+      throw new Error(
+        `Reassign ${activeReports.length} direct report${activeReports.length === 1 ? "" : "s"} before removing this supervisor's access.`,
+      );
+    }
+
+    const { storage, notifications } = getApplicationDataServices();
+    const snapshot = storage.exportState();
+    try {
+      const context = { actor: actorContext.actor, reason: trimmedReason };
+      let updated: User;
+      if (status === "Archived") {
+        updated = this.userRepo.update(userId, { roles, status }, context);
+        updated = this.userRepo.archive(userId, context);
+      } else {
+        if (target.archivedAt) this.userRepo.restore(userId, context);
+        updated = this.userRepo.update(userId, { roles, status }, context);
+      }
+      notifications.create(
+        {
+          recipientUserId: target.id,
+          type: "access.changed",
+          title: "Your VIA HR access changed",
+          message: `Your access is now ${status.toLowerCase()}. Responsibilities: ${roles.join(", ")}.`,
+          priority: status === "Active" ? "Normal" : "High",
+          status: "Unread",
+          deduplicationKey: `access-change-${target.id}-${updated.recordVersion}`,
+          link: { entityType: "user", entityId: target.id, path: "/staff" },
+        },
+        { ...actorContext, reason: trimmedReason },
+      );
+      return updated;
+    } catch (error) {
+      storage.replaceState(snapshot);
+      throw error;
+    }
   }
 
   async createEmployee(

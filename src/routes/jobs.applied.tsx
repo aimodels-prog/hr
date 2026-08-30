@@ -36,16 +36,23 @@ function ApplicationReceived() {
               <CheckCircle2 className="h-8 w-8 text-success" />
             </div>
             <h1 className="text-3xl font-semibold mb-3">Application Received</h1>
-            
+
             <p className="text-muted-foreground mb-6">
-              Thank you for applying to VIA International. Our people team will review your application and get back to you within 5 working days.
+              Thank you for applying to VIA International. Our people team will review your
+              application and get back to you within 5 working days.
             </p>
 
             {ref && !isDuplicate && (
               <div className="bg-muted px-6 py-4 rounded-lg w-full mb-8">
-                <p className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-1">Your Application Reference</p>
-                <p className="text-2xl font-mono font-semibold text-foreground tracking-widest">{ref}</p>
-                <p className="text-xs text-muted-foreground mt-2">Please quote this reference in any correspondence.</p>
+                <p className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-1">
+                  Your Application Reference
+                </p>
+                <p className="text-2xl font-mono font-semibold text-foreground tracking-widest">
+                  {ref}
+                </p>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Please quote this reference in any correspondence.
+                </p>
               </div>
             )}
 

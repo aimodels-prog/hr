@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useRef } from "react";
 import { Download, Upload, RotateCcw, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,6 +17,7 @@ import {
   restoreApplicationBackup,
   resetApplicationDemoData,
 } from "@/lib/data/application-data";
+import type { RestorePreview } from "@/lib/data/backup-service";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -29,27 +29,17 @@ import {
 } from "@/components/ui/dialog";
 
 export function DataManagement() {
-  const { currentUser, activeRole } = useCurrentUser();
+  const { getActorContext, refreshRecords } = useCurrentUser();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const currentActor = currentUser
-    ? {
-        userId: currentUser.id,
-        employeeId: currentUser.employeeId,
-        displayName: currentUser.displayName,
-        roles: currentUser.roles,
-        activeRole,
-      }
-    : { userId: "system", displayName: "System", roles: [] };
-
-  const [restorePreview, setRestorePreview] = useState<any>(null);
+  const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
   const [isRestoreDialogOpen, setIsRestoreDialogOpen] = useState(false);
   const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
   const [rawRestoreData, setRawRestoreData] = useState<string>("");
 
   const handleExport = () => {
     try {
-      const data = exportApplicationBackup({ actor: currentActor });
+      const data = exportApplicationBackup(getActorContext());
       const blob = new Blob([data], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -60,8 +50,8 @@ export function DataManagement() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       toast.success("Backup downloaded");
-    } catch (e: any) {
-      toast.error(`Export failed: ${e.message}`);
+    } catch (error: unknown) {
+      toast.error(`Export failed: ${error instanceof Error ? error.message : "Unexpected error"}`);
     }
   };
 
@@ -77,8 +67,10 @@ export function DataManagement() {
         setRawRestoreData(content);
         setRestorePreview(preview);
         setIsRestoreDialogOpen(true);
-      } catch (e: any) {
-        toast.error(`Invalid backup file: ${e.message}`);
+      } catch (error: unknown) {
+        toast.error(
+          `Invalid backup file: ${error instanceof Error ? error.message : "Unexpected error"}`,
+        );
       } finally {
         if (fileInputRef.current) fileInputRef.current.value = "";
       }
@@ -88,7 +80,7 @@ export function DataManagement() {
 
   const confirmRestore = () => {
     try {
-      const result = restoreApplicationBackup(rawRestoreData, { actor: currentActor as any });
+      const result = restoreApplicationBackup(rawRestoreData, getActorContext());
       const collectionsRestored = Object.keys(result.collectionCounts).length;
       const totalRecordsRestored = Object.values(result.collectionCounts).reduce(
         (a, b) => a + b,
@@ -98,20 +90,22 @@ export function DataManagement() {
         `Restore complete: ${collectionsRestored} sections and ${totalRecordsRestored} records.`,
       );
       setIsRestoreDialogOpen(false);
-      setTimeout(() => window.location.reload(), 1500);
-    } catch (e: any) {
-      toast.error(`Restore failed: ${e.message}`);
+      refreshRecords();
+      window.dispatchEvent(new CustomEvent("via_hr:data_changed"));
+    } catch (error: unknown) {
+      toast.error(`Restore failed: ${error instanceof Error ? error.message : "Unexpected error"}`);
     }
   };
 
   const confirmReset = async () => {
     try {
-      await resetApplicationDemoData({ actor: currentActor as any });
+      await resetApplicationDemoData(getActorContext());
       toast.success("The sample workspace has been restored.");
       setIsResetDialogOpen(false);
-      setTimeout(() => window.location.reload(), 1500);
-    } catch (e: any) {
-      toast.error(`Reset failed: ${e.message}`);
+      refreshRecords();
+      window.dispatchEvent(new CustomEvent("via_hr:data_changed"));
+    } catch (error: unknown) {
+      toast.error(`Reset failed: ${error instanceof Error ? error.message : "Unexpected error"}`);
     }
   };
 
@@ -205,30 +199,44 @@ export function DataManagement() {
 
           {restorePreview && (
             <div className="space-y-4 py-2">
-              <Alert variant={restorePreview.isValid ? "default" : "destructive"}>
-                {restorePreview.isValid ? (
+              <Alert variant={restorePreview.valid ? "default" : "destructive"}>
+                {restorePreview.valid ? (
                   <CheckCircle2 className="h-4 w-4" />
                 ) : (
                   <AlertTriangle className="h-4 w-4" />
                 )}
-                <AlertTitle>
-                  {restorePreview.isValid ? "Valid Backup" : "Invalid Backup"}
-                </AlertTitle>
+                <AlertTitle>{restorePreview.valid ? "Valid Backup" : "Invalid Backup"}</AlertTitle>
                 <AlertDescription>
-                  {restorePreview.isValid
+                  {restorePreview.valid
                     ? "This backup is ready to restore."
-                    : restorePreview.error}
+                    : restorePreview.errors.join(" ")}
                 </AlertDescription>
               </Alert>
 
-              {restorePreview.isValid && (
+              {restorePreview.valid && (
                 <div className="rounded-md bg-muted p-4 text-sm">
                   <div className="grid grid-cols-2 gap-2">
                     <div className="font-medium">Sections:</div>
-                    <div>{restorePreview.collectionsFound}</div>
+                    <div>{Object.keys(restorePreview.collectionCounts).length}</div>
                     <div className="font-medium">Total Records:</div>
-                    <div>{restorePreview.totalRecords}</div>
+                    <div>
+                      {Object.values(restorePreview.collectionCounts).reduce(
+                        (total, count) => total + count,
+                        0,
+                      )}
+                    </div>
+                    <div className="font-medium">Created:</div>
+                    <div>
+                      {restorePreview.exportedAt
+                        ? new Date(restorePreview.exportedAt).toLocaleString()
+                        : "Not recorded"}
+                    </div>
                   </div>
+                  {restorePreview.warnings.length > 0 && (
+                    <div className="mt-3 border-t pt-3 text-amber-700">
+                      {restorePreview.warnings.join(" ")}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -238,7 +246,7 @@ export function DataManagement() {
             <Button variant="outline" onClick={() => setIsRestoreDialogOpen(false)}>
               Cancel
             </Button>
-            <Button disabled={!restorePreview?.isValid} onClick={confirmRestore}>
+            <Button disabled={!restorePreview?.valid} onClick={confirmRestore}>
               Confirm Restore
             </Button>
           </DialogFooter>

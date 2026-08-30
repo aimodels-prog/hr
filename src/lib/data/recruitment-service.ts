@@ -1,6 +1,6 @@
-import { VacancyService } from "./vacancy-service";
-import { CandidateService } from "./candidate-service";
-import type { Vacancy, Candidate, CandidateApplication } from "./types";
+import { VacancyService } from "./vacancy-service.ts";
+import { CandidateService } from "./candidate-service.ts";
+import type { Vacancy, Candidate, CandidateApplication } from "./types.ts";
 
 export interface CandidateWithApplications extends Candidate {
   name: string;
@@ -25,8 +25,8 @@ export class RecruitmentService {
     const candidates = this.candidateService.getCandidateRepository().list();
     const applications = this.candidateService.getApplicationRepository().list();
 
-    return candidates.map(c => {
-      const candidateApps = applications.filter(a => a.candidateId === c.id);
+    return candidates.map((c) => {
+      const candidateApps = applications.filter((a) => a.candidateId === c.id);
       return {
         ...c,
         name: `${c.firstName} ${c.lastName}`.trim(),

@@ -1,16 +1,11 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { Building, Settings2, FileDigit, Database, Download, Users } from "lucide-react";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  getMasterDataRepository,
-  getProjectRepository,
-  type MasterDataCollection,
-} from "@/lib/data/master-data";
+import { MasterDataService, type MasterDataCollection } from "@/lib/data/master-data";
 import type { MasterRecord } from "@/lib/data/types";
 import { MasterDataTable } from "@/components/settings/master-data-table";
 import { MasterDataForm } from "@/components/settings/master-data-form";
@@ -27,6 +22,18 @@ import {
 } from "@/components/settings/organisation-settings-panel";
 import { UserManagementPanel } from "@/components/settings/user-management-panel";
 import { ProjectsPanel } from "@/components/settings/projects-panel";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+
+type HolidayMasterRecord = MasterRecord & { date?: string };
 
 export const Route = createFileRoute("/staff/settings")({
   component: SettingsRoute,
@@ -80,6 +87,9 @@ function SettingsRoute() {
               </TabsTrigger>
               <TabsTrigger value="costCentres" className="gap-2">
                 Cost Centres
+              </TabsTrigger>
+              <TabsTrigger value="activityCodes" className="gap-2">
+                Activity Codes
               </TabsTrigger>
               <TabsTrigger value="positions" className="gap-2">
                 Positions
@@ -140,6 +150,10 @@ function SettingsRoute() {
               <MasterDataSection collection="costCentres" title="Cost Centres" />
             </TabsContent>
 
+            <TabsContent value="activityCodes">
+              <MasterDataSection collection="activityCodes" title="Activity Codes" />
+            </TabsContent>
+
             <TabsContent value="positions">
               <MasterDataSection collection="positions" title="Positions" />
             </TabsContent>
@@ -189,25 +203,31 @@ function MasterDataSection({
   collection: MasterDataCollection;
   title: string;
 }) {
-  const { currentUser, activeRole } = useCurrentUser();
-  const repo = useMemo(() => getMasterDataRepository(collection), [collection]);
+  const currentUser = useCurrentUser();
+  const service = useMemo(() => new MasterDataService(), []);
 
-  const currentActor = currentUser
-    ? {
-        userId: currentUser.id,
-        employeeId: currentUser.employeeId,
-        displayName: currentUser.displayName,
-        roles: currentUser.roles,
-        activeRole,
-      }
-    : { userId: "system", displayName: "System", roles: [] };
-
-  // Use state to force re-renders when data changes
-  const [data, setData] = useState<MasterRecord[]>(() => repo.list({ includeArchived: true }));
+  // Use state with async loading
+  const [data, setData] = useState<MasterRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<MasterRecord | null>(null);
+  const [recordToArchive, setRecordToArchive] = useState<MasterRecord | null>(null);
 
-  const refresh = () => setData(repo.list({ includeArchived: true }));
+  const refresh = async () => {
+    setIsLoading(true);
+    try {
+      const records = await service.listAsync(collection, true);
+      setData(records);
+    } catch (error) {
+      toast.error("Failed to load records");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+  }, [collection]);
 
   const handleAdd = () => {
     setEditingRecord(null);
@@ -220,48 +240,59 @@ function MasterDataSection({
   };
 
   const handleArchive = (record: MasterRecord) => {
-    // In a real app, we'd check dependencies here (e.g. "is this department assigned to active employees?")
-    if (
-      confirm(
-        `Are you sure you want to archive ${record.name}? It will no longer be available for new assignments.`,
-      )
-    ) {
-      try {
-        repo.archive(record.id, { actor: currentActor as any });
-        toast.success(`${title} archived`);
-        refresh();
-      } catch (e: any) {
-        toast.error(e.message);
-      }
+    setRecordToArchive(record);
+  };
+
+  const confirmArchive = async () => {
+    if (!recordToArchive) return;
+    try {
+      await service.archive(collection, recordToArchive.id, currentUser.getActorContext());
+      toast.success(`${title} archived`);
+      setRecordToArchive(null);
+      await refresh();
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : `Could not archive ${title}`);
     }
   };
 
-  const handleRestore = (record: MasterRecord) => {
+  const handleRestore = async (record: MasterRecord) => {
     try {
-      repo.restore(record.id, { actor: currentActor as any });
+      await service.restore(collection, record.id, currentUser.getActorContext());
       toast.success(`${title} restored`);
-      refresh();
-    } catch (e: any) {
-      toast.error(e.message);
+      await refresh();
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : `Could not restore ${title}`);
     }
   };
 
-  const handleSave = (recordData: Partial<MasterRecord>) => {
+  const handleSave = async (recordData: Partial<MasterRecord>) => {
     try {
-      if (collection === "publicHolidays" && !(recordData as any).date) {
+      const holidayData = recordData as Partial<HolidayMasterRecord>;
+      if (collection === "publicHolidays" && !holidayData.date) {
         throw new Error("Holiday date is required.");
       }
       if (editingRecord) {
-        repo.update(editingRecord.id, recordData, { actor: currentActor as any });
+        await service.update(collection, editingRecord.id, recordData, currentUser.getActorContext());
         toast.success(`${title} updated`);
       } else {
-        repo.create(recordData as any, { actor: currentActor as any });
+        await service.create(
+          collection,
+          {
+            name: recordData.name?.trim() ?? "",
+            code: recordData.code?.trim() || undefined,
+            description: recordData.description?.trim() || undefined,
+            isActive: recordData.isActive !== false,
+            orderIndex: recordData.orderIndex ?? data.length,
+            ...(collection === "publicHolidays" ? { date: holidayData.date } : {}),
+          },
+          currentUser.getActorContext(),
+        );
         toast.success(`${title} created`);
       }
       setIsFormOpen(false);
-      refresh();
-    } catch (e: any) {
-      toast.error(e.message);
+      await refresh();
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : `Could not save ${title}`);
     }
   };
 
@@ -295,14 +326,33 @@ function MasterDataSection({
               <Input
                 id="holiday-date"
                 type="date"
-                value={(formData as any).date || ""}
-                onChange={(event) => updateField("date" as any, event.target.value)}
+                value={(formData as Partial<HolidayMasterRecord>).date || ""}
+                onChange={(event) => updateField("date" as keyof MasterRecord, event.target.value)}
                 required
               />
             </div>
           ) : null
         }
       </MasterDataForm>
+
+      <AlertDialog
+        open={Boolean(recordToArchive)}
+        onOpenChange={(open) => !open && setRecordToArchive(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Archive {recordToArchive?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              It will no longer be available for new assignments. VIA HR will stop the action if
+              this record is still used by an active employee or project.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmArchive}>Archive</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

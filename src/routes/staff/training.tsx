@@ -1,18 +1,15 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { PlaceholderPage } from "@/components/placeholder-page";
-import { RequirePermission } from "@/lib/auth";
+import { Outlet, createFileRoute } from "@tanstack/react-router";
+import { RequireAnyPermission } from "@/lib/auth";
 
-export const Route = createFileRoute("/staff/training")({
-  component: TrainingRoute,
-});
+export const Route = createFileRoute("/staff/training")({ component: TrainingLayout });
 
-function TrainingRoute() {
+function TrainingLayout() {
   return (
-    <RequirePermission permission="training:view_all" resourceName="Training">
-      <PlaceholderPage
-        title="Training"
-        breadcrumbs={[{ label: "Talent" }, { label: "Training" }]}
-      />
-    </RequirePermission>
+    <RequireAnyPermission
+      permissions={["training:manage_all", "training:view_direct_reports"]}
+      resourceName="Training Records"
+    >
+      <Outlet />
+    </RequireAnyPermission>
   );
 }

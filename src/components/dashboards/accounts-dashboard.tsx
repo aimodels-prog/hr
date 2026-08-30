@@ -37,7 +37,7 @@ export function AccountsDashboard() {
 
   // Payroll
   const openPeriods = payrollService
-    .getAllPeriods()
+    .getAllPeriods(actorContext)
     .filter(
       (p) =>
         p.status === "Collecting Inputs" || p.status === "Exceptions" || p.status === "Prepared",

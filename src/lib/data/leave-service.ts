@@ -20,6 +20,7 @@ import {
   differenceInMonths,
   parseISO,
   eachDayOfInterval,
+  isValid,
 } from "date-fns";
 import { NotificationService } from "./notification-service.ts";
 import { getMasterDataRepository } from "./master-data.ts";
@@ -727,6 +728,79 @@ export class LeaveService {
     const current = this.policyRepo.getById(id);
     if (!current) throw new Error("Leave policy was not found.");
 
+    const candidate = { ...current, ...updates };
+    if (!candidate.name.trim() || !candidate.code.trim() || !candidate.description.trim()) {
+      throw new Error("Policy name, code and explanation are required.");
+    }
+    if (!Number.isFinite(candidate.baseEntitlementDays) || candidate.baseEntitlementDays < 0) {
+      throw new Error("Base entitlement days must be zero or greater.");
+    }
+    if (!Number.isFinite(candidate.carryForwardLimit) || candidate.carryForwardLimit < 0) {
+      throw new Error("Carry-forward days must be zero or greater.");
+    }
+    if (
+      !["Upfront", "Monthly", "Per Pay Period", "Not Applicable"].includes(candidate.accrualMode)
+    ) {
+      throw new Error("Select a valid balance method.");
+    }
+    if (candidate.allowNegativeBalance) {
+      if (
+        !Number.isFinite(candidate.maxNegativeBalance) ||
+        (candidate.maxNegativeBalance ?? 0) <= 0
+      ) {
+        throw new Error("Enter the maximum number of advance leave days allowed.");
+      }
+    } else {
+      candidate.maxNegativeBalance = undefined;
+    }
+    if (
+      candidate.eligibility?.minimumServiceMonths !== undefined &&
+      (!Number.isInteger(candidate.eligibility.minimumServiceMonths) ||
+        candidate.eligibility.minimumServiceMonths < 0)
+    ) {
+      throw new Error("Minimum service must be a whole number of months.");
+    }
+    if (
+      candidate.approvalChain.length !== 2 ||
+      candidate.approvalChain[0] !== "Line Manager" ||
+      candidate.approvalChain[1] !== "HR"
+    ) {
+      throw new Error("Leave approval must follow Supervisor, then HR.");
+    }
+    if (candidate.noticeRules?.enabled) {
+      const noticeValues = [
+        candidate.noticeRules.shortLeaveMaxDays,
+        candidate.noticeRules.shortLeaveNoticeDays,
+        candidate.noticeRules.longLeaveNoticeDays,
+      ];
+      if (noticeValues.some((value) => !Number.isInteger(value) || value < 0)) {
+        throw new Error("Notice rules must use whole numbers of zero or greater.");
+      }
+      if (candidate.noticeRules.longLeaveNoticeDays < candidate.noticeRules.shortLeaveNoticeDays) {
+        throw new Error("Long leave notice cannot be shorter than short leave notice.");
+      }
+    }
+    if (candidate.payTiers?.length) {
+      const tiers = [...candidate.payTiers].sort((a, b) => a.fromDay - b.fromDay);
+      tiers.forEach((tier, index) => {
+        if (
+          !Number.isInteger(tier.fromDay) ||
+          !Number.isInteger(tier.toDay) ||
+          tier.fromDay < 1 ||
+          tier.toDay < tier.fromDay ||
+          !Number.isFinite(tier.payPercentage) ||
+          tier.payPercentage < 0 ||
+          tier.payPercentage > 100
+        ) {
+          throw new Error("Sick pay tiers must contain valid day ranges and percentages.");
+        }
+        if (index > 0 && tiers[index - 1]!.toDay + 1 !== tier.fromDay) {
+          throw new Error("Sick pay tiers must be continuous without overlapping or missing days.");
+        }
+      });
+      candidate.payTiers = tiers;
+    }
+
     if (
       updates.baseEntitlementDays !== undefined &&
       (!Number.isFinite(updates.baseEntitlementDays) || updates.baseEntitlementDays < 0)
@@ -746,15 +820,22 @@ export class LeaveService {
       }
     }
 
-    const updated = this.policyRepo.update(id, updates, context);
-    if (
-      current.scope === "Annual" &&
-      updated.scope === "Annual" &&
-      current.baseEntitlementDays !== updated.baseEntitlementDays
-    ) {
-      this.applyCurrentYearEntitlementChange(current, updated, context);
+    const { storage } = getApplicationDataServices();
+    const snapshot = storage.createRawSnapshot();
+    try {
+      const updated = this.policyRepo.update(id, candidate, context);
+      if (
+        current.scope === "Annual" &&
+        updated.scope === "Annual" &&
+        current.baseEntitlementDays !== updated.baseEntitlementDays
+      ) {
+        this.applyCurrentYearEntitlementChange(current, updated, context);
+      }
+      return updated;
+    } catch (error) {
+      storage.restoreRawSnapshot(snapshot);
+      throw error;
     }
-    return updated;
   }
 
   private applyCurrentYearEntitlementChange(
@@ -912,7 +993,11 @@ export class LeaveService {
 
     return this.requestRepo
       .list()
-      .filter((r) => r.status === "Pending Line Manager" && reportIds.has(r.employeeId));
+      .filter(
+        (r) =>
+          (r.status === "Pending Line Manager" || r.status === "Amendment Pending Line Manager") &&
+          reportIds.has(r.employeeId),
+      );
   }
 
   getPendingRequestsForHr(context: ActorContext): LeaveRequest[] {
@@ -931,7 +1016,9 @@ export class LeaveService {
           r.status === "Pending Line Manager" ||
           r.status === "Pending HR" ||
           r.status === "Pending Super Admin" ||
-          r.status === "Cancellation Pending",
+          r.status === "Cancellation Pending" ||
+          r.status === "Amendment Pending Line Manager" ||
+          r.status === "Amendment Pending HR",
       );
   }
 
@@ -976,7 +1063,9 @@ export class LeaveService {
         r.status !== "Approved" &&
         r.status !== "Pending Line Manager" &&
         r.status !== "Pending HR" &&
-        r.status !== "Pending Super Admin"
+        r.status !== "Pending Super Admin" &&
+        r.status !== "Amendment Pending Line Manager" &&
+        r.status !== "Amendment Pending HR"
       )
         return false;
 
@@ -991,6 +1080,10 @@ export class LeaveService {
   approveRequest(requestId: string, context: ActorContext): LeaveRequest {
     const req = this.requestRepo.getById(requestId);
     if (!req) throw new Error("Request not found");
+
+    if (req.status === "Amendment Pending Line Manager" || req.status === "Amendment Pending HR") {
+      return this.approveAmendment(req, context);
+    }
 
     if (req.status === "Pending Line Manager") {
       const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
@@ -1110,6 +1203,10 @@ export class LeaveService {
   rejectRequest(requestId: string, reason: string, context: ActorContext): LeaveRequest {
     const req = this.requestRepo.getById(requestId);
     if (!req) throw new Error("Request not found");
+
+    if (req.status === "Amendment Pending Line Manager" || req.status === "Amendment Pending HR") {
+      return this.rejectAmendment(req, reason, context);
+    }
 
     if (req.status === "Pending Line Manager") {
       const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
@@ -1284,7 +1381,7 @@ export class LeaveService {
 
     if (start > end) return 0;
 
-    const workingDaysOfWeek = new SettingsService().getAppSettings().workingDays;
+    const workingDaysOfWeek = new SettingsService().getAppSettingsSync().workingDays;
     const isRestDay = (d: Date) => !workingDaysOfWeek.includes(d.getDay());
 
     let workingDays = 0;
@@ -1430,6 +1527,8 @@ export class LeaveService {
           "Pending Super Admin",
           "Approved",
           "Taken",
+          "Amendment Pending Line Manager",
+          "Amendment Pending HR",
         ];
         const alreadyUsed = this.requestRepo
           .list()
@@ -1577,7 +1676,17 @@ export class LeaveService {
       ? `${requester.preferredName} ${requester.legalName}`
       : "An employee";
 
-    if (request.status === "Pending Line Manager" && requester?.lineManagerId) {
+    const managerStage =
+      request.status === "Pending Line Manager" ||
+      request.status === "Amendment Pending Line Manager";
+    const hrStage = request.status === "Pending HR" || request.status === "Amendment Pending HR";
+    const amendment = request.pendingAmendment;
+    const dateSummary = amendment
+      ? `${amendment.proposedStartDate} to ${amendment.proposedEndDate}`
+      : `${request.startDate} to ${request.endDate}`;
+    const actionLabel = amendment ? "requested a change to" : "requested";
+
+    if (managerStage && requester?.lineManagerId) {
       const managerUser = storage
         .readCollection<User>("users")
         .find((user) => user.employeeId === requester.lineManagerId && user.status === "Active");
@@ -1586,11 +1695,15 @@ export class LeaveService {
           {
             recipientUserId: managerUser.id,
             type: "Approval",
-            title: "Leave request awaiting your approval",
-            message: `${requesterName} requested ${request.workingDaysRequested} day(s) of ${request.policySnapshot.name} from ${request.startDate} to ${request.endDate}.`,
+            title: amendment
+              ? "Leave date change awaiting your approval"
+              : "Leave request awaiting your approval",
+            message: `${requesterName} ${actionLabel} ${amendment?.proposedWorkingDays ?? request.workingDaysRequested} day(s) of ${request.policySnapshot.name}: ${dateSummary}.`,
             priority: "High",
             status: "Unread",
-            deduplicationKey: `leave-submitted-manager-${request.id}`,
+            deduplicationKey: amendment
+              ? `leave-amendment-manager-${request.id}-${amendment.requestedAt}`
+              : `leave-submitted-manager-${request.id}`,
             link: {
               entityType: "leave-request",
               entityId: request.id,
@@ -1600,7 +1713,7 @@ export class LeaveService {
           context,
         );
       }
-    } else if (request.status === "Pending HR") {
+    } else if (hrStage) {
       const hrUsers = storage
         .readCollection<User>("users")
         .filter((user) => user.status === "Active" && user.roles.includes("HR"));
@@ -1609,11 +1722,15 @@ export class LeaveService {
           {
             recipientUserId: hrUser.id,
             type: "Approval",
-            title: "Leave request awaiting HR approval",
-            message: `${requesterName} requested ${request.workingDaysRequested} day(s) of ${request.policySnapshot.name} from ${request.startDate} to ${request.endDate}.`,
+            title: amendment
+              ? "Leave date change awaiting HR approval"
+              : "Leave request awaiting HR approval",
+            message: `${requesterName} ${actionLabel} ${amendment?.proposedWorkingDays ?? request.workingDaysRequested} day(s) of ${request.policySnapshot.name}: ${dateSummary}.`,
             priority: "High",
             status: "Unread",
-            deduplicationKey: `leave-submitted-hr-${request.id}-${hrUser.id}`,
+            deduplicationKey: amendment
+              ? `leave-amendment-hr-${request.id}-${amendment.requestedAt}-${hrUser.id}`
+              : `leave-submitted-hr-${request.id}-${hrUser.id}`,
             link: {
               entityType: "leave-request",
               entityId: request.id,
@@ -1672,6 +1789,418 @@ export class LeaveService {
     req.status = "Cancellation Pending";
     req.cancellationReason = reason;
     return this.requestRepo.update(req.id, req, context);
+  }
+
+  requestAmendment(
+    requestId: string,
+    proposedStartDate: string,
+    proposedEndDate: string,
+    reason: string,
+    context: ActorContext,
+  ): LeaveRequest {
+    const req = this.requestRepo.getById(requestId);
+    if (!req) throw new Error("Request not found");
+    if (!context.actor.employeeId || context.actor.employeeId !== req.employeeId) {
+      this.denyAccess(
+        "Leave amendment denied",
+        req.id,
+        "You can only change your own approved leave.",
+        context,
+      );
+    }
+    if (req.status !== "Approved") throw new Error("Only approved future leave can be changed.");
+    if (reason.trim().length < 3) throw new Error("Explain why the leave dates need to change.");
+    const start = parseISO(proposedStartDate);
+    const end = parseISO(proposedEndDate);
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(proposedStartDate) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(proposedEndDate) ||
+      !isValid(start) ||
+      !isValid(end) ||
+      end < start
+    ) {
+      throw new Error("Enter a valid new leave date range.");
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (parseISO(req.startDate) <= today || start <= today) {
+      throw new Error(
+        "Leave that has started or is in the past cannot be changed here. Contact HR.",
+      );
+    }
+    if (req.startDate === proposedStartDate && req.endDate === proposedEndDate) {
+      throw new Error("Choose dates that are different from the current approved leave.");
+    }
+    const policy = this.policyRepo.getById(req.policyId);
+    if (!policy || !policy.isEnabled) throw new Error("This leave policy is no longer available.");
+    const workingDays = this.calculateWorkingDays(
+      proposedStartDate,
+      proposedEndDate,
+      req.isHalfDay,
+    );
+    if (workingDays <= 0) throw new Error("The proposed period contains no working days.");
+
+    if (policy.noticeRules?.enabled) {
+      const noticeDays = differenceInCalendarDays(start, today);
+      const rules = policy.noticeRules;
+      const requiredNotice =
+        workingDays > rules.shortLeaveMaxDays
+          ? rules.longLeaveNoticeDays
+          : rules.shortLeaveNoticeDays;
+      if (noticeDays < requiredNotice) {
+        throw new Error(
+          `${workingDays > rules.shortLeaveMaxDays ? "Long" : "Short"} leave changes require at least ${requiredNotice} calendar days' notice.`,
+        );
+      }
+    }
+    if (policy.scope === "Per Event") {
+      const limit = this.getEmployeeEntitlementLimit(req.employeeId, policy.id, context);
+      if (workingDays > limit) throw new Error(`${policy.name} is limited to ${limit} days.`);
+    } else if (policy.scope === "Once Per Service") {
+      const limit = this.getEmployeeEntitlementLimit(req.employeeId, policy.id, context);
+      if (workingDays > limit) throw new Error(`${policy.name} is limited to ${limit} days.`);
+    } else if (policy.consumesBalance) {
+      const balance = this.calculateBalance(req.employeeId, req.policyId, context);
+      const minimum = policy.allowNegativeBalance ? -(policy.maxNegativeBalance ?? 0) : 0;
+      const availableAfterChange = balance.available + req.workingDaysRequested - workingDays;
+      if (availableAfterChange < minimum) {
+        throw new Error("The proposed dates exceed the available leave balance.");
+      }
+    }
+
+    const overlapping = this.requestRepo
+      .list()
+      .some(
+        (other) =>
+          other.id !== req.id &&
+          other.employeeId === req.employeeId &&
+          [
+            "Pending Line Manager",
+            "Pending HR",
+            "Pending Super Admin",
+            "Approved",
+            "Taken",
+            "Amendment Pending Line Manager",
+            "Amendment Pending HR",
+          ].includes(other.status) &&
+          proposedStartDate <= other.endDate &&
+          proposedEndDate >= other.startDate,
+      );
+    if (overlapping) throw new Error("The proposed dates overlap another active leave request.");
+
+    const chainApprovals = policy.approvalChain.map((role) => ({
+      role,
+      status: "Pending" as const,
+    }));
+    const startsWithManager = isManagerRoleName(policy.approvalChain[0] ?? "");
+    const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
+    if (startsWithManager && !employee?.lineManagerId) {
+      throw new Error(
+        "Your supervisor has not been assigned. Ask HR to update your reporting line.",
+      );
+    }
+    req.status = startsWithManager ? "Amendment Pending Line Manager" : "Amendment Pending HR";
+    req.pendingAmendment = {
+      proposedStartDate,
+      proposedEndDate,
+      proposedWorkingDays: workingDays,
+      reason: reason.trim(),
+      requestedAt: new Date().toISOString(),
+      requestedBy: context.actor.userId,
+      chainApprovals,
+    };
+    const updated = this.requestRepo.update(req.id, req, context);
+    this.notifySubmission(updated, context);
+    return updated;
+  }
+
+  private approveAmendment(req: LeaveRequest, context: ActorContext): LeaveRequest {
+    const amendment = req.pendingAmendment;
+    if (!amendment) throw new Error("The proposed leave change could not be found.");
+    if (req.status === "Amendment Pending Line Manager") {
+      const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
+      const isManager =
+        Boolean(context.actor.employeeId) && employee?.lineManagerId === context.actor.employeeId;
+      const isRecovery = ["HR", "Super Admin"].includes(context.actor.activeRole ?? "");
+      if (!isManager && !isRecovery) {
+        this.denyAccess(
+          "Leave amendment approval denied",
+          req.id,
+          "Only the assigned supervisor can approve this leave date change.",
+          context,
+        );
+      }
+      if (isRecovery && !isManager && (context.reason?.trim().length ?? 0) < 5) {
+        throw new Error("Enter a reason for completing the unavailable supervisor's review.");
+      }
+      const step = amendment.chainApprovals.find(
+        (item) => isManagerRoleName(item.role) && item.status === "Pending",
+      );
+      if (step) {
+        step.status = "Approved";
+        step.approvedBy = context.actor.userId;
+        step.date = new Date().toISOString();
+      }
+      const hasHrStep = amendment.chainApprovals.some(
+        (item) => ["HR", "Super Admin"].includes(item.role) && item.status === "Pending",
+      );
+      if (hasHrStep) {
+        req.status = "Amendment Pending HR";
+        const updated = this.requestRepo.update(req.id, req, context);
+        this.notifySubmission(updated, context);
+        return updated;
+      }
+      return this.finalizeAmendment(req, context);
+    }
+    if (!["HR", "Super Admin"].includes(context.actor.activeRole ?? "")) {
+      this.denyAccess(
+        "Leave amendment approval denied",
+        req.id,
+        "Only HR can complete this leave date change.",
+        context,
+      );
+    }
+    if (context.actor.employeeId === req.employeeId) {
+      this.denyAccess(
+        "Leave amendment approval denied",
+        req.id,
+        "You cannot approve your own leave date change.",
+        context,
+      );
+    }
+    const step = amendment.chainApprovals.find(
+      (item) => ["HR", "Super Admin"].includes(item.role) && item.status === "Pending",
+    );
+    if (step) {
+      step.status = "Approved";
+      step.approvedBy = context.actor.userId;
+      step.date = new Date().toISOString();
+    }
+    return this.finalizeAmendment(req, context);
+  }
+
+  private finalizeAmendment(req: LeaveRequest, context: ActorContext): LeaveRequest {
+    const amendment = req.pendingAmendment;
+    if (!amendment) throw new Error("The proposed leave change could not be found.");
+    // Approval can happen days after the employee proposed the change. Recheck the facts that may
+    // have changed in the meantime so HR cannot approve stale dates, a new overlap, or an
+    // overdrawn balance.
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (parseISO(amendment.proposedStartDate) <= today) {
+      throw new Error(
+        "These proposed dates have already started or passed. The employee must submit a new request.",
+      );
+    }
+    const policy = this.policyRepo.getById(req.policyId);
+    if (!policy || !policy.isEnabled) {
+      throw new Error("This leave policy is no longer available.");
+    }
+    const currentWorkingDays = this.calculateWorkingDays(
+      amendment.proposedStartDate,
+      amendment.proposedEndDate,
+      req.isHalfDay,
+    );
+    if (currentWorkingDays !== amendment.proposedWorkingDays) {
+      throw new Error(
+        "The working-day calendar changed while this request was awaiting approval. The employee must submit the new dates again.",
+      );
+    }
+    const nowOverlaps = this.requestRepo
+      .list()
+      .some(
+        (other) =>
+          other.id !== req.id &&
+          other.employeeId === req.employeeId &&
+          [
+            "Pending Line Manager",
+            "Pending HR",
+            "Pending Super Admin",
+            "Approved",
+            "Taken",
+            "Amendment Pending Line Manager",
+            "Amendment Pending HR",
+          ].includes(other.status) &&
+          amendment.proposedStartDate <= other.endDate &&
+          amendment.proposedEndDate >= other.startDate,
+      );
+    if (nowOverlaps) {
+      throw new Error(
+        "These proposed dates now overlap another leave request. Review the dates with the employee.",
+      );
+    }
+    if (policy.scope === "Per Event" || policy.scope === "Once Per Service") {
+      const limit = this.getEmployeeEntitlementLimit(req.employeeId, policy.id, context);
+      if (amendment.proposedWorkingDays > limit) {
+        throw new Error(`${policy.name} is limited to ${limit} days.`);
+      }
+    } else if (policy.consumesBalance) {
+      const balance = this.calculateBalance(req.employeeId, req.policyId, context);
+      const minimum = policy.allowNegativeBalance ? -(policy.maxNegativeBalance ?? 0) : 0;
+      const availableAfterChange =
+        balance.available + req.workingDaysRequested - amendment.proposedWorkingDays;
+      if (availableAfterChange < minimum) {
+        throw new Error(
+          "The employee no longer has enough leave for these dates. Review the balance before approving.",
+        );
+      }
+    }
+    const { storage, audit } = getApplicationDataServices();
+    const snapshot = storage.createRawSnapshot();
+    try {
+      const dayDifference = amendment.proposedWorkingDays - req.workingDaysRequested;
+      if (dayDifference !== 0) {
+        this.recordTransaction(
+          {
+            employeeId: req.employeeId,
+            policyId: req.policyId,
+            transactionType: "Leave Amendment",
+            days: -dayDifference,
+            reason: `Approved date change: ${req.startDate} to ${req.endDate} changed to ${amendment.proposedStartDate} to ${amendment.proposedEndDate}.`,
+            referenceId: `amendment:${req.id}:${amendment.requestedAt}`,
+          },
+          context,
+        );
+      }
+      const history = [
+        ...(req.amendmentHistory ?? []),
+        {
+          previousStartDate: req.startDate,
+          previousEndDate: req.endDate,
+          previousWorkingDays: req.workingDaysRequested,
+          newStartDate: amendment.proposedStartDate,
+          newEndDate: amendment.proposedEndDate,
+          newWorkingDays: amendment.proposedWorkingDays,
+          reason: amendment.reason,
+          decidedAt: new Date().toISOString(),
+          decidedBy: context.actor.userId,
+          outcome: "Approved" as const,
+        },
+      ];
+      const updated = this.requestRepo.update(
+        req.id,
+        {
+          startDate: amendment.proposedStartDate,
+          endDate: amendment.proposedEndDate,
+          workingDaysRequested: amendment.proposedWorkingDays,
+          status: "Approved",
+          amendmentHistory: history,
+          pendingAmendment: undefined,
+        } as never,
+        context,
+      );
+      this.notifyAmendmentOutcome(updated, amendment.reason, true, context);
+      return updated;
+    } catch (error) {
+      storage.restoreRawSnapshot(snapshot);
+      try {
+        audit.record({
+          context,
+          action: "leave_amendment_rolled_back",
+          module: "leave",
+          entityType: "leave-request",
+          entityId: req.id,
+          reason: `The leave date change was not completed and all records were restored: ${error instanceof Error ? error.message : "unknown error"}.`,
+          riskLevel: "High",
+        });
+      } catch {
+        // Preserve the original workflow error.
+      }
+      throw error;
+    }
+  }
+
+  private rejectAmendment(req: LeaveRequest, reason: string, context: ActorContext): LeaveRequest {
+    const amendment = req.pendingAmendment;
+    if (!amendment) throw new Error("The proposed leave change could not be found.");
+    if (reason.trim().length < 3)
+      throw new Error("A reason is required to decline the date change.");
+    if (req.status === "Amendment Pending Line Manager") {
+      const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
+      const isManager =
+        Boolean(context.actor.employeeId) && employee?.lineManagerId === context.actor.employeeId;
+      const isRecovery = ["HR", "Super Admin"].includes(context.actor.activeRole ?? "");
+      if (!isManager && !isRecovery) {
+        this.denyAccess(
+          "Leave amendment rejection denied",
+          req.id,
+          "Only the assigned supervisor can decline this leave date change.",
+          context,
+        );
+      }
+    } else if (!["HR", "Super Admin"].includes(context.actor.activeRole ?? "")) {
+      this.denyAccess(
+        "Leave amendment rejection denied",
+        req.id,
+        "Only HR can decline this leave date change.",
+        context,
+      );
+    }
+    if (context.actor.employeeId === req.employeeId) {
+      this.denyAccess(
+        "Leave amendment rejection denied",
+        req.id,
+        "You cannot decide your own leave date change.",
+        context,
+      );
+    }
+    const history = [
+      ...(req.amendmentHistory ?? []),
+      {
+        previousStartDate: req.startDate,
+        previousEndDate: req.endDate,
+        previousWorkingDays: req.workingDaysRequested,
+        newStartDate: amendment.proposedStartDate,
+        newEndDate: amendment.proposedEndDate,
+        newWorkingDays: amendment.proposedWorkingDays,
+        reason: amendment.reason,
+        decidedAt: new Date().toISOString(),
+        decidedBy: context.actor.userId,
+        outcome: "Declined" as const,
+        decisionReason: reason.trim(),
+      },
+    ];
+    const updated = this.requestRepo.update(
+      req.id,
+      { status: "Approved", amendmentHistory: history, pendingAmendment: undefined } as never,
+      context,
+    );
+    this.notifyAmendmentOutcome(updated, reason.trim(), false, context);
+    return updated;
+  }
+
+  private notifyAmendmentOutcome(
+    request: LeaveRequest,
+    reason: string,
+    approved: boolean,
+    context: ActorContext,
+  ): void {
+    const { storage, notifications } = getApplicationDataServices();
+    const user = storage
+      .readCollection<User>("users")
+      .find(
+        (candidate) => candidate.employeeId === request.employeeId && candidate.status === "Active",
+      );
+    if (!user) return;
+    notifications.create(
+      {
+        recipientUserId: user.id,
+        type: approved ? "Success" : "Warning",
+        title: approved ? "Leave dates changed" : "Leave date change declined",
+        message: approved
+          ? `Your approved leave now runs from ${request.startDate} to ${request.endDate}.`
+          : `Your original approved leave remains unchanged. ${reason}`,
+        priority: "High",
+        status: "Unread",
+        deduplicationKey: `leave-amendment-outcome-${request.id}-${request.recordVersion}`,
+        link: {
+          entityType: "leave-request",
+          entityId: request.id,
+          path: "/staff/me/leave-balances",
+        },
+      },
+      context,
+    );
   }
 
   reconcileLeaveStates(context: ActorContext): void {
@@ -1970,6 +2499,12 @@ export class LeaveService {
         req.status === "Pending Super Admin"
       ) {
         pending += req.workingDaysRequested;
+      } else if (
+        (req.status === "Amendment Pending Line Manager" ||
+          req.status === "Amendment Pending HR") &&
+        req.pendingAmendment
+      ) {
+        pending += Math.max(0, req.pendingAmendment.proposedWorkingDays - req.workingDaysRequested);
       }
     }
 
@@ -1981,6 +2516,7 @@ export class LeaveService {
       else if (tx.transactionType === "Carry-Forward") carriedForward += tx.days;
       else if (tx.transactionType === "Accrual") accrued += tx.days;
       else if (tx.transactionType === "Manual Adjustment") adjustments += tx.days;
+      else if (tx.transactionType === "Leave Amendment") adjustments += tx.days;
       else if (tx.transactionType === "Cancellation Restoration")
         adjustments += tx.days; // Acts as a positive adjustment
       else if (tx.transactionType === "Approved Leave") {
@@ -2172,6 +2708,8 @@ export class LeaveService {
       "Pending Line Manager",
       "Pending HR",
       "Pending Super Admin",
+      "Amendment Pending Line Manager",
+      "Amendment Pending HR",
     ];
     const currentYear = new Date().getFullYear();
 

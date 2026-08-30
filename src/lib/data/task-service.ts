@@ -9,7 +9,12 @@ import type { OvertimeClaim } from "./overtime-types.ts";
 import type { PayrollPeriod } from "./payroll-types.ts";
 import type { PerformanceReview, ReviewCycle } from "./performance-types.ts";
 import type { TimesheetPeriod, TimesheetWithEntries } from "./timesheet-types.ts";
-import type { TrainingRecord } from "./training-types.ts";
+import type {
+  TrainingEnrollment,
+  TrainingRecord,
+  TrainingRequest,
+  TrainingSession,
+} from "./training-types.ts";
 import type { TravelRequest } from "./travel-types.ts";
 import type {
   Candidate,
@@ -206,6 +211,61 @@ export class TaskService {
         });
       }
     }
+    const sessions = new Map(
+      storage
+        .readCollection<TrainingSession>("training_sessions")
+        .map((session) => [session.id, session]),
+    );
+    for (const enrollment of storage.readCollection<TrainingEnrollment>("training_enrollments")) {
+      if (
+        !isActive(enrollment) ||
+        enrollment.employeeId !== viewer.employeeId ||
+        enrollment.status !== "Scheduled"
+      )
+        continue;
+      const session = enrollment.sessionId ? sessions.get(enrollment.sessionId) : undefined;
+      addTask({
+        id: `training-attend-${enrollment.id}`,
+        module: "Training",
+        title: "Attend scheduled training",
+        description: session
+          ? `${session.title} at ${session.location}.`
+          : "Your training session has been scheduled.",
+        priority: "Normal",
+        dueDate: session?.startAt.slice(0, 10),
+        actionLabel: "View training plan",
+        actionUrl: "/staff/me/training",
+        sourceType: "training-enrollment",
+        sourceId: enrollment.id,
+        subjectEmployeeId: enrollment.employeeId,
+        subjectName: employeeName(enrollment.employeeId),
+      });
+    }
+    const renewalWindow = addDays(today, 60);
+    for (const record of storage.readCollection<TrainingRecord>("training_records")) {
+      if (
+        isActive(record) &&
+        record.employeeId === viewer.employeeId &&
+        record.expiryDate &&
+        record.expiryDate >= today &&
+        record.expiryDate <= renewalWindow
+      ) {
+        addTask({
+          id: `training-renew-${record.id}`,
+          module: "Training",
+          title: "Renew expiring certification",
+          description: `${record.title} expires on ${record.expiryDate}. Review the available renewal training.`,
+          priority: record.expiryDate <= addDays(today, 30) ? "High" : "Normal",
+          dueDate: record.expiryDate,
+          actionLabel: "Open my learning",
+          actionUrl: "/staff/me/training",
+          sourceType: "training-record",
+          sourceId: record.id,
+          subjectEmployeeId: record.employeeId,
+          subjectName: employeeName(record.employeeId),
+        });
+      }
+    }
   }
 
   private addManagerTasks(
@@ -319,11 +379,33 @@ export class TaskService {
           priority: "Normal",
           dueDate: addDays(goal.updatedAt.slice(0, 10), 3),
           actionLabel: "Review goals",
-          actionUrl: "/staff/performance/goals",
+          actionUrl: "/staff/performance/team",
           sourceType: "employee-goal",
           sourceId: goal.id,
           subjectEmployeeId: goal.employeeId,
           subjectName: employeeName(goal.employeeId),
+        });
+      }
+    }
+    for (const request of storage.readCollection<TrainingRequest>("training_requests")) {
+      if (
+        isActive(request) &&
+        request.status === "Pending Supervisor" &&
+        directReportIds.has(request.employeeId)
+      ) {
+        addTask({
+          id: `training-manager-${request.id}`,
+          module: "Training",
+          title: "Review training request",
+          description: `${employeeName(request.employeeId)} submitted a training request for your review.`,
+          priority: "Normal",
+          dueDate: addDays(request.createdAt.slice(0, 10), 3),
+          actionLabel: "Review training",
+          actionUrl: "/staff/training",
+          sourceType: "training-request",
+          sourceId: request.id,
+          subjectEmployeeId: request.employeeId,
+          subjectName: employeeName(request.employeeId),
         });
       }
     }
@@ -472,6 +554,22 @@ export class TaskService {
     for (const review of storage.readCollection<PerformanceReview>("performanceReviews")) {
       if (!isActive(review)) continue;
       const cycle = cycleById.get(review.cycleId);
+      if (review.employeeId === viewer.employeeId && review.status === "Objectives Pending") {
+        addTask({
+          id: `performance-objectives-${review.id}`,
+          module: "Performance",
+          title: "Set performance objectives",
+          description: `Create measurable objectives for ${cycle?.name ?? "the current review cycle"}.`,
+          priority: "High",
+          dueDate: cycle?.objectiveSettingDeadline,
+          actionLabel: "Set objectives",
+          actionUrl: "/staff/me/performance",
+          sourceType: "performance-review",
+          sourceId: review.id,
+          subjectEmployeeId: review.employeeId,
+          subjectName: employeeName(review.employeeId),
+        });
+      }
       if (review.employeeId === viewer.employeeId && review.status === "Self Assessment Pending") {
         addTask({
           id: `performance-self-${review.id}`,
@@ -508,7 +606,10 @@ export class TaskService {
           subjectName: employeeName(review.employeeId),
         });
       }
-      if (viewer.activeRole === "HR" && review.status === "Moderation Pending") {
+      if (
+        (viewer.activeRole === "HR" || viewer.activeRole === "Super Admin") &&
+        review.status === "Moderation Pending"
+      ) {
         addTask({
           id: `performance-moderation-${review.id}`,
           module: "Performance",
@@ -524,12 +625,51 @@ export class TaskService {
           subjectName: employeeName(review.employeeId),
         });
       }
-      if (review.employeeId === viewer.employeeId && review.status === "Discussion Pending") {
+      if (
+        review.status === "Discussion Pending" &&
+        viewer.activeRole === "Line Manager" &&
+        directReportIds.has(review.employeeId)
+      ) {
+        addTask({
+          id: `performance-discussion-${review.id}`,
+          module: "Performance",
+          title: "Hold performance discussion",
+          description: `Discuss the completed review with ${employeeName(review.employeeId)} and record the outcome.`,
+          priority: "High",
+          dueDate: cycle?.discussionDeadline,
+          actionLabel: "Open review",
+          actionUrl: `/staff/performance/reviews/${review.id}`,
+          sourceType: "performance-review",
+          sourceId: review.id,
+          subjectEmployeeId: review.employeeId,
+          subjectName: employeeName(review.employeeId),
+        });
+      }
+      if (review.employeeId === viewer.employeeId && review.status === "Acknowledgement Pending") {
         addTask({
           id: `performance-acknowledge-${review.id}`,
           module: "Performance",
           title: "Acknowledge performance review",
           description: "Read the completed review and record your acknowledgement.",
+          priority: "Normal",
+          dueDate: cycle?.discussionDeadline,
+          actionLabel: "Open review",
+          actionUrl: `/staff/performance/reviews/${review.id}`,
+          sourceType: "performance-review",
+          sourceId: review.id,
+          subjectEmployeeId: review.employeeId,
+          subjectName: employeeName(review.employeeId),
+        });
+      }
+      if (
+        (viewer.activeRole === "HR" || viewer.activeRole === "Super Admin") &&
+        review.status === "Acknowledged"
+      ) {
+        addTask({
+          id: `performance-lock-${review.id}`,
+          module: "Performance",
+          title: "Finalise acknowledged review",
+          description: `Finalise and lock the acknowledged review for ${employeeName(review.employeeId)}.`,
           priority: "Normal",
           dueDate: cycle?.discussionDeadline,
           actionLabel: "Open review",
@@ -551,6 +691,24 @@ export class TaskService {
   ): void {
     if (viewer.activeRole !== "HR") return;
     const { storage } = getApplicationDataServices();
+    for (const request of storage.readCollection<TrainingRequest>("training_requests")) {
+      if (isActive(request) && request.status === "Pending HR") {
+        addTask({
+          id: `training-hr-${request.id}`,
+          module: "Training",
+          title: "Approve training request",
+          description: `${employeeName(request.employeeId)} has a training request awaiting HR approval.`,
+          priority: "Normal",
+          dueDate: addDays(request.updatedAt.slice(0, 10), 3),
+          actionLabel: "Review training",
+          actionUrl: "/staff/training",
+          sourceType: "training-request",
+          sourceId: request.id,
+          subjectEmployeeId: request.employeeId,
+          subjectName: employeeName(request.employeeId),
+        });
+      }
+    }
     for (const request of storage.readCollection<LeaveRequest>("leave_requests")) {
       if (
         isActive(request) &&

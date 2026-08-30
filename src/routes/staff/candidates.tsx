@@ -10,7 +10,10 @@ export const Route = createFileRoute("/staff/candidates")({
         content: "Candidate database, scoring, contact tracker, and shortlist management.",
       },
       { property: "og:title", content: "Candidates — VIA HR System" },
-      { property: "og:description", content: "Repository-backed candidate database with full HR override." },
+      {
+        property: "og:description",
+        content: "Repository-backed candidate database with full HR override.",
+      },
     ],
   }),
   component: CandidatesRoute,

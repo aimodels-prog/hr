@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -37,48 +37,81 @@ const numberingSchema = z.object({
 export function OrganisationSettingsPanel() {
   const { getActorContext } = useCurrentUser();
   const [settingsService] = useState(() => new SettingsService());
-  const [refreshKey, setRefreshKey] = useState(0);
-  const settings = useMemo(() => settingsService.getAppSettings(), [settingsService, refreshKey]);
+  const [settings, setSettings] = useState<any>(null);
+  const [workingDays, setWorkingDays] = useState<number[]>([]);
+  const [reminderDays, setReminderDays] = useState("");
 
   const form = useForm<z.infer<typeof orgSchema>>({
     resolver: zodResolver(orgSchema),
     defaultValues: {
-      organisationName: settings.organisationName,
-      timezone: settings.timezone,
-      baseCurrency: settings.baseCurrency,
-      standardDailyHours: settings.standardDailyHours,
-      standardWeeklyHours: settings.standardWeeklyHours,
-      leaveYearStart: settings.leaveYearStart,
-      leaveYearEnd: settings.leaveYearEnd,
+      organisationName: "",
+      timezone: "",
+      baseCurrency: "",
+      standardDailyHours: 8,
+      standardWeeklyHours: 40,
+      leaveYearStart: "",
+      leaveYearEnd: "",
     },
   });
 
-  const onSubmit = (values: z.infer<typeof orgSchema>) => {
+  useEffect(() => {
+    settingsService.getAppSettings().then((data) => {
+      setSettings(data);
+      form.reset(data);
+      setWorkingDays(data.workingDays);
+      setReminderDays(data.documentReminderDays.join(", "));
+    }).catch(err => {
+      toast.error(err instanceof Error ? err.message : "Failed to load settings");
+    });
+  }, [settingsService, form]);
+
+  const onSubmit = async (values: z.infer<typeof orgSchema>) => {
     try {
-      settingsService.saveAppSettings({ ...settings, ...values }, getActorContext());
+      const parsedReminderDays = reminderDays
+        .split(",")
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isFinite(value));
+      const updated = await settingsService.saveAppSettings(
+        {
+          ...settings,
+          ...values,
+          baseCurrency: values.baseCurrency.toUpperCase(),
+          workingDays,
+          documentReminderDays: parsedReminderDays,
+        },
+        getActorContext(),
+      );
       toast.success("Organisation settings updated");
-      setRefreshKey((k) => k + 1);
-    } catch (e: any) {
-      toast.error(e.message || "Failed to save settings");
+      setSettings(updated);
+      form.reset(updated);
+      setWorkingDays(updated.workingDays);
+      setReminderDays(updated.documentReminderDays.join(", "));
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Failed to save settings");
     }
   };
 
-  const toggleOnboardingGate = (checked: boolean) => {
+  const toggleOnboardingGate = async (checked: boolean) => {
+    if (!settings) return;
     try {
-      settingsService.saveAppSettings(
+      const updated = await settingsService.saveAppSettings(
         { ...settings, requireOnboardingCompletionBeforeDashboard: checked },
         getActorContext(),
       );
       toast.success(
         checked
-          ? "New hires will be gated until onboarding is complete"
-          : "Onboarding gate disabled",
+          ? "Employees must now complete onboarding before accessing the dashboard."
+          : "Employees can now skip onboarding and access the dashboard.",
       );
-      setRefreshKey((k) => k + 1);
-    } catch (e: any) {
-      toast.error(e.message || "Failed to save settings");
+      setSettings(updated);
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Failed to save settings");
     }
   };
+
+  if (!settings) {
+    return <div className="p-8 text-center text-muted-foreground">Loading settings...</div>;
+  }
 
   return (
     <div className="space-y-6">
@@ -185,6 +218,55 @@ export function OrganisationSettingsPanel() {
                   )}
                 />
               </div>
+              <div className="space-y-3 rounded-md border p-4">
+                <div>
+                  <Label>Company Working Days</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Used when calculating leave, timesheets and attendance expectations.
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+                  {[
+                    "Sunday",
+                    "Monday",
+                    "Tuesday",
+                    "Wednesday",
+                    "Thursday",
+                    "Friday",
+                    "Saturday",
+                  ].map((label, day) => (
+                    <label
+                      key={label}
+                      className="flex items-center justify-between gap-2 rounded-md border p-2 text-sm"
+                    >
+                      {label}
+                      <Switch
+                        aria-label={`${label} is a working day`}
+                        checked={workingDays.includes(day)}
+                        onCheckedChange={(checked) =>
+                          setWorkingDays((current) =>
+                            checked
+                              ? [...current, day].sort((a, b) => a - b)
+                              : current.filter((item) => item !== day),
+                          )
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="document-reminders">Document Expiry Reminders</Label>
+                <Input
+                  id="document-reminders"
+                  value={reminderDays}
+                  onChange={(event) => setReminderDays(event.target.value)}
+                  placeholder="90, 60, 30, 14, 7"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Enter the days before expiry when reminders should be sent, separated by commas.
+                </p>
+              </div>
               <div className="flex justify-end">
                 <Button type="submit">Save Organisation Settings</Button>
               </div>
@@ -226,26 +308,45 @@ export function OrganisationSettingsPanel() {
 export function NumberingSettingsPanel() {
   const { getActorContext } = useCurrentUser();
   const [settingsService] = useState(() => new SettingsService());
-  const [refreshKey, setRefreshKey] = useState(0);
-  const settings = useMemo(() => settingsService.getAppSettings(), [settingsService, refreshKey]);
+  const [settings, setSettings] = useState<any>(null);
 
   const form = useForm<z.infer<typeof numberingSchema>>({
     resolver: zodResolver(numberingSchema),
     defaultValues: {
-      employeeNumberFormat: settings.employeeNumberFormat,
-      candidateReferenceFormat: settings.candidateReferenceFormat,
+      employeeNumberFormat: "",
+      candidateReferenceFormat: "",
     },
   });
 
-  const onSubmit = (values: z.infer<typeof numberingSchema>) => {
+  useEffect(() => {
+    settingsService.getAppSettings().then((data) => {
+      setSettings(data);
+      form.reset({
+        employeeNumberFormat: data.employeeNumberFormat,
+        candidateReferenceFormat: data.candidateReferenceFormat,
+      });
+    }).catch(err => {
+      toast.error(err instanceof Error ? err.message : "Failed to load settings");
+    });
+  }, [settingsService, form]);
+
+  const onSubmit = async (values: z.infer<typeof numberingSchema>) => {
     try {
-      settingsService.saveAppSettings({ ...settings, ...values }, getActorContext());
+      const updated = await settingsService.saveAppSettings(
+        { ...settings, ...values },
+        getActorContext(),
+      );
       toast.success("Numbering formats updated");
-      setRefreshKey((k) => k + 1);
-    } catch (e: any) {
-      toast.error(e.message || "Failed to save settings");
+      setSettings(updated);
+      form.reset(updated);
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Failed to save settings");
     }
   };
+
+  if (!settings) {
+    return <div className="p-8 text-center text-muted-foreground">Loading settings...</div>;
+  }
 
   return (
     <Card>

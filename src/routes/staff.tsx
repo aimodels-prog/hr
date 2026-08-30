@@ -13,6 +13,9 @@ import { OnboardingService } from "@/lib/data/onboarding-service";
 import { SettingsService } from "@/lib/data/settings-service";
 import { AttendanceService } from "@/lib/data/attendance-service";
 import { LeaveService } from "@/lib/data/leave-service";
+import { TimesheetService } from "@/lib/data/timesheet-service";
+import { DocumentService } from "@/lib/data/document-service";
+import { SYSTEM_CONTEXT } from "@/lib/data/types";
 
 export const Route = createFileRoute("/staff")({
   component: StaffLayout,
@@ -85,6 +88,8 @@ function StaffLayout() {
 function OperationsAutomation({ onboardingService }: { onboardingService: OnboardingService }) {
   const [attendanceService] = useState(() => new AttendanceService());
   const [leaveService] = useState(() => new LeaveService());
+  const [timesheetService] = useState(() => new TimesheetService(attendanceService));
+  const [documentService] = useState(() => new DocumentService());
 
   useEffect(() => {
     const reconcile = () => {
@@ -92,12 +97,14 @@ function OperationsAutomation({ onboardingService }: { onboardingService: Onboar
       attendanceService.reconcileSignOutReminders();
       onboardingService.reconcileStartDates();
       leaveService.autoRunAnnualRollover();
+      timesheetService.reconcileSubmissionReminders();
+      documentService.reconcileExpiryNotifications(SYSTEM_CONTEXT);
       window.dispatchEvent(new CustomEvent("via_hr:notifications_changed"));
     };
     reconcile();
     const timer = window.setInterval(reconcile, 60_000);
     return () => window.clearInterval(timer);
-  }, [attendanceService, onboardingService, leaveService]);
+  }, [attendanceService, onboardingService, leaveService, timesheetService, documentService]);
 
   return null;
 }

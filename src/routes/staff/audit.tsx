@@ -3,7 +3,7 @@ import { useState } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { AuditViewer } from "@/components/audit-viewer";
 import { getApplicationDataServices } from "@/lib/data/application-data";
-import { useCurrentUser, RequirePermission } from "@/lib/auth";
+import { useCurrentUser, RequireRole } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import { toast } from "sonner";
@@ -34,57 +34,7 @@ function GlobalAuditRoute() {
     try {
       const { audit } = getApplicationDataServices();
 
-      // Log the export action itself first
-      audit.record({
-        context: {
-          actor: {
-            userId: currentUser.userId,
-            displayName: currentUser.displayName,
-            roles: currentUser.roles,
-            activeRole: currentUser.activeRole,
-          },
-        },
-        action: "export",
-        module: "Audit",
-        entityType: "system",
-        entityId: "global-audit",
-        reason: "User requested CSV export of global audit logs",
-        riskLevel: "High",
-      });
-
-      const allEvents = audit.list();
-
-      // Build simple CSV
-      const headers = [
-        "ID",
-        "Timestamp",
-        "Actor",
-        "Role",
-        "Module",
-        "Entity",
-        "EntityID",
-        "Action",
-        "Risk",
-        "Reason",
-      ];
-      const rows = allEvents.map((e) =>
-        [
-          e.id,
-          e.occurredAt,
-          e.actor.displayName,
-          e.actor.activeRole || e.actor.roles[0],
-          e.module,
-          e.entityType,
-          e.entityId,
-          e.action,
-          e.riskLevel,
-          e.reason || "",
-        ]
-          .map((v) => `"${String(v).replace(/"/g, '""')}"`)
-          .join(","),
-      );
-
-      const csvContent = [headers.join(","), ...rows].join("\n");
+      const csvContent = audit.exportCsv(currentUser.getActorContext());
 
       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
@@ -108,7 +58,7 @@ function GlobalAuditRoute() {
   };
 
   return (
-    <RequirePermission permission="system:audit_view" resourceName="Audit History">
+    <RequireRole roles={["Super Admin"]} resourceName="Audit History">
       <div className="mx-auto flex h-full max-w-[1500px] flex-col gap-6 pb-10">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <PageHeader
@@ -148,6 +98,6 @@ function GlobalAuditRoute() {
           </AlertDialogContent>
         </AlertDialog>
       </div>
-    </RequirePermission>
+    </RequireRole>
   );
 }

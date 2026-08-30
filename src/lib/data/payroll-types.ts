@@ -45,7 +45,10 @@ export interface PayrollInputReport {
   approvedOvertimeHours: number;
   unpaidLeaveDays: number;
   reimbursementsTotal: number;
+  /** Reimbursements are converted to VIA's base currency independently of salary currency. */
+  reimbursementsCurrency: string;
   manualAdjustmentsTotal: number;
+  /** Salary/manual-adjustment currency; never reused to label reimbursements. */
   currency: string;
 }
 

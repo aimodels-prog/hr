@@ -333,3 +333,31 @@ test("HR can reopen a closed timesheet period with a recorded reason", () => {
   const reopened = timesheets.reopenPeriod(period.id, "Correction work must be completed", hr);
   assert.equal(reopened.status, "Open");
 });
+
+test("timesheet reminders recover due-soon, due and overdue notices without creating timesheets", () => {
+  const { timesheets, storage, period } = harness();
+  const beforeCount = storage.readCollection("timesheets").length;
+  const reminderDate = new Date(new Date(`${period.endDate}T12:00:00Z`).getTime() + 3 * 86_400_000);
+  const created = timesheets.reconcileSubmissionReminders(reminderDate);
+  assert.ok(created > 0);
+  const notifications = storage
+    .readCollection<{ recipientUserId: string; deduplicationKey?: string }>("notifications")
+    .filter((item) => item.recipientUserId === "user-omar");
+  assert.ok(
+    notifications.some((item) =>
+      item.deduplicationKey?.includes(`timesheet-reminder-${period.id}-employee-omar-upcoming`),
+    ),
+  );
+  assert.ok(
+    notifications.some((item) =>
+      item.deduplicationKey?.includes(`timesheet-reminder-${period.id}-employee-omar-due`),
+    ),
+  );
+  assert.ok(
+    notifications.some((item) =>
+      item.deduplicationKey?.includes(`timesheet-reminder-${period.id}-employee-omar-overdue`),
+    ),
+  );
+  assert.equal(storage.readCollection("timesheets").length, beforeCount);
+  assert.equal(timesheets.reconcileSubmissionReminders(reminderDate), 0);
+});

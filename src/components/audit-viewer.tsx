@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { format, isAfter, startOfDay, subDays } from "date-fns";
-import { Activity, Bot, ChevronRight, FilterX, Search, UserRound } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  Bot,
+  ChevronRight,
+  FilterX,
+  Search,
+  UserRound,
+} from "lucide-react";
 
 import { useCurrentUser } from "@/lib/auth";
 import { getApplicationDataServices } from "@/lib/data/application-data";
@@ -20,6 +28,7 @@ import {
 import type { AuditEvent, Candidate, Employee, User } from "@/lib/data/types";
 import type { LeavePolicy } from "@/lib/data/leave-types";
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTableShell } from "@/components/ui/data-table-shell";
@@ -101,33 +110,92 @@ function riskClasses(risk: AuditEvent["riskLevel"]): string {
 export function AuditViewer({ entityId, entityType, global }: AuditViewerProps) {
   const currentUser = useCurrentUser();
   const [events, setEvents] = useState<AuditEvent[]>([]);
+  const [loadError, setLoadError] = useState("");
+  const [integrityIssueCount, setIntegrityIssueCount] = useState(0);
   const [lookup, setLookup] = useState<AuditNameLookup>({});
   const [searchTerm, setSearchTerm] = useState("");
   const [source, setSource] = useState<ActivitySource>(global ? "people" : "all");
+  const [actor, setActor] = useState("all");
+  const [role, setRole] = useState("all");
   const [area, setArea] = useState("all");
+  const [action, setAction] = useState("all");
+  const [entity, setEntity] = useState("all");
   const [activityGroup, setActivityGroup] = useState<AuditActivityGroup | "all">("all");
   const [risk, setRisk] = useState("all");
   const [dateWindow, setDateWindow] = useState<keyof typeof DATE_WINDOWS>("month");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
   const [selectedEvent, setSelectedEvent] = useState<AuditEvent | null>(null);
 
   useEffect(() => {
-    let allEvents = getApplicationDataServices().audit.list();
-    if (!global) {
-      allEvents = allEvents.filter(
-        (event) => event.entityId === entityId && event.entityType === entityType,
+    try {
+      const audit = getApplicationDataServices().audit;
+      const allEvents = audit.listForContext(currentUser.getActorContext(), {
+        global: Boolean(global),
+        ...(global ? {} : { entityId, entityType }),
+      });
+      setEvents(
+        allEvents.sort(
+          (a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime(),
+        ),
       );
+      setLookup(createNameLookup());
+      setLoadError("");
+      setIntegrityIssueCount(
+        global ? audit.checkIntegrity(currentUser.getActorContext()).length : 0,
+      );
+    } catch (error) {
+      setEvents([]);
+      setLoadError(error instanceof Error ? error.message : "Audit history could not be loaded.");
     }
-    setEvents(
-      allEvents.sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()),
-    );
-    setLookup(createNameLookup());
-  }, [entityId, entityType, global]);
+  }, [currentUser, entityId, entityType, global]);
 
-  useEffect(() => setPage(1), [searchTerm, source, area, activityGroup, risk, dateWindow]);
+  useEffect(
+    () => setPage(1),
+    [
+      searchTerm,
+      source,
+      actor,
+      role,
+      area,
+      action,
+      entity,
+      activityGroup,
+      risk,
+      dateWindow,
+      dateFrom,
+      dateTo,
+    ],
+  );
+
+  const actors = useMemo(
+    () =>
+      Array.from(new Map(events.map((event) => [event.actor.userId, event.actor.displayName])))
+        .map(([id, name]) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [events],
+  );
+  const roles = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          events.map((event) => event.actor.activeRole ?? event.actor.roles[0] ?? "Employee"),
+        ),
+      ).sort(),
+    [events],
+  );
 
   const areas = useMemo(
     () => Array.from(new Set(events.map(getAuditArea))).sort((a, b) => a.localeCompare(b)),
+    [events],
+  );
+  const actions = useMemo(
+    () => Array.from(new Set(events.map(getAuditActivity))).sort((a, b) => a.localeCompare(b)),
+    [events],
+  );
+  const entities = useMemo(
+    () => Array.from(new Set(events.map((event) => event.entityType))).sort(),
     [events],
   );
 
@@ -139,10 +207,18 @@ export function AuditViewer({ entityId, entityType, global }: AuditViewerProps) 
       const automated = isAutomatedAuditEvent(event);
       if (source === "people" && automated) return false;
       if (source === "automated" && !automated) return false;
+      if (actor !== "all" && event.actor.userId !== actor) return false;
+      if (role !== "all" && (event.actor.activeRole ?? event.actor.roles[0] ?? "Employee") !== role)
+        return false;
       if (area !== "all" && getAuditArea(event) !== area) return false;
+      if (action !== "all" && getAuditActivity(event) !== action) return false;
+      if (entity !== "all" && event.entityType !== entity) return false;
       if (activityGroup !== "all" && getAuditActivityGroup(event) !== activityGroup) return false;
       if (risk !== "all" && event.riskLevel !== risk) return false;
       if (threshold && !isAfter(new Date(event.occurredAt), threshold)) return false;
+      const eventDate = event.occurredAt.slice(0, 10);
+      if (dateFrom && eventDate < dateFrom) return false;
+      if (dateTo && eventDate > dateTo) return false;
       if (!search) return true;
       return [
         event.actor.displayName,
@@ -153,7 +229,22 @@ export function AuditViewer({ entityId, entityType, global }: AuditViewerProps) 
         event.reason ?? "",
       ].some((value) => value.toLowerCase().includes(search));
     });
-  }, [activityGroup, area, dateWindow, events, lookup, risk, searchTerm, source]);
+  }, [
+    action,
+    activityGroup,
+    actor,
+    area,
+    dateFrom,
+    dateTo,
+    dateWindow,
+    entity,
+    events,
+    lookup,
+    risk,
+    role,
+    searchTerm,
+    source,
+  ]);
 
   if (!currentUser) return null;
   const canSeeFinancial = currentUser.can("payroll:view");
@@ -163,22 +254,51 @@ export function AuditViewer({ entityId, entityType, global }: AuditViewerProps) 
   const selectedChanges = selectedEvent ? getAuditChanges(selectedEvent, canSeeFinancial) : [];
   const hasFilters = Boolean(
     searchTerm ||
+    actor !== "all" ||
+    role !== "all" ||
     area !== "all" ||
+    action !== "all" ||
+    entity !== "all" ||
     activityGroup !== "all" ||
     risk !== "all" ||
-    dateWindow !== "month",
+    dateWindow !== "month" ||
+    dateFrom ||
+    dateTo,
   );
 
   const resetFilters = () => {
     setSearchTerm("");
+    setActor("all");
+    setRole("all");
     setArea("all");
+    setAction("all");
+    setEntity("all");
     setActivityGroup("all");
     setRisk("all");
     setDateWindow("month");
+    setDateFrom("");
+    setDateTo("");
   };
 
   return (
     <>
+      {loadError && (
+        <Alert variant="destructive" className="mb-4">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Audit history unavailable</AlertTitle>
+          <AlertDescription>{loadError}</AlertDescription>
+        </Alert>
+      )}
+      {global && integrityIssueCount > 0 && (
+        <Alert className="mb-4 border-amber-300 bg-amber-50">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Audit records need attention</AlertTitle>
+          <AlertDescription>
+            {integrityIssueCount} record{integrityIssueCount === 1 ? "" : "s"} contain missing or
+            unresolved references. The records remain preserved for investigation.
+          </AlertDescription>
+        </Alert>
+      )}
       <Card className="overflow-hidden border-border/80 shadow-sm">
         <CardHeader className="border-b bg-card px-5 py-5 sm:px-6">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
@@ -206,7 +326,7 @@ export function AuditViewer({ entityId, entityType, global }: AuditViewerProps) 
             </Tabs>
           </div>
 
-          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(240px,1.5fr)_repeat(4,minmax(130px,0.7fr))_auto]">
+          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <div className="relative md:col-span-2 xl:col-span-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -217,6 +337,32 @@ export function AuditViewer({ entityId, entityType, global }: AuditViewerProps) 
                 onChange={(event) => setSearchTerm(event.target.value)}
               />
             </div>
+            <Select value={actor} onValueChange={setActor}>
+              <SelectTrigger aria-label="Filter by person">
+                <SelectValue placeholder="All people" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All people</SelectItem>
+                {actors.map((item) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={role} onValueChange={setRole}>
+              <SelectTrigger aria-label="Filter by role">
+                <SelectValue placeholder="All roles" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All roles</SelectItem>
+                {roles.map((item) => (
+                  <SelectItem key={item} value={item}>
+                    {item}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select value={area} onValueChange={setArea}>
               <SelectTrigger aria-label="Filter by area">
                 <SelectValue placeholder="All areas" />
@@ -226,6 +372,32 @@ export function AuditViewer({ entityId, entityType, global }: AuditViewerProps) 
                 {areas.map((item) => (
                   <SelectItem key={item} value={item}>
                     {item}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={action} onValueChange={setAction}>
+              <SelectTrigger aria-label="Filter by recorded action">
+                <SelectValue placeholder="All recorded actions" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All recorded actions</SelectItem>
+                {actions.map((item) => (
+                  <SelectItem key={item} value={item}>
+                    {item}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={entity} onValueChange={setEntity}>
+              <SelectTrigger aria-label="Filter by record type">
+                <SelectValue placeholder="All record types" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All record types</SelectItem>
+                {entities.map((item) => (
+                  <SelectItem key={item} value={item}>
+                    {humanizeAuditText(item)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -246,6 +418,24 @@ export function AuditViewer({ entityId, entityType, global }: AuditViewerProps) 
                 <SelectItem value="Other">Other</SelectItem>
               </SelectContent>
             </Select>
+            <Input
+              type="date"
+              aria-label="Audit history from date"
+              value={dateFrom}
+              onChange={(event) => {
+                setDateFrom(event.target.value);
+                if (event.target.value) setDateWindow("all");
+              }}
+            />
+            <Input
+              type="date"
+              aria-label="Audit history to date"
+              value={dateTo}
+              onChange={(event) => {
+                setDateTo(event.target.value);
+                if (event.target.value) setDateWindow("all");
+              }}
+            />
             <Select value={risk} onValueChange={setRisk}>
               <SelectTrigger aria-label="Filter by attention level">
                 <SelectValue placeholder="All levels" />
@@ -253,6 +443,7 @@ export function AuditViewer({ entityId, entityType, global }: AuditViewerProps) 
               <SelectContent>
                 <SelectItem value="all">All attention levels</SelectItem>
                 <SelectItem value="High">High attention</SelectItem>
+                <SelectItem value="Critical">Critical attention</SelectItem>
                 <SelectItem value="Medium">Medium attention</SelectItem>
                 <SelectItem value="Low">Routine</SelectItem>
               </SelectContent>

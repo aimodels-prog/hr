@@ -45,6 +45,7 @@ function clearSavedPreviewState(): void {
 }
 
 export function CurrentUserProvider({ children }: { children: ReactNode }) {
+  const [dataRevision, setDataRevision] = useState(0);
   const [users, setUsers] = useState<User[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string>("user-rana");
@@ -279,6 +280,15 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const handleDataChange = () => {
+      refreshRecords();
+      setDataRevision((current) => current + 1);
+    };
+    window.addEventListener("via_hr:data_changed", handleDataChange);
+    return () => window.removeEventListener("via_hr:data_changed", handleDataChange);
+  }, [refreshRecords]);
+
   // Context object
   const contextValue = useMemo<DevPreviewContextValue>(() => {
     const userCtx: CurrentUserContext = {
@@ -337,5 +347,11 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
 
   if (!isIdentityReady) return <ApplicationBootScreen />;
 
-  return <DevPreviewContext.Provider value={contextValue}>{children}</DevPreviewContext.Provider>;
+  return (
+    <DevPreviewContext.Provider value={contextValue}>
+      <div key={dataRevision} className="contents">
+        {children}
+      </div>
+    </DevPreviewContext.Provider>
+  );
 }
