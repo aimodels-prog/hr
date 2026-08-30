@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { AccessDenied, useCurrentUser } from "@/lib/auth";
 import { ReportService, type ReportData, type ReportSavedView } from "@/lib/data/report-service";
@@ -73,8 +73,15 @@ function ReportsDashboard() {
   const [savedViews, setSavedViews] = useState<ReportSavedView[]>([]);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [viewName, setViewName] = useState("");
-  const currency = useMemo(() => {
-    return new SettingsService().getAppSettings().baseCurrency;
+  const [currency, setCurrency] = useState(
+    () => new SettingsService().getAppSettingsSync().baseCurrency,
+  );
+
+  useEffect(() => {
+    new SettingsService()
+      .getAppSettings()
+      .then((s) => setCurrency(s.baseCurrency))
+      .catch(() => {});
   }, []);
 
   const loadReport = (id: string) => {

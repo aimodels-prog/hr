@@ -10,7 +10,7 @@
 
 This file replaces Steps 01-45 of the original playbook with current-state-aware prompts: verify-only where code is already correct, precise fix instructions where it's broken (naming the exact wrong call and the exact right one, from direct inspection of the service source), and build instructions only where something is genuinely missing. **Steps 46-48 (Google Workspace auth, external integrations, production backend) are unchanged - use the original file for those, unmodified, once you reach that stage.**
 
-`PRODUCT_IMPLEMENTATION_PLAN.md` remains the source of truth for business rules. This file only changes *how* you get there from here.
+`PRODUCT_IMPLEMENTATION_PLAN.md` remains the source of truth for business rules. This file only changes _how_ you get there from here.
 
 ## How to use this playbook
 
@@ -42,56 +42,56 @@ Before every step:
 
 Legend: ✅ working, verify only · 🟠 built but broken (real defect found and named below) · 🔴 missing, build it · ⏭ deferred, unchanged from the original playbook.
 
-| Step | Module | Status |
-|---|---|---|
-| 01-03 | Foundation, permissions, shell | ✅ |
-| 03A-03C | *(new)* Foundational data-layer repair | 🟠 - do this before anything else below |
-| 04 | Org settings & master data | 🟠 - 3 tabs are literal placeholders |
-| 04A | *(new)* Settings route de-duplication | 🟠 |
-| 05 | Employee directory | ✅ |
-| 06 | Create/manage employee | ✅ |
-| 07 | Employee profile | 🟠 - missing `Link` import |
-| 08 | Digital employee files (per-employee tab) | ✅ |
-| 08A | *(new)* Employee Files cross-employee hub | 🔴 - nav points at a placeholder |
-| 09 | Document expiry centre | ✅ |
-| 10 | Vacancy list/lifecycle | ✅ |
-| 11 | Vacancy creation/AI-draft UI | ✅ |
-| 12 | Public careers portal | ✅ |
-| 13 | Public application flow | ✅ |
-| 14 | Candidate database/profile | 🟠 - routing bug (see 03D scope, folded into this step) |
-| 15 | Candidate import wizard | ✅ (blocked by Step 14's routing bug until fixed) |
-| 16 | Candidate contact tracker | 🟠 - nav points at the wrong URL |
-| 17 | Recommendations/sources | 🟠 - routing bug |
-| 18 | AI scoring | ✅ |
-| 19 | Shortlist | ✅ |
-| 20 | Interview scheduling | 🟠 - context-shape bug, fixed by 03B |
-| 21 | Interview scorecards | 🟠 - context-shape bug, fixed by 03B |
-| 22 | Hiring decision & offers | 🔴/🟠 - route is a placeholder; components exist but call broken service methods |
-| 23 | Leave policies & ledger | 🟠 - field-name bugs in `leave-service.ts` |
-| 24 | Employee leave request | 🔴 - route is a placeholder despite balances/approvals/admin all working |
-| 25 | Leave manager/Super Admin approvals | 🟠 - depends on 03A's `EmployeeService.getById` fix |
-| 26 | Leave admin & calendar | 🟠 - wrong field names, missing `DepartmentService` |
-| 27 | Timesheet setup | 🟠 - Settings persistence is fully broken (calls storage methods that don't exist) |
-| 28 | Employee weekly timesheet | 🟠 + nav item is a dead placeholder |
-| 29 | Manager timesheet approval | 🟠 - display-name bug |
-| 30 | Attendance | 🟠 + routing bug |
-| 30A | Geofenced clock-in | 🔴 - specified, not built |
-| 31 | Overtime | 🟠 - display-name and service-name bugs |
-| 32 | Travel pre-authorisation | 🟠 + routing bug |
-| 33 | HR/Accounts travel approvals | 🟠 - display-name bug |
-| 34 | Post-trip expenses/closure | 🟠 - display-name bug |
-| 35 | Payroll preparation | 🟠 + routing bug (unconditional redirect) |
-| 36 | Candidate-to-employee conversion | 🟠 - four broken service calls |
-| 37 | Onboarding templates & case | 🟠 + routing bug + orphaned template settings |
-| 38 | Offboarding | 🔴 - no data model exists at all |
-| 39 | Performance review cycles | 🟠 + routing bug + orphaned template settings |
-| 40 | Training | 🟠 + 🔴 - no course catalogue/assignment layer |
-| 41 | Notifications & My Tasks | 🟠 - task-generation service calls broken methods |
-| 42 | Audit history | 🟠 - context-shape bug, fixed by 03B |
-| 43 | Role dashboards | 🟠 - severe: 5 dashboards call methods that don't exist |
-| 44 | Reports centre | 🟠 - report-service has 7 broken field/method references |
-| 45 | Full completion pass | Run last, after everything above |
-| 46-48 | Auth, integrations, production backend | ⏭ unchanged, use the original playbook |
+| Step    | Module                                    | Status                                                                             |
+| ------- | ----------------------------------------- | ---------------------------------------------------------------------------------- |
+| 01-03   | Foundation, permissions, shell            | ✅                                                                                 |
+| 03A-03C | _(new)_ Foundational data-layer repair    | 🟠 - do this before anything else below                                            |
+| 04      | Org settings & master data                | 🟠 - 3 tabs are literal placeholders                                               |
+| 04A     | _(new)_ Settings route de-duplication     | 🟠                                                                                 |
+| 05      | Employee directory                        | ✅                                                                                 |
+| 06      | Create/manage employee                    | ✅                                                                                 |
+| 07      | Employee profile                          | 🟠 - missing `Link` import                                                         |
+| 08      | Digital employee files (per-employee tab) | ✅                                                                                 |
+| 08A     | _(new)_ Employee Files cross-employee hub | 🔴 - nav points at a placeholder                                                   |
+| 09      | Document expiry centre                    | ✅                                                                                 |
+| 10      | Vacancy list/lifecycle                    | ✅                                                                                 |
+| 11      | Vacancy creation/AI-draft UI              | ✅                                                                                 |
+| 12      | Public careers portal                     | ✅                                                                                 |
+| 13      | Public application flow                   | ✅                                                                                 |
+| 14      | Candidate database/profile                | 🟠 - routing bug (see 03D scope, folded into this step)                            |
+| 15      | Candidate import wizard                   | ✅ (blocked by Step 14's routing bug until fixed)                                  |
+| 16      | Candidate contact tracker                 | 🟠 - nav points at the wrong URL                                                   |
+| 17      | Recommendations/sources                   | 🟠 - routing bug                                                                   |
+| 18      | AI scoring                                | ✅                                                                                 |
+| 19      | Shortlist                                 | ✅                                                                                 |
+| 20      | Interview scheduling                      | 🟠 - context-shape bug, fixed by 03B                                               |
+| 21      | Interview scorecards                      | 🟠 - context-shape bug, fixed by 03B                                               |
+| 22      | Hiring decision & offers                  | 🔴/🟠 - route is a placeholder; components exist but call broken service methods   |
+| 23      | Leave policies & ledger                   | 🟠 - field-name bugs in `leave-service.ts`                                         |
+| 24      | Employee leave request                    | 🔴 - route is a placeholder despite balances/approvals/admin all working           |
+| 25      | Leave manager/Super Admin approvals       | 🟠 - depends on 03A's `EmployeeService.getById` fix                                |
+| 26      | Leave admin & calendar                    | 🟠 - wrong field names, missing `DepartmentService`                                |
+| 27      | Timesheet setup                           | 🟠 - Settings persistence is fully broken (calls storage methods that don't exist) |
+| 28      | Employee weekly timesheet                 | 🟠 + nav item is a dead placeholder                                                |
+| 29      | Manager timesheet approval                | 🟠 - display-name bug                                                              |
+| 30      | Attendance                                | 🟠 + routing bug                                                                   |
+| 30A     | Geofenced clock-in                        | 🔴 - specified, not built                                                          |
+| 31      | Overtime                                  | 🟠 - display-name and service-name bugs                                            |
+| 32      | Travel pre-authorisation                  | 🟠 + routing bug                                                                   |
+| 33      | HR/Accounts travel approvals              | 🟠 - display-name bug                                                              |
+| 34      | Post-trip expenses/closure                | 🟠 - display-name bug                                                              |
+| 35      | Payroll preparation                       | 🟠 + routing bug (unconditional redirect)                                          |
+| 36      | Candidate-to-employee conversion          | 🟠 - four broken service calls                                                     |
+| 37      | Onboarding templates & case               | 🟠 + routing bug + orphaned template settings                                      |
+| 38      | Offboarding                               | 🔴 - no data model exists at all                                                   |
+| 39      | Performance review cycles                 | 🟠 + routing bug + orphaned template settings                                      |
+| 40      | Training                                  | 🟠 + 🔴 - no course catalogue/assignment layer                                     |
+| 41      | Notifications & My Tasks                  | 🟠 - task-generation service calls broken methods                                  |
+| 42      | Audit history                             | 🟠 - context-shape bug, fixed by 03B                                               |
+| 43      | Role dashboards                           | 🟠 - severe: 5 dashboards call methods that don't exist                            |
+| 44      | Reports centre                            | 🟠 - report-service has 7 broken field/method references                           |
+| 45      | Full completion pass                      | Run last, after everything above                                                   |
+| 46-48   | Auth, integrations, production backend    | ⏭ unchanged, use the original playbook                                             |
 
 ---
 

@@ -1,0 +1,105 @@
+name: via-hr-system-production
+
+services:
+  tools:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: build
+    image: via-hr-system-tools:${VIA_HR_IMAGE_TAG:-local}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${VIA_HR_DATABASE_URL:?Set VIA_HR_DATABASE_URL in .env.production}
+      VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID: ${VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID:?Set VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID in .env.production}
+      VIA_HR_FIELD_ENCRYPTION_KEYS: ${VIA_HR_FIELD_ENCRYPTION_KEYS:?Set VIA_HR_FIELD_ENCRYPTION_KEYS in .env.production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: via-hr-system:${VIA_HR_IMAGE_TAG:-local}
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATABASE_URL: ${VIA_HR_DATABASE_URL:?Set VIA_HR_DATABASE_URL in .env.production}
+      DATABASE_POOL_SIZE: ${VIA_HR_DATABASE_POOL_SIZE:-10}
+      VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID: ${VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID:?Set VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID in .env.production}
+      VIA_HR_FIELD_ENCRYPTION_KEYS: ${VIA_HR_FIELD_ENCRYPTION_KEYS:?Set VIA_HR_FIELD_ENCRYPTION_KEYS in .env.production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${VIA_HR_APP_BIND_ADDRESS:-127.0.0.1}:${VIA_HR_APP_PORT:-8082}:3000"
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health/ready').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${VIA_HR_POSTGRES_DB:?Set VIA_HR_POSTGRES_DB in .env.production}
+      POSTGRES_USER: ${VIA_HR_POSTGRES_USER:?Set VIA_HR_POSTGRES_USER in .env.production}
+      POSTGRES_PASSWORD: ${VIA_HR_POSTGRES_PASSWORD:?Set VIA_HR_POSTGRES_PASSWORD in .env.production}
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    stop_grace_period: 60s
+    volumes:
+      - via_hr_postgres_data:/var/lib/postgresql/data
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+networks:
+  frontend:
+  backend:
+    internal: true
+
+volumes:
+  via_hr_postgres_data:

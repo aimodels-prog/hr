@@ -42,7 +42,7 @@ function harness() {
   return { audit, storage };
 }
 
-test.skip("organisation settings and backups require Super Admin", async () => {
+test("organisation settings and backups require Super Admin", async () => {
   const { audit } = harness();
   const service = new SettingsService();
   const settings = service.getAppSettingsSync();
@@ -54,7 +54,7 @@ test.skip("organisation settings and backups require Super Admin", async () => {
   assert.ok(audit.list().some((event) => event.action === "export"));
 });
 
-test.skip("master data writes are permission controlled, unique and dependency safe", async () => {
+test("master data writes are permission controlled, unique and dependency safe", async () => {
   harness();
   const service = new MasterDataService();
   await assert.rejects(
@@ -79,9 +79,8 @@ test.skip("master data writes are permission controlled, unique and dependency s
     ),
     /same name or code/,
   );
-  // Wait, I need to await listAsync() instead of list() which reads from legacy fallback
   const list = await service.listAsync("departments");
-  const operations = list.find((item: any) => item.name === "Operations");
+  const operations = list.find((item: { name: string; id: string }) => item.name === "Operations");
   assert.ok(operations);
   await assert.rejects(
     service.archive("departments", operations!.id, superAdmin),

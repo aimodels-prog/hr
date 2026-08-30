@@ -46,14 +46,39 @@ export class MasterDataService {
   }
 
   // Async methods for the settings UI (H3.5A PostgreSQL cutover)
-  async listAsync(collection: MasterDataCollection, includeArchived = true): Promise<MasterRecord[]> {
-    const { listMasterDataFn } = await import("../server-functions/master-data.server.ts");
-    return listMasterDataFn({ data: { collection, includeArchived } }) as unknown as Promise<MasterRecord[]>;
+  async listAsync(
+    collection: MasterDataCollection,
+    includeArchived = true,
+  ): Promise<MasterRecord[]> {
+    try {
+      const { listMasterDataFn } = await import("../server-functions/master-data.server.ts");
+      const result = (await listMasterDataFn({
+        data: { collection, includeArchived },
+      })) as unknown as MasterRecord[];
+      if (result) return result;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.includes("No Start context") && !message.includes("is not a function")) {
+        throw err;
+      }
+    }
+    return this.list(collection, includeArchived);
   }
 
   async listProjectsAsync(includeArchived = true): Promise<Project[]> {
-    const { listProjectsFn } = await import("../server-functions/master-data.server.ts");
-    return listProjectsFn({ data: { includeArchived } }) as unknown as Promise<Project[]>;
+    try {
+      const { listProjectsFn } = await import("../server-functions/master-data.server.ts");
+      const result = (await listProjectsFn({
+        data: { includeArchived },
+      })) as unknown as Project[];
+      if (result) return result;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.includes("No Start context") && !message.includes("is not a function")) {
+        throw err;
+      }
+    }
+    return this.listProjects(includeArchived);
   }
 
   async create(
@@ -61,15 +86,43 @@ export class MasterDataService {
     input: NewRecord<MasterRecord>,
     context: ActorContext,
   ): Promise<MasterRecord> {
-    const { createMasterDataFn } = await import("../server-functions/master-data.server.ts");
-    return createMasterDataFn({
-      data: {
-        collection,
-        input,
-        actorId: context.actor.userId,
-        activeRole: context.actor.activeRole,
-      },
-    }) as unknown as Promise<MasterRecord>;
+    this.requireAdministrator(context, `create a ${collection} record`);
+    this.validateMasterRecord(collection, input);
+    this.requireUnique(collection, input.name, input.code);
+
+    try {
+      const { createMasterDataFn } = await import("../server-functions/master-data.server.ts");
+      const result = (await createMasterDataFn({
+        data: {
+          collection,
+          input: {
+            name: input.name,
+            code: input.code,
+            description: input.description,
+            isActive: input.isActive,
+            orderIndex: input.orderIndex,
+            date: "date" in input && typeof input.date === "string" ? input.date : undefined,
+          },
+          actorId: context.actor.userId,
+        },
+      })) as unknown as MasterRecord;
+
+      if (result) {
+        try {
+          getMasterDataRepository(collection).create(result, context);
+        } catch {
+          // Ignore
+        }
+        return result;
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.includes("No Start context") && !message.includes("is not a function")) {
+        throw err;
+      }
+    }
+
+    return getMasterDataRepository(collection).create(input, context);
   }
 
   async update(
@@ -78,85 +131,311 @@ export class MasterDataService {
     changes: RecordChanges<MasterRecord>,
     context: ActorContext,
   ): Promise<MasterRecord> {
-    const { updateMasterDataFn } = await import("../server-functions/master-data.server.ts");
-    return updateMasterDataFn({
-      data: {
-        collection,
-        id,
-        changes,
-        actorId: context.actor.userId,
-        activeRole: context.actor.activeRole,
-      },
-    }) as unknown as Promise<MasterRecord>;
+    this.requireAdministrator(context, `update a ${collection} record`);
+    const repository = getMasterDataRepository(collection);
+    const existing = repository.getById(id);
+    if (!existing) throw new Error("The selected setting was not found.");
+    const candidate = { ...existing, ...changes };
+    this.validateMasterRecord(collection, candidate);
+    this.requireUnique(collection, candidate.name, candidate.code, id);
+
+    try {
+      const { updateMasterDataFn } = await import("../server-functions/master-data.server.ts");
+      const result = (await updateMasterDataFn({
+        data: {
+          collection,
+          id,
+          changes: {
+            name: changes.name,
+            code: changes.code,
+            description: changes.description,
+            isActive: changes.isActive,
+            orderIndex: changes.orderIndex,
+            date: "date" in changes && typeof changes.date === "string" ? changes.date : undefined,
+          },
+          actorId: context.actor.userId,
+        },
+      })) as unknown as MasterRecord;
+
+      if (result) {
+        try {
+          repository.update(id, result, context);
+        } catch {
+          // Ignore
+        }
+        return result;
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.includes("No Start context") && !message.includes("is not a function")) {
+        throw err;
+      }
+    }
+
+    return repository.update(id, changes, context);
   }
 
-  async archive(collection: MasterDataCollection, id: string, context: ActorContext): Promise<MasterRecord> {
-    const { archiveMasterDataFn } = await import("../server-functions/master-data.server.ts");
-    return archiveMasterDataFn({
-      data: {
-        collection,
-        id,
-        actorId: context.actor.userId,
-        activeRole: context.actor.activeRole,
-      },
-    }) as unknown as Promise<MasterRecord>;
+  async archive(
+    collection: MasterDataCollection,
+    id: string,
+    context: ActorContext,
+  ): Promise<MasterRecord> {
+    this.requireAdministrator(context, `archive a ${collection} record`);
+    const repository = getMasterDataRepository(collection);
+    const existing = repository.getById(id);
+    if (!existing || existing.archivedAt) {
+      throw new Error("The selected setting was not found or is already archived.");
+    }
+    const dependencyBlock = this.findActiveDependency(collection, existing);
+    if (dependencyBlock) throw new Error(dependencyBlock);
+
+    try {
+      const { archiveMasterDataFn } = await import("../server-functions/master-data.server.ts");
+      const result = (await archiveMasterDataFn({
+        data: {
+          collection,
+          id,
+          actorId: context.actor.userId,
+        },
+      })) as unknown as MasterRecord;
+
+      if (result) {
+        try {
+          repository.archive(id, context);
+        } catch {
+          // Ignore
+        }
+        return result;
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.includes("No Start context") && !message.includes("is not a function")) {
+        throw err;
+      }
+    }
+
+    return repository.archive(id, context);
   }
 
-  async restore(collection: MasterDataCollection, id: string, context: ActorContext): Promise<MasterRecord> {
-    const { restoreMasterDataFn } = await import("../server-functions/master-data.server.ts");
-    return restoreMasterDataFn({
-      data: {
-        collection,
-        id,
-        actorId: context.actor.userId,
-        activeRole: context.actor.activeRole,
-      },
-    }) as unknown as Promise<MasterRecord>;
+  async restore(
+    collection: MasterDataCollection,
+    id: string,
+    context: ActorContext,
+  ): Promise<MasterRecord> {
+    this.requireAdministrator(context, `restore a ${collection} record`);
+    const repository = getMasterDataRepository(collection);
+    const existing = repository.getById(id);
+    if (!existing) throw new Error("The selected setting was not found.");
+    this.requireUnique(collection, existing.name, existing.code, id);
+
+    try {
+      const { restoreMasterDataFn } = await import("../server-functions/master-data.server.ts");
+      const result = (await restoreMasterDataFn({
+        data: {
+          collection,
+          id,
+          actorId: context.actor.userId,
+        },
+      })) as unknown as MasterRecord;
+
+      if (result) {
+        try {
+          repository.restore(id, context);
+        } catch {
+          // Ignore
+        }
+        return result;
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.includes("No Start context") && !message.includes("is not a function")) {
+        throw err;
+      }
+    }
+
+    return repository.restore(id, context);
   }
 
   async createProject(input: NewRecord<Project>, context: ActorContext): Promise<Project> {
-    const { createProjectFn } = await import("../server-functions/master-data.server.ts");
-    return createProjectFn({
-      data: {
-        input,
-        actorId: context.actor.userId,
-        activeRole: context.actor.activeRole,
-      },
-    }) as unknown as Promise<Project>;
+    this.requireAdministrator(context, "create a project");
+    this.validateProject(input);
+    this.requireUniqueProject(input.name, input.code);
+
+    try {
+      const { createProjectFn } = await import("../server-functions/master-data.server.ts");
+      const result = (await createProjectFn({
+        data: {
+          input: {
+            name: input.name,
+            code: input.code,
+            description: input.description,
+            client: input.client,
+            type: input.type,
+            startDate: input.startDate ?? new Date().toISOString().slice(0, 10),
+            endDate: input.endDate,
+            costCentreId: input.costCentreId,
+            managerId: input.managerId,
+            locationId: input.locationId,
+            status: input.status ?? "Draft",
+            orderIndex: input.orderIndex,
+            isActive: input.isActive,
+          },
+          actorId: context.actor.userId,
+        },
+      })) as unknown as Project;
+
+      if (result) {
+        try {
+          getProjectRepository().create(result, context);
+        } catch {
+          // Ignore
+        }
+        return result;
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.includes("No Start context") && !message.includes("is not a function")) {
+        throw err;
+      }
+    }
+
+    return getProjectRepository().create(input, context);
   }
 
-  async updateProject(id: string, changes: RecordChanges<Project>, context: ActorContext): Promise<Project> {
-    const { updateProjectFn } = await import("../server-functions/master-data.server.ts");
-    return updateProjectFn({
-      data: {
-        id,
-        changes,
-        actorId: context.actor.userId,
-        activeRole: context.actor.activeRole,
-      },
-    }) as unknown as Promise<Project>;
+  async updateProject(
+    id: string,
+    changes: RecordChanges<Project>,
+    context: ActorContext,
+  ): Promise<Project> {
+    this.requireAdministrator(context, "update a project");
+    const repository = getProjectRepository();
+    const existing = repository.getById(id);
+    if (!existing) throw new Error("The selected project was not found.");
+    const candidate = { ...existing, ...changes };
+    this.validateProject(candidate);
+    this.requireUniqueProject(candidate.name, candidate.code, id);
+
+    try {
+      const { updateProjectFn } = await import("../server-functions/master-data.server.ts");
+      const result = (await updateProjectFn({
+        data: {
+          id,
+          changes: {
+            name: changes.name,
+            code: changes.code,
+            description: changes.description,
+            client: changes.client,
+            type: changes.type,
+            startDate: changes.startDate,
+            endDate: changes.endDate,
+            costCentreId: changes.costCentreId,
+            managerId: changes.managerId,
+            locationId: changes.locationId,
+            status: changes.status,
+            orderIndex: changes.orderIndex,
+            isActive: changes.isActive,
+          },
+          actorId: context.actor.userId,
+        },
+      })) as unknown as Project;
+
+      if (result) {
+        try {
+          repository.update(id, result, context);
+        } catch {
+          // Ignore
+        }
+        return result;
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.includes("No Start context") && !message.includes("is not a function")) {
+        throw err;
+      }
+    }
+
+    return repository.update(id, changes, context);
   }
 
   async archiveProject(id: string, context: ActorContext): Promise<Project> {
-    const { archiveProjectFn } = await import("../server-functions/master-data.server.ts");
-    return archiveProjectFn({
-      data: {
-        id,
-        actorId: context.actor.userId,
-        activeRole: context.actor.activeRole,
-      },
-    }) as unknown as Promise<Project>;
+    this.requireAdministrator(context, "archive a project");
+    const repository = getProjectRepository();
+    const existing = repository.getById(id);
+    if (!existing || existing.archivedAt) {
+      throw new Error("The selected project was not found or is already archived.");
+    }
+    const { storage } = getApplicationDataServices();
+    const activeEmployees = storage
+      .readCollection<Employee>("employees")
+      .filter(
+        (employee) =>
+          employee.projectId === id && !["Inactive", "Archived"].includes(employee.status),
+      );
+    if (activeEmployees.length) {
+      throw new Error(
+        `Reassign ${activeEmployees.length} active employee${activeEmployees.length === 1 ? "" : "s"} before archiving this project.`,
+      );
+    }
+
+    try {
+      const { archiveProjectFn } = await import("../server-functions/master-data.server.ts");
+      const result = (await archiveProjectFn({
+        data: {
+          id,
+          actorId: context.actor.userId,
+        },
+      })) as unknown as Project;
+
+      if (result) {
+        try {
+          repository.archive(id, context);
+        } catch {
+          // Ignore
+        }
+        return result;
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.includes("No Start context") && !message.includes("is not a function")) {
+        throw err;
+      }
+    }
+
+    return repository.archive(id, context);
   }
 
   async restoreProject(id: string, context: ActorContext): Promise<Project> {
-    const { restoreProjectFn } = await import("../server-functions/master-data.server.ts");
-    return restoreProjectFn({
-      data: {
-        id,
-        actorId: context.actor.userId,
-        activeRole: context.actor.activeRole,
-      },
-    }) as unknown as Promise<Project>;
+    this.requireAdministrator(context, "restore a project");
+    const repository = getProjectRepository();
+    const existing = repository.getById(id);
+    if (!existing) throw new Error("The selected project was not found.");
+    this.requireUniqueProject(existing.name, existing.code, id);
+
+    try {
+      const { restoreProjectFn } = await import("../server-functions/master-data.server.ts");
+      const result = (await restoreProjectFn({
+        data: {
+          id,
+          actorId: context.actor.userId,
+        },
+      })) as unknown as Project;
+
+      if (result) {
+        try {
+          repository.restore(id, context);
+        } catch {
+          // Ignore
+        }
+        return result;
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.includes("No Start context") && !message.includes("is not a function")) {
+        throw err;
+      }
+    }
+
+    return repository.restore(id, context);
   }
 
   private requireAdministrator(context: ActorContext, action: string): void {

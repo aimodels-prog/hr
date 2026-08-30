@@ -33,10 +33,12 @@ export interface Project extends MasterRecord {
   client?: string | undefined;
   type?: string | undefined;
   location?: string | undefined;
+  locationId?: string | undefined;
   startDate?: string | undefined;
   endDate?: string | undefined;
   costCentreId?: string | undefined;
   managerId?: string | undefined;
+  status?: "Draft" | "Active" | "On Hold" | "Completed" | "Archived" | undefined;
 }
 
 export type EmployeeStatus =

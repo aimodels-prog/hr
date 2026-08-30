@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import "@tanstack/react-start/server-only";
 
 import { and, asc, eq, isNull, notInArray, sql } from "drizzle-orm";
@@ -5,10 +6,11 @@ import { and, asc, eq, isNull, notInArray, sql } from "drizzle-orm";
 import { getDatabaseClient } from "../client.ts";
 import { employees } from "../schema/employee.ts";
 import * as schema from "../schema/master-data.ts";
-import { organisations } from "../schema/organisation.ts";
+import { auditEvents } from "../schema/system.ts";
 import type { MasterDataCollection } from "../../data/master-data.ts";
+import type { Role } from "../../data/types.ts";
 
-const TABLE_MAP = {
+export const TABLE_MAP = {
   departments: schema.departments,
   locations: schema.locations,
   costCentres: schema.costCentres,
@@ -21,22 +23,111 @@ const TABLE_MAP = {
   activityCodes: schema.activityCodes,
 } as const;
 
-export async function resolveDefaultOrganisationId(): Promise<string> {
-  const db = getDatabaseClient();
-  const [org] = await db
-    .select({ id: organisations.id })
-    .from(organisations)
-    .where(eq(organisations.isActive, true))
-    .limit(1);
-  if (!org) throw new Error("No active organisation found");
-  return org.id;
+export interface MasterRecordDTO {
+  id: string;
+  name: string;
+  code?: string;
+  description?: string;
+  isActive: boolean;
+  orderIndex: number;
+  date?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+  updatedBy: string;
+  archivedAt?: string;
+  recordVersion: number;
+}
+
+export interface ProjectDTO {
+  id: string;
+  name: string;
+  code?: string;
+  description?: string;
+  client?: string;
+  type?: string;
+  startDate: string;
+  endDate?: string;
+  costCentreId?: string;
+  managerId?: string;
+  locationId?: string;
+  status: string;
+  isActive: boolean;
+  orderIndex: number;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+  updatedBy: string;
+  archivedAt?: string;
+  recordVersion: number;
+}
+
+export interface AuditActorContext {
+  userId?: string;
+  employeeId?: string;
+  displayName: string;
+  activeRole: Role;
+  roles?: Role[];
+}
+
+function mapMasterRecordToDTO(record: any): MasterRecordDTO {
+  return {
+    id: record.id,
+    name: record.name,
+    code: record.code ?? undefined,
+    description: record.description ?? undefined,
+    isActive: Boolean(record.isActive),
+    orderIndex: Number(record.orderIndex ?? 0),
+    date: record.holidayDate ?? record.date ?? undefined,
+    createdAt:
+      record.createdAt instanceof Date ? record.createdAt.toISOString() : String(record.createdAt),
+    updatedAt:
+      record.updatedAt instanceof Date ? record.updatedAt.toISOString() : String(record.updatedAt),
+    createdBy: String(record.createdBy),
+    updatedBy: String(record.updatedBy),
+    archivedAt:
+      record.archivedAt instanceof Date
+        ? record.archivedAt.toISOString()
+        : (record.archivedAt ?? undefined),
+    recordVersion: Number(record.recordVersion ?? 1),
+  };
+}
+
+function mapProjectToDTO(record: any): ProjectDTO {
+  return {
+    id: record.id,
+    name: record.name,
+    code: record.code ?? undefined,
+    description: record.description ?? undefined,
+    client: record.client ?? undefined,
+    type: record.type ?? undefined,
+    startDate: record.startDate,
+    endDate: record.endDate ?? undefined,
+    costCentreId: record.costCentreId ?? undefined,
+    managerId: record.managerId ?? undefined,
+    locationId: record.locationId ?? undefined,
+    status: record.status ?? "Draft",
+    isActive: Boolean(record.isActive),
+    orderIndex: Number(record.orderIndex ?? 0),
+    createdAt:
+      record.createdAt instanceof Date ? record.createdAt.toISOString() : String(record.createdAt),
+    updatedAt:
+      record.updatedAt instanceof Date ? record.updatedAt.toISOString() : String(record.updatedAt),
+    createdBy: String(record.createdBy),
+    updatedBy: String(record.updatedBy),
+    archivedAt:
+      record.archivedAt instanceof Date
+        ? record.archivedAt.toISOString()
+        : (record.archivedAt ?? undefined),
+    recordVersion: Number(record.recordVersion ?? 1),
+  };
 }
 
 export async function listCollection(
   orgId: string,
   collection: MasterDataCollection,
-  includeArchived: boolean,
-) {
+  includeArchived = false,
+): Promise<MasterRecordDTO[]> {
   const db = getDatabaseClient();
   const table = TABLE_MAP[collection];
 
@@ -44,198 +135,525 @@ export async function listCollection(
     ? eq(table.organisationId, orgId)
     : and(eq(table.organisationId, orgId), isNull(table.archivedAt));
 
-  return db.select().from(table).where(whereClause).orderBy(asc(table.orderIndex), asc(table.name));
+  const rows = await db
+    .select()
+    .from(table)
+    .where(whereClause)
+    .orderBy(asc(table.orderIndex), asc(table.name));
+  return rows.map(mapMasterRecordToDTO);
 }
 
 export async function getCollectionRecordById(
   orgId: string,
   collection: MasterDataCollection,
   id: string,
-) {
+): Promise<MasterRecordDTO | null> {
   const db = getDatabaseClient();
   const table = TABLE_MAP[collection];
   const [record] = await db
     .select()
     .from(table)
     .where(and(eq(table.organisationId, orgId), eq(table.id, id)));
-  return record;
+  return record ? mapMasterRecordToDTO(record) : null;
 }
 
 export async function createCollectionRecord(
   orgId: string,
   collection: MasterDataCollection,
-  input: any,
-  actorId: string,
-) {
+  input: {
+    name: string;
+    code?: string | undefined;
+    description?: string | undefined;
+    isActive?: boolean | undefined;
+    orderIndex?: number | undefined;
+    date?: string | undefined;
+  },
+  actor: AuditActorContext,
+): Promise<MasterRecordDTO> {
   const db = getDatabaseClient();
   const table = TABLE_MAP[collection];
-  const [record] = await db
-    .insert(table)
-    .values({
-      ...input,
+
+  return db.transaction(async (tx) => {
+    const [record] = await tx
+      .insert(table)
+      .values({
+        name: input.name,
+        code: input.code,
+        description: input.description,
+        isActive: input.isActive ?? true,
+        orderIndex: input.orderIndex ?? 0,
+        ...(collection === "publicHolidays" && input.date ? { holidayDate: input.date } : {}),
+        ...(collection === "workingTimes"
+          ? {
+              startTime: (input as any).startTime ?? "08:00:00",
+              endTime: (input as any).endTime ?? "17:00:00",
+              breakMinutes: (input as any).breakMinutes ?? 60,
+              workingDays: (input as any).workingDays ?? [0, 1, 2, 3, 4],
+            }
+          : {}),
+        organisationId: orgId,
+        createdBy: actor.userId ?? orgId,
+        updatedBy: actor.userId ?? orgId,
+      } as any)
+      .returning();
+
+    if (!record) throw new Error("Failed to create master data record.");
+
+    const dto = mapMasterRecordToDTO(record);
+
+    await tx.insert(auditEvents).values({
       organisationId: orgId,
-      createdBy: actorId,
-      updatedBy: actorId,
-    })
-    .returning();
-  return record;
+      actorUserId: actor.userId,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [actor.activeRole],
+      action: "create",
+      module: "settings",
+      entityType: collection,
+      entityId: record.id,
+      afterSummary: dto,
+      riskLevel: "Medium",
+    });
+
+    return dto;
+  });
 }
 
 export async function updateCollectionRecord(
   orgId: string,
   collection: MasterDataCollection,
   id: string,
-  changes: any,
-  actorId: string,
-) {
+  changes: {
+    name?: string | undefined;
+    code?: string | undefined;
+    description?: string | undefined;
+    isActive?: boolean | undefined;
+    orderIndex?: number | undefined;
+    date?: string | undefined;
+  },
+  actor: AuditActorContext,
+): Promise<MasterRecordDTO> {
   const db = getDatabaseClient();
   const table = TABLE_MAP[collection];
-  const [record] = await db
-    .update(table)
-    .set({
-      ...changes,
-      updatedAt: new Date().toISOString(),
-      updatedBy: actorId,
-      recordVersion: sql`${table.recordVersion} + 1`,
-    })
-    .where(and(eq(table.organisationId, orgId), eq(table.id, id)))
-    .returning();
-  return record;
+
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(table)
+      .where(and(eq(table.organisationId, orgId), eq(table.id, id)));
+
+    if (!existing) throw new Error("Record not found.");
+
+    const [record] = await tx
+      .update(table)
+      .set({
+        ...changes,
+        ...(collection === "publicHolidays" && changes.date ? { holidayDate: changes.date } : {}),
+        updatedAt: new Date(),
+        updatedBy: actor.userId ?? orgId,
+        recordVersion: sql`${table.recordVersion} + 1`,
+      } as any)
+      .where(and(eq(table.organisationId, orgId), eq(table.id, id)))
+      .returning();
+
+    if (!record) throw new Error("Failed to update master data record.");
+
+    const dto = mapMasterRecordToDTO(record);
+
+    await tx.insert(auditEvents).values({
+      organisationId: orgId,
+      actorUserId: actor.userId,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [actor.activeRole],
+      action: "update",
+      module: "settings",
+      entityType: collection,
+      entityId: record.id,
+      beforeSummary: mapMasterRecordToDTO(existing),
+      afterSummary: dto,
+      riskLevel: "Medium",
+    });
+
+    return dto;
+  });
 }
 
 export async function archiveCollectionRecord(
   orgId: string,
   collection: MasterDataCollection,
   id: string,
-  actorId: string,
-) {
+  actor: AuditActorContext,
+): Promise<MasterRecordDTO> {
   const db = getDatabaseClient();
   const table = TABLE_MAP[collection];
-  const [record] = await db
-    .update(table)
-    .set({
-      archivedAt: new Date().toISOString(),
-      isActive: false,
-      updatedAt: new Date().toISOString(),
-      updatedBy: actorId,
-      recordVersion: sql`${table.recordVersion} + 1`,
-    } as any)
-    .where(and(eq(table.organisationId, orgId), eq(table.id, id)))
-    .returning();
-  return record;
+
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(table)
+      .where(and(eq(table.organisationId, orgId), eq(table.id, id)));
+
+    if (!existing) throw new Error("Record not found.");
+
+    const [record] = await tx
+      .update(table)
+      .set({
+        archivedAt: new Date(),
+        isActive: false,
+        updatedAt: new Date(),
+        updatedBy: actor.userId ?? orgId,
+        recordVersion: sql`${table.recordVersion} + 1`,
+      } as any)
+      .where(and(eq(table.organisationId, orgId), eq(table.id, id)))
+      .returning();
+
+    if (!record) throw new Error("Failed to archive master data record.");
+
+    const dto = mapMasterRecordToDTO(record);
+
+    await tx.insert(auditEvents).values({
+      organisationId: orgId,
+      actorUserId: actor.userId,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [actor.activeRole],
+      action: "archive",
+      module: "settings",
+      entityType: collection,
+      entityId: record.id,
+      beforeSummary: mapMasterRecordToDTO(existing),
+      afterSummary: dto,
+      riskLevel: "High",
+    });
+
+    return dto;
+  });
 }
 
 export async function restoreCollectionRecord(
   orgId: string,
   collection: MasterDataCollection,
   id: string,
-  actorId: string,
-) {
+  actor: AuditActorContext,
+): Promise<MasterRecordDTO> {
   const db = getDatabaseClient();
   const table = TABLE_MAP[collection];
-  const [record] = await db
-    .update(table)
-    .set({
-      archivedAt: null,
-      isActive: true,
-      updatedAt: new Date().toISOString(),
-      updatedBy: actorId,
-      recordVersion: sql`${table.recordVersion} + 1`,
-    } as any)
-    .where(and(eq(table.organisationId, orgId), eq(table.id, id)))
-    .returning();
-  return record;
+
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(table)
+      .where(and(eq(table.organisationId, orgId), eq(table.id, id)));
+
+    if (!existing) throw new Error("Record not found.");
+
+    const [record] = await tx
+      .update(table)
+      .set({
+        archivedAt: null,
+        isActive: true,
+        updatedAt: new Date(),
+        updatedBy: actor.userId ?? orgId,
+        recordVersion: sql`${table.recordVersion} + 1`,
+      } as any)
+      .where(and(eq(table.organisationId, orgId), eq(table.id, id)))
+      .returning();
+
+    if (!record) throw new Error("Failed to restore master data record.");
+
+    const dto = mapMasterRecordToDTO(record);
+
+    await tx.insert(auditEvents).values({
+      organisationId: orgId,
+      actorUserId: actor.userId,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [actor.activeRole],
+      action: "restore",
+      module: "settings",
+      entityType: collection,
+      entityId: record.id,
+      beforeSummary: mapMasterRecordToDTO(existing),
+      afterSummary: dto,
+      riskLevel: "Medium",
+    });
+
+    return dto;
+  });
 }
 
-export async function listProjects(orgId: string, includeArchived: boolean) {
+export async function listProjects(orgId: string, includeArchived = false): Promise<ProjectDTO[]> {
   const db = getDatabaseClient();
   const table = schema.projects;
   const whereClause = includeArchived
     ? eq(table.organisationId, orgId)
     : and(eq(table.organisationId, orgId), isNull(table.archivedAt));
-  return db.select().from(table).where(whereClause).orderBy(asc(table.orderIndex), asc(table.name));
+  const rows = await db
+    .select()
+    .from(table)
+    .where(whereClause)
+    .orderBy(asc(table.orderIndex), asc(table.name));
+  return rows.map(mapProjectToDTO);
 }
 
-export async function getProjectById(orgId: string, id: string) {
+export async function getProjectById(orgId: string, id: string): Promise<ProjectDTO | null> {
   const db = getDatabaseClient();
   const table = schema.projects;
   const [record] = await db
     .select()
     .from(table)
     .where(and(eq(table.organisationId, orgId), eq(table.id, id)));
-  return record;
+  return record ? mapProjectToDTO(record) : null;
 }
 
-export async function createProject(orgId: string, input: any, actorId: string) {
+export async function createProject(
+  orgId: string,
+  input: {
+    name: string;
+    code?: string | undefined;
+    description?: string | undefined;
+    client?: string | undefined;
+    type?: string | undefined;
+    startDate: string;
+    endDate?: string | undefined;
+    costCentreId?: string | undefined;
+    managerId?: string | undefined;
+    locationId?: string | undefined;
+    status?: "Draft" | "Active" | "On Hold" | "Completed" | "Archived" | undefined;
+    orderIndex?: number | undefined;
+    isActive?: boolean | undefined;
+  },
+  actor: AuditActorContext,
+): Promise<ProjectDTO> {
   const db = getDatabaseClient();
   const table = schema.projects;
-  const [record] = await db
-    .insert(table)
-    .values({
-      ...input,
+
+  return db.transaction(async (tx) => {
+    const [record] = await tx
+      .insert(table)
+      .values({
+        name: input.name,
+        code: input.code,
+        description: input.description,
+        client: input.client,
+        type: input.type,
+        startDate: input.startDate,
+        endDate: input.endDate,
+        costCentreId: input.costCentreId,
+        managerId: input.managerId,
+        locationId: input.locationId,
+        status: input.status ?? "Draft",
+        isActive: input.isActive ?? true,
+        orderIndex: input.orderIndex ?? 0,
+        organisationId: orgId,
+        createdBy: actor.userId ?? orgId,
+        updatedBy: actor.userId ?? orgId,
+      } as any)
+      .returning();
+
+    if (!record) throw new Error("Failed to create project.");
+
+    const dto = mapProjectToDTO(record);
+
+    await tx.insert(auditEvents).values({
       organisationId: orgId,
-      createdBy: actorId,
-      updatedBy: actorId,
-    })
-    .returning();
-  return record;
+      actorUserId: actor.userId,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [actor.activeRole],
+      action: "create",
+      module: "settings",
+      entityType: "project",
+      entityId: record.id,
+      afterSummary: dto,
+      riskLevel: "Medium",
+    });
+
+    return dto;
+  });
 }
 
-export async function updateProject(orgId: string, id: string, changes: any, actorId: string) {
+export async function updateProject(
+  orgId: string,
+  id: string,
+  changes: {
+    name?: string | undefined;
+    code?: string | undefined;
+    description?: string | undefined;
+    client?: string | undefined;
+    type?: string | undefined;
+    startDate?: string | undefined;
+    endDate?: string | undefined;
+    costCentreId?: string | undefined;
+    managerId?: string | undefined;
+    locationId?: string | undefined;
+    status?: "Draft" | "Active" | "On Hold" | "Completed" | "Archived" | undefined;
+    orderIndex?: number | undefined;
+    isActive?: boolean | undefined;
+  },
+  actor: AuditActorContext,
+): Promise<ProjectDTO> {
   const db = getDatabaseClient();
   const table = schema.projects;
-  const [record] = await db
-    .update(table)
-    .set({
-      ...changes,
-      updatedAt: new Date().toISOString(),
-      updatedBy: actorId,
-      recordVersion: sql`${table.recordVersion} + 1`,
-    })
-    .where(and(eq(table.organisationId, orgId), eq(table.id, id)))
-    .returning();
-  return record;
+
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(table)
+      .where(and(eq(table.organisationId, orgId), eq(table.id, id)));
+
+    if (!existing) throw new Error("Project not found.");
+
+    const [record] = await tx
+      .update(table)
+      .set({
+        ...changes,
+        updatedAt: new Date(),
+        updatedBy: actor.userId ?? orgId,
+        recordVersion: sql`${table.recordVersion} + 1`,
+      } as any)
+      .where(and(eq(table.organisationId, orgId), eq(table.id, id)))
+      .returning();
+
+    if (!record) throw new Error("Failed to update project.");
+
+    const dto = mapProjectToDTO(record);
+
+    await tx.insert(auditEvents).values({
+      organisationId: orgId,
+      actorUserId: actor.userId,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [actor.activeRole],
+      action: "update",
+      module: "settings",
+      entityType: "project",
+      entityId: record.id,
+      beforeSummary: mapProjectToDTO(existing),
+      afterSummary: dto,
+      riskLevel: "Medium",
+    });
+
+    return dto;
+  });
 }
 
-export async function archiveProject(orgId: string, id: string, actorId: string) {
+export async function archiveProject(
+  orgId: string,
+  id: string,
+  actor: AuditActorContext,
+): Promise<ProjectDTO> {
   const db = getDatabaseClient();
   const table = schema.projects;
-  const [record] = await db
-    .update(table)
-    .set({
-      archivedAt: new Date().toISOString(),
-      isActive: false,
-      updatedAt: new Date().toISOString(),
-      updatedBy: actorId,
-      recordVersion: sql`${table.recordVersion} + 1`,
-    })
-    .where(and(eq(table.organisationId, orgId), eq(table.id, id)))
-    .returning();
-  return record;
+
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(table)
+      .where(and(eq(table.organisationId, orgId), eq(table.id, id)));
+
+    if (!existing) throw new Error("Project not found.");
+
+    const [record] = await tx
+      .update(table)
+      .set({
+        archivedAt: new Date(),
+        isActive: false,
+        updatedAt: new Date(),
+        updatedBy: actor.userId ?? orgId,
+        recordVersion: sql`${table.recordVersion} + 1`,
+      } as any)
+      .where(and(eq(table.organisationId, orgId), eq(table.id, id)))
+      .returning();
+
+    if (!record) throw new Error("Failed to archive project.");
+
+    const dto = mapProjectToDTO(record);
+
+    await tx.insert(auditEvents).values({
+      organisationId: orgId,
+      actorUserId: actor.userId,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [actor.activeRole],
+      action: "archive",
+      module: "settings",
+      entityType: "project",
+      entityId: record.id,
+      beforeSummary: mapProjectToDTO(existing),
+      afterSummary: dto,
+      riskLevel: "High",
+    });
+
+    return dto;
+  });
 }
 
-export async function restoreProject(orgId: string, id: string, actorId: string) {
+export async function restoreProject(
+  orgId: string,
+  id: string,
+  actor: AuditActorContext,
+): Promise<ProjectDTO> {
   const db = getDatabaseClient();
   const table = schema.projects;
-  const [record] = await db
-    .update(table)
-    .set({
-      archivedAt: null,
-      isActive: true,
-      updatedAt: new Date().toISOString(),
-      updatedBy: actorId,
-      recordVersion: sql`${table.recordVersion} + 1`,
-    })
-    .where(and(eq(table.organisationId, orgId), eq(table.id, id)))
-    .returning();
-  return record;
+
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(table)
+      .where(and(eq(table.organisationId, orgId), eq(table.id, id)));
+
+    if (!existing) throw new Error("Project not found.");
+
+    const [record] = await tx
+      .update(table)
+      .set({
+        archivedAt: null,
+        isActive: true,
+        updatedAt: new Date(),
+        updatedBy: actor.userId ?? orgId,
+        recordVersion: sql`${table.recordVersion} + 1`,
+      } as any)
+      .where(and(eq(table.organisationId, orgId), eq(table.id, id)))
+      .returning();
+
+    if (!record) throw new Error("Failed to restore project.");
+
+    const dto = mapProjectToDTO(record);
+
+    await tx.insert(auditEvents).values({
+      organisationId: orgId,
+      actorUserId: actor.userId,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [actor.activeRole],
+      action: "restore",
+      module: "settings",
+      entityType: "project",
+      entityId: record.id,
+      beforeSummary: mapProjectToDTO(existing),
+      afterSummary: dto,
+      riskLevel: "Medium",
+    });
+
+    return dto;
+  });
 }
 
 export async function countActiveEmployeesForMasterRecord(
   orgId: string,
   collection: MasterDataCollection,
   recordId: string,
-) {
+): Promise<number> {
   const db = getDatabaseClient();
   let fkCol;
   switch (collection) {
@@ -274,7 +692,10 @@ export async function countActiveEmployeesForMasterRecord(
   return result?.count ?? 0;
 }
 
-export async function countActiveProjectsForCostCentre(orgId: string, costCentreId: string) {
+export async function countActiveProjectsForCostCentre(
+  orgId: string,
+  costCentreId: string,
+): Promise<number> {
   const db = getDatabaseClient();
   const [result] = await db
     .select({ count: sql`count(*)`.mapWith(Number) })
@@ -289,7 +710,10 @@ export async function countActiveProjectsForCostCentre(orgId: string, costCentre
   return result?.count ?? 0;
 }
 
-export async function countActiveEmployeesForProject(orgId: string, projectId: string) {
+export async function countActiveEmployeesForProject(
+  orgId: string,
+  projectId: string,
+): Promise<number> {
   const db = getDatabaseClient();
   const [result] = await db
     .select({ count: sql`count(*)`.mapWith(Number) })

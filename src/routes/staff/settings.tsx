@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { Building, Settings2, FileDigit, Database, Download, Users } from "lucide-react";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
@@ -234,21 +234,21 @@ function MasterDataSection({
   const [editingRecord, setEditingRecord] = useState<MasterRecord | null>(null);
   const [recordToArchive, setRecordToArchive] = useState<MasterRecord | null>(null);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setIsLoading(true);
     try {
       const records = await service.listAsync(collection, true);
       setData(records);
-    } catch (error) {
+    } catch {
       toast.error("Failed to load records");
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [collection, service]);
 
   useEffect(() => {
     void refresh();
-  }, [collection]);
+  }, [refresh]);
 
   const handleAdd = () => {
     setEditingRecord(null);
@@ -293,7 +293,12 @@ function MasterDataSection({
         throw new Error("Holiday date is required.");
       }
       if (editingRecord) {
-        await service.update(collection, editingRecord.id, recordData, currentUser.getActorContext());
+        await service.update(
+          collection,
+          editingRecord.id,
+          recordData,
+          currentUser.getActorContext(),
+        );
         toast.success(`${title} updated`);
       } else {
         await service.create(

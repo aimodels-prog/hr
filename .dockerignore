@@ -1,0 +1,16 @@
+.git
+.github
+.claude
+.output
+.tanstack
+.wrangler
+dist
+node_modules
+test-results
+playwright-report
+*.log
+.env
+.env.*
+!.env.database.example
+!.env.production.example
+Candidates 2025.xlsx

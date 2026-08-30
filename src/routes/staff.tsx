@@ -25,18 +25,25 @@ function StaffLayout() {
   const { currentEmployee, getActorContext } = useCurrentUser();
   const [obService] = useState(() => new OnboardingService());
   const [settingsService] = useState(() => new SettingsService());
+  const [settings, setSettings] = useState(() => settingsService.getAppSettingsSync());
   const [gateCleared, setGateCleared] = useState(false);
 
+  useEffect(() => {
+    settingsService
+      .getAppSettings()
+      .then(setSettings)
+      .catch(() => {});
+  }, [settingsService]);
+
   const isGated = useMemo(() => {
-    if (gateCleared || !currentEmployee) return false;
+    if (gateCleared || !currentEmployee || !settings) return false;
+    if (!settings.requireOnboardingCompletionBeforeDashboard) return false;
     try {
-      const settings = settingsService.getAppSettings();
-      if (!settings.requireOnboardingCompletionBeforeDashboard) return false;
       return obService.hasIncompleteSelfServiceTasks(currentEmployee.id, getActorContext());
     } catch {
       return false;
     }
-  }, [currentEmployee, gateCleared, getActorContext, obService, settingsService]);
+  }, [currentEmployee, gateCleared, getActorContext, obService, settings]);
 
   return (
     <SidebarProvider>

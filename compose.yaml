@@ -1,0 +1,22 @@
+name: via-hr-system
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${VIA_HR_POSTGRES_DB:?Set VIA_HR_POSTGRES_DB in .env.database}
+      POSTGRES_USER: ${VIA_HR_POSTGRES_USER:?Set VIA_HR_POSTGRES_USER in .env.database}
+      POSTGRES_PASSWORD: ${VIA_HR_POSTGRES_PASSWORD:?Set VIA_HR_POSTGRES_PASSWORD in .env.database}
+    ports:
+      - "${VIA_HR_POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - via_hr_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  via_hr_postgres_data:

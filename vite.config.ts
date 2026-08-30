@@ -28,7 +28,13 @@ export default defineConfig(({ command, mode }) => {
       ],
     },
     optimizeDeps: {
-      include: ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime"],
+      include: [
+        "react",
+        "react-dom",
+        "react-dom/client",
+        "react/jsx-runtime",
+        "react/jsx-dev-runtime",
+      ],
       ignoreOutdatedRequests: true,
     },
     server: { host: "::", port: 8080 },
@@ -55,7 +61,9 @@ export default defineConfig(({ command, mode }) => {
         // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
         server: { entry: "server" },
       }),
-      ...(command === "build" ? [nitro({ defaultPreset: "cloudflare-module" })] : []),
+      // VIA HR System is deployed as a long-running Node service on Contabo.
+      // Keep this explicit so a CI environment cannot silently select an edge preset.
+      ...(command === "build" ? [nitro({ defaultPreset: "node" })] : []),
       viteReact(),
     ],
   };

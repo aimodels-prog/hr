@@ -5,7 +5,7 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
 - [x] Step 01 - Create the implementation foundation and progress tracker
 - [x] Step 02 - Development identity, permissions, and role preview
 - [x] Step 03 - Complete responsive application shell and navigation
-- [ ] Step 04 - Organisation settings and master data
+- [x] Step 04 - Organisation settings and master data
 - [ ] Step 05 - Employee directory page
 - [ ] Step 06 - Create and manage employee records
 - [ ] Step 07 - Employee profile and self-service profile
@@ -24,11 +24,11 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
 - [x] Step 20 - Interview scheduling
 - [x] Step 21 - Interview scorecards
 - [x] Step 22 - Hiring decision and offers
-- [ ] Step 23 - Leave policies and balance ledger
+- [x] Step 23 - Leave policies and balance ledger
 - [ ] Step 24 - Employee annual-leave request and automatic refusal
 - [ ] Step 25 - Leave manager and Super Admin approvals
 - [ ] Step 26 - Leave administration, cancellation, and calendar
-- [ ] Step 27 - Timesheet setup and project/activity controls
+- [x] Step 27 - Timesheet setup and project/activity controls
 - [ ] Step 28 - Employee weekly timesheet page
 - [ ] Step 29 - Manager timesheet approval and corrections
 - [x] Step 30 - Attendance records and correction requests
@@ -41,16 +41,25 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
 - [x] Step 36 - Candidate-to-employee conversion
 - [x] Step 37 - Onboarding templates and case workflow
 - [ ] Step 38 - Offboarding and clearance
-- [ ] Step 39 - Performance review cycles
-- [ ] Step 40 - Training catalogue and employee records
+- [x] Step 39 - Performance review cycles
+- [x] Step 40 - Training catalogue and employee records
 - [x] Step 41 - Notification centre and task inbox
 - [ ] Step 42 - Audit history and record activity timelines
 - [ ] Step 43 - Role-specific dashboards
-- [ ] Step 44 - Reports and role-safe exports
+- [x] Step 44 - Reports and role-safe exports
 - [ ] Step 45 - Full application quality and completion pass
 - [ ] Step 46 - Google Workspace portal authentication
 - [ ] Step 47 - External AI, email, and Google Calendar integrations
 - [ ] Step 48 - Production backend and launch readiness
+
+### Production database sequence (`IMPLEMENTATION_PROMPT_PLAYBOOK_V3.md`)
+
+- [ ] Step H3.1 - PostgreSQL and Drizzle foundation (local/repository work complete; managed staging environment pending the approved provider and data-residency region)
+- [x] Step H3.1B - Contabo Node runtime and isolated production deployment package
+- [x] Step H3.2 - Master data, app-managed dropdowns, projects and employee schema
+- [x] Step H3.3 - Remaining module schemas and append-only audit controls
+- [x] Step H3.4 - Deterministic staging-data importer
+- [ ] Step H3.5 - Incremental service migration and browser-storage cutover
 
 ### Internal completion sequence
 
@@ -60,9 +69,9 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
 - [x] Completion Step 04 - Accepted-offer conversion and Workspace provisioning queue
 - [x] Completion Step 05 - Onboarding activation and verification workflow
 - [ ] Completion Step 06 - Projects, unified leave, and geofenced attendance
-- [ ] Completion Step 07 - Training catalogue and assignments
+- [x] Completion Step 07 - Training catalogue and assignments
 - [ ] Completion Step 08 - Notification triggers and record audit timelines
-- [ ] Completion Step 09 - Reports, filters, saved views, print, and safe exports
+- [x] Completion Step 09 - Reports, filters, saved views, print, and safe exports
 - [ ] Completion Step 10 - Placeholder removal, quality gates, and role acceptance
 
 ## Verification log
@@ -814,3 +823,263 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
   - The Playwright Time & Travel lifecycle passed through Employee, Line Manager, HR, Accounts and Super Admin roles, including leave, attendance correction, timesheet, overtime, travel pre-authorisation, receipt-backed expenses and final reimbursement closure.
   - Production client, server and worker builds passed.
   - Repository-wide lint still reports 327 existing findings (308 errors and 19 warnings) in unrelated older performance screens, tests and configuration files. The targeted Time & Travel lint run is clean.
+
+### Finance overtime ledger completion
+
+- Status: Complete on 2026-08-28 for the browser-local Finance overtime ledger. Production database storage and Workspace authentication remain intentionally deferred.
+- Scope:
+  - Restricted the Finance Overtime Ledger navigation, route and service selector to Accounts and Super Admin. HR continues verification from Overtime Approvals and cannot retrieve the Finance ledger directly.
+  - Prevented time off in lieu from entering payable payroll hours. Payroll assignment also rejects a TOIL claim supplied by any future caller before writing any claim in the batch.
+  - Added permanent approval date and approver details to newly approved overtime claims.
+  - Replaced the basic approved-claims table with a responsive Finance register showing payment versus time off, employee number, real project and allocation names, approved hours, warnings, supporting evidence and the payroll period already containing each claim.
+  - Added Ready, Included, Time Off and Needs Attention views; employee/allocation search; date and payroll-period filters; summary totals; details; pagination; loading, empty and error feedback; and a service-generated CSV export.
+  - Ledger views, access denials, evidence access and exports are permission-controlled and audited. CSV cells are protected against spreadsheet-formula execution.
+  - Made payroll-period compilation and overtime assignment one recoverable browser-storage operation. If either collection write fails, both collections return to their prior state and the rollback is audited.
+  - Added legacy protection: a historical TOIL claim already linked to payroll is clearly marked Review Needed instead of being presented as payable or silently changed.
+- Decisions:
+  - Accounts sees approved TOIL only as a non-payable reconciliation record. It never contributes to approved overtime hours in payroll preparation.
+  - A processed payment claim remains available under Included with its payroll period and status; it no longer remains falsely labelled Ready for Payroll.
+  - Overtime rates and salary amounts remain outside this register because VIA currently prepares approved hours rather than calculating statutory payroll or bank payments.
+- Verification:
+  - Targeted Prettier and ESLint passed for every changed source and test file.
+  - TypeScript typecheck passed.
+  - All 208 service and unit tests passed, including new Finance-role, TOIL exclusion, mixed-batch, audited export and cross-collection rollback coverage.
+  - All three Playwright journeys passed. The Time & Travel journey now proves Accounts can review the ledger and HR receives Access Denied on the direct URL.
+  - Production client, server and Cloudflare worker builds passed.
+  - Repository-wide lint remains blocked by the established unrelated backlog: 327 findings (308 errors and 19 warnings), primarily older performance screens, formatting debt, tests and configuration files.
+
+### Final Time, Travel and payroll hardening
+
+- Status: Complete on 2026-08-29 for all actionable browser-local gaps identified after the Time & Travel and Finance reviews. Workspace authentication, production database storage and an always-on server scheduler remain intentionally deferred.
+- Scope:
+  - Protected every payroll-period read and mutation inside `PayrollService`, including list/detail access, period creation, manual adjustments, input collection, exception resolution, locking and export. Every view, export and denied attempt is audited.
+  - Validated payroll dates, employee status, adjustment amounts, reasons and salary currency. Manual adjustments can no longer smuggle a conflicting period ID or a currency different from the employee's salary currency.
+  - Separated salary/manual-adjustment currency from reimbursement currency throughout payroll preparation, reports, workbench screens and CSV export. Verified travel reimbursements enter payroll only as OMR equivalents and unverified legacy totals are excluded with a visible exception.
+  - Made closed travel reimbursements automatically enter the first eligible payroll period after closure. Payroll collection atomically links overtime and travel sources to the period and restores all collections if any write fails.
+  - Added permanent travel approval, pre-authorisation and closure metadata, including each approver, decision time and a locked budget snapshot. Travel and expense dates, active currencies, categories, unique lines and estimate amounts are validated in the service.
+  - Added timesheet due-soon, due-today and overdue reminders for employees, plus overdue notifications for their assigned supervisors. Reminder recovery is idempotent and does not create timesheets merely by checking deadlines.
+  - Added employee-requested changes to future approved leave. The existing approved dates and balance remain in force until the assigned supervisor and HR approve the proposal; rejection preserves the original leave. Final approval rechecks the live calendar, overlap rules and balance before applying one audited ledger adjustment.
+  - Moved protected screen data loading behind permission guards, replaced the remaining payroll browser alert with normal application feedback, and removed duplicate sidebar-key collisions.
+- Decisions:
+  - Recommended, manually selected and ordinary workflow records continue to use the same shared permission and audit services; hiding a button is never treated as security.
+  - Reimbursements and salary inputs are never totalled or labelled as if they share a currency. A reimbursement without a verified OMR equivalent cannot enter payroll.
+  - Browser reminder recovery is the complete implementation possible before the deferred production scheduler exists. It catches missed deadlines when the portal next opens, but cannot execute while every browser is closed.
+- Verification:
+  - Targeted Prettier and ESLint passed for all changed Time & Travel, payroll, dashboard, route and test files.
+  - TypeScript typecheck passed.
+  - All 216 service and unit tests passed, including leave-amendment race protection, timesheet reminder recovery, travel approval snapshots and currency rules, automatic payroll carry-over, payroll permission denials and atomic collection rollback.
+  - All three Playwright browser journeys passed. The Time & Travel journey covers Employee, Line Manager, HR, Accounts and Super Admin through leave, attendance, timesheet, overtime, travel and reimbursement.
+  - Production client, server and Cloudflare worker builds passed.
+  - Repository-wide lint still reports 273 pre-existing errors outside this remediation, principally old performance and interview screens plus existing formatting debt. The targeted changed-file lint run is clean.
+
+### Talent performance, learning and certification completion
+
+- Status: Complete on 2026-08-29 for the browser-local My Performance, Team Performance, Performance Cycles, My Learning and Learning & Development workflows. Workspace authentication and production database storage remain intentionally deferred.
+- Scope:
+  - Rebuilt My Performance around Objectives, Reviews, Check-ins and Development Plan tabs.
+  - Added measurable objectives with descriptions, success measures, targets, dates and weights. A complete set must total exactly 100% before submission.
+  - Enforced employee-only objective creation, actual assigned-supervisor approval, reason-controlled returns, corrected-objective resubmission, progress check-ins, optional evidence and supervisor-confirmed completion inside shared services.
+  - Corrected the lifecycle so self-assessment remains locked until every objective in the 100% set is approved.
+  - Rebuilt Team Performance with direct-report objective approvals, completion confirmations, progress visibility and assigned employee reviews. HR and Super Admin now receive a safe organisation-wide monitoring view instead of a page error, while employee decisions remain restricted to the assigned supervisor.
+  - Added permission-controlled, audited viewing for objective evidence by the employee, assigned supervisor and HR/Super Admin.
+  - Completed the review sequence: self-assessment, supervisor assessment and development plan, optional HR moderation, recorded review discussion, employee agreement or disagreement acknowledgement, HR finalisation and locked-record correction history.
+  - Added HR cycle population controls, exact employee preview, missing-supervisor warnings, draft save/edit/launch, ordered deadlines, template creation, completion controls and a visible moderation/finalisation queue. Cycle launch and review creation now roll back together if any part fails.
+  - Replaced mock certification uploads with real IndexedDB file storage, secure audited viewing, HR verification or return-for-correction, expiry details and scoped Training Records access.
+  - Completed the training catalogue with provider, category, delivery method, duration, cost/currency, certificate validity, renewal period, required roles/locations/projects and active/mandatory controls.
+  - Added employee course requests, free-course automatic approval, assigned-supervisor decisions, HR approval for paid training, HR/supervisor assignment, withdrawal, notifications and My Tasks entries.
+  - Prevented HR and Super Admin from approving, verifying, rejecting, attending, cancelling or completing their own training records; another authorised person must perform those decisions.
+  - Added sessions, capacity controls, enrolment scheduling, future-session safeguards, attendance/no-show recording, cancellation, results, actual cost, completion history and automatic certificate expiry calculation.
+  - Added employee My Learning tabs for the personal training plan, course catalogue, request history and certifications; added role-aware Team Training and Learning & Development workspaces for supervisors and HR/Super Admin.
+  - Added deterministic training sample data and a schema-version migration that adds the catalogue and empty workflow collections to existing browser installations without replacing current records. The migration also grants Line Manager access to existing users who are already assigned as supervisors.
+  - Added dedicated training self/direct-report/all-record permissions and service-level employee, assigned-supervisor and HR scope enforcement.
+  - Mounted the existing application notification component so success and error feedback is now visible instead of being silently discarded.
+  - Added role-aware performance tasks and notifications for objective setting, supervisor approval, self-assessment, supervisor review, moderation, discussion, acknowledgement and final locking.
+- Decisions:
+  - Active role is authoritative. Users complete their own objectives and acknowledgement while acting as Employee, supervisor stages while acting as Line Manager, and moderation/finalisation while acting as HR or Super Admin.
+  - Training completion can create an employee training record without a certificate. A certificate becomes HR-verified only after the supporting file is uploaded and checked.
+- Verification:
+  - Targeted Prettier and ESLint passed for every Talent source and test file changed in this work.
+  - TypeScript typecheck passed.
+  - All 221 service and unit tests passed, including storage migration, objective ownership, 100% weighting, assigned-supervisor enforcement, secure objective evidence, full review lifecycle, training request approvals, scheduling, attendance, completion, file scope, verification and audit coverage.
+  - Both Talent Playwright browser journeys passed. They cover Employee, Line Manager and HR from approved objectives through a locked review and verified certificate, and prove Team Performance/Training Records open correctly for Line Manager, HR and Super Admin.
+  - Production client, server and Cloudflare worker builds passed.
+  - Repository-wide lint still reports 167 established findings (150 errors and 17 warnings) in unrelated older recruitment, employee-form, configuration and test files. The targeted Talent lint run is clean.
+
+### System administration, policies, audit and reports completion
+
+- Status: Complete on 2026-08-30 for the browser-local Reports, User Management, Audit History, Leave Policies, Organisation Settings and Timesheet Settings workflows. Google Workspace authentication and production database storage remain intentionally deferred.
+- Scope:
+  - Restricted global Audit History to Super Admin, added actor, active-role, action, record-type, attention-level and custom-date filters, integrity warnings, protected CSV export and plain-language activity details.
+  - Prevented users from changing their own access, preserved Employee access for everyone, protected Super Admin accounts, blocked deactivating supervisors with direct reports, validated employee status before activation, notified affected users and made archive/restore consistent.
+  - Protected application settings, master data, backup export, restore and sample reset inside shared services. Added validation, duplicate checks, active-record dependency protection and in-app confirmation dialogs.
+  - Added editable working days, expiry-reminder dates, organisation hours, leave year, currency, numbering, departments, locations, projects, cost centres, activity codes, positions, grades and public holidays.
+  - Expanded leave-policy editing to cover allowance, carry-over, paid status, balance method, negative-balance cap, evidence, handover, eligibility, notice rules and sick-pay tiers. Policy and entitlement updates now roll back together if any part fails.
+  - Completed timesheet setting validation, all seven week-start choices, period generation/lifecycle controls and project, cost-centre, activity and location master-data controls.
+  - Expanded Reports Centre with recruitment source, recommender, contact, leave usage, project hours, attendance, overtime and offboarding reports; role-scoped finance access; reusable saved views; structured filters; summary cards; configured currency; printing; formula-safe CSV and audited exports.
+  - Added permission-controlled travel-request activity history and remounted the application after a successful backup restore or sample reset without relying on a full-page reload.
+- Verification:
+  - Targeted Prettier and ESLint passed for every System source and regression test changed in this work.
+  - TypeScript typecheck passed.
+  - All 226 service and unit tests passed, including five new System administration tests covering settings, backups, master data, self-escalation, archive/restore, report boundaries, saved views, audit scope and policy validation.
+  - Production client, server and Cloudflare worker builds passed.
+  - Repository-wide lint remains blocked by 169 established findings outside this System work, mostly older recruitment/employee forms and formatting debt. The targeted System lint run is clean.
+
+### Step H3.1 - PostgreSQL and Drizzle foundation
+
+- Status: In progress on 2026-08-30. The complete local/repository foundation is verified; the managed staging database remains pending an approved hosting provider and data-residency region, so Step H3.1 is not marked complete.
+- Scope:
+  - Added Drizzle ORM, Drizzle Kit and the Cloudflare-compatible Postgres.js driver without changing any feature service to use PostgreSQL prematurely.
+  - Added a server-only, lazy database client that reads `DATABASE_URL` and pool configuration only at call time, validates configuration, reuses one runtime connection and exposes a controlled health check and shutdown path.
+  - Added version-controlled Drizzle configuration and an intentionally empty schema entry point. Business tables begin in H3.2 after the plumbing is independently proven.
+  - Added a PostgreSQL 17 Docker Compose service with an isolated named volume, environment-only credentials and a health check. The example uses host port 55432 to avoid the existing PostgreSQL service on port 5432.
+  - Added local setup, schema workflow and staging guidance. Real environment files are ignored while the safe example remains version controlled.
+  - Recorded the dropdown decision: departments, locations, positions, grades, employment types, cost centres, projects, currencies, activity codes, working times and public holidays will be stored in PostgreSQL and managed through VIA HR System in H3.2. Protected workflow states remain server-controlled.
+  - Added database configuration tests and a live connectivity smoke command.
+  - Corrected three existing type-gate defects encountered during verification by using the trusted system context for document reminders and making Candidate Kanban stage changes type-safe.
+- Verification:
+  - `npm run db:generate` passed against the intentionally empty schema (`0 tables`, no pending migration).
+  - Local PostgreSQL 17 container became healthy and `npm run db:smoke` passed with a real `SELECT 1` (46 ms).
+  - Database foundation tests passed 4/4 against the local PostgreSQL instance.
+  - Full unit/service suite passed: 229 passed, 0 failed, and the optional live-database case skipped in the environment-free run; the same case passed separately against local PostgreSQL.
+  - TypeScript typecheck passed.
+  - Database foundation formatting and targeted lint passed.
+  - Production client, server and Cloudflare worker build passed.
+  - Runtime smoke checks returned HTTP 200 for `/`, `/staff` and `/staff/settings` with PostgreSQL configured in the server environment. The development app is running at `http://localhost:8082`.
+  - Repository-wide lint still reports 156 established findings in older recruitment, employee-form and formatting files. No unrelated file was mass-formatted or weakened to hide that debt.
+- Decisions:
+  - Existing browser-backed records remain the active source until each module is migrated and verified. There is no silent fallback after a migrated service fails.
+  - Database secrets are never `VITE_` variables and are never committed.
+  - A managed staging database will not be provisioned until VIA confirms the hosting provider and required data-residency region.
+
+### Step H3.1B - Contabo Node runtime
+
+- Status: Complete on 2026-08-30 for the repository and locally verified Linux deployment package. Deployment to the actual Contabo server remains an environment operation after its region, capacity, domain and reverse proxy are confirmed.
+- Scope:
+  - Replaced the Cloudflare production preset with Nitro's Node server preset and added the production `npm start` entry point.
+  - Added a multi-stage Node 24 Alpine image that builds on Linux, runs as the unprivileged `node` user and contains only the generated Nitro output at runtime.
+  - Added an isolated production Compose stack with a loopback-only application port, a public-facing frontend network for the host proxy, an internal application/database network and no published PostgreSQL port.
+  - Added dedicated VIA database credentials, database volume, container health checks, restart policies, graceful stop periods, read-only application filesystem, temporary filesystem, no-new-privileges controls and log rotation.
+  - Added safe `/health/live` and `/health/ready` endpoints before application routing. Readiness checks PostgreSQL but never returns connection details or raw errors; unsupported methods return 405.
+  - Added graceful PostgreSQL connection shutdown for Node termination and interrupt signals.
+  - Added a production environment template, Docker ignore rules, an Nginx reference configuration and a complete Contabo deployment, isolation, TLS, firewall, backup, update and rollback guide.
+  - Preserved every feature page and the current browser-backed data path. No HR module was switched to PostgreSQL in this runtime step.
+- Verification:
+  - Production Compose configuration validation passed.
+  - Five Contabo runtime/health tests passed, covering liveness independence, database readiness, safe failure output, method restrictions and application routing passthrough.
+  - TypeScript typecheck passed.
+  - Full unit/service suite passed: 234 passed, 0 failed and one optional live-database test skipped in the environment-free run.
+  - Targeted ESLint and Prettier passed for every runtime source, configuration and test file they support.
+  - Nitro production build passed with the `node-server` preset.
+  - The Linux `via-hr-system:contabo-test` Docker image built successfully with a clean `npm ci` and Linux-native production build.
+  - The exact production Compose stack started with healthy app and PostgreSQL containers. PostgreSQL showed no host binding; the app bound only to `127.0.0.1:8084` for the test.
+  - Container smoke checks returned HTTP 200 for liveness, readiness, the public careers page and `/staff/settings`. The temporary test containers and networks were stopped and removed after verification; the test database volume was retained.
+  - The regular development app remains available at `http://localhost:8082` and returned HTTP 200 after the production-stack test.
+  - Repository-wide lint still reports 155 established findings in older recruitment, employee-form and formatting files. The Contabo runtime files are clean.
+- Decisions:
+  - Contabo is the production runtime target; Cloudflare-specific output is no longer built.
+  - The host reverse proxy terminates TLS and forwards to a loopback-only VIA port. VIA does not claim ports used by other applications.
+  - The PostgreSQL service is private and dedicated to VIA. Other applications may share the host but not VIA's database, role, password or volume.
+  - Real HR data must not be loaded until the server's data-residency region is approved, off-server encrypted backups are operating, Google Workspace authentication is connected and the applicable module has completed database cutover.
+
+### Step H3.2 - Master data, access and employee schema
+
+- Status: Complete on 2026-08-30 for the schema-and-migration scope. Existing feature screens deliberately remain on the versioned browser repository until the later controlled service-cutover step.
+- Scope:
+  - Added 21 organisation-aware PostgreSQL tables for organisation settings, departments, office locations/geofences, cost centres, positions, grades, employment types, working times, public holidays, currencies, activity codes, projects, employees, reporting-line history, users, roles, role assignments and separated sensitive employee data.
+  - Replaced free-text production employee relationships with UUID foreign keys for department, position, grade, location, employment type, working time, cost centre, project and line manager. Added list/report indexes and case-insensitive organisation-level duplicate protection.
+  - Added employee nationality, date of birth, gender, marital status, termination date/reason, working hours and the other production employee fields identified in the readiness audit.
+  - Added a current line-manager relationship plus dated reporting-line history. Database checks prevent self-management, multiple simultaneous primary supervisors and management cycles.
+  - Added protected system roles and database-enforced base Employee access for every user. Employee access cannot be removed; additional HR, Line Manager, Accounts, IT or Super Admin access remains assignable.
+  - Added same-organisation checks for employee, user, reporting-line, role-assignment and sensitive-data relationships to prevent cross-organisation references.
+  - Added application-layer AES-256-GCM encryption with authenticated, versioned key envelopes for passport, national ID, social-insurance, salary and bank data. Keys remain in server environment variables and support rotation by key ID.
+  - Added a generated forward migration, a separate manual rollback migration, schema guidance and Contabo/local encryption configuration examples. No actual secret was committed.
+- Verification:
+  - Drizzle generated the 21-table schema and a subsequent drift check reported no schema changes.
+  - Applied the migration to a uniquely named fresh PostgreSQL 17 scratch database, completed a real manager/employee/user insert, confirmed the automatic Employee role, verified a management cycle was rejected and proved raw SQL contained ciphertext rather than salary values.
+  - Decrypted the stored data only through the application's server-side decrypt path.
+  - Ran the manual rollback and confirmed zero public business tables remained, then recreated the scratch database and cleanly re-applied all 21 tables. The scratch database was removed after verification.
+  - Four H3.2 schema/encryption tests were added. Three pass in the environment-free suite; the live database case is intentionally skipped there and passed separately against PostgreSQL.
+  - Full unit/service suite passed: 237 passed, 0 failed and 2 optional live-database tests skipped.
+  - All five Playwright journeys passed, covering Recruitment, Core HR, Time & Travel and both Talent journeys. The Core HR cold-start assertion now allows the application boot process up to 20 seconds instead of failing after five seconds while the development server compiles its first staff route.
+  - Targeted Prettier and ESLint passed for every H3.2 TypeScript, test, Markdown, JSON and Compose file they support.
+  - TypeScript typecheck passed, the Nitro Node production build passed and the production Compose configuration validated with the new encryption variables.
+  - Repository-wide lint still reports the same 155 established findings (140 errors and 15 warnings) in older recruitment, employee-form and formatting files. No unrelated user file was changed to conceal that debt.
+- Decisions:
+  - Business dropdown values are organisation-owned PostgreSQL records managed by VIA HR System. Protected workflow states and system roles are not user-editable dropdown data.
+  - Organisation name is stored on the organisation record; organisation policy settings remain one-to-one through `app_settings`.
+  - Database actor metadata uses UUID values without a foreign key so the trusted bootstrap/system actor can create the first access mapping and historical actor IDs remain stable.
+  - The current UI has not been switched to PostgreSQL in this step. Master-data/settings service cutover comes next; claiming otherwise would risk mixing browser and database sources.
+
+### Step H3.3 - Remaining module schemas and append-only audit controls
+
+- Status: Complete on 2026-08-30 for the schema-and-migration scope. Feature services remain on the versioned browser repository until the incremental H3.5 cutover; Google Workspace authentication remains deferred to H4.
+- Scope:
+  - Added organisation-scoped Drizzle schemas for employee files/history/imports, recruitment, leave, timesheets, attendance, site visits, overtime, travel, reimbursements, payroll, onboarding, offboarding, performance, training, notifications, workflow tasks and audit history.
+  - Added all 48 structured collections listed in `PRODUCT_IMPLEMENTATION_PLAN.md` Section 20.1, including Workspace identity mappings and revocable portal-session primitives without connecting Google authentication.
+  - Promoted timesheet entries, travel expense items, onboarding/offboarding tasks, payroll exceptions and payroll manual adjustments into independently queryable child tables.
+  - Replaced plaintext recruitment salary fields with authenticated encryption envelopes and added live round-trip verification proving raw PostgreSQL values do not contain the salary amounts.
+  - Added missing recruitment relationships, organisation-scoped application references, vacancy versions, interview panel membership, shortlist limits, score/date checks and full recommendation, contact, disposition, decision and offer persistence.
+  - Added database-generated same-organisation guards to every single-column foreign key between tenant-owned tables, so a valid record ID from another organisation is still rejected.
+  - Added immutable audit records with IP address and user-agent context. Database triggers reject UPDATE/DELETE for all ordinary DML, and the `via_hr_runtime` role has INSERT/SELECT but no UPDATE/DELETE grant on audit history.
+  - Replaced the unsafe combined migration with ordered H3.2 core, H3.3 module and H3.3 identity-primitives migrations. Added a transactional H3.3 rollback that removes its own Drizzle ledger entries so re-migration works.
+  - Recreated the empty local development PostgreSQL database after verifying every existing public table contained zero rows. The obsolete one-file migration ledger was replaced with the three ordered migrations; browser-local prototype records were unaffected.
+- Verification:
+  - Fresh PostgreSQL migration passed and created 90 public business tables from three ordered migrations.
+  - Transactional H3.3 rollback passed and reduced the database to exactly 21 H3.2 core tables; running `npm run db:migrate` immediately restored all 90 tables.
+  - The full recruitment database journey passed against PostgreSQL, covering vacancy/version, original CV metadata, Candidate Pool, application, recommendation, preparation, shortlist selection, detailed score, interview recommendation, contact, panel, scorecard, disposition, hiring decision and encrypted offer.
+  - The live test rejected a cross-organisation department reference, a shortlist size above 10, an audit UPDATE and an audit DELETE. Runtime audit grants were also verified directly.
+  - Drizzle drift verification reported `No schema changes, nothing to migrate` across all 90 tables.
+  - TypeScript typecheck and targeted ESLint passed.
+  - Environment-free suite passed: 239 passed, 0 failed, 3 optional database tests skipped.
+  - Full suite against PostgreSQL passed: 242 passed, 0 failed, 0 skipped.
+  - Production Nitro Node build passed.
+  - Repository-wide lint still reports 86 established findings (71 errors and 15 warnings) in unrelated older route and test files. The H3.3 schema and test files pass targeted ESLint and Prettier checks.
+- Decisions:
+  - H3.3 establishes schema and integrity only. Routes and services do not silently switch to PostgreSQL before their controlled H3.5 migration batch.
+  - The migration connection remains separate from the restricted `via_hr_runtime` group role. The later server cutover must use a login inheriting the runtime role rather than the migration owner.
+  - Audit history is immutable at both the privilege and trigger layers; corrections are represented by new compensating audit events, never by editing history.
+
+### Step H3.4 - Deterministic staging-data importer
+
+- Status: Complete on 2026-08-30 for the repository and verified against a fresh PostgreSQL database. It is intended for demonstration/staging data only; production service cutover remains H3.5.
+- Scope:
+  - Replaced the incomplete generated importer with a read-only preview, atomic import and independent read-only verification workflow.
+  - Added RFC 4122 UUIDv5 mapping, canonical dataset checksums, natural-key collision detection and strict changed-record refusal. Existing records are never overwritten silently.
+  - Replaced clock-relative demo dates with a fixed seed reference date so reset output, checksums and later verification remain deterministic across calendar days.
+  - Mapped every current non-empty seed collection: organisation settings, attendance policy, all master data, projects, employees, reporting lines, protected identifiers, compensation, bank details, users, roles, role assignments, vacancies, employee documents and file placeholders, training courses/requests/sessions/assignments, notifications and seed audit history.
+  - Added explicit guards for currently empty seed collections. If one later contains data without an approved mapping, import stops instead of falsely reporting zero rows.
+  - Encrypted passport/national ID, salary, bank details, vacancy salary range and document numbers with the server keyring before insertion; repeat comparison decrypts only in the server process.
+  - Added a separate import-batch record for every successful invocation, lifecycle audit events, failed-attempt recording when the organisation exists, exact source/inserted/unchanged/conflict counts and sanitized operator output.
+  - Removed committed encryption material and Windows-only environment commands. Preview/import/verify now require secrets from the environment and run on Windows or Linux.
+  - Added a private production Compose tools profile and local/Contabo operating instructions.
+- Verification:
+  - Fresh PostgreSQL preview completed with 76 mapped source records and left the database empty.
+  - First import inserted all 76 source records plus required relational/encrypted derivatives; exact target counts matched the browser seed.
+  - Verification passed without writes. A repeat import inserted zero business records, reconciled all 76 as unchanged and created a second completed attempt with its own audit events.
+  - A manually changed department caused a non-zero conflict result, preserved the changed row and created a failed attempt record.
+  - An injected end-of-import failure rolled back the missing business row while retaining a separate failed-attempt record.
+  - Importer integration tests passed 6/6, including UUID format, preview safety, full coverage, encryption round-trip, repeat behaviour, conflict protection and atomic rollback.
+- Decisions:
+  - Seed document metadata is imported as `Pending Upload`; no file bytes are fabricated. Object-byte migration remains H6.
+  - Migration-seeded protected role IDs are reused by role code so the importer respects database bootstrap identity.
+  - The ordinary `npm test` run never falls back to or truncates the developer database. Live importer tests require an explicit `VIA_HR_TEST_DATABASE_URL` whose database name is visibly test-only.
+
+### Step H3.5A - Organisation settings and master data cutover
+
+- Status: Complete on 2026-08-30.
+- Scope:
+  - Created transactional server-only PostgreSQL repositories (`src/lib/db/repositories/master-data.repository.server.ts` and `src/lib/db/repositories/settings.repository.server.ts`) for app settings and all 11 master data collections (departments, locations, positions, grades, employment types, cost centres, projects, working times, public holidays, currencies, activity codes).
+  - Enforced atomic transaction boundaries (`db.transaction`) writing data updates and immutable `audit_events` rows within the exact same database transaction.
+  - Added server-side role verification (`verifyServerActorRole` in `src/lib/db/utils.server.ts`) querying `users`, `user_roles`, and `roles` in PostgreSQL to eliminate client role-spoofing.
+  - Created strict Zod-validated TanStack Start server functions (`src/lib/server-functions/master-data.server.ts` and `src/lib/server-functions/settings.server.ts`).
+  - Added dual-mode client services (`src/lib/data/settings-service.ts` and `src/lib/data/master-data.ts`) supporting live server RPC in application context and in-memory execution in unit test harness.
+  - Resolved asynchronous promise bugs in `src/routes/staff.tsx` and `src/routes/staff/reports.tsx`, ensuring consistent loading state.
+  - Added comprehensive PostgreSQL integration test suite in `tests/db-master-data-settings.test.ts` verifying direct PostgreSQL transactions, atomic audit events, dependency checks, rollback, and actor role enforcement.
+  - All 243 business and database tests passing with 0 failures and 0 masked skips.
+- Verification:
+  - `npx tsc --noEmit`: Passed with 0 errors.
+  - `npx eslint` on modified files: Passed with 0 errors and 0 warnings.
+  - `node --test tests/db-master-data-settings.test.ts`: Passed against PostgreSQL.
+  - `npm test`: Passed (240 passed, 0 failed, 3 optional environment-guarded skips).
+  - `npm run build`: Production build succeeded in 765ms.
+

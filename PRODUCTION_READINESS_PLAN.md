@@ -1,6 +1,6 @@
 # VIA HR System — Production Readiness Plan
 
-Author's framing: this is written as a senior PM would scope it — sequenced by risk and dependency, not by module popularity. The prototype's *data modeling* is in surprisingly good shape (see Appendix A); the gap to production is mostly **trust boundary** work: nothing currently stops a browser from lying about who it is, and nothing currently stores a bank account number, passport number, or salary figure anywhere but a browser tab. That reframes the plan: schema migration is the easy 20%, and auth/authorization/security is the hard 80%.
+Author's framing: this is written as a senior PM would scope it — sequenced by risk and dependency, not by module popularity. The prototype's _data modeling_ is in surprisingly good shape (see Appendix A); the gap to production is mostly **trust boundary** work: nothing currently stops a browser from lying about who it is, and nothing currently stores a bank account number, passport number, or salary figure anywhere but a browser tab. That reframes the plan: schema migration is the easy 20%, and auth/authorization/security is the hard 80%.
 
 Companion documents: `PRODUCT_IMPLEMENTATION_PLAN.md` (target product spec), `IMPLEMENTATION_PROMPT_PLAYBOOK.md` (original build steps), `IMPLEMENTATION_PROGRESS.md` (stale — do not trust it; see the analysis note added 2026-08-18).
 
@@ -23,13 +23,13 @@ Exit criterion: `npm run typecheck`, `npm run lint`, `npm test` all pass; every 
 
 These block schema design, so decide them before Phase 2:
 
-| Decision | Why it matters | Recommendation |
-|---|---|---|
-| Single-tenant or multi-tenant (multiple client companies)? | Determines whether every table needs `organisationId` | If this ever sells beyond one company, add `organisationId` now — retrofitting tenancy later touches every table and every query |
-| Source of identity: Google Workspace only, or also email/password? | Determines auth architecture | Spec already assumes Workspace-only (Section 4) — keep it, it removes password-storage risk entirely |
-| Where does payroll money actually get paid from? | Determines whether payroll module needs to integrate with a real payroll processor or stays "input preparation" only | Confirm scope stays "prepare & export inputs," not "run payroll" — the spec already says this (Section 11), just get explicit sign-off since it changes compliance scope enormously |
-| Data residency / hosting region | HR data (passports, bank details, medical) is regulated in most jurisdictions | Pick the DB region before Phase 2; changing it later means a data migration |
-| Retention policy for leavers' data | Legal requirement varies by country | Get a number (e.g., 7 years post-termination) before building the archive/delete jobs in Phase 7 |
+| Decision                                                           | Why it matters                                                                                                       | Recommendation                                                                                                                                                                      |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Single-tenant or multi-tenant (multiple client companies)?         | Determines whether every table needs `organisationId`                                                                | If this ever sells beyond one company, add `organisationId` now — retrofitting tenancy later touches every table and every query                                                    |
+| Source of identity: Google Workspace only, or also email/password? | Determines auth architecture                                                                                         | Spec already assumes Workspace-only (Section 4) — keep it, it removes password-storage risk entirely                                                                                |
+| Where does payroll money actually get paid from?                   | Determines whether payroll module needs to integrate with a real payroll processor or stays "input preparation" only | Confirm scope stays "prepare & export inputs," not "run payroll" — the spec already says this (Section 11), just get explicit sign-off since it changes compliance scope enormously |
+| Data residency / hosting region                                    | HR data (passports, bank details, medical) is regulated in most jurisdictions                                        | Pick the DB region before Phase 2; changing it later means a data migration                                                                                                         |
+| Retention policy for leavers' data                                 | Legal requirement varies by country                                                                                  | Get a number (e.g., 7 years post-termination) before building the archive/delete jobs in Phase 7                                                                                    |
 
 ---
 
@@ -56,7 +56,7 @@ These block schema design, so decide them before Phase 2:
    - `Employee.terminationDate`, `Employee.terminationReason` — needed for "leavers" reporting and offboarding, not currently modeled.
    - `AuditEvent` needs a durable `ipAddress`/`userAgent` for real security audit value (currently just actor + before/after).
    - A first-class `Session` table (see Phase 3) — doesn't exist at all in the prototype since there's no real login.
-4. Encrypt at column level (via pgcrypto or application-layer encryption before write) rather than plaintext: `BankDetails.accountNumber`, `BankDetails.iban`, `Employee.passportNumber`, `Employee.nationalId`, `EmployeeSalary.baseMonthly`. These are flagged "sensitive" in code comments already (`JobOffer.salary // sensitive`) — that comment is currently the *only* protection they get. In production it needs to be enforced at the data layer, not just by UI redaction.
+4. Encrypt at column level (via pgcrypto or application-layer encryption before write) rather than plaintext: `BankDetails.accountNumber`, `BankDetails.iban`, `Employee.passportNumber`, `Employee.nationalId`, `EmployeeSalary.baseMonthly`. These are flagged "sensitive" in code comments already (`JobOffer.salary // sensitive`) — that comment is currently the _only_ protection they get. In production it needs to be enforced at the data layer, not just by UI redaction.
 5. File metadata (`FileMetadata`) moves from IndexedDB to pointing at object storage (Phase 4) — keep the table, change what `fileId` resolves to.
 
 ### 2.4 Migration mechanics
@@ -169,49 +169,61 @@ Maps to playbook Step 47 (currently deferred):
 Fields already modeled well in `src/lib/data/*-types.ts` are marked **✓ modeled**; gaps found during this audit are marked **⚠ add**. This is not a re-design — it's a checklist to review against, since the existing modeling is the strongest part of the current codebase.
 
 ### Employee profile
+
 ✓ modeled: employee number, legal/preferred name, work email/phone, department, position, grade, location, employment type, dates (start/probation), line manager, status, salary block, bank details, passport/national ID, performance rating/notes, project, address, emergency contacts, dependants.
 ⚠ add: `nationality`, `dateOfBirth`, `gender`, `terminationDate`/`terminationReason`, `userId` back-reference for fast session→employee lookup.
 
 ### Recruitment (Vacancy → Candidate → Application → Interview → Scorecard → Offer)
+
 ✓ modeled: extremely thorough — vacancy salary range with public visibility flag, screening questions, candidate scoring with evidence/strengths/risks, shortlist overrides with reasons, interview slots/history, blind scorecards with revision history, offer status lifecycle with history log.
 ⚠ add: nothing structurally significant found; this is the most complete module in the schema. Priority here is wiring it to a real DB and a real AI provider, not adding fields.
 
 ### Leave
+
 ✓ modeled: policy accrual modes, carry-forward limits, negative-balance rules, notice-period rules, transaction ledger (entitlement/accrual/adjustment all separately typed), request approval chain with policy snapshot (protects historical requests from later policy changes — good design, keep it).
 ⚠ add: nothing major; consider a `blackoutPeriods` field on `LeavePolicy` if the business has seasonal no-leave windows (confirm with HR stakeholders during §1 workshops).
 
 ### Timesheets
+
 ✓ modeled: settings (period start day, overtime threshold, lock behaviour), period/timesheet/entry split.
 ⚠ add: promote `TimesheetEntry` to a real child table in Postgres (see §2.3) — the current "embedded for simplicity" note in the code is explicitly a prototype shortcut that will hurt reporting.
 
 ### Attendance & Overtime
+
 ✓ modeled: clock in/out, source (hardware/manual/web/import), lateness flags, correction workflow with manager+HR notes, overtime claims with cross-check warnings and correction lineage (`originalClaimId`).
 ⚠ add: geofenced clock-in (decided 2026-08-18 — see `IMPLEMENTATION_PROMPT_PLAYBOOK.md` Step 30A). `Location` master data needs `latitude`/`longitude`/`radiusMeters`/`isClockInSite`; `AttendanceRecord` needs `locationId`/`capturedLatitude`/`capturedLongitude`/`capturedAccuracyMeters`. Hard-block enforcement, any active clock-in-enabled location qualifies (not a per-employee assignment), HR places locations via a free Leaflet/OpenStreetMap picker (no API key/billing) with a live radius circle. Build this in the current prototype architecture before the Phase 2 DB migration, so the migration inherits the finished schema instead of retrofitting it.
 
 ### Travel & Reimbursement
+
 ✓ modeled: dual-track HR/Accounts approval, estimate vs actual split, expense line items with receipts, variance explanation.
 ⚠ add: promote `ExpenseLine` to a real child table (needed for the variance/actuals report in §16.6).
 
 ### Payroll input prep
+
 ✓ modeled: period status lifecycle, exceptions with severity/acknowledgement, manual adjustments with evidence, compiled input snapshot per employee.
 ⚠ add: promote `PayrollException`/`PayrollManualAdjustment` to real child tables for the exception report.
 
 ### Onboarding / Offboarding
+
 ✓ modeled (onboarding): template-driven tasks by checkpoint/group/owner role, dependency chains, evidence requirement, readiness-for-start-date computation.
 ⚠ add: **Offboarding has no dedicated type file at all** — it's referenced in the collection list (§20.1: `offboardingCases`) and playbook Step 38, but unlike every other module has no `offboarding-types.ts` and no built case-workflow UI (confirmed in the 2026-08-18 audit). This needs to be modeled from scratch, likely mirroring `OnboardingCase`/`OnboardingTask` shape (clearance tasks by department: IT equipment return, access revocation, final settlement, exit interview) rather than invented independently.
 
 ### Performance
+
 ✓ modeled: template-driven weighted sections/items, self vs manager scoring, moderation/discussion stages, acknowledgement, correction lineage.
 ⚠ add: none significant.
 
 ### Training
+
 ✓ modeled: minimal but sufficient (title, provider, completion/expiry, certificate file, HR verification).
 ⚠ add: a `TrainingCourse`/mandatory-course-catalogue relationship — the collection list mentions `trainingCourses` and `trainingAssignments` separately, but the only type found (`TrainingRecord`) models a flat completed-training log, not an assignable catalogue with due dates. Needed for the "mandatory training gaps" report in §16.6.
 
 ### Master data (departments, locations, cost centres, positions, grades, projects)
+
 ✓ modeled: generic `MasterRecord` (name, code, description, active flag, order) covers all of these except `Project`, which has its own richer type (client, dates, cost centre, manager).
 ⚠ add: none.
 
 ### Notifications / Audit
+
 ✓ modeled: notification priority/status/dedup key/deep link; audit event with actor snapshot, before/after, risk level.
 ⚠ add: `ipAddress`/`userAgent` on `AuditEvent` for real security value (see §6.1).

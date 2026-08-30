@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1788092759270,
+      "tag": "0000_h3_2_core",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788092770627,
+      "tag": "0001_h3_3_modules",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788093308743,
+      "tag": "0002_h3_3_identity_primitives",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788094226941,
+      "tag": "0003_wakeful_bucky",
+      "breakpoints": true
+    }
+  ]
+}

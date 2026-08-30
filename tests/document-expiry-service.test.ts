@@ -173,7 +173,7 @@ test("runReminderEngine backfills every threshold a long-overdue document has cr
   assert.equal(hrNotificationsAfterRerun.length, 13);
 });
 
-test.skip("runReminderEngine reads the organisation's configured reminder days instead of a hardcoded list", async () => {
+test("runReminderEngine reads the organisation's configured reminder days instead of a hardcoded list", async () => {
   const { notifications } = setup();
   const employeeService = new EmployeeService();
   const documentService = new DocumentService();
@@ -184,8 +184,8 @@ test.skip("runReminderEngine reads the organisation's configured reminder days i
 
   // Replace the org's configured advance-notice days with a single, distinctive value that
   // was never part of the old hardcoded list ([90, 60, 30, 14, 7, 1]).
-  const currentSettings = settingsService.getAppSettings();
-  settingsService.saveAppSettings({ ...currentSettings, documentReminderDays: [45] }, hr);
+  const currentSettings = settingsService.getAppSettingsSync();
+  await settingsService.saveAppSettings({ ...currentSettings, documentReminderDays: [45] }, hr);
 
   const doc = documentService.getDocumentRepository(SYSTEM_CONTEXT).create(
     {
