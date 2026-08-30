@@ -97,6 +97,15 @@ function SettingsRoute() {
               <TabsTrigger value="grades" className="gap-2">
                 Grades
               </TabsTrigger>
+              <TabsTrigger value="employmentTypes" className="gap-2">
+                Employment Types
+              </TabsTrigger>
+              <TabsTrigger value="workingTimes" className="gap-2">
+                Working Times
+              </TabsTrigger>
+              <TabsTrigger value="currencies" className="gap-2">
+                Currencies
+              </TabsTrigger>
               <TabsTrigger value="publicHolidays" className="gap-2">
                 Public Holidays
               </TabsTrigger>
@@ -160,6 +169,18 @@ function SettingsRoute() {
 
             <TabsContent value="grades">
               <MasterDataSection collection="grades" title="Grades" />
+            </TabsContent>
+
+            <TabsContent value="employmentTypes">
+              <MasterDataSection collection="employmentTypes" title="Employment Types" />
+            </TabsContent>
+
+            <TabsContent value="workingTimes">
+              <MasterDataSection collection="workingTimes" title="Working Times" />
+            </TabsContent>
+
+            <TabsContent value="currencies">
+              <MasterDataSection collection="currencies" title="Currencies" />
             </TabsContent>
 
             <TabsContent value="publicHolidays">
