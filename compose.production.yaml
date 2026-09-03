@@ -139,8 +139,11 @@ services:
     ports:
       - "${VIA_HR_APP_BIND_ADDRESS:-127.0.0.1}:${VIA_HR_APP_PORT:-8082}:3000"
     networks:
-      - frontend
-      - backend
+      frontend:
+      backend:
+      proxy:
+        aliases:
+          - via-hr-app
     healthcheck:
       test:
         [
@@ -298,6 +301,9 @@ networks:
   frontend:
   backend:
     internal: true
+  proxy:
+    external: true
+    name: via_proxy
 
 volumes:
   via_hr_postgres_data:

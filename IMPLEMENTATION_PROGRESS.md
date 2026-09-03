@@ -1574,3 +1574,4 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
   - The production origin is configured as `https://career.via-int.com`, with callback `https://career.via-int.com/auth/portal/callback` and dashboard `https://career.via-int.com/dashboard`.
   - Supply `PORTAL_SSO_SECRET` securely to both VIA Portal and VIA HR; it is intentionally absent from source control.
   - Register the exact production callback and app slug in VIA Portal, then complete the Contabo staging login/logout and role-scope UAT described in the release acceptance record.
+  - Contabo inspection confirmed that the host uses the shared `via_proxy` Caddy gateway. The production Compose configuration now joins that external network under the `via-hr-app` alias, and the supplied Caddy block enforces the 16 MB request ceiling while redacting `portal_token` from access logs.

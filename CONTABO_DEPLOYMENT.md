@@ -32,7 +32,9 @@ decisions, VIA Portal SSO, encrypted backup and access-control checks are comple
 - Keep the database on the internal `backend` network. The production Compose
   file publishes no PostgreSQL port.
 - Give VIA its own database, PostgreSQL role, password and named volume.
-- Bind the application to `127.0.0.1` so only the host reverse proxy can reach it.
+- Keep the optional host health port bound to `127.0.0.1`. The application also joins the existing
+  external `via_proxy` Docker network under the unique `via-hr-app` alias so Caddy can reach it
+  without publishing the application container directly to the internet.
 - Never reuse another application's database credentials or encryption keys.
 
 The applications may share the Contabo host and reverse proxy. They must not
@@ -61,8 +63,8 @@ Before deployment:
   the approved secret channel. Put it only in the owner-readable `.env.production`; never commit it.
 - Keep `VIA_HR_ALLOW_PASSWORD_LOGIN=false`. VIA HR has no normal production password login and
   does not implement Google OAuth directly.
-- Configure Nginx from the supplied example. Its exact callback location has access logging disabled
-  so the short-lived query token is never written to the proxy log.
+- Configure the existing Caddy gateway from `deploy/contabo/Caddyfile.via-hr.example`. Its access-log
+  filter replaces the short-lived `portal_token` value with `REDACTED` before writing the event.
 
 After successful verification, VIA HR replaces the callback URL immediately with `/dashboard`,
 creates an opaque database-backed session valid for no more than eight hours, and stores only a
@@ -148,10 +150,10 @@ curl --fail http://127.0.0.1:8082/health/ready
 curl --fail http://127.0.0.1:8082/health/worker
 ```
 
-14. Configure the existing reverse proxy using
-    `deploy/contabo/nginx-via-hr.conf.example` as a reference. Replace the example
-    hostname and port, validate the proxy configuration, then obtain or attach the
-    site's TLS certificate.
+14. Back up `/opt/via/proxy/Caddyfile`, append the complete block from
+    `deploy/contabo/Caddyfile.via-hr.example`, validate it inside the existing `via-caddy` container,
+    and reload Caddy only after validation succeeds. Caddy obtains and renews the
+    `career.via-int.com` TLS certificate after DNS points to this server.
 15. Allow public firewall access only to SSH, HTTP and HTTPS as required by the
     existing server policy. Do not open ports `3000`, `5432` or VIA's loopback
     port to the internet.
@@ -166,10 +168,10 @@ provided by the network administrator.
 
 Keep `VIA_HR_ATTENDANCE_NETWORK_ENFORCEMENT=true` and
 `VIA_HR_TRUST_PROXY=true` in production. The reverse proxy must overwrite
-`X-Forwarded-For` with the connection address; it must never trust or append a
-value supplied by the browser. The provided Nginx example follows this rule.
-If another trusted load balancer sits in front of Nginx, define its trusted
-proxy addresses explicitly before changing this configuration.
+`X-Real-IP`; it must never trust an `X-Real-IP` value supplied by the browser. The selected Caddy
+configuration sets `X-Real-IP` from the direct remote address. Caddy manages the standard
+forwarding headers itself. If another trusted load balancer sits in front of Caddy, define its
+trusted proxy addresses explicitly before changing this configuration.
 
 This is the selected first production anti-spoofing control. Managed-device or
 trusted-mobile attestation can be added later without replacing the network and
@@ -197,9 +199,9 @@ importer logs only the database host/name, checksum, counts and batch ID.
 
 ## Request and upload security
 
-- The application and Nginx both enforce request limits. Keep the proxy's
-  `client_max_body_size` aligned with `VIA_HR_MAX_REQUEST_BYTES`; the default is
-  16 MB so a 10 MB file can be carried in an encoded server request.
+- The application and Caddy both enforce request limits. Keep Caddy's `request_body max_size`
+  aligned with `VIA_HR_MAX_REQUEST_BYTES`; the default is 16 MB so a 10 MB file can be carried in
+  an encoded server request.
 - All uploaded files pass through the private ClamAV service before encryption,
   object storage or PostgreSQL metadata creation. Production fails closed when
   the scanner is unavailable or returns an uncertain result.

@@ -1,0 +1,36 @@
+career.via-int.com {
+	encode zstd gzip
+
+	request_body {
+		max_size 16MB
+	}
+
+	reverse_proxy via-hr-app:3000 {
+		health_uri /health/ready
+		health_interval 30s
+		health_timeout 5s
+		header_up X-Real-IP {remote_host}
+	}
+
+	header {
+		Alt-Svc "clear"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/via-hr-access.log {
+			roll_size 20MiB
+			roll_keep 10
+			roll_keep_for 720h
+		}
+		format filter {
+			request>uri query {
+				replace portal_token REDACTED
+			}
+			wrap json
+		}
+	}
+}
