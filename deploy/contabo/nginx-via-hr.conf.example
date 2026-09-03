@@ -3,7 +3,7 @@ limit_req_zone $binary_remote_addr zone=via_hr_requests:10m rate=10r/s;
 server {
     listen 80;
     listen [::]:80;
-    server_name career.via-int.com;
+    server_name careers.via-int.com;
     client_max_body_size 16m;
 
     add_header X-Content-Type-Options nosniff always;

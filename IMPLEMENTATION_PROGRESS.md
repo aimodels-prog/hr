@@ -1518,7 +1518,7 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
 
 ### Step H3.5T - Contabo launch preparation
 
-- Status: Repository-side preparation complete on 2026-09-02. The production hostname is now `career.via-int.com`; external deployment is waiting for the Contabo host access, DNS/TLS activation, production secrets, off-server backup account and the intentionally deferred Gemini credentials.
+- Status: Repository-side preparation complete on 2026-09-02. The production hostname is now `careers.via-int.com`; external deployment is waiting for the Contabo host access, DNS/TLS activation, production secrets, off-server backup account and the intentionally deferred Gemini credentials.
 - Scope:
   - Corrected the first-deployment order so PostgreSQL, MinIO and ClamAV start first, the release-specific tools image applies migrations, optional staging data is imported and verified, and only then are the web application and worker started.
   - Added worker release-tag propagation so worker health/history identifies the deployed image rather than reporting `development`.
@@ -1544,17 +1544,17 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
   - Final repository checks after the release-smoke correction passed: 253 environment-free tests, zero failures, 22 expected live-infrastructure skips, TypeScript, ESLint, the production build and dependency audit with zero vulnerabilities.
   - Added and passed a browser regression journey covering the Recommendations index, Vacancy Detail and missing Recommender Profile after PostgreSQL identity hydration.
   - Added and passed a browser regression that deliberately resets the first organisation-data request and verifies that the staff portal recovers automatically without displaying the unavailable-data screen.
-- External inputs still required:
-  - Contabo SSH access, server region/capacity confirmation and the directory/port allocated to VIA HR System.
-  - DNS control and TLS activation for the selected `career.via-int.com` hostname.
-  - Generated PostgreSQL, field-encryption, MinIO and off-server-backup credentials.
+- Deployment activation status on 2026-09-03:
+  - Contabo SSH access, server capacity and the isolated VIA HR directory, networks, volumes and loopback port have been verified.
+  - DNS and automatic TLS are active for `careers.via-int.com`; the public readiness endpoint, careers page, Portal redirect and API `401` boundary pass.
+  - Dedicated PostgreSQL, field-encryption and MinIO credentials are installed. The off-server backup destination and restore drill remain required before production data entry.
   - Approved office public network CIDRs for production attendance enforcement.
   - Final VIA HR hostname, the securely shared VIA Portal SSO secret and Portal callback registration.
   - Gemini/Calendar/Meet/email credentials when those external integrations begin.
 
 ### Step 46 - VIA Portal single sign-on
 
-- Status: Repository implementation and production-mode acceptance complete on 2026-09-03. The selected production hostname is `career.via-int.com`; authentication activation now requires the shared secret supplied outside source control and registration of the exact callback URL in VIA Portal.
+- Status: Repository implementation and production-mode acceptance complete on 2026-09-03. The selected production hostname is `careers.via-int.com`; authentication activation now requires the shared secret supplied outside source control and registration of the exact callback URL in VIA Portal.
 - Scope:
   - VIA Portal is the sole production login authority. VIA HR has no direct Google OAuth flow and normal password login remains disabled by default and is rejected by the production preflight when enabled.
   - Every protected browser route redirects an unauthenticated user to VIA Portal with the current destination encoded in `returnTo`. Unauthenticated API and server-function calls return JSON `401` responses instead of following an HTML login redirect.
@@ -1570,8 +1570,8 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
   - The live PostgreSQL session test passed identity linking, safe baseline role mapping, session hashing, audit creation, session restoration and revocation against an isolated migrated database.
   - The compiled production browser smoke passed public careers/CV submission and authenticated Employee, Line Manager, HR, Accounts and Super Admin access using signed short-lived Portal tokens, with no preview-identity impersonation.
   - Final gates passed: Prettier, ESLint, TypeScript, 297 automated tests with 274 passed and 23 optional live-infrastructure suites skipped, production build and dependency audit with zero known vulnerabilities.
-- External activation inputs:
-  - The production origin is configured as `https://career.via-int.com`, with callback `https://career.via-int.com/auth/portal/callback` and dashboard `https://career.via-int.com/dashboard`.
-  - Supply `PORTAL_SSO_SECRET` securely to both VIA Portal and VIA HR; it is intentionally absent from source control.
-  - Register the exact production callback and app slug in VIA Portal, then complete the Contabo staging login/logout and role-scope UAT described in the release acceptance record.
+- External activation status on 2026-09-03:
+  - The production origin is configured as `https://careers.via-int.com`, with callback `https://careers.via-int.com/auth/portal/callback` and dashboard `https://careers.via-int.com/dashboard`.
+  - The shared secret is installed in root-protected environment files and remains absent from source control. All four current SSO consumers loaded the same verified value.
+  - VIA Portal registers app slug `via-hr` with the exact production callback. Deployed callback, secure-cookie session and logout acceptance passed for the initial Super Admin; interactive role-scope UAT remains required.
   - Contabo inspection confirmed that the host uses the shared `via_proxy` Caddy gateway. The production Compose configuration now joins that external network under the `via-hr-app` alias, and the supplied Caddy block enforces the 16 MB request ceiling while redacting `portal_token` from access logs.

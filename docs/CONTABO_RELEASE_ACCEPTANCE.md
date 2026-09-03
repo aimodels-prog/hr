@@ -15,7 +15,7 @@ access tokens, employee documents or database dumps.
 | Image digest: worker      |                      |
 | Deployment date and time  |                      |
 | Deployment operator       |                      |
-| Approved hostname         | career.via-int.com   |
+| Approved hostname         | careers.via-int.com  |
 | Contabo region            |                      |
 | Previous release tag      |                      |
 

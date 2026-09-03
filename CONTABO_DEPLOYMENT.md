@@ -14,7 +14,7 @@ implement its own Google OAuth or normal password login.
   residency requirements.
 - Confirm available CPU, RAM and disk headroom alongside the other applications.
 - Identify the existing reverse proxy and an unused loopback port.
-- Production hostname: `career.via-int.com`.
+- Production hostname: `careers.via-int.com`.
 - Agree backup retention, off-server backup destination and restore owner.
 
 Use [the release acceptance record](docs/CONTABO_RELEASE_ACCEPTANCE.md) for the
@@ -50,15 +50,15 @@ and Super Admin access continue to come from VIA HR user management.
 
 Production URLs:
 
-- Origin: `https://career.via-int.com`
-- Portal callback: `https://career.via-int.com/auth/portal/callback`
-- Post-login dashboard: `https://career.via-int.com/dashboard`
+- Origin: `https://careers.via-int.com`
+- Portal callback: `https://careers.via-int.com/auth/portal/callback`
+- Post-login dashboard: `https://careers.via-int.com/dashboard`
 - Post-logout destination: `https://portal.via-int.com`
 
 Before deployment:
 
-- Set `APP_ORIGIN=https://career.via-int.com` without a trailing path.
-- Register `https://career.via-int.com/auth/portal/callback` in VIA Portal as the exact callback URL.
+- Set `APP_ORIGIN=https://careers.via-int.com` without a trailing path.
+- Register `https://careers.via-int.com/auth/portal/callback` in VIA Portal as the exact callback URL.
 - Generate one dedicated random secret of at least 32 bytes and transfer it to both systems through
   the approved secret channel. Put it only in the owner-readable `.env.production`; never commit it.
 - Keep `VIA_HR_ALLOW_PASSWORD_LOGIN=false`. VIA HR has no normal production password login and
@@ -153,7 +153,7 @@ curl --fail http://127.0.0.1:8082/health/worker
 14. Back up `/opt/via/proxy/Caddyfile`, append the complete block from
     `deploy/contabo/Caddyfile.via-hr.example`, validate it inside the existing `via-caddy` container,
     and reload Caddy only after validation succeeds. Caddy obtains and renews the
-    `career.via-int.com` TLS certificate after DNS points to this server.
+    `careers.via-int.com` TLS certificate after DNS points to this server.
 15. Allow public firewall access only to SSH, HTTP and HTTPS as required by the
     existing server policy. Do not open ports `3000`, `5432` or VIA's loopback
     port to the internet.

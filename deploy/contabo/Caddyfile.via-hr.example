@@ -1,4 +1,4 @@
-career.via-int.com {
+careers.via-int.com {
 	encode zstd gzip
 
 	request_body {
