@@ -1581,8 +1581,7 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
 
 ### Step 47 - Public careers and private staff separation
 
-- Status: Repository implementation complete on 2026-09-03. Contabo activation requires the new
-  `hr.via-int.com` DNS record, deployment of this release and the Portal registration update.
+- Status: Complete and activated on Contabo on 2026-09-03 as release `2ca1ffe`.
 - Decisions and behaviour:
   - `careers.via-int.com` is the public vacancy and application surface. It cannot serve Portal
     callbacks, sessions, staff pages, private APIs or protected server functions.
@@ -1610,5 +1609,15 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
   - A compiled two-server smoke test returned `200` for the careers home, `404` for cross-surface
     APIs, a permanent careers-to-HR redirect for staff URLs, a permanent HR-to-careers redirect for
     public URLs and the expected VIA Portal launch for an unauthenticated staff request.
-  - `careers.via-int.com` resolves to `169.58.112.30`; `hr.via-int.com` does not yet resolve, so the
-    live reverse-proxy and Portal callback cutover were deliberately not applied.
+  - DNS for both domains points to `169.58.112.30`, and Caddy serves a valid HR TLS certificate.
+  - The live careers and staff containers, worker, PostgreSQL, object storage and malware scanner
+    are healthy. The existing VIA Portal, Vendor and CV Tool health checks remained `200` after
+    cutover.
+  - Live public/private boundaries passed: careers home and public vacancy API `200`, careers
+    private API `404`, HR public recruitment API `404`, HR private API `401`, and cross-surface
+    browser routes redirect to the correct domain.
+  - VIA Portal now registers `https://hr.via-int.com/auth/portal/callback`. A live signed-token test
+    passed the clean `/dashboard` redirect, secure eight-hour cookie and authenticated `/staff`
+    entry. Caddy access logging redacted the callback token.
+  - The previous application directory and pre-cutover Caddy configuration remain available as
+    rollback material. The temporary deployment-IP Fail2Ban exception was removed after acceptance.
