@@ -1621,3 +1621,38 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
     entry. Caddy access logging redacted the callback token.
   - The previous application directory and pre-cutover Caddy configuration remain available as
     rollback material. The temporary deployment-IP Fail2Ban exception was removed after acceptance.
+
+### Public careers brand alignment
+
+- Status: Complete in the repository on 2026-09-03; deployment to `careers.via-int.com` remains a
+  separate release action.
+- Decisions and behaviour:
+  - Repositioned the public website around VIA International's actual civil-engineering business,
+    replacing the unrelated freight, logistics and international-trade language.
+  - Rebuilt the careers home page using the corporate website's spacious editorial layout, white
+    navigation, VIA blue, restrained typography and real VIA project photography.
+  - Removed the generic three-icon values-card section and replaced it with factual company,
+    geographic and engineering-discipline content.
+  - Added a reusable public careers header and footer that connect candidates to VIA's corporate
+    Home, About us, Projects, Expertise, Services, Team and Contact destinations. The public site
+    contains no staff-login or HR-system link; employees enter the private system only through the
+    organisation's VIA Portal.
+  - Restyled the position detail, application form, unavailable-position state and successful
+    application confirmation as one consistent public experience without changing recruitment
+    persistence or submission behaviour.
+  - Stored the approved VIA corporate photographs with the application so the strict production
+    Content Security Policy remains unchanged and the page does not depend on cross-site image
+    loading.
+  - Updated public metadata to describe VIA as an international civil-engineering consultancy and
+    removed external-facing AI implementation language.
+- Verification:
+  - Desktop and 390-pixel mobile visual inspections passed with no broken images or horizontal
+    overflow.
+  - Corporate navigation destinations were checked against the live `www.via-int.com` links.
+  - Targeted Prettier, repository ESLint and TypeScript checks passed.
+  - Environment-free automated suite passed: 303 tests, 280 passed, 23 expected optional
+    live-infrastructure skips and zero failures.
+  - Production build passed.
+  - Local public vacancy retrieval returned the expected unavailable-database response because the
+    development server was intentionally started without the live PostgreSQL environment; the page
+    retained its honest empty state and the deployed production endpoint was not changed.

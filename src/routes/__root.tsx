@@ -83,14 +83,13 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       {
         name: "description",
         content:
-          "Hiring and people operations for VIA International: job openings, AI-assisted shortlisting, interviews and onboarding.",
+          "Careers and people operations for VIA International, an international civil engineering consultancy.",
       },
       { name: "author", content: "VIA International" },
       { property: "og:title", content: "VIA HR System" },
       {
         property: "og:description",
-        content:
-          "Job openings, AI-assisted shortlisting, interviews and onboarding at VIA International.",
+        content: "Careers and people operations at VIA International.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },

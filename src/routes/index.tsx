@@ -1,23 +1,16 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import {
-  ArrowRight,
-  BriefcaseBusiness,
-  Building2,
-  CheckCircle2,
-  Clock3,
-  Globe2,
-  MapPin,
-  Search,
-  Users2,
-  X,
-} from "lucide-react";
+import { ArrowRight, Building2, Clock3, MapPin, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import heroImage from "@/assets/careers-hero.jpg";
-import { BrandLogo } from "@/components/brand-logo";
+import bridgeImage from "@/assets/via-mughsayl-bridge.jpg";
+import workImage from "@/assets/via-work-with-us.jpg";
+import {
+  PublicCareersFooter,
+  PublicCareersHeader,
+  PublicCareersPage,
+} from "@/components/public-careers-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -26,85 +19,67 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { VacancyService } from "@/lib/data/vacancy-service";
 import type { Vacancy } from "@/lib/data/types";
+import { VacancyService } from "@/lib/data/vacancy-service";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Careers at VIA International — Build what moves the world" },
+      { title: "Careers | VIA International" },
       {
         name: "description",
         content:
-          "Build your career at VIA International. Explore opportunities across freight, compliance, finance and operations in the GCC.",
+          "Explore careers at VIA International, an international civil engineering consultancy working across infrastructure, water, geotechnics and buildings.",
       },
-      { property: "og:title", content: "Careers at VIA International" },
+      { property: "og:title", content: "Careers | VIA International" },
       {
         property: "og:description",
-        content: "Join the people behind reliable trade and logistics across the GCC and beyond.",
+        content: "Join VIA International and contribute to engineering projects across the world.",
       },
     ],
   }),
   component: CareerPortal,
 });
 
-const principles = [
-  {
-    icon: CheckCircle2,
-    title: "Own the outcome",
-    description:
-      "We trust people to make sound decisions, communicate clearly and finish what they start.",
-  },
-  {
-    icon: Globe2,
-    title: "Think across borders",
-    description:
-      "Our work connects customers, partners and teams across markets, cultures and time zones.",
-  },
-  {
-    icon: Users2,
-    title: "Move as one team",
-    description:
-      "The best logistics feels effortless because capable people coordinate behind the scenes.",
-  },
+const expertise = [
+  "Civil Infrastructure",
+  "Water & Environment",
+  "Geology & Geotechnics",
+  "Buildings & Architecture",
 ];
 
 function CareerPortal() {
   const vacancyService = useMemo(() => new VacancyService(), []);
-  // Vacancy data lives in browser storage, which does not exist during server rendering (no
-  // window, so the storage driver falls back to an empty in-memory store there). Reading it
-  // synchronously in a useMemo meant the server render and the client's very first render pass
-  // saw different data (empty vs. whatever is already seeded in this browser), which is exactly
-  // what a hydration mismatch is. Starting from an empty array and only populating it after
-  // mount, via this effect, guarantees the server render and the client's hydration-matching
-  // render agree - the real data then arrives as a normal follow-up client update, not part of
-  // the hydration pass itself.
   const [openVacancies, setOpenVacancies] = useState<Vacancy[]>([]);
+  const [vacanciesReady, setVacanciesReady] = useState(false);
+  const [query, setQuery] = useState("");
+  const [department, setDepartment] = useState("all");
+  const [location, setLocation] = useState("all");
+  const [employmentType, setEmploymentType] = useState("all");
+
   useEffect(() => {
     let cancelled = false;
     vacancyService
       .hydrateCompatibilityCache()
       .then(() => {
-        if (!cancelled) {
-          setOpenVacancies(
-            vacancyService
-              .getVacancyRepository()
-              .list()
-              .filter((vacancy) => vacancy.status === "Open"),
-          );
-        }
+        if (cancelled) return;
+        setOpenVacancies(
+          vacancyService
+            .getVacancyRepository()
+            .list()
+            .filter((vacancy) => vacancy.status === "Open"),
+        );
       })
       .catch(() => {
         if (!cancelled) setOpenVacancies([]);
+      })
+      .finally(() => {
+        if (!cancelled) setVacanciesReady(true);
       });
     return () => {
       cancelled = true;
     };
   }, [vacancyService]);
-  const [query, setQuery] = useState("");
-  const [department, setDepartment] = useState("all");
-  const [location, setLocation] = useState("all");
-  const [employmentType, setEmploymentType] = useState("all");
 
   const departments = useMemo(
     () => Array.from(new Set(openVacancies.map((vacancy) => vacancy.department))),
@@ -121,184 +96,150 @@ function CareerPortal() {
   const filtered = openVacancies.filter((job) => {
     const searchText = `${job.title} ${job.department} ${job.location}`.toLowerCase();
     return (
-      searchText.includes(query.toLowerCase()) &&
+      searchText.includes(query.trim().toLowerCase()) &&
       (department === "all" || job.department === department) &&
       (location === "all" || job.location === location) &&
       (employmentType === "all" || job.employmentType === employmentType)
     );
   });
+  const hasActiveFilters =
+    Boolean(query) || department !== "all" || location !== "all" || employmentType !== "all";
   const clearFilters = () => {
     setQuery("");
     setDepartment("all");
     setLocation("all");
     setEmploymentType("all");
   };
-  const hasActiveFilters =
-    Boolean(query) || department !== "all" || location !== "all" || employmentType !== "all";
 
   return (
-    <div className="min-h-screen bg-white text-slate-950">
-      <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/92 backdrop-blur-xl">
-        <div className="mx-auto flex h-[76px] max-w-7xl items-center justify-between px-5 sm:px-8">
-          <Link to="/" aria-label="VIA International careers home">
-            <BrandLogo className="h-12" />
-          </Link>
-          <nav aria-label="Primary navigation" className="flex items-center gap-1 sm:gap-3">
-            <a
-              href="#life-at-via"
-              className="hidden rounded-lg px-3 py-2 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-950 md:block"
-            >
-              Life at VIA
-            </a>
-            <a
-              href="#openings"
-              className="hidden rounded-lg px-3 py-2 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-950 sm:block"
-            >
-              Open roles
-            </a>
-            <Button
-              asChild
-              variant="outline"
-              size="sm"
-              className="rounded-full border-slate-300 bg-white px-4"
-            >
-              <a href="/staff">Staff portal</a>
-            </Button>
-          </nav>
-        </div>
-      </header>
-
+    <PublicCareersPage>
+      <PublicCareersHeader />
       <main>
-        <section className="relative isolate min-h-[660px] overflow-hidden bg-[#092f55] text-white sm:min-h-[700px]">
+        <section className="relative isolate min-h-[620px] overflow-hidden bg-[#174c70] text-white lg:min-h-[720px]">
           <img
-            src={heroImage}
-            alt="Container terminal and international freight operations"
-            width={1600}
-            height={1000}
-            className="absolute inset-0 -z-20 h-full w-full object-cover object-center"
+            src={bridgeImage}
+            alt="Mughsayl Bridge, a VIA International infrastructure project in Oman"
+            className="absolute inset-0 -z-20 h-full w-full object-cover"
           />
-          <div className="absolute inset-0 -z-10 bg-[linear-gradient(90deg,rgba(5,32,61,.97)_0%,rgba(7,47,84,.88)_45%,rgba(8,55,93,.3)_100%)]" />
-          <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-[#092f55]/80 to-transparent" />
-          <div className="relative mx-auto flex min-h-[660px] max-w-7xl items-center px-5 py-20 sm:min-h-[700px] sm:px-8">
-            <div className="max-w-3xl">
-              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-blue-100/80">
+          <div className="absolute inset-0 -z-10 bg-[linear-gradient(90deg,rgba(5,48,82,.84)_0%,rgba(8,69,111,.54)_48%,rgba(8,69,111,.12)_100%)]" />
+          <div className="mx-auto flex min-h-[620px] max-w-[1480px] items-center px-5 py-20 sm:px-8 lg:min-h-[720px] lg:px-10">
+            <div className="max-w-[830px]">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-white/85">
                 Careers at VIA International
               </p>
-              <h1 className="mt-7 max-w-3xl font-display text-5xl font-bold leading-[0.98] tracking-[-0.055em] sm:text-6xl lg:text-[5.25rem]">
-                Build the career that moves the world forward.
+              <h1 className="mt-7 text-[3.6rem] font-normal leading-[0.96] tracking-[-0.045em] sm:text-7xl lg:text-[6.25rem]">
+                Engineer the places people depend on.
               </h1>
-              <p className="mt-7 max-w-2xl text-lg leading-8 text-blue-50/82 sm:text-xl">
-                Join the people making international trade feel simple, from the first customer
-                conversation to the final delivery.
+              <p className="mt-8 max-w-2xl text-lg leading-8 text-white/88 sm:text-xl">
+                Work with an international team designing roads, bridges, water systems and
+                buildings that serve communities for generations.
               </p>
-              <div className="mt-10 flex flex-col gap-3 sm:flex-row">
-                <Button
-                  asChild
-                  size="lg"
-                  className="bg-white text-[#0b4f86] shadow-xl shadow-slate-950/20 hover:bg-blue-50"
-                >
-                  <a href="#openings">
-                    Explore {openVacancies.length || "current"}{" "}
-                    {openVacancies.length === 1 ? "opportunity" : "opportunities"}
-                    <ArrowRight className="ml-1" />
-                  </a>
-                </Button>
-                <Button
-                  asChild
-                  size="lg"
-                  variant="outline"
-                  className="border-white/25 bg-white/5 text-white hover:bg-white/12 hover:text-white"
-                >
-                  <a href="#life-at-via">Discover life at VIA</a>
-                </Button>
-              </div>
+              <a
+                href="#openings"
+                className="mt-10 inline-flex min-h-12 items-center gap-3 bg-white px-6 py-3 text-sm font-semibold uppercase tracking-[0.08em] text-[#07558e] transition-colors hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
+              >
+                View open positions <ArrowRight className="h-4 w-4" />
+              </a>
             </div>
           </div>
         </section>
 
-        <section id="life-at-via" className="bg-slate-50 py-20 sm:py-28">
-          <div className="mx-auto max-w-7xl px-5 sm:px-8">
-            <div className="grid gap-12 lg:grid-cols-[.85fr_1.15fr] lg:items-end">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#0d639f]">
-                  How we work
-                </p>
-                <h2 className="mt-4 font-display text-4xl font-bold leading-tight tracking-[-0.045em] text-slate-950 sm:text-5xl">
-                  Ambitious people.
-                  <br />
-                  Practical impact.
-                </h2>
-              </div>
-              <p className="max-w-2xl text-lg leading-8 text-slate-600">
-                Logistics rewards clarity, care and momentum. At VIA, your judgement matters and
-                your work is visible. We solve real operational problems with colleagues who value
-                reliability as much as speed.
+        <section id="life-at-via" className="bg-white py-20 sm:py-28">
+          <div className="mx-auto grid max-w-[1480px] gap-12 px-5 sm:px-8 lg:grid-cols-[0.92fr_1.08fr] lg:items-center lg:gap-20 lg:px-10">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.15em] text-[#0a5d9c]">
+                Work with us
               </p>
+              <h2 className="mt-5 max-w-2xl text-4xl font-normal leading-[1.05] tracking-[-0.035em] text-slate-950 sm:text-6xl">
+                Make your experience part of something built to last.
+              </h2>
+              <div className="mt-8 max-w-2xl space-y-5 text-base leading-7 text-slate-600 sm:text-lg sm:leading-8">
+                <p>
+                  VIA International brings together engineers, designers, project managers and
+                  technical specialists to solve complex civil engineering challenges.
+                </p>
+                <p>
+                  Our teams contribute to projects across Europe, the Middle East and Africa,
+                  combining local knowledge with international experience.
+                </p>
+              </div>
+              <a
+                href="https://www.via-int.com/#aboutus"
+                className="mt-8 inline-flex items-center gap-3 border-b border-[#0a5d9c] pb-2 text-sm font-semibold uppercase tracking-[0.08em] text-[#0a5d9c]"
+              >
+                Learn about VIA International <ArrowRight className="h-4 w-4" />
+              </a>
             </div>
-            <div className="mt-12 grid gap-5 md:grid-cols-3">
-              {principles.map(({ icon: Icon, title, description }, index) => (
-                <article
-                  key={title}
-                  className="rounded-2xl border border-slate-200 bg-white p-7 shadow-[0_20px_60px_-45px_rgba(15,50,90,.45)]"
+            <figure className="relative min-h-[390px] overflow-hidden bg-slate-100 sm:min-h-[520px]">
+              <img
+                src={workImage}
+                alt="Road and infrastructure works delivered by VIA International"
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+            </figure>
+          </div>
+        </section>
+
+        <section className="bg-[#07558e] text-white">
+          <div className="mx-auto max-w-[1480px] px-5 py-16 sm:px-8 lg:px-10 lg:py-20">
+            <p className="text-sm font-semibold uppercase tracking-[0.15em] text-blue-100">
+              Our expertise
+            </p>
+            <div className="mt-8 grid border-y border-white/25 sm:grid-cols-2 lg:grid-cols-4">
+              {expertise.map((item, index) => (
+                <div
+                  key={item}
+                  className="flex min-h-36 flex-col justify-between border-b border-white/20 py-6 sm:px-6 sm:first:pl-0 sm:[&:nth-child(odd)]:border-r lg:border-b-0 lg:border-r lg:last:border-r-0"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-[#0d639f]">
-                      <Icon className="h-5 w-5" />
-                    </div>
-                    <span className="text-xs font-bold tabular-nums text-slate-300">
-                      0{index + 1}
-                    </span>
-                  </div>
-                  <h3 className="mt-8 text-xl font-bold tracking-[-0.025em]">{title}</h3>
-                  <p className="mt-3 text-sm leading-6 text-slate-600">{description}</p>
-                </article>
+                  <span className="text-xs tabular-nums text-blue-100/70">0{index + 1}</span>
+                  <p className="mt-8 max-w-[14rem] text-xl leading-tight">{item}</p>
+                </div>
               ))}
             </div>
           </div>
         </section>
 
-        <section id="openings" className="scroll-mt-20 py-20 sm:py-28">
-          <div className="mx-auto max-w-7xl px-5 sm:px-8">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+        <section id="openings" className="scroll-mt-16 bg-[#f5f6f6] py-20 sm:py-28">
+          <div className="mx-auto max-w-[1280px] px-5 sm:px-8 lg:px-10">
+            <div className="grid gap-8 lg:grid-cols-[1fr_360px] lg:items-end">
               <div>
-                <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#0d639f]">
-                  Find your place
+                <p className="text-sm font-semibold uppercase tracking-[0.15em] text-[#0a5d9c]">
+                  Join VIA
                 </p>
-                <h2 className="mt-3 font-display text-4xl font-bold tracking-[-0.045em] sm:text-5xl">
-                  Open opportunities
+                <h2 className="mt-4 text-4xl font-normal tracking-[-0.035em] sm:text-6xl">
+                  Open positions
                 </h2>
-                <p className="mt-3 text-slate-600">
-                  {openVacancies.length} {openVacancies.length === 1 ? "role is" : "roles are"}{" "}
-                  currently open.
+                <p className="mt-4 text-slate-600" aria-live="polite">
+                  {vacanciesReady
+                    ? `${openVacancies.length} ${openVacancies.length === 1 ? "position" : "positions"} currently available`
+                    : "Loading current positions"}
                 </p>
               </div>
               {openVacancies.length > 0 && (
-                <div className="relative w-full lg:w-80">
+                <div className="relative">
                   <label htmlFor="career-search" className="sr-only">
-                    Search open roles
+                    Search open positions
                   </label>
-                  <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <Search className="absolute left-0 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" />
                   <Input
                     id="career-search"
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Search by role, team or location"
-                    className="h-12 rounded-xl border-slate-300 bg-white pl-11"
+                    placeholder="Search positions"
+                    className="h-13 rounded-none border-0 border-b border-slate-400 bg-transparent pl-8 shadow-none focus-visible:ring-0"
                   />
                 </div>
               )}
             </div>
+
             {openVacancies.length > 0 && (
-              <div className="mt-8 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:flex-row">
+              <div className="mt-12 grid gap-3 border-y border-slate-300 py-5 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto]">
                 <Select value={department} onValueChange={setDepartment}>
-                  <SelectTrigger
-                    aria-label="Filter by department"
-                    className="h-11 bg-white sm:w-52"
-                  >
-                    <SelectValue placeholder="Department" />
+                  <SelectTrigger aria-label="Filter by discipline" className="h-11 bg-white">
+                    <SelectValue placeholder="Discipline" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All departments</SelectItem>
+                    <SelectItem value="all">All disciplines</SelectItem>
                     {departments.map((value) => (
                       <SelectItem key={value} value={value}>
                         {value}
@@ -307,11 +248,11 @@ function CareerPortal() {
                   </SelectContent>
                 </Select>
                 <Select value={location} onValueChange={setLocation}>
-                  <SelectTrigger aria-label="Filter by location" className="h-11 bg-white sm:w-52">
-                    <SelectValue placeholder="Location" />
+                  <SelectTrigger aria-label="Filter by office" className="h-11 bg-white">
+                    <SelectValue placeholder="Office" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All locations</SelectItem>
+                    <SelectItem value="all">All offices</SelectItem>
                     {locations.map((value) => (
                       <SelectItem key={value} value={value}>
                         {value}
@@ -320,10 +261,7 @@ function CareerPortal() {
                   </SelectContent>
                 </Select>
                 <Select value={employmentType} onValueChange={setEmploymentType}>
-                  <SelectTrigger
-                    aria-label="Filter by employment type"
-                    className="h-11 bg-white sm:w-52"
-                  >
+                  <SelectTrigger aria-label="Filter by employment type" className="h-11 bg-white">
                     <SelectValue placeholder="Employment type" />
                   </SelectTrigger>
                   <SelectContent>
@@ -336,109 +274,81 @@ function CareerPortal() {
                   </SelectContent>
                 </Select>
                 {hasActiveFilters && (
-                  <Button variant="ghost" onClick={clearFilters}>
-                    <X /> Clear filters
+                  <Button
+                    variant="ghost"
+                    onClick={clearFilters}
+                    className="justify-start lg:justify-center"
+                  >
+                    <X className="h-4 w-4" /> Clear
                   </Button>
                 )}
               </div>
             )}
-            <div className="mt-8 grid gap-4">
+
+            <div className="mt-6 border-t border-slate-300">
               {filtered.length > 0 ? (
                 filtered.map((job) => (
-                  <Card
+                  <article
                     key={job.id}
-                    className="group relative overflow-hidden border-slate-200 bg-white transition-all duration-300 hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-[0_24px_70px_-45px_rgba(9,67,113,.55)]"
+                    className="group relative border-b border-slate-300 bg-transparent"
                   >
-                    <CardContent className="flex flex-col gap-6 p-6 sm:flex-row sm:items-center sm:justify-between sm:p-7">
+                    <Link
+                      to="/jobs/$jobId"
+                      params={{ jobId: job.id }}
+                      className="grid gap-5 py-7 transition-colors hover:bg-white focus-visible:bg-white sm:px-5 lg:grid-cols-[1fr_1fr_auto] lg:items-center"
+                    >
                       <div>
-                        <Badge
-                          variant="secondary"
-                          className="mb-4 rounded-full bg-blue-50 px-3 text-[#0d639f]"
-                        >
+                        <Badge className="mb-3 rounded-none bg-[#0a5d9c] text-white hover:bg-[#0a5d9c]">
                           {job.department}
                         </Badge>
-                        <h3 className="text-2xl font-bold tracking-[-0.03em] group-hover:text-[#0d639f]">
-                          <Link
-                            to="/jobs/$jobId"
-                            params={{ jobId: job.id }}
-                            className="before:absolute before:inset-0"
-                          >
-                            {job.title}
-                          </Link>
+                        <h3 className="text-2xl font-medium tracking-[-0.025em] group-hover:text-[#0a5d9c]">
+                          {job.title}
                         </h3>
-                        <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-500">
-                          <span className="inline-flex items-center gap-2">
-                            <MapPin className="h-4 w-4" />
-                            {job.location}
-                          </span>
-                          <span className="inline-flex items-center gap-2">
-                            <Building2 className="h-4 w-4" />
-                            {job.employmentType}
-                          </span>
-                          <span className="inline-flex items-center gap-2">
-                            <Clock3 className="h-4 w-4" />
-                            Target start {job.targetStartDate || "to be agreed"}
-                          </span>
-                        </div>
                       </div>
-                      <div className="flex shrink-0 items-center gap-2 font-bold text-[#0d639f]">
-                        View role{" "}
-                        <ArrowRight className="transition-transform group-hover:translate-x-1" />
+                      <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-600">
+                        <span className="inline-flex items-center gap-2">
+                          <MapPin className="h-4 w-4" /> {job.location}
+                        </span>
+                        <span className="inline-flex items-center gap-2">
+                          <Building2 className="h-4 w-4" /> {job.employmentType}
+                        </span>
+                        {job.targetStartDate && (
+                          <span className="inline-flex items-center gap-2">
+                            <Clock3 className="h-4 w-4" /> Start {job.targetStartDate}
+                          </span>
+                        )}
                       </div>
-                    </CardContent>
-                  </Card>
+                      <span className="inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.06em] text-[#0a5d9c]">
+                        View position
+                        <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                      </span>
+                    </Link>
+                  </article>
                 ))
               ) : (
-                <div className="overflow-hidden rounded-3xl border border-slate-200 bg-[#f7fafc]">
-                  <div className="grid min-h-[360px] lg:grid-cols-[1.15fr_.85fr]">
-                    <div className="flex flex-col justify-center p-8 sm:p-12">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-100 text-[#0d639f]">
-                        <BriefcaseBusiness />
-                      </div>
-                      <h3 className="mt-7 max-w-lg text-3xl font-bold tracking-[-0.035em]">
-                        {hasActiveFilters
-                          ? "No roles match those filters."
-                          : "The next opportunity is taking shape."}
-                      </h3>
-                      <p className="mt-4 max-w-xl leading-7 text-slate-600">
-                        {hasActiveFilters
-                          ? "Try broadening your search or clearing the filters to see every available role."
-                          : "We do not have a published vacancy today, but our teams continue to grow. Check back soon for opportunities across operations, compliance and corporate services."}
-                      </p>
-                      {hasActiveFilters && (
-                        <div className="mt-7">
-                          <Button variant="outline" onClick={clearFilters}>
-                            Clear all filters
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                    <div className="relative hidden overflow-hidden bg-[#0a3f70] lg:block">
-                      <div className="absolute -right-16 -top-16 h-64 w-64 rounded-full border-[48px] border-white/5" />
-                      <div className="absolute -bottom-20 -left-16 h-72 w-72 rounded-full border-[52px] border-emerald-400/10" />
-                      <div className="relative flex h-full items-end p-10 text-blue-50/80">
-                        <p className="max-w-xs text-sm leading-6">
-                          Good careers are built over time. We publish every approved opportunity
-                          here so the process stays fair and transparent.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
+                <div className="border-b border-slate-300 py-16">
+                  <h3 className="text-2xl font-medium">
+                    {hasActiveFilters
+                      ? "No positions match your search."
+                      : "There are no published positions at present."}
+                  </h3>
+                  <p className="mt-3 max-w-2xl leading-7 text-slate-600">
+                    {hasActiveFilters
+                      ? "Adjust the filters to see other opportunities."
+                      : "New positions are published here as they become available. Please visit again soon."}
+                  </p>
+                  {hasActiveFilters && (
+                    <Button variant="outline" onClick={clearFilters} className="mt-6 rounded-none">
+                      Clear all filters
+                    </Button>
+                  )}
                 </div>
               )}
             </div>
           </div>
         </section>
       </main>
-      <footer className="bg-[#062d52] text-white">
-        <div className="mx-auto flex max-w-7xl flex-col gap-8 px-5 py-10 sm:flex-row sm:items-center sm:justify-between sm:px-8">
-          <BrandLogo invert className="h-11" />
-          <div className="text-sm text-blue-100/65 sm:text-right">
-            <p>VIA International · People who keep trade moving.</p>
-            <p className="mt-1">Equal opportunity. Respectful hiring. Clear decisions.</p>
-          </div>
-        </div>
-      </footer>
-    </div>
+      <PublicCareersFooter />
+    </PublicCareersPage>
   );
 }
