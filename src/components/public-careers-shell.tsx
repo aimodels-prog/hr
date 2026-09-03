@@ -4,13 +4,10 @@ import type { ReactNode } from "react";
 
 import { BrandLogo } from "@/components/brand-logo";
 
-const corporateLinks = [
-  { label: "Home", href: "https://www.via-int.com/" },
-  { label: "About us", href: "https://www.via-int.com/#aboutus" },
-  { label: "Projects", href: "https://www.via-int.com/projects/" },
-  { label: "Expertise", href: "https://www.via-int.com/#work" },
-  { label: "Services", href: "https://www.via-int.com/#services" },
-  { label: "The team", href: "https://www.via-int.com/#theteam" },
+const careersLinks = [
+  { label: "Life at VIA", hash: "life-at-via" },
+  { label: "Our expertise", hash: "expertise" },
+  { label: "Open positions", hash: "openings" },
 ] as const;
 
 export function PublicCareersHeader({ compact = false }: { compact?: boolean }) {
@@ -21,41 +18,35 @@ export function PublicCareersHeader({ compact = false }: { compact?: boolean }) 
           compact ? "h-[82px]" : "h-[98px]"
         }`}
       >
-        <Link to="/" aria-label="VIA International careers home" className="shrink-0">
-          <BrandLogo className={compact ? "h-12" : "h-14 sm:h-16"} />
-        </Link>
+        <div className="flex shrink-0 items-center gap-4 sm:gap-5">
+          <Link to="/" aria-label="VIA International careers home">
+            <BrandLogo className={compact ? "h-12" : "h-14 sm:h-16"} />
+          </Link>
+          <span className="hidden border-l border-slate-300 pl-4 text-xs font-semibold uppercase tracking-[0.14em] text-slate-600 sm:inline">
+            Careers
+          </span>
+        </div>
 
-        <nav aria-label="VIA International" className="hidden items-center gap-7 xl:flex">
-          {corporateLinks.map((item) => (
-            <a
+        <nav aria-label="Careers" className="hidden items-center gap-8 lg:flex">
+          {careersLinks.map((item) => (
+            <Link
               key={item.label}
-              href={item.href}
+              to="/"
+              hash={item.hash}
               className="text-[13px] font-semibold uppercase tracking-[0.035em] text-slate-950 transition-colors hover:text-[#0a5d9c]"
             >
               {item.label}
-            </a>
+            </Link>
           ))}
-          <Link
-            to="/"
-            className="border-b-2 border-[#0a5d9c] py-2 text-[13px] font-semibold uppercase tracking-[0.035em] text-[#0a5d9c]"
-          >
-            Careers
-          </Link>
           <a
-            href="https://www.via-int.com/#contact"
-            className="text-[13px] font-semibold uppercase tracking-[0.035em] text-slate-950 transition-colors hover:text-[#0a5d9c]"
+            href="https://www.via-int.com/"
+            className="inline-flex items-center gap-2 border-l border-slate-300 pl-8 text-[13px] font-semibold uppercase tracking-[0.035em] text-[#0a5d9c] transition-colors hover:text-[#074777]"
           >
-            Contacts
+            VIA International <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
           </a>
         </nav>
 
-        <div className="flex items-center gap-4 xl:hidden">
-          <a
-            href="https://www.via-int.com/"
-            className="hidden text-xs font-semibold uppercase tracking-[0.08em] text-slate-700 sm:inline-flex"
-          >
-            Corporate website
-          </a>
+        <div className="flex items-center gap-4 lg:hidden">
           <Link
             to="/"
             hash="openings"

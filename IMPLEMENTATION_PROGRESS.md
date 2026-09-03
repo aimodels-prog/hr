@@ -1656,3 +1656,13 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
   - Local public vacancy retrieval returned the expected unavailable-database response because the
     development server was intentionally started without the live PostgreSQL environment; the page
     retained its honest empty state and the deployed production endpoint was not changed.
+
+### Public careers navigation correction
+
+- Status: Complete in the repository on 2026-09-03.
+- Decisions and behaviour:
+  - Replaced the copied corporate-site navigation with a careers-focused navigation for Life at VIA,
+    engineering expertise and open positions.
+  - Kept one clearly identified external link to the VIA International corporate website.
+  - Retained the VIA visual identity without distracting applicants with links to every corporate
+    section, and kept staff access exclusively in the VIA Portal.

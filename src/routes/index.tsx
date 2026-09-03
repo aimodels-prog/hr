@@ -180,7 +180,7 @@ function CareerPortal() {
           </div>
         </section>
 
-        <section className="bg-[#07558e] text-white">
+        <section id="expertise" className="scroll-mt-16 bg-[#07558e] text-white">
           <div className="mx-auto max-w-[1480px] px-5 py-16 sm:px-8 lg:px-10 lg:py-20">
             <p className="text-sm font-semibold uppercase tracking-[0.15em] text-blue-100">
               Our expertise
