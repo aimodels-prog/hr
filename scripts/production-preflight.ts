@@ -100,6 +100,7 @@ export function validateProductionEnvironment(values: Record<string, string>): P
     "VIA_HR_POSTGRES_PASSWORD",
     "VIA_HR_DATABASE_URL",
     "VIA_HR_ORGANISATION_ID",
+    "VIA_HR_CAREERS_ORIGIN",
     "PORTAL_URL",
     "PORTAL_SSO_ISSUER",
     "PORTAL_SSO_AUDIENCE",
@@ -146,6 +147,10 @@ export function validateProductionEnvironment(values: Record<string, string>): P
     errors.push("VIA_HR_APP_BIND_ADDRESS must be 127.0.0.1.");
   if (!integer(values, "VIA_HR_APP_PORT", 1024, 65_535))
     errors.push("VIA_HR_APP_PORT must be between 1024 and 65535.");
+  if (!integer(values, "VIA_HR_CAREERS_APP_PORT", 1024, 65_535))
+    errors.push("VIA_HR_CAREERS_APP_PORT must be between 1024 and 65535.");
+  if (values["VIA_HR_CAREERS_APP_PORT"] === values["VIA_HR_APP_PORT"])
+    errors.push("Staff and careers containers must use different host ports.");
   if (values["VIA_HR_ATTENDANCE_NETWORK_ENFORCEMENT"] !== "true")
     errors.push("Attendance network enforcement must be enabled in production.");
   if (values["VIA_HR_TRUST_PROXY"] !== "true")
@@ -179,12 +184,14 @@ export function validateProductionEnvironment(values: Record<string, string>): P
 
   let portalUrl: URL | undefined;
   let appOrigin: URL | undefined;
+  let careersOrigin: URL | undefined;
   let callbackUrl: URL | undefined;
   let postLoginUrl: URL | undefined;
   let postLogoutUrl: URL | undefined;
   for (const [name, assign] of [
     ["PORTAL_URL", (url: URL) => (portalUrl = url)],
     ["APP_ORIGIN", (url: URL) => (appOrigin = url)],
+    ["VIA_HR_CAREERS_ORIGIN", (url: URL) => (careersOrigin = url)],
     ["PORTAL_CALLBACK_URL", (url: URL) => (callbackUrl = url)],
     ["POST_LOGIN_URL", (url: URL) => (postLoginUrl = url)],
     ["POST_LOGOUT_URL", (url: URL) => (postLogoutUrl = url)],
@@ -199,6 +206,12 @@ export function validateProductionEnvironment(values: Record<string, string>): P
   }
   if (portalUrl?.origin !== "https://portal.via-int.com")
     errors.push("PORTAL_URL must identify https://portal.via-int.com.");
+  if (appOrigin?.origin !== "https://hr.via-int.com")
+    errors.push("APP_ORIGIN must identify the private https://hr.via-int.com staff application.");
+  if (careersOrigin?.origin !== "https://careers.via-int.com")
+    errors.push("VIA_HR_CAREERS_ORIGIN must identify https://careers.via-int.com.");
+  if (appOrigin && careersOrigin && appOrigin.origin === careersOrigin.origin)
+    errors.push("The private HR and public careers origins must be different.");
   if (
     appOrigin &&
     callbackUrl &&

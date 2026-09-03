@@ -1,6 +1,7 @@
 import "@tanstack/react-start/server-only";
 
-import { isPortalSsoEnabled, loadPortalSsoConfig } from "./auth/portal-sso-config.server.ts";
+import { isPortalSsoEnabled } from "./auth/portal-sso-config.server.ts";
+import { expectedRequestOrigin, getAppSurface } from "./app-surface.server.ts";
 
 const DEFAULT_MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 const counters = new Map<string, { count: number; resetAt: number }>();
@@ -35,9 +36,10 @@ function isStateChanging(method: string): boolean {
 }
 
 function originFailure(request: Request): Response | null {
-  if (!isPortalSsoEnabled() || !isStateChanging(request.method)) return null;
+  if ((getAppSurface() === "combined" && !isPortalSsoEnabled()) || !isStateChanging(request.method))
+    return null;
   const origin = request.headers.get("origin");
-  if (origin === loadPortalSsoConfig().appOrigin.origin) return null;
+  if (origin === expectedRequestOrigin(request)) return null;
   const accept = request.headers.get("accept")?.toLowerCase() ?? "";
   const apiRequest =
     new URL(request.url).pathname.startsWith("/api/") ||

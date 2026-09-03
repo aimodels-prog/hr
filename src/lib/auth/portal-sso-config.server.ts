@@ -53,6 +53,9 @@ function isExplicitlyAllowedLoopback(url: URL): boolean {
 }
 
 export function isPortalSsoEnabled(): boolean {
+  // The public careers container never handles Portal callbacks or HR sessions.
+  // Its route boundary is enforced before authentication in the server entry.
+  if (process.env["VIA_HR_APP_SURFACE"]?.trim().toLowerCase() === "careers") return false;
   if (process.env["NODE_ENV"] === "production") return true;
   return process.env["PORTAL_SSO_ENABLED"]?.trim().toLowerCase() === "true";
 }

@@ -162,7 +162,7 @@ function CareerPortal() {
               size="sm"
               className="rounded-full border-slate-300 bg-white px-4"
             >
-              <Link to="/staff">Staff portal</Link>
+              <a href="/staff">Staff portal</a>
             </Button>
           </nav>
         </div>

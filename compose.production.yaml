@@ -92,6 +92,8 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: 3000
+      VIA_HR_APP_SURFACE: staff
+      VIA_HR_CAREERS_ORIGIN: ${VIA_HR_CAREERS_ORIGIN:?Set VIA_HR_CAREERS_ORIGIN in .env.production}
       DATABASE_URL: ${VIA_HR_DATABASE_URL:?Set VIA_HR_DATABASE_URL in .env.production}
       VIA_HR_ATTENDANCE_NETWORK_ENFORCEMENT: ${VIA_HR_ATTENDANCE_NETWORK_ENFORCEMENT:-true}
       VIA_HR_TRUST_PROXY: ${VIA_HR_TRUST_PROXY:-true}
@@ -144,6 +146,92 @@ services:
       proxy:
         aliases:
           - via-hr-app
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health/ready').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  careers-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: via-hr-system:${VIA_HR_IMAGE_TAG:-local}
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      VIA_HR_APP_SURFACE: careers
+      VIA_HR_CAREERS_ORIGIN: ${VIA_HR_CAREERS_ORIGIN:?Set VIA_HR_CAREERS_ORIGIN in .env.production}
+      DATABASE_URL: ${VIA_HR_DATABASE_URL:?Set VIA_HR_DATABASE_URL in .env.production}
+      VIA_HR_TRUST_PROXY: ${VIA_HR_TRUST_PROXY:-true}
+      VIA_HR_ORGANISATION_ID: ${VIA_HR_ORGANISATION_ID:-}
+      DATABASE_POOL_SIZE: ${VIA_HR_DATABASE_POOL_SIZE:-10}
+      PORTAL_SSO_ENABLED: "false"
+      PORTAL_URL: ${PORTAL_URL:?Set PORTAL_URL in .env.production}
+      PORTAL_SSO_ISSUER: ${PORTAL_SSO_ISSUER:?Set PORTAL_SSO_ISSUER in .env.production}
+      PORTAL_SSO_AUDIENCE: ${PORTAL_SSO_AUDIENCE:?Set PORTAL_SSO_AUDIENCE in .env.production}
+      PORTAL_APP_SLUG: ${PORTAL_APP_SLUG:?Set PORTAL_APP_SLUG in .env.production}
+      PORTAL_SSO_ALGORITHM: ${PORTAL_SSO_ALGORITHM:?Set PORTAL_SSO_ALGORITHM in .env.production}
+      PORTAL_TOKEN_LIFETIME_SECONDS: ${PORTAL_TOKEN_LIFETIME_SECONDS:-120}
+      ALLOWED_EMAIL_DOMAIN: ${ALLOWED_EMAIL_DOMAIN:?Set ALLOWED_EMAIL_DOMAIN in .env.production}
+      APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN in .env.production}
+      PORTAL_CALLBACK_URL: ${PORTAL_CALLBACK_URL:?Set PORTAL_CALLBACK_URL in .env.production}
+      POST_LOGIN_URL: ${POST_LOGIN_URL:?Set POST_LOGIN_URL in .env.production}
+      POST_LOGOUT_URL: ${POST_LOGOUT_URL:?Set POST_LOGOUT_URL in .env.production}
+      VIA_HR_ALLOW_PASSWORD_LOGIN: "false"
+      VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID: ${VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID:?Set VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID in .env.production}
+      VIA_HR_FIELD_ENCRYPTION_KEYS: ${VIA_HR_FIELD_ENCRYPTION_KEYS:?Set VIA_HR_FIELD_ENCRYPTION_KEYS in .env.production}
+      VIA_HR_OBJECT_STORAGE_ENDPOINT: http://object-storage:9000
+      VIA_HR_OBJECT_STORAGE_REGION: ${VIA_HR_OBJECT_STORAGE_REGION:-us-east-1}
+      VIA_HR_OBJECT_STORAGE_BUCKET: ${VIA_HR_OBJECT_STORAGE_BUCKET:-via-hr-files}
+      VIA_HR_OBJECT_STORAGE_ACCESS_KEY_ID: ${VIA_HR_OBJECT_STORAGE_ACCESS_KEY_ID:?Set VIA_HR_OBJECT_STORAGE_ACCESS_KEY_ID in .env.production}
+      VIA_HR_OBJECT_STORAGE_SECRET_ACCESS_KEY: ${VIA_HR_OBJECT_STORAGE_SECRET_ACCESS_KEY:?Set VIA_HR_OBJECT_STORAGE_SECRET_ACCESS_KEY in .env.production}
+      VIA_HR_OBJECT_STORAGE_FORCE_PATH_STYLE: "true"
+      VIA_HR_OBJECT_STORAGE_AUTO_CREATE_BUCKET: "true"
+      VIA_HR_OBJECT_STORAGE_ALLOW_PRIVATE_HTTP: "true"
+      VIA_HR_MALWARE_SCANNER_HOST: malware-scanner
+      VIA_HR_MALWARE_SCANNER_PORT: 3310
+      VIA_HR_MALWARE_SCAN_REQUIRED: "true"
+      VIA_HR_MAX_FILE_BYTES: ${VIA_HR_MAX_FILE_BYTES:-10485760}
+      VIA_HR_MAX_REQUEST_BYTES: ${VIA_HR_MAX_REQUEST_BYTES:-16777216}
+      VIA_HR_MUTATION_RATE_LIMIT: ${VIA_HR_MUTATION_RATE_LIMIT:-1200}
+      VIA_HR_READ_RATE_LIMIT: ${VIA_HR_READ_RATE_LIMIT:-3000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      object-storage:
+        condition: service_healthy
+      malware-scanner:
+        condition: service_healthy
+    ports:
+      - "${VIA_HR_APP_BIND_ADDRESS:-127.0.0.1}:${VIA_HR_CAREERS_APP_PORT:-8083}:3000"
+    networks:
+      frontend:
+      backend:
+      proxy:
+        aliases:
+          - via-careers-app
     healthcheck:
       test:
         [

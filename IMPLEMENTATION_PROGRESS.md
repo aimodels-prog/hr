@@ -1554,7 +1554,9 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
 
 ### Step 46 - VIA Portal single sign-on
 
-- Status: Repository implementation and production-mode acceptance complete on 2026-09-03. The selected production hostname is `careers.via-int.com`; authentication activation now requires the shared secret supplied outside source control and registration of the exact callback URL in VIA Portal.
+- Status: Repository implementation and production-mode acceptance complete on 2026-09-03. Step 47
+  subsequently moved the authenticated staff origin to `hr.via-int.com` while retaining
+  `careers.via-int.com` for public recruitment.
 - Scope:
   - VIA Portal is the sole production login authority. VIA HR has no direct Google OAuth flow and normal password login remains disabled by default and is rejected by the production preflight when enabled.
   - Every protected browser route redirects an unauthenticated user to VIA Portal with the current destination encoded in `returnTo`. Unauthenticated API and server-function calls return JSON `401` responses instead of following an HTML login redirect.
@@ -1571,7 +1573,42 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
   - The compiled production browser smoke passed public careers/CV submission and authenticated Employee, Line Manager, HR, Accounts and Super Admin access using signed short-lived Portal tokens, with no preview-identity impersonation.
   - Final gates passed: Prettier, ESLint, TypeScript, 297 automated tests with 274 passed and 23 optional live-infrastructure suites skipped, production build and dependency audit with zero known vulnerabilities.
 - External activation status on 2026-09-03:
-  - The production origin is configured as `https://careers.via-int.com`, with callback `https://careers.via-int.com/auth/portal/callback` and dashboard `https://careers.via-int.com/dashboard`.
+  - Superseded by Step 47: the production staff origin is `https://hr.via-int.com`, with callback
+    `https://hr.via-int.com/auth/portal/callback` and dashboard `https://hr.via-int.com/dashboard`.
   - The shared secret is installed in root-protected environment files and remains absent from source control. All four current SSO consumers loaded the same verified value.
   - VIA Portal registers app slug `via-hr` with the exact production callback. Deployed callback, secure-cookie session and logout acceptance passed for the initial Super Admin; interactive role-scope UAT remains required.
   - Contabo inspection confirmed that the host uses the shared `via_proxy` Caddy gateway. The production Compose configuration now joins that external network under the `via-hr-app` alias, and the supplied Caddy block enforces the 16 MB request ceiling while redacting `portal_token` from access logs.
+
+### Step 47 - Public careers and private staff separation
+
+- Status: Repository implementation complete on 2026-09-03. Contabo activation requires the new
+  `hr.via-int.com` DNS record, deployment of this release and the Portal registration update.
+- Decisions and behaviour:
+  - `careers.via-int.com` is the public vacancy and application surface. It cannot serve Portal
+    callbacks, sessions, staff pages, private APIs or protected server functions.
+  - `hr.via-int.com` is the private employee and HR surface. It cannot receive public applications
+    or expose the public recruitment endpoints; public URLs are redirected to the careers domain.
+  - The two surfaces run from the same immutable image in separate containers and proxy aliases,
+    while sharing VIA HR's isolated PostgreSQL, encrypted object storage and background worker.
+  - Each container validates its expected hostname itself, so bypassing Caddy does not remove the
+    public/private route boundary. Health checks and versioned static assets remain available.
+  - Public application mutations accept only the careers origin. Private mutations continue to
+    accept only the HR origin. Portal SSO is disabled inside the careers runtime and remains the
+    only production login authority for the staff runtime.
+  - The public Staff portal action now performs a full navigation to `hr.via-int.com`; `/jobs`
+    resolves cleanly to the careers vacancy listing.
+  - Production Compose, Caddy, Nginx, environment examples, preflight validation, deployment guide
+    and release acceptance evidence now describe and enforce both domains.
+- Verification:
+  - Prettier, ESLint, TypeScript, dependency audit and the production build passed.
+  - The complete environment-free suite passed 302 tests: 279 passed, 23 optional live-service
+    suites skipped and zero failed.
+  - Five new surface-isolation tests passed, including hostile cross-host, reverse-proxy protocol
+    handling and private/public API attempts. Request-origin and SSO regression tests passed.
+  - Production Compose interpolation includes the isolated `app` and `careers-app` services and
+    validates successfully.
+  - A compiled two-server smoke test returned `200` for the careers home, `404` for cross-surface
+    APIs, a permanent careers-to-HR redirect for staff URLs, a permanent HR-to-careers redirect for
+    public URLs and the expected VIA Portal launch for an unauthenticated staff request.
+  - `careers.via-int.com` resolves to `169.58.112.30`; `hr.via-int.com` does not yet resolve, so the
+    live reverse-proxy and Portal callback cutover were deliberately not applied.

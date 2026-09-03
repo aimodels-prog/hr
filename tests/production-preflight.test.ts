@@ -14,6 +14,7 @@ function validEnvironment(): Record<string, string> {
   return {
     VIA_HR_APP_BIND_ADDRESS: "127.0.0.1",
     VIA_HR_APP_PORT: "8082",
+    VIA_HR_CAREERS_APP_PORT: "8083",
     VIA_HR_IMAGE_TAG: "release-2026.09.02-a1b2c3d",
     VIA_HR_POSTGRES_DB: "via_hr",
     VIA_HR_POSTGRES_USER: "via_hr_app",
@@ -33,6 +34,7 @@ function validEnvironment(): Record<string, string> {
     PORTAL_SSO_SECRET: "portal-sso-secret-1234567890-abcdefgh",
     ALLOWED_EMAIL_DOMAIN: "via-int.com",
     APP_ORIGIN: "https://hr.via-int.com",
+    VIA_HR_CAREERS_ORIGIN: "https://careers.via-int.com",
     PORTAL_CALLBACK_URL: "https://hr.via-int.com/auth/portal/callback",
     POST_LOGIN_URL: "https://hr.via-int.com/dashboard",
     POST_LOGOUT_URL: "https://portal.via-int.com",

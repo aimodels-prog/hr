@@ -72,3 +72,37 @@ test("safe reads and health checks do not require an Origin header", async () =>
     assert.equal(enforceRequestSecurity(new Request("https://hr.via-int.com/health/ready")), null);
   });
 });
+
+test("public careers mutations accept only the careers origin", async () => {
+  const previousSurface = process.env["VIA_HR_APP_SURFACE"];
+  const previousCareersOrigin = process.env["VIA_HR_CAREERS_ORIGIN"];
+  process.env["VIA_HR_APP_SURFACE"] = "careers";
+  process.env["VIA_HR_CAREERS_ORIGIN"] = "https://careers.via-int.com";
+  try {
+    resetRequestSecurityForTests();
+    assert.equal(
+      enforceRequestSecurity(
+        new Request("https://careers.via-int.com/api/public/applications", {
+          method: "POST",
+          headers: { origin: "https://careers.via-int.com" },
+        }),
+      ),
+      null,
+    );
+    assert.equal(
+      enforceRequestSecurity(
+        new Request("https://careers.via-int.com/api/public/applications", {
+          method: "POST",
+          headers: { origin: "https://hr.via-int.com", accept: "application/json" },
+        }),
+      )?.status,
+      403,
+    );
+  } finally {
+    resetRequestSecurityForTests();
+    if (previousSurface === undefined) delete process.env["VIA_HR_APP_SURFACE"];
+    else process.env["VIA_HR_APP_SURFACE"] = previousSurface;
+    if (previousCareersOrigin === undefined) delete process.env["VIA_HR_CAREERS_ORIGIN"];
+    else process.env["VIA_HR_CAREERS_ORIGIN"] = previousCareersOrigin;
+  }
+});

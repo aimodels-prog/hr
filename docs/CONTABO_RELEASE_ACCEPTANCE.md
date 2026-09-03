@@ -15,7 +15,8 @@ access tokens, employee documents or database dumps.
 | Image digest: worker      |                      |
 | Deployment date and time  |                      |
 | Deployment operator       |                      |
-| Approved hostname         | careers.via-int.com  |
+| Public careers hostname   | careers.via-int.com  |
+| Private staff hostname    | hr.via-int.com       |
 | Contabo region            |                      |
 | Previous release tag      |                      |
 
@@ -92,6 +93,7 @@ Record reconciliation totals:
 - [ ] An upload is rejected when malware scanning is unavailable.
 - [ ] No secret, raw error, filesystem path or database detail appears in public responses.
 - [ ] Protected browser pages launch VIA Portal and protected API requests return JSON 401.
+- [ ] Careers rejects private APIs and staff routes; HR rejects public application APIs and pages.
 - [ ] Valid Portal SSO reaches a clean `/dashboard` URL with no `portal_token` in URL, storage or logs.
 - [ ] Invalid, expired, wrong-domain, wrong-issuer and wrong-audience tokens show a controlled error without a redirect loop.
 - [ ] Logout revokes the VIA HR session and returns to `https://portal.via-int.com`.

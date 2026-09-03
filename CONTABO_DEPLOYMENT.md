@@ -14,7 +14,8 @@ implement its own Google OAuth or normal password login.
   residency requirements.
 - Confirm available CPU, RAM and disk headroom alongside the other applications.
 - Identify the existing reverse proxy and an unused loopback port.
-- Production hostname: `careers.via-int.com`.
+- Public careers hostname: `careers.via-int.com`.
+- Private staff-system hostname: `hr.via-int.com`.
 - Agree backup retention, off-server backup destination and restore owner.
 
 Use [the release acceptance record](docs/CONTABO_RELEASE_ACCEPTANCE.md) for the
@@ -32,9 +33,9 @@ decisions, VIA Portal SSO, encrypted backup and access-control checks are comple
 - Keep the database on the internal `backend` network. The production Compose
   file publishes no PostgreSQL port.
 - Give VIA its own database, PostgreSQL role, password and named volume.
-- Keep the optional host health port bound to `127.0.0.1`. The application also joins the existing
-  external `via_proxy` Docker network under the unique `via-hr-app` alias so Caddy can reach it
-  without publishing the application container directly to the internet.
+- Keep both optional host health ports bound to `127.0.0.1`. The private staff container uses the
+  `via-hr-app` proxy alias and the public careers container uses `via-careers-app`. Both share VIA
+  HR's PostgreSQL and object storage, but each container rejects the other surface's routes.
 - Never reuse another application's database credentials or encryption keys.
 
 The applications may share the Contabo host and reverse proxy. They must not
@@ -50,15 +51,17 @@ and Super Admin access continue to come from VIA HR user management.
 
 Production URLs:
 
-- Origin: `https://careers.via-int.com`
-- Portal callback: `https://careers.via-int.com/auth/portal/callback`
-- Post-login dashboard: `https://careers.via-int.com/dashboard`
+- Public vacancies and applications: `https://careers.via-int.com`
+- Private staff origin: `https://hr.via-int.com`
+- Portal callback: `https://hr.via-int.com/auth/portal/callback`
+- Post-login dashboard: `https://hr.via-int.com/dashboard`
 - Post-logout destination: `https://portal.via-int.com`
 
 Before deployment:
 
-- Set `APP_ORIGIN=https://careers.via-int.com` without a trailing path.
-- Register `https://careers.via-int.com/auth/portal/callback` in VIA Portal as the exact callback URL.
+- Set `APP_ORIGIN=https://hr.via-int.com` and
+  `VIA_HR_CAREERS_ORIGIN=https://careers.via-int.com`, without trailing paths.
+- Register `https://hr.via-int.com/auth/portal/callback` in VIA Portal as the exact callback URL.
 - Generate one dedicated random secret of at least 32 bytes and transfer it to both systems through
   the approved secret channel. Put it only in the owner-readable `.env.production`; never commit it.
 - Keep `VIA_HR_ALLOW_PASSWORD_LOGIN=false`. VIA HR has no normal production password login and
@@ -108,7 +111,7 @@ Docker Engine with the Compose plugin is already installed.
 8. Build the exact release images, including the migration tools image:
 
    ```bash
-   docker compose --env-file .env.production -f compose.production.yaml build tools app background-worker
+   docker compose --env-file .env.production -f compose.production.yaml build tools app careers-app background-worker
    ```
 
 9. Start only the private dependencies and wait until they are healthy:
@@ -138,7 +141,7 @@ docker compose --env-file .env.production -f compose.production.yaml --profile t
 12. Start the web application and durable background worker:
 
     ```bash
-    docker compose --env-file .env.production -f compose.production.yaml up -d app background-worker
+    docker compose --env-file .env.production -f compose.production.yaml up -d app careers-app background-worker
     ```
 
 13. Confirm the complete stack is healthy:
@@ -148,12 +151,14 @@ docker compose --env-file .env.production -f compose.production.yaml ps
 curl --fail http://127.0.0.1:8082/health/live
 curl --fail http://127.0.0.1:8082/health/ready
 curl --fail http://127.0.0.1:8082/health/worker
+curl --fail http://127.0.0.1:8083/health/ready
 ```
 
 14. Back up `/opt/via/proxy/Caddyfile`, append the complete block from
     `deploy/contabo/Caddyfile.via-hr.example`, validate it inside the existing `via-caddy` container,
     and reload Caddy only after validation succeeds. Caddy obtains and renews the
-    `careers.via-int.com` TLS certificate after DNS points to this server.
+    `careers.via-int.com` and `hr.via-int.com` TLS certificates after both DNS records point to this
+    server.
 15. Allow public firewall access only to SSH, HTTP and HTTPS as required by the
     existing server policy. Do not open ports `3000`, `5432` or VIA's loopback
     port to the internet.

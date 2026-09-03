@@ -1,9 +1,33 @@
 limit_req_zone $binary_remote_addr zone=via_hr_requests:10m rate=10r/s;
 
+# Public vacancy discovery and candidate applications only.
 server {
     listen 80;
     listen [::]:80;
     server_name careers.via-int.com;
+    client_max_body_size 16m;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    location / {
+        limit_req zone=via_hr_requests burst=30 nodelay;
+        proxy_pass http://127.0.0.1:8083;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+}
+
+# Private employee and HR system. VIA Portal is the only login authority.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name hr.via-int.com;
     client_max_body_size 16m;
 
     add_header X-Content-Type-Options nosniff always;
@@ -30,15 +54,8 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        # Replace untrusted client-supplied values. VIA uses this address when
-        # enforcing the approved office network for attendance punches.
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 60s;
-    }
-
-    location = /health/live {
-        access_log off;
-        proxy_pass http://127.0.0.1:8082/health/live;
     }
 }

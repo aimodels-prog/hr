@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as StaffRouteImport } from './routes/staff'
+import { Route as JobsIndexRouteImport } from './routes/jobs.index'
 import { Route as JobsJobIdRouteImport } from './routes/jobs.$jobId'
 import { Route as JobsAppliedRouteImport } from './routes/jobs.applied'
 import { Route as StaffIndexRouteImport } from './routes/staff/index'
@@ -100,6 +101,11 @@ const IndexRoute = IndexRouteImport.update({
 const StaffRoute = StaffRouteImport.update({
   id: '/staff',
   path: '/staff',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JobsIndexRoute = JobsIndexRouteImport.update({
+  id: '/jobs/',
+  path: '/jobs/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const JobsJobIdRoute = JobsJobIdRouteImport.update({
@@ -556,6 +562,7 @@ export interface FileRoutesByFullPath {
   '/staff/travel-closures': typeof StaffTravelClosuresRoute
   '/staff/travel-hr-approvals': typeof StaffTravelHrApprovalsRoute
   '/staff/users': typeof StaffUsersRoute
+  '/jobs/': typeof JobsIndexRoute
   '/staff/': typeof StaffIndexRoute
   '/staff/attendance/corrections': typeof StaffAttendanceCorrectionsRoute
   '/staff/candidates/$candidateId': typeof StaffCandidatesCandidateIdRouteWithChildren
@@ -631,6 +638,7 @@ export interface FileRoutesByTo {
   '/staff/travel-closures': typeof StaffTravelClosuresRoute
   '/staff/travel-hr-approvals': typeof StaffTravelHrApprovalsRoute
   '/staff/users': typeof StaffUsersRoute
+  '/jobs': typeof JobsIndexRoute
   '/staff': typeof StaffIndexRoute
   '/staff/attendance/corrections': typeof StaffAttendanceCorrectionsRoute
   '/staff/candidates/$candidateId': typeof StaffCandidatesCandidateIdRouteWithChildren
@@ -716,6 +724,7 @@ export interface FileRoutesById {
   '/staff/travel-closures': typeof StaffTravelClosuresRoute
   '/staff/travel-hr-approvals': typeof StaffTravelHrApprovalsRoute
   '/staff/users': typeof StaffUsersRoute
+  '/jobs/': typeof JobsIndexRoute
   '/staff/': typeof StaffIndexRoute
   '/staff/attendance/corrections': typeof StaffAttendanceCorrectionsRoute
   '/staff/candidates/$candidateId': typeof StaffCandidatesCandidateIdRouteWithChildren
@@ -802,6 +811,7 @@ export interface FileRouteTypes {
     | '/staff/travel-closures'
     | '/staff/travel-hr-approvals'
     | '/staff/users'
+    | '/jobs/'
     | '/staff/'
     | '/staff/attendance/corrections'
     | '/staff/candidates/$candidateId'
@@ -877,6 +887,7 @@ export interface FileRouteTypes {
     | '/staff/travel-closures'
     | '/staff/travel-hr-approvals'
     | '/staff/users'
+    | '/jobs'
     | '/staff'
     | '/staff/attendance/corrections'
     | '/staff/candidates/$candidateId'
@@ -961,6 +972,7 @@ export interface FileRouteTypes {
     | '/staff/travel-closures'
     | '/staff/travel-hr-approvals'
     | '/staff/users'
+    | '/jobs/'
     | '/staff/'
     | '/staff/attendance/corrections'
     | '/staff/candidates/$candidateId'
@@ -1015,6 +1027,7 @@ export interface RootRouteChildren {
   StaffRoute: typeof StaffRouteWithChildren
   JobsJobIdRoute: typeof JobsJobIdRoute
   JobsAppliedRoute: typeof JobsAppliedRoute
+  JobsIndexRoute: typeof JobsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -1031,6 +1044,13 @@ declare module '@tanstack/react-router' {
       path: '/staff'
       fullPath: '/staff'
       preLoaderRoute: typeof StaffRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/jobs/': {
+      id: '/jobs/'
+      path: '/jobs'
+      fullPath: '/jobs/'
+      preLoaderRoute: typeof JobsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/jobs/$jobId': {
@@ -1866,6 +1886,7 @@ const rootRouteChildren: RootRouteChildren = {
   StaffRoute: StaffRouteWithChildren,
   JobsJobIdRoute: JobsJobIdRoute,
   JobsAppliedRoute: JobsAppliedRoute,
+  JobsIndexRoute: JobsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

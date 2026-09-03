@@ -7,6 +7,7 @@ import { resolveHealthRequest } from "./lib/health.server";
 import { addSecurityHeaders, enforceRequestSecurity } from "./lib/http-security.server";
 import { resolvePortalAuthenticationRequest } from "./lib/auth/portal-auth-http.server";
 import { resolvePublicRecruitmentRequest } from "./lib/recruitment/public-recruitment-http.server";
+import { resolveAppSurfaceRequest } from "./lib/app-surface.server";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -74,6 +75,8 @@ export default {
       if (rejected) return addSecurityHeaders(request, rejected);
       const healthResponse = await resolveHealthRequest(request);
       if (healthResponse) return addSecurityHeaders(request, healthResponse);
+      const surfaceResponse = resolveAppSurfaceRequest(request);
+      if (surfaceResponse) return addSecurityHeaders(request, surfaceResponse);
       const publicRecruitmentResponse = await resolvePublicRecruitmentRequest(request);
       if (publicRecruitmentResponse) return addSecurityHeaders(request, publicRecruitmentResponse);
       const authenticationResponse = await resolvePortalAuthenticationRequest(request);
