@@ -71,9 +71,7 @@ function OvertimeLedgerContent() {
   const currentUser = useCurrentUser();
   const overtimeService = useMemo(() => new OvertimeService(), []);
   const actorContext = currentUser.getActorContext();
-  const [ledger, setLedger] = useState<PayrollOvertimeLedgerRow[]>(() =>
-    overtimeService.getPayrollOvertimeLedger(actorContext),
-  );
+  const [ledger, setLedger] = useState<PayrollOvertimeLedgerRow[]>([]);
   const [view, setView] = useState<PayrollOvertimeLedgerView>("all");
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -167,11 +165,11 @@ function OvertimeLedgerContent() {
   const safePage = Math.min(page, pageCount);
   const visibleRows = filteredRows.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  const refresh = () => {
+  const refresh = async (showSuccess = true) => {
     setIsRefreshing(true);
     try {
-      setLedger(overtimeService.getPayrollOvertimeLedger(actorContext));
-      toast.success("Overtime ledger refreshed.");
+      setLedger(await overtimeService.getPayrollOvertimeLedgerAsync(actorContext));
+      if (showSuccess) toast.success("Overtime ledger refreshed.");
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "The overtime ledger could not be refreshed.",
@@ -181,12 +179,18 @@ function OvertimeLedgerContent() {
     }
   };
 
-  const exportCsv = () => {
+  useEffect(() => {
+    void refresh(false);
+    // The active actor changes by remount through the staff preview context.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const exportCsv = async () => {
     setIsExporting(true);
     try {
-      const csv = overtimeService.exportPayrollOvertimeLedgerCsv(actorContext, {
-        view,
+      const csv = await overtimeService.exportPayrollOvertimeLedgerCsvAsync(actorContext, {
         ...(search.trim() ? { search: search.trim() } : {}),
+        view,
         ...(dateFrom ? { dateFrom } : {}),
         ...(dateTo ? { dateTo } : {}),
         ...(payrollPeriodId !== "all" ? { payrollPeriodId } : {}),
@@ -241,7 +245,7 @@ function OvertimeLedgerContent() {
         breadcrumbs={[{ label: "Finance" }, { label: "Overtime Ledger" }]}
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={refresh} disabled={isRefreshing}>
+            <Button variant="outline" onClick={() => void refresh()} disabled={isRefreshing}>
               <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
               Refresh
             </Button>

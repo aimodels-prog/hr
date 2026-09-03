@@ -15,6 +15,12 @@ import type {
 } from "./performance-types.ts";
 import { LocalRepository, type NewRecord } from "./repository.ts";
 import { SYSTEM_CONTEXT, type ActorContext, type User } from "./types.ts";
+import {
+  hydratePerformanceCache,
+  performanceDatabaseId,
+  performanceMasterDataId,
+  performanceServerActor,
+} from "./performance-cache.ts";
 
 const generateId = () => crypto.randomUUID?.() ?? Math.random().toString(36).slice(2);
 
@@ -45,6 +51,238 @@ export class PerformanceService {
       { module: "performance", entityType: "performance-review" },
     );
     this.seedDefaultTemplate();
+  }
+
+  async hydrateCompatibilityCache(context: ActorContext) {
+    await hydratePerformanceCache(context);
+  }
+
+  async saveTemplateAsync(
+    input: ReviewTemplate | NewRecord<ReviewTemplate>,
+    context: ActorContext,
+  ) {
+    const { savePerformanceTemplateFn } = await import("../server-functions/performance.server.ts");
+    const existing = input.id ? this.templatesRepo.getById(input.id) : null;
+    await savePerformanceTemplateFn({
+      data: {
+        actor: await performanceServerActor(context),
+        ...(existing
+          ? {
+              templateId: performanceDatabaseId("performanceTemplates", existing.id),
+              expectedVersion: existing.recordVersion,
+            }
+          : {}),
+        name: input.name,
+        description: input.description,
+        isActive: input.isActive,
+        maxRating: input.maxRating,
+        sections: input.sections,
+        employeeCanSeeManagerRatings: input.employeeCanSeeManagerRatings,
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    return this.getTemplates(context);
+  }
+
+  async deleteTemplateAsync(id: string, context: ActorContext) {
+    const { archivePerformanceTemplateFn } =
+      await import("../server-functions/performance.server.ts");
+    await archivePerformanceTemplateFn({
+      data: {
+        actor: await performanceServerActor(context),
+        templateId: performanceDatabaseId("performanceTemplates", id),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    return this.getTemplates(context);
+  }
+
+  async createCycleAsync(input: NewRecord<ReviewCycle>, context: ActorContext) {
+    const { savePerformanceCycleFn } = await import("../server-functions/performance.server.ts");
+    await savePerformanceCycleFn({
+      data: {
+        actor: await performanceServerActor(context),
+        name: input.name,
+        templateId: performanceDatabaseId("performanceTemplates", input.templateId),
+        status: input.status === "Active" ? "Active" : "Draft",
+        departments: input.departments.map((id) => performanceMasterDataId("departments", id)),
+        employmentTypes: input.employmentTypes.map((id) =>
+          performanceMasterDataId("employmentTypes", id),
+        ),
+        selfAssessmentDeadline: input.selfAssessmentDeadline,
+        managerReviewDeadline: input.managerReviewDeadline,
+        discussionDeadline: input.discussionDeadline,
+        ...(input.objectiveSettingDeadline
+          ? { objectiveSettingDeadline: input.objectiveSettingDeadline }
+          : {}),
+        requiresModeration: input.requiresModeration,
+        ...(input.employeeCanSeeManagerRatings === undefined
+          ? {}
+          : { employeeCanSeeManagerRatings: input.employeeCanSeeManagerRatings }),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    return this.getCycles(context);
+  }
+
+  async updateDraftCycleAsync(
+    id: string,
+    input: Omit<NewRecord<ReviewCycle>, "id" | "status">,
+    context: ActorContext,
+  ) {
+    await this.hydrateCompatibilityCache(context);
+    const cycle = this.cyclesRepo.getById(id);
+    if (!cycle) throw new Error("Performance cycle not found.");
+    const { savePerformanceCycleFn } = await import("../server-functions/performance.server.ts");
+    await savePerformanceCycleFn({
+      data: {
+        actor: await performanceServerActor(context),
+        cycleId: performanceDatabaseId("performanceCycles", id),
+        expectedVersion: cycle.recordVersion,
+        name: input.name,
+        templateId: performanceDatabaseId("performanceTemplates", input.templateId),
+        status: "Draft",
+        departments: input.departments.map((value) =>
+          performanceMasterDataId("departments", value),
+        ),
+        employmentTypes: input.employmentTypes.map((value) =>
+          performanceMasterDataId("employmentTypes", value),
+        ),
+        selfAssessmentDeadline: input.selfAssessmentDeadline,
+        managerReviewDeadline: input.managerReviewDeadline,
+        discussionDeadline: input.discussionDeadline,
+        ...(input.objectiveSettingDeadline
+          ? { objectiveSettingDeadline: input.objectiveSettingDeadline }
+          : {}),
+        requiresModeration: input.requiresModeration,
+        ...(input.employeeCanSeeManagerRatings === undefined
+          ? {}
+          : { employeeCanSeeManagerRatings: input.employeeCanSeeManagerRatings }),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    return this.cyclesRepo.getById(id)!;
+  }
+
+  async updateCycleStatusAsync(id: string, status: "Active" | "Completed", context: ActorContext) {
+    await this.hydrateCompatibilityCache(context);
+    const cycle = this.cyclesRepo.getById(id);
+    if (!cycle) throw new Error("Performance cycle not found.");
+    const { changePerformanceCycleStatusFn } =
+      await import("../server-functions/performance.server.ts");
+    await changePerformanceCycleStatusFn({
+      data: {
+        actor: await performanceServerActor(context),
+        cycleId: performanceDatabaseId("performanceCycles", id),
+        status,
+        expectedVersion: cycle.recordVersion,
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    return this.cyclesRepo.getById(id)!;
+  }
+
+  private async actReviewAsync(
+    reviewId: string,
+    action:
+      | { type: "self"; sections: ReviewSectionInstance[] }
+      | {
+          type: "manager";
+          sections: ReviewSectionInstance[];
+          summary: string;
+          developmentPlan: string;
+        }
+      | { type: "moderate"; comment: string }
+      | { type: "discussion"; heldAt: string; notes: string }
+      | { type: "acknowledge"; agrees: boolean; comment?: string }
+      | { type: "lock" }
+      | {
+          type: "correct";
+          sections: ReviewSectionInstance[];
+          summary: string;
+          developmentPlan: string;
+          reason: string;
+        },
+    context: ActorContext,
+  ) {
+    await this.hydrateCompatibilityCache(context);
+    const review = this.reviewsRepo.getById(reviewId);
+    if (!review) throw new Error("Performance review not found.");
+    const { actOnPerformanceReviewFn } = await import("../server-functions/performance.server.ts");
+    const resultId = await actOnPerformanceReviewFn({
+      data: {
+        actor: await performanceServerActor(context),
+        reviewId: performanceDatabaseId("performanceReviews", reviewId),
+        expectedVersion: review.recordVersion,
+        action,
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const result = this.reviewsRepo.getById(resultId);
+    if (!result) throw new Error("The updated performance review could not be reloaded.");
+    return this.resolveReviewGoals(result);
+  }
+
+  submitSelfAssessmentAsync(
+    reviewId: string,
+    sections: ReviewSectionInstance[],
+    context: ActorContext,
+  ) {
+    return this.actReviewAsync(reviewId, { type: "self", sections }, context);
+  }
+
+  submitManagerReviewAsync(
+    reviewId: string,
+    sections: ReviewSectionInstance[],
+    summary: string,
+    developmentPlan: string,
+    context: ActorContext,
+  ) {
+    return this.actReviewAsync(
+      reviewId,
+      { type: "manager", sections, summary, developmentPlan },
+      context,
+    );
+  }
+
+  approveModerationAsync(reviewId: string, comment: string, context: ActorContext) {
+    return this.actReviewAsync(reviewId, { type: "moderate", comment }, context);
+  }
+
+  recordDiscussionAsync(reviewId: string, heldAt: string, notes: string, context: ActorContext) {
+    return this.actReviewAsync(reviewId, { type: "discussion", heldAt, notes }, context);
+  }
+
+  acknowledgeReviewAsync(
+    reviewId: string,
+    agrees: boolean,
+    comment: string | undefined,
+    context: ActorContext,
+  ) {
+    return this.actReviewAsync(
+      reviewId,
+      { type: "acknowledge", agrees, ...(comment ? { comment } : {}) },
+      context,
+    );
+  }
+
+  lockReviewAsync(reviewId: string, context: ActorContext) {
+    return this.actReviewAsync(reviewId, { type: "lock" }, context);
+  }
+
+  correctReviewAsync(
+    reviewId: string,
+    sections: ReviewSectionInstance[],
+    summary: string,
+    developmentPlan: string,
+    reason: string,
+    context: ActorContext,
+  ) {
+    return this.actReviewAsync(
+      reviewId,
+      { type: "correct", sections, summary, developmentPlan, reason },
+      context,
+    );
   }
 
   getTemplates(context: ActorContext): ReviewTemplate[] {

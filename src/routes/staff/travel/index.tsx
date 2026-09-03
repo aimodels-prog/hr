@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -26,17 +26,37 @@ function MyTravelRoute() {
   const travelService = useMemo(() => new TravelService(), []);
   const employeeId = currentUser.employeeId ?? "";
 
-  const [requests, setRequests] = useState(
+  const [requests, setRequests] = useState(() =>
     travelService.getRequestsForEmployee(employeeId, currentUser.getActorContext()),
   );
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoading(true);
+    travelService
+      .getRequestsAsync(currentUser.getActorContext())
+      .then((rows) => {
+        if (!cancelled) setRequests(rows.filter((request) => request.employeeId === employeeId));
+      })
+      .catch((error) =>
+        toast.error(
+          error instanceof Error ? error.message : "Travel requests could not be loaded.",
+        ),
+      )
+      .finally(() => !cancelled && setIsLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser, employeeId, travelService]);
 
   if (!currentUser?.employeeId) {
     return <div>Employee profile required.</div>;
   }
 
-  const handleWithdraw = (id: string) => {
+  const handleWithdraw = async (id: string) => {
     try {
-      travelService.withdrawRequest(id, currentUser.getActorContext());
+      await travelService.withdrawRequestAsync(id, currentUser.getActorContext());
       setRequests(travelService.getRequestsForEmployee(employeeId, currentUser.getActorContext()));
       toast.success("Travel request withdrawn");
     } catch (error: unknown) {
@@ -119,7 +139,7 @@ function MyTravelRoute() {
                             variant="outline"
                             size="sm"
                             className="ml-2"
-                            onClick={() => handleWithdraw(req.id)}
+                            onClick={() => void handleWithdraw(req.id)}
                           >
                             Withdraw
                           </Button>
@@ -127,7 +147,7 @@ function MyTravelRoute() {
                     </TableCell>
                   </TableRow>
                 ))}
-                {requests.length === 0 && (
+                {!isLoading && requests.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                       <Plane className="w-8 h-8 mx-auto mb-2 text-muted-foreground/50" />

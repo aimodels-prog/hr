@@ -165,7 +165,7 @@ export function PersonalTab({
     reason,
   });
 
-  const onSubmit = (values: z.infer<typeof personalFormSchema>) => {
+  const onSubmit = async (values: z.infer<typeof personalFormSchema>) => {
     try {
       if (!currentUser) return;
 
@@ -193,14 +193,14 @@ export function PersonalTab({
       if (Object.keys(changes).length === 0) throw new Error("No changes were made.");
 
       if (isSelf) {
-        employeeService.requestProfileChange(
+        await employeeService.requestProfileChangeAsync(
           employee.id,
           changes,
           getActorContext("Self-service profile update"),
         );
         toast.success("Profile changes sent to HR for review");
       } else {
-        employeeService.updatePersonalRecord(
+        await employeeService.updatePersonalRecordAsync(
           employee.id,
           changes,
           values.changeReason || "",
@@ -216,10 +216,11 @@ export function PersonalTab({
     }
   };
 
-  const handleApprove = (requestId: string) => {
+  const handleApprove = async (requestId: string) => {
     try {
-      employeeService.approveProfileChange(
+      await employeeService.decideProfileChangeAsync(
         requestId,
+        "Approved",
         "Verified and approved",
         getActorContext("Approval"),
       );
@@ -231,11 +232,12 @@ export function PersonalTab({
     }
   };
 
-  const handleReject = () => {
+  const handleReject = async () => {
     if (!rejectingId) return;
     try {
-      employeeService.rejectProfileChange(
+      await employeeService.decideProfileChangeAsync(
         rejectingId,
+        "Rejected",
         rejectionReason,
         getActorContext(rejectionReason),
       );

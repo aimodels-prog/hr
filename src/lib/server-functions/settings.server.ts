@@ -4,7 +4,11 @@ import * as z from "zod";
 import { getDatabaseClient } from "../db/client.ts";
 import { getAppSettings, saveAppSettings } from "../db/repositories/settings.repository.server.ts";
 import { auditEvents } from "../db/schema/system.ts";
-import { resolveDefaultOrganisationId, verifyServerActorRole } from "../db/utils.server.ts";
+import {
+  resolveDefaultOrganisationId,
+  resolveOrganisationIdForActor,
+  verifyServerActorRole,
+} from "../db/utils.server.ts";
 import type { AppSettings } from "../data/types.ts";
 
 const AppSettingsInputSchema = z.object({
@@ -34,27 +38,39 @@ const AppSettingsInputSchema = z.object({
 });
 
 export const getAppSettingsFn = createServerFn({ method: "GET" })
-  .validator((input: { orgId?: string } = {}) => input)
-  .handler(async ({ data }): Promise<AppSettings> => {
-    const orgId = data?.orgId ?? (await resolveDefaultOrganisationId());
+  .validator((input: Record<string, never> = {}) => input)
+  .handler(async (): Promise<AppSettings> => {
+    const orgId = await resolveDefaultOrganisationId();
     return getAppSettings(orgId);
   });
 
 export const saveAppSettingsFn = createServerFn({ method: "POST" })
-  .validator((input: { settings: z.infer<typeof AppSettingsInputSchema>; actorId: string }) => {
-    return z
-      .object({
-        settings: AppSettingsInputSchema,
-        actorId: z.string().min(1),
-      })
-      .parse(input);
-  })
+  .validator(
+    (input: {
+      settings: z.infer<typeof AppSettingsInputSchema>;
+      actorId: string;
+      actorEmail?: string;
+    }) => {
+      return z
+        .object({
+          settings: AppSettingsInputSchema,
+          actorId: z.string().min(1),
+          actorEmail: z.string().email().optional(),
+        })
+        .parse(input);
+    },
+  )
   .handler(async ({ data }): Promise<AppSettings> => {
-    const orgId = await resolveDefaultOrganisationId();
+    const orgId = await resolveOrganisationIdForActor(data.actorId, data.actorEmail);
     const previous = await getAppSettings(orgId);
 
     // Verify actor in database
-    const { verified, actor, error } = await verifyServerActorRole(orgId, data.actorId);
+    const { verified, actor, error } = await verifyServerActorRole(
+      orgId,
+      data.actorId,
+      undefined,
+      data.actorEmail,
+    );
     if (!verified || !actor) {
       const db = getDatabaseClient();
       await db.insert(auditEvents).values({

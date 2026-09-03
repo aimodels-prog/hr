@@ -9,6 +9,17 @@ const healthyDatabase = async () => ({
   latencyMs: 7,
 });
 
+const healthyWorker = async () => ({
+  healthy: true,
+  checkedAt: "2026-09-02T00:00:00.000Z",
+  activeWorkers: 1,
+  staleWorkers: 0,
+  queuedJobs: 2,
+  retryJobs: 0,
+  failedJobs: 1,
+  overdueSchedules: 0,
+});
+
 test("liveness responds without touching the database", async () => {
   let databaseCalled = false;
   const response = await resolveHealthRequest(
@@ -53,6 +64,29 @@ test("readiness hides database errors and returns 503", async () => {
   const text = await response?.text();
   assert.match(text ?? "", /not_ready/);
   assert.doesNotMatch(text ?? "", /secret-user|secret-password|private-host/);
+});
+
+test("worker health reports only safe operational counts", async () => {
+  const response = await resolveHealthRequest(
+    new Request("http://localhost/health/worker"),
+    healthyDatabase,
+    healthyWorker,
+  );
+  assert.equal(response?.status, 200);
+  const body = (await response?.json()) as Record<string, unknown>;
+  assert.equal(body["service"], "via-hr-background-worker");
+  assert.equal(body["activeWorkers"], 1);
+  assert.equal(body["failedJobs"], 1);
+  assert.equal("lastError" in body, false);
+});
+
+test("worker health fails closed when the heartbeat is stale", async () => {
+  const response = await resolveHealthRequest(
+    new Request("http://localhost/health/worker"),
+    healthyDatabase,
+    async () => ({ ...(await healthyWorker()), healthy: false, activeWorkers: 0, staleWorkers: 1 }),
+  );
+  assert.equal(response?.status, 503);
 });
 
 test("health endpoints permit only GET and HEAD", async () => {

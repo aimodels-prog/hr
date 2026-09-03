@@ -20,7 +20,11 @@ import {
   updateProject,
 } from "../db/repositories/master-data.repository.server.ts";
 import { auditEvents } from "../db/schema/system.ts";
-import { resolveDefaultOrganisationId, verifyServerActorRole } from "../db/utils.server.ts";
+import {
+  resolveDefaultOrganisationId,
+  resolveOrganisationIdForActor,
+  verifyServerActorRole,
+} from "../db/utils.server.ts";
 
 const MasterDataCollectionEnum = z.enum([
   "departments",
@@ -50,6 +54,22 @@ const MasterDataInputSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)")
     .optional(),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  radiusMeters: z.number().int().min(25).max(50_000).optional(),
+  isClockInSite: z.boolean().optional(),
+  startTime: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/)
+    .optional(),
+  endTime: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/)
+    .optional(),
+  breakMinutes: z.number().int().min(0).max(1_439).optional(),
+  workingDays: z.array(z.number().int().min(0).max(6)).min(1).optional(),
+  symbol: z.string().trim().max(12).optional(),
+  decimalPlaces: z.number().int().min(0).max(4).optional(),
 });
 
 const MasterDataUpdateInputSchema = MasterDataInputSchema.partial();
@@ -100,22 +120,25 @@ export const createMasterDataFn = createServerFn({ method: "POST" })
       collection: z.infer<typeof MasterDataCollectionEnum>;
       input: z.infer<typeof MasterDataInputSchema>;
       actorId: string;
+      actorEmail?: string;
     }) => {
       return z
         .object({
           collection: MasterDataCollectionEnum,
           input: MasterDataInputSchema,
           actorId: z.string().min(1),
+          actorEmail: z.string().email().optional(),
         })
         .parse(input);
     },
   )
   .handler(async ({ data }): Promise<MasterRecordDTO> => {
-    const orgId = await resolveDefaultOrganisationId();
+    const orgId = await resolveOrganisationIdForActor(data.actorId, data.actorEmail);
     const { verified, actor, error } = await verifyServerActorRole(
       orgId,
       data.actorId,
       "Super Admin",
+      data.actorEmail,
     );
 
     if (!verified || !actor) {
@@ -144,6 +167,20 @@ export const createMasterDataFn = createServerFn({ method: "POST" })
         throw new Error("Holiday date is invalid.");
       }
     }
+    if (data.collection === "workingTimes") {
+      if (!data.input.startTime || !data.input.endTime || !data.input.workingDays?.length) {
+        throw new Error("Start time, end time and working days are required.");
+      }
+      if (data.input.startTime >= data.input.endTime) {
+        throw new Error("Working time must end after it starts.");
+      }
+      if (new Set(data.input.workingDays).size !== data.input.workingDays.length) {
+        throw new Error("Working days cannot contain duplicates.");
+      }
+    }
+    if (data.collection === "currencies" && !/^[A-Z]{3}$/.test(code ?? "")) {
+      throw new Error("Currency code must be a three-letter ISO code.");
+    }
 
     const existing = await listCollection(orgId, data.collection, true);
     const normalizedName = name.trim().toLowerCase();
@@ -166,6 +203,7 @@ export const updateMasterDataFn = createServerFn({ method: "POST" })
       id: string;
       changes: z.infer<typeof MasterDataUpdateInputSchema>;
       actorId: string;
+      actorEmail?: string;
     }) => {
       return z
         .object({
@@ -173,16 +211,18 @@ export const updateMasterDataFn = createServerFn({ method: "POST" })
           id: z.string().min(1),
           changes: MasterDataUpdateInputSchema,
           actorId: z.string().min(1),
+          actorEmail: z.string().email().optional(),
         })
         .parse(input);
     },
   )
   .handler(async ({ data }): Promise<MasterRecordDTO> => {
-    const orgId = await resolveDefaultOrganisationId();
+    const orgId = await resolveOrganisationIdForActor(data.actorId, data.actorEmail);
     const { verified, actor, error } = await verifyServerActorRole(
       orgId,
       data.actorId,
       "Super Admin",
+      data.actorEmail,
     );
 
     if (!verified || !actor) {
@@ -214,6 +254,20 @@ export const updateMasterDataFn = createServerFn({ method: "POST" })
         throw new Error("Holiday date is invalid.");
       }
     }
+    if (data.collection === "workingTimes") {
+      if (!candidate.startTime || !candidate.endTime || !candidate.workingDays?.length) {
+        throw new Error("Start time, end time and working days are required.");
+      }
+      if (candidate.startTime >= candidate.endTime) {
+        throw new Error("Working time must end after it starts.");
+      }
+      if (new Set(candidate.workingDays).size !== candidate.workingDays.length) {
+        throw new Error("Working days cannot contain duplicates.");
+      }
+    }
+    if (data.collection === "currencies" && !/^[A-Z]{3}$/.test(candidate.code ?? "")) {
+      throw new Error("Currency code must be a three-letter ISO code.");
+    }
 
     const name = candidate.name ?? current.name;
     const normalizedName = name.trim().toLowerCase();
@@ -236,22 +290,25 @@ export const archiveMasterDataFn = createServerFn({ method: "POST" })
       collection: z.infer<typeof MasterDataCollectionEnum>;
       id: string;
       actorId: string;
+      actorEmail?: string;
     }) => {
       return z
         .object({
           collection: MasterDataCollectionEnum,
           id: z.string().min(1),
           actorId: z.string().min(1),
+          actorEmail: z.string().email().optional(),
         })
         .parse(input);
     },
   )
   .handler(async ({ data }): Promise<MasterRecordDTO> => {
-    const orgId = await resolveDefaultOrganisationId();
+    const orgId = await resolveOrganisationIdForActor(data.actorId, data.actorEmail);
     const { verified, actor, error } = await verifyServerActorRole(
       orgId,
       data.actorId,
       "Super Admin",
+      data.actorEmail,
     );
 
     if (!verified || !actor) {
@@ -300,22 +357,25 @@ export const restoreMasterDataFn = createServerFn({ method: "POST" })
       collection: z.infer<typeof MasterDataCollectionEnum>;
       id: string;
       actorId: string;
+      actorEmail?: string;
     }) => {
       return z
         .object({
           collection: MasterDataCollectionEnum,
           id: z.string().min(1),
           actorId: z.string().min(1),
+          actorEmail: z.string().email().optional(),
         })
         .parse(input);
     },
   )
   .handler(async ({ data }): Promise<MasterRecordDTO> => {
-    const orgId = await resolveDefaultOrganisationId();
+    const orgId = await resolveOrganisationIdForActor(data.actorId, data.actorEmail);
     const { verified, actor, error } = await verifyServerActorRole(
       orgId,
       data.actorId,
       "Super Admin",
+      data.actorEmail,
     );
 
     if (!verified || !actor) {
@@ -368,20 +428,28 @@ export const listProjectsFn = createServerFn({ method: "GET" })
   });
 
 export const createProjectFn = createServerFn({ method: "POST" })
-  .validator((input: { input: z.infer<typeof ProjectInputSchema>; actorId: string }) => {
-    return z
-      .object({
-        input: ProjectInputSchema,
-        actorId: z.string().min(1),
-      })
-      .parse(input);
-  })
+  .validator(
+    (input: {
+      input: z.infer<typeof ProjectInputSchema>;
+      actorId: string;
+      actorEmail?: string;
+    }) => {
+      return z
+        .object({
+          input: ProjectInputSchema,
+          actorId: z.string().min(1),
+          actorEmail: z.string().email().optional(),
+        })
+        .parse(input);
+    },
+  )
   .handler(async ({ data }): Promise<ProjectDTO> => {
-    const orgId = await resolveDefaultOrganisationId();
+    const orgId = await resolveOrganisationIdForActor(data.actorId, data.actorEmail);
     const { verified, actor, error } = await verifyServerActorRole(
       orgId,
       data.actorId,
       "Super Admin",
+      data.actorEmail,
     );
 
     if (!verified || !actor) {
@@ -428,22 +496,29 @@ export const createProjectFn = createServerFn({ method: "POST" })
 
 export const updateProjectFn = createServerFn({ method: "POST" })
   .validator(
-    (input: { id: string; changes: z.infer<typeof ProjectUpdateInputSchema>; actorId: string }) => {
+    (input: {
+      id: string;
+      changes: z.infer<typeof ProjectUpdateInputSchema>;
+      actorId: string;
+      actorEmail?: string;
+    }) => {
       return z
         .object({
           id: z.string().min(1),
           changes: ProjectUpdateInputSchema,
           actorId: z.string().min(1),
+          actorEmail: z.string().email().optional(),
         })
         .parse(input);
     },
   )
   .handler(async ({ data }): Promise<ProjectDTO> => {
-    const orgId = await resolveDefaultOrganisationId();
+    const orgId = await resolveOrganisationIdForActor(data.actorId, data.actorEmail);
     const { verified, actor, error } = await verifyServerActorRole(
       orgId,
       data.actorId,
       "Super Admin",
+      data.actorEmail,
     );
 
     if (!verified || !actor) {
@@ -499,20 +574,22 @@ export const updateProjectFn = createServerFn({ method: "POST" })
   });
 
 export const archiveProjectFn = createServerFn({ method: "POST" })
-  .validator((input: { id: string; actorId: string }) => {
+  .validator((input: { id: string; actorId: string; actorEmail?: string }) => {
     return z
       .object({
         id: z.string().min(1),
         actorId: z.string().min(1),
+        actorEmail: z.string().email().optional(),
       })
       .parse(input);
   })
   .handler(async ({ data }): Promise<ProjectDTO> => {
-    const orgId = await resolveDefaultOrganisationId();
+    const orgId = await resolveOrganisationIdForActor(data.actorId, data.actorEmail);
     const { verified, actor, error } = await verifyServerActorRole(
       orgId,
       data.actorId,
       "Super Admin",
+      data.actorEmail,
     );
 
     if (!verified || !actor) {
@@ -547,20 +624,22 @@ export const archiveProjectFn = createServerFn({ method: "POST" })
   });
 
 export const restoreProjectFn = createServerFn({ method: "POST" })
-  .validator((input: { id: string; actorId: string }) => {
+  .validator((input: { id: string; actorId: string; actorEmail?: string }) => {
     return z
       .object({
         id: z.string().min(1),
         actorId: z.string().min(1),
+        actorEmail: z.string().email().optional(),
       })
       .parse(input);
   })
   .handler(async ({ data }): Promise<ProjectDTO> => {
-    const orgId = await resolveDefaultOrganisationId();
+    const orgId = await resolveOrganisationIdForActor(data.actorId, data.actorEmail);
     const { verified, actor, error } = await verifyServerActorRole(
       orgId,
       data.actorId,
       "Super Admin",
+      data.actorEmail,
     );
 
     if (!verified || !actor) {

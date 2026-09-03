@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -49,6 +49,16 @@ function HrTravelApprovalsContent() {
   const [requests, setRequests] = useState(
     travelService.getAllRequests(currentUser.getActorContext()),
   );
+  useEffect(() => {
+    void travelService
+      .getRequestsAsync(currentUser.getActorContext())
+      .then(setRequests)
+      .catch((error) =>
+        toast.error(
+          error instanceof Error ? error.message : "Travel requests could not be loaded.",
+        ),
+      );
+  }, [currentUser, travelService]);
   const allEmployees = empService.getEmployees(currentUser.getActorContext());
 
   const [notes, setNotes] = useState("");
@@ -80,10 +90,10 @@ function HrTravelApprovalsContent() {
     }
   };
 
-  const handleFinalise = () => {
+  const handleFinalise = async () => {
     if (!selectedReq) return;
     try {
-      travelService.hrApprove(
+      await travelService.hrApproveAsync(
         selectedReq.id,
         actionType === "approve",
         notes,
@@ -277,7 +287,7 @@ function HrTravelApprovalsContent() {
             </Button>
             <Button
               variant={actionType === "approve" ? "default" : "destructive"}
-              onClick={handleFinalise}
+              onClick={() => void handleFinalise()}
               disabled={actionType === "reject" && notes.trim().length < 3}
             >
               {actionType === "approve" ? "Confirm HR Approval" : "Confirm Rejection"}

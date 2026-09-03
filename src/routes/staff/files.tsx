@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { getScopedEmployees, getScopedDocuments } from "@/lib/auth/record-scope";
@@ -56,6 +56,34 @@ function EmployeeFilesRoute() {
   const currentUser = useCurrentUser();
   const employeeService = useMemo(() => new EmployeeService(), []);
   const documentService = useMemo(() => new DocumentService(), []);
+  const [, setRefreshKey] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError("");
+    void Promise.all([
+      employeeService.hydrateCompatibilityCache(currentUser.getActorContext()),
+      documentService.hydrateCompatibilityCache(currentUser.getActorContext()),
+    ])
+      .then(() => {
+        if (active) setRefreshKey((value) => value + 1);
+      })
+      .catch((error) => {
+        if (active)
+          setLoadError(
+            error instanceof Error ? error.message : "Employee files could not be loaded.",
+          );
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentUser, documentService, employeeService]);
 
   const allEmployees = employeeService.getEmployees(currentUser.getActorContext());
   const allDocs = documentService.getDocuments(currentUser.getActorContext());
@@ -102,6 +130,8 @@ function EmployeeFilesRoute() {
           description="Search and review documents across every employee, without opening each profile individually."
           breadcrumbs={[{ label: "Core HR" }, { label: "Employee Files" }]}
         />
+        {loading && <p className="text-sm text-muted-foreground">Loading employee files...</p>}
+        {loadError && <p className="text-sm text-destructive">{loadError}</p>}
 
         <div className="flex flex-wrap gap-4 rounded-xl border bg-card p-4 shadow-sm">
           <div className="relative flex-1 min-w-[250px]">

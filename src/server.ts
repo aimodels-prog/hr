@@ -4,6 +4,9 @@ import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 import { closeDatabaseConnection } from "./lib/db/client";
 import { resolveHealthRequest } from "./lib/health.server";
+import { addSecurityHeaders, enforceRequestSecurity } from "./lib/http-security.server";
+import { resolvePortalAuthenticationRequest } from "./lib/auth/portal-auth-http.server";
+import { resolvePublicRecruitmentRequest } from "./lib/recruitment/public-recruitment-http.server";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -67,18 +70,27 @@ function isH3SwallowedErrorBody(body: string): boolean {
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
+      const rejected = enforceRequestSecurity(request);
+      if (rejected) return addSecurityHeaders(request, rejected);
       const healthResponse = await resolveHealthRequest(request);
-      if (healthResponse) return healthResponse;
+      if (healthResponse) return addSecurityHeaders(request, healthResponse);
+      const publicRecruitmentResponse = await resolvePublicRecruitmentRequest(request);
+      if (publicRecruitmentResponse) return addSecurityHeaders(request, publicRecruitmentResponse);
+      const authenticationResponse = await resolvePortalAuthenticationRequest(request);
+      if (authenticationResponse) return addSecurityHeaders(request, authenticationResponse);
 
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
-      return await normalizeCatastrophicSsrResponse(response);
+      return addSecurityHeaders(request, await normalizeCatastrophicSsrResponse(response));
     } catch (error) {
       console.error(error);
-      return new Response(renderErrorPage(), {
-        status: 500,
-        headers: { "content-type": "text/html; charset=utf-8" },
-      });
+      return addSecurityHeaders(
+        request,
+        new Response(renderErrorPage(), {
+          status: 500,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+      );
     }
   },
 };

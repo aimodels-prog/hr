@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { useCurrentUser } from "@/lib/auth";
 import { getMasterDataRepository, MasterDataService } from "@/lib/data/master-data";
 import { EmployeeService } from "@/lib/data/employee-service";
-import type { Project } from "@/lib/data/types";
+import type { MasterRecord, Project } from "@/lib/data/types";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -62,7 +62,7 @@ const projectFormSchema = z
     code: z.string().optional(),
     client: z.string().optional(),
     type: z.string().optional(),
-    location: z.string().optional(),
+    locationId: z.string().optional(),
     startDate: z.string().min(1, "Start date is required"),
     endDate: z.string().optional(),
     costCentreId: z.string().optional(),
@@ -80,7 +80,7 @@ const emptyFormValues: ProjectFormValues = {
   code: "",
   client: "",
   type: "",
-  location: "",
+  locationId: "",
   startDate: "",
   endDate: "",
   costCentreId: "",
@@ -93,8 +93,8 @@ export function ProjectsPanel() {
   const masterDataService = useMemo(() => new MasterDataService(), []);
 
   const [projects, setProjects] = useState<Project[]>([]);
-  const [locations, setLocations] = useState<any[]>([]);
-  const [costCentres, setCostCentres] = useState<any[]>([]);
+  const [locations, setLocations] = useState<MasterRecord[]>([]);
+  const [costCentres, setCostCentres] = useState<MasterRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // Includes archived employees so a project's historical manager still resolves to a name.
@@ -107,7 +107,7 @@ export function ProjectsPanel() {
     [allEmployees],
   );
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setIsLoading(true);
     try {
       const [p, l, c] = await Promise.all([
@@ -123,17 +123,20 @@ export function ProjectsPanel() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [masterDataService]);
 
   useEffect(() => {
     void refresh();
-  }, []);
+  }, [refresh]);
 
   const employeeName = (id?: string) => {
     if (!id) return "-";
     const employee = allEmployees.find((e) => e.id === id);
     return employee ? employee.preferredName : "-";
   };
+
+  const locationName = (id?: string) =>
+    id ? (locations.find((location) => location.id === id)?.name ?? "-") : "-";
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
@@ -152,7 +155,7 @@ export function ProjectsPanel() {
         code: editingProject.code || "",
         client: editingProject.client || "",
         type: editingProject.type || "",
-        location: editingProject.location || "",
+        locationId: editingProject.locationId || "",
         startDate: editingProject.startDate || "",
         endDate: editingProject.endDate || "",
         costCentreId: editingProject.costCentreId || "",
@@ -206,7 +209,7 @@ export function ProjectsPanel() {
         code: values.code?.trim() || undefined,
         client: values.client?.trim() || undefined,
         type: values.type?.trim() || undefined,
-        location: values.location || undefined,
+        locationId: values.locationId || undefined,
         startDate: values.startDate || undefined,
         endDate: values.endDate || undefined,
         costCentreId: values.costCentreId || undefined,
@@ -218,7 +221,7 @@ export function ProjectsPanel() {
         toast.success("Project updated");
       } else {
         await masterDataService.createProject(
-          { ...payload, isActive: true, orderIndex: projects.length } as any,
+          { ...payload, isActive: true, orderIndex: projects.length },
           getActorContext(),
         );
         toast.success("Project created");
@@ -284,7 +287,7 @@ export function ProjectsPanel() {
                   <TableCell>{project.code || "-"}</TableCell>
                   <TableCell>{project.client || "-"}</TableCell>
                   <TableCell>{project.type || "-"}</TableCell>
-                  <TableCell>{project.location || "-"}</TableCell>
+                  <TableCell>{locationName(project.locationId)}</TableCell>
                   <TableCell>{employeeName(project.managerId)}</TableCell>
                   <TableCell>
                     {project.startDate ? new Date(project.startDate).toLocaleDateString() : "-"}
@@ -398,7 +401,7 @@ export function ProjectsPanel() {
                 />
                 <FormField
                   control={form.control}
-                  name="location"
+                  name="locationId"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Location</FormLabel>

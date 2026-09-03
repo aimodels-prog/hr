@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   check,
   date,
   index,
@@ -282,6 +283,76 @@ export const importBatches = pgTable(
     check(
       "import_batches_counts_consistent",
       sql`${table.validRows} + ${table.unchangedRows} + ${table.rejectedRows} <= ${table.totalRows}`,
+    ),
+  ],
+);
+
+export const assetCondition = pgEnum("asset_condition", ["New", "Good", "Fair", "Damaged"]);
+export const companyAssetStatus = pgEnum("company_asset_status", [
+  "Available",
+  "Assigned",
+  "Lost",
+  "Damaged",
+  "Retired",
+]);
+export const companyAssets = pgTable(
+  "company_assets",
+  {
+    ...mutableRecordColumns,
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "restrict" }),
+    assetType: text("asset_type").notNull(),
+    assetTag: text("asset_tag").notNull(),
+    description: text("description").notNull(),
+    currentCondition: assetCondition("current_condition").notNull(),
+    status: companyAssetStatus("status").notNull().default("Available"),
+    isSensitive: boolean("is_sensitive").notNull().default(false),
+  },
+  (table) => [
+    uniqueIndex("company_assets_org_tag_unique").on(table.organisationId, table.assetTag),
+    index("company_assets_org_status_idx").on(table.organisationId, table.status),
+    check("company_assets_tag_not_blank", sql`btrim(${table.assetTag}) <> ''`),
+    check("company_assets_description_not_blank", sql`btrim(${table.description}) <> ''`),
+  ],
+);
+
+export const assetAssignmentStatus = pgEnum("asset_assignment_status", [
+  "Assigned",
+  "Returned",
+  "Lost",
+  "Damaged",
+]);
+export const assetAssignments = pgTable(
+  "asset_assignments",
+  {
+    ...mutableRecordColumns,
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "restrict" }),
+    assetId: uuid("asset_id")
+      .notNull()
+      .references(() => companyAssets.id, { onDelete: "restrict" }),
+    employeeId: uuid("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "restrict" }),
+    assignedDate: date("assigned_date", { mode: "string" }).notNull(),
+    conditionAtAssignment: assetCondition("condition_at_assignment").notNull(),
+    status: assetAssignmentStatus("status").notNull().default("Assigned"),
+    returnedDate: date("returned_date", { mode: "string" }),
+    returnCondition: assetCondition("return_condition"),
+    notes: text("notes"),
+  },
+  (table) => [
+    index("asset_assignments_org_employee_idx").on(table.organisationId, table.employeeId),
+    index("asset_assignments_org_asset_status_idx").on(
+      table.organisationId,
+      table.assetId,
+      table.status,
+    ),
+    check(
+      "asset_assignments_return_consistency",
+      sql`${table.status} <> 'Returned' OR (${table.returnedDate} IS NOT NULL AND ${table.returnCondition} IS NOT NULL)`,
     ),
   ],
 );

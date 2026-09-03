@@ -138,6 +138,121 @@ export class EmployeeService {
     );
   }
 
+  /**
+   * Loads the PostgreSQL Core HR snapshot and keeps legacy IDs only as a temporary compatibility
+   * bridge for modules that have not completed their own H3.5 cutover.
+   */
+  async hydrateCompatibilityCache(actorContext: ActorContext): Promise<void> {
+    if (typeof window === "undefined") return;
+    const actorEmail =
+      actorContext.actor.workspaceEmail ??
+      this.userRepo.getById(actorContext.actor.userId, { includeArchived: true })?.workspaceEmail ??
+      this.employeeRepo.getById(actorContext.actor.employeeId ?? "", { includeArchived: true })
+        ?.workspaceEmail ??
+      this.employeeRepo.getById(actorContext.actor.employeeId ?? "", { includeArchived: true })
+        ?.workEmail;
+    const { getCoreHrSnapshotFn } = await import("../server-functions/employee.server.ts");
+    const snapshot = await getCoreHrSnapshotFn({
+      data: {
+        actorId: actorContext.actor.userId,
+        ...(actorEmail ? { actorEmail } : {}),
+        activeRole: actorContext.actor.activeRole ?? actorContext.actor.roles[0] ?? "Employee",
+      },
+    });
+    const { storage } = getApplicationDataServices();
+    const existingEmployees = storage.readCollection<Employee>("employees");
+    const existingUsers = storage.readCollection<User>("users");
+    const employeeByNumber = new Map(
+      existingEmployees.map((employee) => [employee.employeeNumber.toLowerCase(), employee]),
+    );
+    const employeeIdMap = new Map<string, string>();
+    for (const employee of snapshot.employees) {
+      const existing = employeeByNumber.get(employee.employeeNumber.toLowerCase());
+      employeeIdMap.set(employee.id, existing?.id ?? employee.id);
+    }
+    const masterIdMap = new Map<string, string>();
+    for (const collection of ["projects", "costCentres"] as const) {
+      for (const record of storage.readCollection<{ id: string; databaseId?: string }>(
+        collection,
+      )) {
+        if (record.databaseId) masterIdMap.set(record.databaseId, record.id);
+      }
+    }
+    const compatibleEmployees = snapshot.employees.map((employee): Employee => {
+      const compatibleId = employeeIdMap.get(employee.id) ?? employee.id;
+      return {
+        ...employee,
+        id: compatibleId,
+        databaseId: employee.id,
+        ...(employee.lineManagerId
+          ? { lineManagerId: employeeIdMap.get(employee.lineManagerId) ?? employee.lineManagerId }
+          : {}),
+        ...(employee.projectId
+          ? { projectId: masterIdMap.get(employee.projectId) ?? employee.projectId }
+          : {}),
+        ...(employee.costCentreId
+          ? { costCentreId: masterIdMap.get(employee.costCentreId) ?? employee.costCentreId }
+          : {}),
+      };
+    });
+    const existingUserByEmail = new Map(
+      existingUsers.map((user) => [user.workspaceEmail.trim().toLowerCase(), user]),
+    );
+    const compatibleUsers = snapshot.users.map((user): User => {
+      const existing = existingUserByEmail.get(user.workspaceEmail.trim().toLowerCase());
+      const compatibleId = existing?.id ?? user.id;
+      return {
+        ...user,
+        id: compatibleId,
+        databaseId: user.id,
+        ...(user.employeeId
+          ? { employeeId: employeeIdMap.get(user.employeeId) ?? user.employeeId }
+          : {}),
+      };
+    });
+    const userIdMap = new Map(
+      snapshot.users.map((user) => [
+        user.id,
+        compatibleUsers.find((compatible) => compatible.databaseId === user.id)?.id ?? user.id,
+      ]),
+    );
+    const compatibleHistory = snapshot.employmentHistory.map((entry) => ({
+      ...entry,
+      employeeId: employeeIdMap.get(entry.employeeId) ?? entry.employeeId,
+    }));
+    const compatibleProfileRequests = snapshot.profileChangeRequests.map((request) => ({
+      ...request,
+      employeeId: employeeIdMap.get(request.employeeId) ?? request.employeeId,
+      ...(request.reviewerId
+        ? { reviewerId: userIdMap.get(request.reviewerId) ?? request.reviewerId }
+        : {}),
+    }));
+    const compatibleUsersWithPreviewRecords = import.meta.env.DEV
+      ? [
+          ...existingUsers.filter(
+            (existing) =>
+              !compatibleUsers.some(
+                (compatible) =>
+                  compatible.workspaceEmail.trim().toLowerCase() ===
+                  existing.workspaceEmail.trim().toLowerCase(),
+              ),
+          ),
+          ...compatibleUsers,
+        ]
+      : compatibleUsers;
+    let changed = false;
+    const writeIfChanged = (collection: string, records: unknown[]) => {
+      if (JSON.stringify(storage.readCollection(collection)) === JSON.stringify(records)) return;
+      storage.writeCollection(collection, records);
+      changed = true;
+    };
+    writeIfChanged("employees", compatibleEmployees);
+    writeIfChanged("users", compatibleUsersWithPreviewRecords);
+    writeIfChanged("employment_history", compatibleHistory);
+    writeIfChanged("profile_change_requests", compatibleProfileRequests);
+    if (changed) window.dispatchEvent(new CustomEvent("via_hr:data_changed"));
+  }
+
   private notifyProfileReviewers(request: ProfileChangeRequest, actorContext: ActorContext): void {
     const { notifications } = getApplicationDataServices();
     const reviewers = this.userRepo
@@ -564,6 +679,48 @@ export class EmployeeService {
     }
   }
 
+  async updateUserAccessAsync(
+    userId: string,
+    requestedRoles: Role[],
+    status: User["status"],
+    reason: string,
+    actorContext: ActorContext,
+  ): Promise<User> {
+    if (typeof window === "undefined") {
+      return this.updateUserAccess(userId, requestedRoles, status, reason, actorContext);
+    }
+    const target = this.userRepo.getById(userId, { includeArchived: true });
+    if (!target) throw new Error("User not found.");
+    if (!target.databaseId) {
+      throw new Error("This user has not yet been linked to the PostgreSQL user register.");
+    }
+    const { updateUserAccessFn } = await import("../server-functions/employee.server.ts");
+    const actorEmail =
+      actorContext.actor.workspaceEmail ??
+      this.userRepo.getById(actorContext.actor.userId, { includeArchived: true })?.workspaceEmail ??
+      this.employeeRepo.getById(actorContext.actor.employeeId ?? "", { includeArchived: true })
+        ?.workspaceEmail ??
+      this.employeeRepo.getById(actorContext.actor.employeeId ?? "", { includeArchived: true })
+        ?.workEmail;
+    await updateUserAccessFn({
+      data: {
+        userId: target.databaseId,
+        roles: requestedRoles,
+        status,
+        reason,
+        actor: {
+          actorId: actorContext.actor.userId,
+          ...(actorEmail ? { actorEmail } : {}),
+          activeRole: actorContext.actor.activeRole ?? actorContext.actor.roles[0] ?? "Employee",
+        },
+      },
+    });
+    await this.hydrateCompatibilityCache(actorContext);
+    const refreshed = this.userRepo.getById(userId, { includeArchived: true });
+    if (!refreshed) throw new Error("The updated user could not be reloaded.");
+    return refreshed;
+  }
+
   async createEmployee(
     data: Omit<
       Employee,
@@ -630,6 +787,69 @@ export class EmployeeService {
     }
 
     validateMasterDataReferences(data);
+
+    if (typeof window !== "undefined") {
+      const resolveEmployeeDatabaseId = (id: string | undefined) => {
+        if (!id) return undefined;
+        const record = this.employeeRepo.getById(id, { includeArchived: true });
+        return record?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
+      };
+      const resolveMasterDatabaseId = (
+        collection: "projects" | "costCentres",
+        id: string | undefined,
+      ) => {
+        if (!id) return undefined;
+        const record = getApplicationDataServices()
+          .storage.readCollection<{ id: string; databaseId?: string }>(collection)
+          .find((item) => item.id === id);
+        return record?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
+      };
+      const managerId = resolveEmployeeDatabaseId(data.lineManagerId);
+      if (data.lineManagerId && !managerId) {
+        throw new Error("The selected supervisor is not linked to PostgreSQL.");
+      }
+      const projectId = resolveMasterDatabaseId("projects", data.projectId);
+      if (data.projectId && !projectId) {
+        throw new Error("The selected project is not linked to PostgreSQL.");
+      }
+      const costCentreId = resolveMasterDatabaseId("costCentres", data.costCentreId);
+      if (data.costCentreId && !costCentreId) {
+        throw new Error("The selected cost centre is not linked to PostgreSQL.");
+      }
+      const { createEmployeeFn } = await import("../server-functions/employee.server.ts");
+      const actorEmail =
+        actorContext.actor.workspaceEmail ??
+        this.userRepo.getById(actorContext.actor.userId, { includeArchived: true })
+          ?.workspaceEmail ??
+        this.employeeRepo.getById(actorContext.actor.employeeId ?? "", { includeArchived: true })
+          ?.workspaceEmail ??
+        this.employeeRepo.getById(actorContext.actor.employeeId ?? "", { includeArchived: true })
+          ?.workEmail;
+      const result = await createEmployeeFn({
+        data: {
+          actor: {
+            actorId: actorContext.actor.userId,
+            ...(actorEmail ? { actorEmail } : {}),
+            activeRole: actorContext.actor.activeRole ?? actorContext.actor.roles[0] ?? "Employee",
+          },
+          employee: {
+            ...data,
+            lineManagerId: managerId,
+            projectId,
+            costCentreId,
+          },
+        },
+      });
+      await this.hydrateCompatibilityCache(actorContext);
+      const employee = this.employeeRepo
+        .list({ includeArchived: true })
+        .find((item) => item.databaseId === result.employeeId || item.id === result.employeeId);
+      const user = this.userRepo
+        .list({ includeArchived: true })
+        .find((item) => item.databaseId === result.userId || item.id === result.userId);
+      if (!employee) throw new Error("The new employee could not be reloaded from PostgreSQL.");
+      return user ? { employee, user } : { employee };
+    }
 
     // Full-state snapshot/rollback: this is several separate writes (employee, user, initial
     // history, and possibly a supervisor role grant) - if any step after the first fails, we
@@ -893,6 +1113,92 @@ export class EmployeeService {
     return updated;
   }
 
+  async updateEmploymentRecordAsync(
+    employeeId: string,
+    changes: Partial<Employee>,
+    effectiveDate: string,
+    reason: string,
+    actorContext: ActorContext,
+  ): Promise<Employee> {
+    if (typeof window === "undefined") {
+      return this.updateEmploymentRecord(employeeId, changes, effectiveDate, reason, actorContext);
+    }
+    const employee = this.employeeRepo.getById(employeeId, { includeArchived: true });
+    if (!employee?.databaseId) {
+      throw new Error("This employee has not yet been linked to the PostgreSQL employee register.");
+    }
+    const resolveEmployeeDatabaseId = (id: string | undefined) => {
+      if (!id) return undefined;
+      const record = this.employeeRepo.getById(id, { includeArchived: true });
+      return record?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
+    };
+    const resolveMasterDatabaseId = (
+      collection: "projects" | "costCentres",
+      id: string | undefined,
+    ) => {
+      if (id === undefined || id === "") return id;
+      const record = getApplicationDataServices()
+        .storage.readCollection<{ id: string; databaseId?: string }>(collection)
+        .find((item) => item.id === id);
+      return record?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
+    };
+    const lineManagerId =
+      changes.lineManagerId === undefined
+        ? undefined
+        : resolveEmployeeDatabaseId(changes.lineManagerId);
+    if (changes.lineManagerId && !lineManagerId) {
+      throw new Error("The selected supervisor is not linked to PostgreSQL.");
+    }
+    const projectId = resolveMasterDatabaseId("projects", changes.projectId);
+    const costCentreId = resolveMasterDatabaseId("costCentres", changes.costCentreId);
+    if (changes.projectId && !projectId)
+      throw new Error("The selected project is not linked to PostgreSQL.");
+    if (changes.costCentreId && !costCentreId)
+      throw new Error("The selected cost centre is not linked to PostgreSQL.");
+
+    const actorEmail =
+      actorContext.actor.workspaceEmail ??
+      this.userRepo.getById(actorContext.actor.userId, { includeArchived: true })?.workspaceEmail ??
+      this.employeeRepo.getById(actorContext.actor.employeeId ?? "", { includeArchived: true })
+        ?.workspaceEmail ??
+      this.employeeRepo.getById(actorContext.actor.employeeId ?? "", { includeArchived: true })
+        ?.workEmail;
+    const { updateEmploymentRecordFn } = await import("../server-functions/employee.server.ts");
+    const allowedChanges = Object.fromEntries(
+      Object.entries({
+        department: changes.department,
+        position: changes.position,
+        grade: changes.grade,
+        location: changes.location,
+        employmentType: changes.employmentType,
+        lineManagerId,
+        projectId,
+        costCentreId,
+        startDate: changes.startDate,
+        probationEndDate: changes.probationEndDate,
+        weeklyHours: changes.weeklyHours,
+        salary: changes.salary,
+      }).filter(([, value]) => value !== undefined),
+    );
+    await updateEmploymentRecordFn({
+      data: {
+        actor: {
+          actorId: actorContext.actor.userId,
+          ...(actorEmail ? { actorEmail } : {}),
+          activeRole: actorContext.actor.activeRole ?? actorContext.actor.roles[0] ?? "Employee",
+        },
+        employeeId: employee.databaseId,
+        changes: allowedChanges,
+        effectiveDate,
+        reason,
+      },
+    });
+    await this.hydrateCompatibilityCache(actorContext);
+    const refreshed = this.employeeRepo.getById(employeeId, { includeArchived: true });
+    if (!refreshed) throw new Error("The updated employee could not be reloaded.");
+    return refreshed;
+  }
+
   private ensureSupervisorAccess(supervisorEmployeeId: string, context: ActorContext): void {
     const user = this.userRepo
       .list()
@@ -997,6 +1303,37 @@ export class EmployeeService {
       this.employeeRepo.restore(employeeId, { actor: actorContext.actor, reason });
       if (user) this.userRepo.restore(user.id, { actor: actorContext.actor, reason });
     }
+  }
+
+  async changeEmployeeStatusAsync(
+    employeeId: string,
+    newStatus: EmployeeStatus,
+    reason: string,
+    actorContext: ActorContext,
+  ): Promise<void> {
+    if (typeof window === "undefined") {
+      this.changeEmployeeStatus(employeeId, newStatus, reason, actorContext);
+      return;
+    }
+    const employee = this.employeeRepo.getById(employeeId, { includeArchived: true });
+    if (!employee?.databaseId) throw new Error("This employee is not linked to PostgreSQL.");
+    const actorEmail =
+      actorContext.actor.workspaceEmail ??
+      this.userRepo.getById(actorContext.actor.userId, { includeArchived: true })?.workspaceEmail;
+    const { changeEmployeeStatusFn } = await import("../server-functions/employee.server.ts");
+    await changeEmployeeStatusFn({
+      data: {
+        actor: {
+          actorId: actorContext.actor.userId,
+          ...(actorEmail ? { actorEmail } : {}),
+          activeRole: actorContext.actor.activeRole ?? actorContext.actor.roles[0] ?? "Employee",
+        },
+        employeeId: employee.databaseId,
+        status: newStatus,
+        reason,
+      },
+    });
+    await this.hydrateCompatibilityCache(actorContext);
   }
 
   finalizeEmployment(
@@ -1104,6 +1441,70 @@ export class EmployeeService {
     });
   }
 
+  async updatePersonalRecordAsync(
+    employeeId: string,
+    changes: Partial<Employee>,
+    reason: string,
+    actorContext: ActorContext,
+  ): Promise<Employee> {
+    if (typeof window === "undefined") {
+      return this.updatePersonalRecord(employeeId, changes, reason, actorContext);
+    }
+    const employee = this.employeeRepo.getById(employeeId, { includeArchived: true });
+    if (!employee?.databaseId) throw new Error("This employee is not linked to PostgreSQL.");
+    const actorEmail =
+      actorContext.actor.workspaceEmail ??
+      this.userRepo.getById(actorContext.actor.userId, { includeArchived: true })?.workspaceEmail;
+    const { updatePersonalRecordFn } = await import("../server-functions/employee.server.ts");
+    await updatePersonalRecordFn({
+      data: {
+        actor: {
+          actorId: actorContext.actor.userId,
+          ...(actorEmail ? { actorEmail } : {}),
+          activeRole: actorContext.actor.activeRole ?? actorContext.actor.roles[0] ?? "Employee",
+        },
+        employeeId: employee.databaseId,
+        changes,
+        reason,
+      },
+    });
+    await this.hydrateCompatibilityCache(actorContext);
+    const refreshed = this.employeeRepo.getById(employeeId, { includeArchived: true });
+    if (!refreshed) throw new Error("The updated employee could not be reloaded.");
+    return refreshed;
+  }
+
+  async requestProfileChangeAsync(
+    employeeId: string,
+    changes: Partial<Employee>,
+    actorContext: ActorContext,
+  ): Promise<ProfileChangeRequest> {
+    if (typeof window === "undefined") {
+      return this.requestProfileChange(employeeId, changes, actorContext);
+    }
+    const employee = this.employeeRepo.getById(employeeId, { includeArchived: true });
+    if (!employee?.databaseId) throw new Error("This employee is not linked to PostgreSQL.");
+    const actorEmail =
+      actorContext.actor.workspaceEmail ??
+      this.userRepo.getById(actorContext.actor.userId, { includeArchived: true })?.workspaceEmail;
+    const { createProfileChangeRequestFn } = await import("../server-functions/employee.server.ts");
+    const requestId = await createProfileChangeRequestFn({
+      data: {
+        actor: {
+          actorId: actorContext.actor.userId,
+          ...(actorEmail ? { actorEmail } : {}),
+          activeRole: actorContext.actor.activeRole ?? actorContext.actor.roles[0] ?? "Employee",
+        },
+        employeeId: employee.databaseId,
+        changes,
+      },
+    });
+    await this.hydrateCompatibilityCache(actorContext);
+    const request = this.changeRequestRepo.getById(requestId);
+    if (!request) throw new Error("The profile request could not be reloaded.");
+    return request;
+  }
+
   approveProfileChange(
     requestId: string,
     reviewerNotes: string | undefined,
@@ -1154,6 +1555,42 @@ export class EmployeeService {
       "HR approved the changes to your personal details.",
       actorContext,
     );
+  }
+
+  async decideProfileChangeAsync(
+    requestId: string,
+    decision: "Approved" | "Rejected",
+    reviewerNotes: string,
+    actorContext: ActorContext,
+  ): Promise<void> {
+    if (typeof window === "undefined") {
+      if (decision === "Approved") {
+        this.approveProfileChange(requestId, reviewerNotes || undefined, actorContext);
+      } else {
+        this.rejectProfileChange(requestId, reviewerNotes, actorContext);
+      }
+      return;
+    }
+    if (!/^[0-9a-f-]{36}$/i.test(requestId)) {
+      throw new Error("This profile request is not linked to PostgreSQL.");
+    }
+    const actorEmail =
+      actorContext.actor.workspaceEmail ??
+      this.userRepo.getById(actorContext.actor.userId, { includeArchived: true })?.workspaceEmail;
+    const { decideProfileChangeRequestFn } = await import("../server-functions/employee.server.ts");
+    await decideProfileChangeRequestFn({
+      data: {
+        actor: {
+          actorId: actorContext.actor.userId,
+          ...(actorEmail ? { actorEmail } : {}),
+          activeRole: actorContext.actor.activeRole ?? actorContext.actor.roles[0] ?? "Employee",
+        },
+        requestId,
+        decision,
+        reviewerNotes,
+      },
+    });
+    await this.hydrateCompatibilityCache(actorContext);
   }
 
   rejectProfileChange(requestId: string, reviewerNotes: string, actorContext: ActorContext): void {

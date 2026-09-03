@@ -50,6 +50,212 @@ export class PayrollService {
     });
   }
 
+  private async serverActor(context: ActorContext) {
+    const users = getApplicationDataServices().storage.readCollection<{
+      id: string;
+      workspaceEmail?: string;
+    }>("users");
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    return {
+      actorId: context.actor.userId,
+      ...(actorEmail ? { actorEmail } : {}),
+      activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+    } as const;
+  }
+
+  private databaseId(collection: string, id: string): string {
+    const item = getApplicationDataServices()
+      .storage.readCollection<{ id: string; databaseId?: string }>(collection)
+      .find((record) => record.id === id || record.databaseId === id);
+    const value = item?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
+    if (!value) throw new Error("This record is not connected to PostgreSQL yet.");
+    return value;
+  }
+
+  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+    if (typeof window === "undefined") return;
+    const { storage } = getApplicationDataServices();
+    const employeeMap = new Map(
+      storage
+        .readCollection<{ id: string; databaseId?: string }>("employees")
+        .filter((item) => item.databaseId)
+        .map((item) => [item.databaseId!, item.id]),
+    );
+    const { getPayrollPeriodsFn } = await import("../server-functions/payroll.server.ts");
+    const periods = await getPayrollPeriodsFn({ data: { actor: await this.serverActor(context) } });
+    storage.writeCollection(
+      "payrollPeriods",
+      periods.map((period) => ({
+        ...period,
+        compiledInputs: period.compiledInputs?.map((item) => ({
+          ...item,
+          employeeId: employeeMap.get(item.employeeId) ?? item.employeeId,
+        })),
+        exceptions: period.exceptions.map((item) => ({
+          ...item,
+          employeeId: employeeMap.get(item.employeeId) ?? item.employeeId,
+        })),
+        manualAdjustments: period.manualAdjustments.map((item) => ({
+          ...item,
+          employeeId: employeeMap.get(item.employeeId) ?? item.employeeId,
+        })),
+      })),
+    );
+  }
+
+  async getAllPeriodsAsync(context: ActorContext) {
+    await this.hydrateCompatibilityCache(context);
+    return this.repo.list();
+  }
+
+  async getPeriodByIdAsync(id: string, context: ActorContext) {
+    await this.hydrateCompatibilityCache(context);
+    return this.repo.list().find((item) => item.id === id || item.databaseId === id) ?? null;
+  }
+
+  async createPeriodAsync(
+    data: Omit<NewRecord<PayrollPeriod>, "status" | "exceptions" | "manualAdjustments">,
+    context: ActorContext,
+  ) {
+    const { createPayrollPeriodFn } = await import("../server-functions/payroll.server.ts");
+    await createPayrollPeriodFn({
+      data: {
+        actor: await this.serverActor(context),
+        name: data.name,
+        startDate: data.startDate,
+        endDate: data.endDate,
+        cutoffDate: data.cutoffDate,
+        paymentDate: data.paymentDate,
+        ...(data.notes ? { notes: data.notes } : {}),
+      },
+    });
+    return this.getAllPeriodsAsync(context);
+  }
+
+  async addManualAdjustmentAsync(
+    periodId: string,
+    adjustment: Omit<PayrollManualAdjustment, "id" | "periodId" | "createdAt" | "createdBy">,
+    context: ActorContext,
+    evidence: File,
+  ) {
+    const { addPayrollAdjustmentFn } = await import("../server-functions/payroll.server.ts");
+    await addPayrollAdjustmentFn({
+      data: {
+        actor: await this.serverActor(context),
+        periodId: this.databaseId("payrollPeriods", periodId),
+        employeeId: this.databaseId("employees", adjustment.employeeId),
+        type: adjustment.type,
+        amount: adjustment.amount,
+        currency: adjustment.currency,
+        reason: adjustment.reason,
+        evidence: {
+          fileName: evidence.name,
+          mimeType: this.payrollEvidenceMime(evidence),
+          bytes: Array.from(new Uint8Array(await evidence.arrayBuffer())),
+        },
+      },
+    });
+    return this.getPeriodByIdAsync(periodId, context);
+  }
+
+  private payrollEvidenceMime(file: File): "application/pdf" | "image/jpeg" | "image/png" {
+    const name = file.name.toLowerCase();
+    if (file.type === "application/pdf" || name.endsWith(".pdf")) return "application/pdf";
+    if (file.type === "image/jpeg" || name.endsWith(".jpg") || name.endsWith(".jpeg"))
+      return "image/jpeg";
+    if (file.type === "image/png" || name.endsWith(".png")) return "image/png";
+    throw new Error("Upload a PDF, JPG or PNG file.");
+  }
+
+  async readManualAdjustmentEvidenceAsync(adjustmentId: string, context: ActorContext) {
+    const { readPayrollAdjustmentEvidenceFn } =
+      await import("../server-functions/payroll.server.ts");
+    const result = await readPayrollAdjustmentEvidenceFn({
+      data: { actor: await this.serverActor(context), adjustmentId },
+    });
+    return {
+      blob: new Blob([Uint8Array.from(result.bytes)], { type: result.metadata.mimeType }),
+      fileName: result.metadata.name,
+    };
+  }
+
+  async collectInputsAsync(periodId: string, context: ActorContext) {
+    const { collectPayrollInputsFn } = await import("../server-functions/payroll.server.ts");
+    await collectPayrollInputsFn({
+      data: {
+        actor: await this.serverActor(context),
+        periodId: this.databaseId("payrollPeriods", periodId),
+      },
+    });
+    return this.getPeriodByIdAsync(periodId, context);
+  }
+
+  async acknowledgeExceptionAsync(
+    periodId: string,
+    exceptionId: string,
+    notes: string,
+    context: ActorContext,
+  ) {
+    const { acknowledgePayrollExceptionFn } = await import("../server-functions/payroll.server.ts");
+    await acknowledgePayrollExceptionFn({
+      data: {
+        actor: await this.serverActor(context),
+        periodId: this.databaseId("payrollPeriods", periodId),
+        exceptionId,
+        notes,
+      },
+    });
+    return this.getPeriodByIdAsync(periodId, context);
+  }
+
+  async lockPeriodAsync(periodId: string, context: ActorContext) {
+    const { lockPayrollPeriodFn } = await import("../server-functions/payroll.server.ts");
+    await lockPayrollPeriodFn({
+      data: {
+        actor: await this.serverActor(context),
+        periodId: this.databaseId("payrollPeriods", periodId),
+      },
+    });
+    return this.getPeriodByIdAsync(periodId, context);
+  }
+
+  async approvePeriodAsync(periodId: string, context: ActorContext) {
+    const { approvePayrollPeriodFn } = await import("../server-functions/payroll.server.ts");
+    await approvePayrollPeriodFn({
+      data: {
+        actor: await this.serverActor(context),
+        periodId: this.databaseId("payrollPeriods", periodId),
+      },
+    });
+    return this.getPeriodByIdAsync(periodId, context);
+  }
+
+  async reopenPeriodAsync(periodId: string, reason: string, context: ActorContext) {
+    const { reopenPayrollPeriodFn } = await import("../server-functions/payroll.server.ts");
+    await reopenPayrollPeriodFn({
+      data: {
+        actor: await this.serverActor(context),
+        periodId: this.databaseId("payrollPeriods", periodId),
+        reason,
+      },
+    });
+    return this.getPeriodByIdAsync(periodId, context);
+  }
+
+  async exportCsvAsync(periodId: string, context: ActorContext) {
+    const { exportPayrollPeriodFn } = await import("../server-functions/payroll.server.ts");
+    const csv = await exportPayrollPeriodFn({
+      data: {
+        actor: await this.serverActor(context),
+        periodId: this.databaseId("payrollPeriods", periodId),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    return csv;
+  }
+
   private requirePermission(
     permission: Permission,
     context: ActorContext,
@@ -260,7 +466,7 @@ export class PayrollService {
       const verifiedTravels = travels.filter((request) => request.actualTotalOmr !== undefined);
       includedTravelRequestIds.push(...verifiedTravels.map((request) => request.id));
       const carriedOverTravels = verifiedTravels.filter(
-        (request) => (request.closedAt ?? request.endDate).slice(0, 10) < period.startDate,
+        (request) => request.endDate < period.startDate,
       );
 
       const adj = period.manualAdjustments.filter((m) => m.employeeId === emp.id);
@@ -376,7 +582,7 @@ export class PayrollService {
           id: generateId(),
           employeeId: emp.id,
           type: "Unmatched Reimbursement",
-          description: `${carriedOverTravels.length} reimbursement${carriedOverTravels.length === 1 ? " was" : "s were"} closed after an earlier payroll cycle and automatically carried into this period (${carriedOverTravels.map((request) => request.id).join(", ")}).`,
+          description: `${carriedOverTravels.length} reimbursement${carriedOverTravels.length === 1 ? " was" : "s were"} for travel from an earlier payroll cycle and automatically carried into this period (${carriedOverTravels.map((request) => request.id).join(", ")}).`,
           severity: "Medium",
           acknowledged: false,
         });

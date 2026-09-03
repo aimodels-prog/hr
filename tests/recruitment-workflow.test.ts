@@ -1333,7 +1333,7 @@ test("accepted offer automatically creates the employee, source linkage, onboard
     storage
       .readCollection<{ employeeId?: string; workspaceEmail: string }>("users")
       .find((user) => user.employeeId === employee.id)!.workspaceEmail,
-    /@via\.example$/,
+    /@via-int\.com$/,
   );
   assert.equal(
     candidateService.getRecommendationsForCandidate(candidate.id, hr)[0]?.employeeId,

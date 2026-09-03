@@ -2,6 +2,7 @@ import type { AuditWriter } from "./audit-service.ts";
 import { LocalRepository, type NewRecord } from "./repository.ts";
 import type { VersionedStorageService } from "./storage.ts";
 import type { ActorContext, Notification } from "./types.ts";
+import { hydrateNotificationCache, notificationServerActor } from "./notification-cache.ts";
 
 export const NOTIFICATION_COLLECTION = "notifications";
 
@@ -38,6 +39,62 @@ export class NotificationService {
 
   listForContext(context: ActorContext, includeDismissed = false): Notification[] {
     return this.listForUser(context.actor.userId, includeDismissed);
+  }
+
+  async hydrateCompatibilityCache(context: ActorContext): Promise<Notification[]> {
+    return hydrateNotificationCache(context);
+  }
+
+  private async setStatusAsync(
+    id: string,
+    status: "Unread" | "Read" | "Dismissed",
+    context: ActorContext,
+  ): Promise<void> {
+    const current = this.repository.getById(id);
+    if (!current) throw new Error("Notification not found.");
+    const { setMyNotificationStatusFn } =
+      await import("../server-functions/notification.server.ts");
+    await setMyNotificationStatusFn({
+      data: {
+        actor: await notificationServerActor(context),
+        notificationId: id,
+        status,
+        expectedVersion: current.recordVersion,
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+  }
+
+  markReadAsync(id: string, context: ActorContext): Promise<void> {
+    return this.setStatusAsync(id, "Read", context);
+  }
+
+  markUnreadAsync(id: string, context: ActorContext): Promise<void> {
+    return this.setStatusAsync(id, "Unread", context);
+  }
+
+  dismissAsync(id: string, context: ActorContext): Promise<void> {
+    return this.setStatusAsync(id, "Dismissed", context);
+  }
+
+  async markAllReadAsync(context: ActorContext): Promise<number> {
+    const { setAllMyNotificationStatusesFn } =
+      await import("../server-functions/notification.server.ts");
+    const count = await setAllMyNotificationStatusesFn({
+      data: { actor: await notificationServerActor(context), status: "Read" },
+    });
+    await this.hydrateCompatibilityCache(context);
+    return count;
+  }
+
+  async dismissAllAsync(context: ActorContext): Promise<number> {
+    const { setAllMyNotificationStatusesFn } =
+      await import("../server-functions/notification.server.ts");
+    const count = await setAllMyNotificationStatusesFn({
+      data: { actor: await notificationServerActor(context), status: "Dismissed" },
+    });
+    await this.hydrateCompatibilityCache(context);
+    return count;
   }
 
   create(input: NewRecord<Notification>, context: ActorContext): Notification {

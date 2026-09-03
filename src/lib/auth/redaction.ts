@@ -38,6 +38,16 @@ export function redactEmployee(
       bankDetails: undefined,
       passportNumber: undefined,
       nationalId: undefined,
+      socialInsuranceNumber: undefined,
+      personalEmail: undefined,
+      phone: undefined,
+      address: undefined,
+      emergencyContacts: [],
+      dependants: [],
+      dateOfBirth: undefined,
+      gender: undefined,
+      nationality: undefined,
+      maritalStatus: undefined,
       performanceNotes: undefined,
       performanceRating: undefined,
     };
@@ -61,6 +71,21 @@ export function redactEmployee(
 
   const safe = { ...employee };
 
+  // Personal-file data is never part of the general employee directory. HR can administer it
+  // and the employee can see their own record; Accounts and supervisors receive only the
+  // operational fields needed for their work.
+  if (!isSelf && !isHR) {
+    safe.personalEmail = undefined;
+    safe.phone = undefined;
+    safe.address = undefined;
+    safe.emergencyContacts = [];
+    safe.dependants = [];
+    safe.dateOfBirth = undefined;
+    safe.gender = undefined;
+    safe.nationality = undefined;
+    safe.maritalStatus = undefined;
+  }
+
   // Salary visibility: Self, Accounts, Super Admin
   if (!isSelf && !isAccounts) {
     safe.salary = undefined;
@@ -75,6 +100,11 @@ export function redactEmployee(
   if (!isSelf && !isHR) {
     safe.nationalId = undefined;
     safe.passportNumber = undefined;
+  }
+
+  // Social-insurance identifiers are payroll data, not a directory field.
+  if (!isSelf && !isAccounts) {
+    safe.socialInsuranceNumber = undefined;
   }
 
   // Performance notes visibility: Self, Line Manager of direct report, HR, Super Admin (Accounts CANNOT see performance notes)

@@ -46,6 +46,7 @@ export interface TimesheetAttendanceReconciliation {
 }
 
 export interface TimesheetPeriod extends BaseRecord {
+  databaseId?: string;
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
   status: "Open" | "Closed";
@@ -61,6 +62,7 @@ export type TimesheetStatus =
   | "Corrected";
 
 export interface Timesheet extends BaseRecord {
+  databaseId?: string;
   employeeId: RecordId;
   periodId: RecordId;
   status: TimesheetStatus;
@@ -74,10 +76,13 @@ export interface Timesheet extends BaseRecord {
   managerNotes?: string;
   attendanceDiscrepancyExplanations?: Record<string, string> | undefined;
   attendanceReconciliationSnapshot?: TimesheetAttendanceReconciliation | undefined;
+  originalTimesheetId?: RecordId | undefined;
+  payrollPeriodId?: RecordId | undefined;
 }
 
 export interface TimesheetEntry {
   id: string; // UUID just for entry uniqueness inside the timesheet
+  databaseId?: string;
   projectId: RecordId;
   costCentreId: RecordId;
   activityCodeId: RecordId;

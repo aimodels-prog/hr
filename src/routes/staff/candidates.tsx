@@ -12,7 +12,7 @@ export const Route = createFileRoute("/staff/candidates")({
       { property: "og:title", content: "Candidates — VIA HR System" },
       {
         property: "og:description",
-        content: "Repository-backed candidate database with full HR override.",
+        content: "Candidate records, assessment results and HR decisions in one place.",
       },
     ],
   }),

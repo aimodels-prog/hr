@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 
 import type { AttendancePolicy } from "../src/lib/data/attendance-types.ts";
+import { POLICY_DEFINITIONS } from "../src/lib/data/leave-service.ts";
 import { createSeedCollections, SEED_SYSTEM_USER_ID } from "../src/lib/data/seeds.ts";
 import type {
   TrainingCourse,
@@ -29,7 +30,7 @@ import { closeDatabaseConnection, getDatabaseClient } from "../src/lib/db/client
 import { decryptSensitiveJson, encryptSensitiveJson } from "../src/lib/db/encryption.server.ts";
 import * as schema from "../src/lib/db/schema/index.ts";
 
-export const IMPORT_SEED_VERSION = "1.0.0";
+export const IMPORT_SEED_VERSION = "1.1.0";
 export const IMPORT_NAMESPACE = "1b671a64-40d5-491e-99b0-da01ff1f3341";
 
 type ImportMode = "preview" | "apply" | "verify";
@@ -146,7 +147,7 @@ function normalized(value: string): string {
   return value.trim().toLocaleLowerCase("en");
 }
 
-const metadataKeys = new Set(["createdAt", "createdBy", "updatedAt", "updatedBy"]);
+const metadataKeys = new Set(["createdAt", "createdBy", "updatedAt", "updatedBy", "recordVersion"]);
 
 function comparable(
   desired: Record<string, unknown>,
@@ -281,7 +282,7 @@ async function execute(mode: ImportMode): Promise<{
   const apply = mode === "apply";
   const verify = mode === "verify";
   const state = createSeedCollections();
-  const checksum = computeDatasetChecksum(state);
+  const checksum = computeDatasetChecksum({ state, leavePolicies: POLICY_DEFINITIONS });
   const settings = collection<AppSettings>(state, "appSettings");
   if (settings.length !== 1)
     throw new ImportValidationError("Exactly one appSettings row is required.");
@@ -381,6 +382,7 @@ async function execute(mode: ImportMode): Promise<{
       ["grades", "grades", schema.grades],
       ["employmentTypes", "employment_types", schema.employmentTypes],
       ["activityCodes", "activity_codes", schema.activityCodes],
+      ["currencies", "currencies", schema.currencies],
     ] as const;
     const masterMaps = new Map<string, Map<string, string>>();
     for (const [sourceName, tableName, table] of masterTables) {
@@ -393,14 +395,26 @@ async function execute(mode: ImportMode): Promise<{
         description: item.description ?? null,
         isActive: item.isActive,
         orderIndex: item.orderIndex,
+        ...(sourceName === "currencies"
+          ? { symbol: item.symbol ?? null, decimalPlaces: item.decimalPlaces ?? 2 }
+          : {}),
+        ...(sourceName === "locations"
+          ? {
+              latitude: item.latitude ?? null,
+              longitude: item.longitude ?? null,
+              radiusMeters: item.radiusMeters ?? null,
+              isClockInSite: item.isClockInSite ?? false,
+            }
+          : {}),
         ...mutable(item),
       }));
       const map = new Map<string, string>();
-      for (const row of rows) {
+      for (const [index, row] of rows.entries()) {
         const key = normalized(row.name);
         if (map.has(key))
           throw new ImportValidationError(`${sourceName} has duplicate name ${row.name}.`);
         map.set(key, row.id);
+        map.set(normalized(source[index]!.id), row.id);
       }
       masterMaps.set(sourceName, map);
       await add({
@@ -419,6 +433,84 @@ async function execute(mode: ImportMode): Promise<{
         },
       });
     }
+
+    const workingTimeSource = collection<MasterRecord>(state, "workingTimes");
+    const workingTimeRows = workingTimeSource.map((item) => ({
+      id: generateDeterministicUuid("workingTimes", item.id),
+      organisationId,
+      name: item.name,
+      code: item.code?.trim() || null,
+      description: item.description ?? null,
+      isActive: item.isActive,
+      orderIndex: item.orderIndex,
+      startTime: item.startTime ?? "09:00:00",
+      endTime: item.endTime ?? "18:00:00",
+      breakMinutes: item.breakMinutes ?? 60,
+      workingDays: item.workingDays ?? [0, 1, 2, 3, 4],
+      ...mutable(item),
+    }));
+    masterMaps.set(
+      "workingTimes",
+      new Map(
+        workingTimeSource.flatMap((item, index) => [
+          [normalized(item.id), workingTimeRows[index]!.id],
+          [normalized(item.name), workingTimeRows[index]!.id],
+        ]),
+      ),
+    );
+    await add({
+      sourceCollection: "workingTimes",
+      targetTable: "working_times",
+      desired: workingTimeRows,
+      loadExisting: () =>
+        executor
+          .select()
+          .from(schema.workingTimes)
+          .where(eq(schema.workingTimes.organisationId, organisationId)),
+      insertRows: async (rows) => void (await executor.insert(schema.workingTimes).values(rows)),
+      naturalKeys: (row) => {
+        const value = row as { name: string; code: string | null };
+        return [
+          `name:${normalized(value.name)}`,
+          ...(value.code ? [`code:${normalized(value.code)}`] : []),
+        ];
+      },
+    });
+
+    const holidaySource = collection<MasterRecord>(state, "publicHolidays");
+    const holidayRows = holidaySource.map((item) => ({
+      id: generateDeterministicUuid("publicHolidays", item.id),
+      organisationId,
+      name: item.name,
+      code: item.code?.trim() || null,
+      description: item.description ?? null,
+      isActive: item.isActive,
+      orderIndex: item.orderIndex,
+      holidayDate: item.date!,
+      locationId: null,
+      ...mutable(item),
+    }));
+    masterMaps.set(
+      "publicHolidays",
+      new Map(
+        holidaySource.flatMap((item, index) => [
+          [normalized(item.id), holidayRows[index]!.id],
+          [normalized(item.name), holidayRows[index]!.id],
+        ]),
+      ),
+    );
+    await add({
+      sourceCollection: "publicHolidays",
+      targetTable: "public_holidays",
+      desired: holidayRows,
+      loadExisting: () =>
+        executor
+          .select()
+          .from(schema.publicHolidays)
+          .where(eq(schema.publicHolidays.organisationId, organisationId)),
+      insertRows: async (rows) => void (await executor.insert(schema.publicHolidays).values(rows)),
+      naturalKeys: (row) => [`date:${String((row as { holidayDate: string }).holidayDate)}`],
+    });
     const masterId = (name: string, value: string): string => {
       const map = masterMaps.get(name)!;
       const key = normalized(value);
@@ -769,6 +861,164 @@ async function execute(mode: ImportMode): Promise<{
           .values(rows.map(({ id: _id, ...row }) => row))),
       naturalKeys: (row) => [`assignment:${row.id}`],
       ignoredComparisonKeys: ["assignedAt", "assignedBy", "reason"],
+      countsTowardSource: false,
+    });
+
+    // A clean PostgreSQL deployment must have the same editable VIA leave policy
+    // catalogue and opening balances as the browser prototype. Without these rows,
+    // employee self-service correctly loads PostgreSQL but has no leave to display.
+    const leavePolicyRows = POLICY_DEFINITIONS.map((definition) => ({
+      id: generateDeterministicUuid("leavePolicies", definition.code),
+      organisationId,
+      code: definition.code,
+      name: definition.name,
+      type: definition.type,
+      category: definition.category,
+      legalBasis: definition.legalBasis ?? null,
+      description: definition.description,
+      isPaid: definition.isPaid,
+      payTiers: definition.payTiers ?? [],
+      baseEntitlementDays: definition.baseEntitlementDays.toFixed(2),
+      scope: definition.scope,
+      accrualMode: definition.accrualMode,
+      carryForwardLimit: definition.carryForwardLimit.toFixed(2),
+      allowNegativeBalance: definition.allowNegativeBalance,
+      maxNegativeBalance: definition.allowNegativeBalance
+        ? (definition.maxNegativeBalance ?? 0).toFixed(2)
+        : null,
+      requiresAttachment: definition.requiresAttachment,
+      requiresHandoverContact: definition.requiresHandoverContact,
+      countsTowardGratuity: definition.countsTowardGratuity,
+      eligibility: definition.eligibility ?? null,
+      approvalChain: [...definition.approvalChain],
+      noticeRules: definition.noticeRules ?? null,
+      isEnabled: definition.isEnabled,
+      isStatutory: definition.isStatutory,
+      consumesBalance: definition.consumesBalance,
+      createdAt: new Date(app.createdAt),
+      createdBy: systemUserId,
+      updatedAt: new Date(app.updatedAt),
+      updatedBy: systemUserId,
+      archivedAt: null,
+      recordVersion: 1,
+    }));
+    await add({
+      sourceCollection: "leavePolicies (derived)",
+      targetTable: "leave_policies",
+      desired: leavePolicyRows,
+      loadExisting: () =>
+        executor
+          .select()
+          .from(schema.leavePolicies)
+          .where(eq(schema.leavePolicies.organisationId, organisationId)),
+      insertRows: async (rows) => void (await executor.insert(schema.leavePolicies).values(rows)),
+      naturalKeys: (row) => {
+        const value = row as { code: string; name: string };
+        return [`code:${normalized(value.code)}`, `name:${normalized(value.name)}`];
+      },
+      countsTowardSource: false,
+    });
+
+    const leaveYear = new Date(app.createdAt).getUTCFullYear();
+    const eligibilityDate = new Date(`${leaveYear}-12-31T00:00:00.000Z`);
+    const isEligible = (employee: Employee, definition: (typeof POLICY_DEFINITIONS)[number]) => {
+      const eligibility = definition.eligibility;
+      if (!eligibility) return true;
+      if (eligibility.genderRestriction && employee.gender !== eligibility.genderRestriction) {
+        return false;
+      }
+      if (eligibility.omaniOnly && normalized(employee.nationality ?? "") !== "omani") {
+        return false;
+      }
+      if (eligibility.minimumServiceMonths !== undefined) {
+        const start = new Date(`${employee.startDate}T00:00:00.000Z`);
+        const serviceMonths =
+          (eligibilityDate.getUTCFullYear() - start.getUTCFullYear()) * 12 +
+          eligibilityDate.getUTCMonth() -
+          start.getUTCMonth();
+        if (serviceMonths < eligibility.minimumServiceMonths) return false;
+      }
+      return true;
+    };
+    const annualEntitlements = employees.flatMap((employee) =>
+      POLICY_DEFINITIONS.filter(
+        (definition) =>
+          definition.scope === "Annual" &&
+          definition.isEnabled &&
+          definition.baseEntitlementDays > 0 &&
+          isEligible(employee, definition),
+      ).map((definition) => ({ employee, definition })),
+    );
+    const leaveBalanceRows = annualEntitlements.map(({ employee, definition }) => ({
+      id: generateDeterministicUuid(
+        "leaveBalances",
+        `${employee.id}:${definition.code}:${leaveYear}`,
+      ),
+      organisationId,
+      employeeId: generateDeterministicUuid("employees", employee.id),
+      policyId: generateDeterministicUuid("leavePolicies", definition.code),
+      leaveYear,
+      balanceDays: definition.baseEntitlementDays.toFixed(2),
+      createdAt: new Date(app.createdAt),
+      createdBy: systemUserId,
+      updatedAt: new Date(app.updatedAt),
+      updatedBy: systemUserId,
+      archivedAt: null,
+      recordVersion: 1,
+    }));
+    await add({
+      sourceCollection: "leaveBalances (derived)",
+      targetTable: "leave_balances",
+      desired: leaveBalanceRows,
+      loadExisting: () =>
+        executor
+          .select()
+          .from(schema.leaveBalances)
+          .where(eq(schema.leaveBalances.organisationId, organisationId)),
+      insertRows: async (rows) => void (await executor.insert(schema.leaveBalances).values(rows)),
+      naturalKeys: (row) => {
+        const value = row as { employeeId: string; policyId: string; leaveYear: number };
+        return [`balance:${value.employeeId}:${value.policyId}:${value.leaveYear}`];
+      },
+      countsTowardSource: false,
+    });
+
+    const leaveTransactionRows = annualEntitlements.map(({ employee, definition }) => ({
+      id: generateDeterministicUuid(
+        "leaveTransactions",
+        `${employee.id}:${definition.code}:${leaveYear}:entitlement`,
+      ),
+      organisationId,
+      employeeId: generateDeterministicUuid("employees", employee.id),
+      policyId: generateDeterministicUuid("leavePolicies", definition.code),
+      date: `${leaveYear}-01-01`,
+      transactionType: "Entitlement" as const,
+      days: definition.baseEntitlementDays.toFixed(2),
+      reason: `${leaveYear} ${definition.name} allowance`,
+      referenceId: generateDeterministicUuid(
+        "leaveBalances",
+        `${employee.id}:${definition.code}:${leaveYear}`,
+      ),
+      actorUserId: systemUserId,
+      createdAt: new Date(app.createdAt),
+      createdBy: systemUserId,
+      updatedAt: new Date(app.updatedAt),
+      updatedBy: systemUserId,
+      archivedAt: null,
+      recordVersion: 1,
+    }));
+    await add({
+      sourceCollection: "leaveTransactions (derived)",
+      targetTable: "leave_transactions",
+      desired: leaveTransactionRows,
+      loadExisting: () =>
+        executor
+          .select()
+          .from(schema.leaveTransactions)
+          .where(eq(schema.leaveTransactions.organisationId, organisationId)),
+      insertRows: async (rows) =>
+        void (await executor.insert(schema.leaveTransactions).values(rows)),
+      naturalKeys: (row) => [`id:${String(row.id)}`],
       countsTowardSource: false,
     });
 

@@ -2,11 +2,21 @@ FROM node:24-alpine AS build
 
 WORKDIR /app
 
+RUN apk add --no-cache postgresql-client
+
 COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
 RUN npm run build
+
+FROM build AS worker
+
+ENV NODE_ENV=production
+
+USER node
+
+CMD ["npm", "run", "worker:background"]
 
 FROM node:24-alpine AS runtime
 

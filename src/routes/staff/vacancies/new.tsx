@@ -290,11 +290,11 @@ function NewVacancy() {
     };
   };
 
-  const onSaveDraft = () => {
+  const onSaveDraft = async () => {
     const values = form.getValues();
     try {
       const payload = mapFormToVacancyPayload(values);
-      const vacancy = vacancyService.saveDraft(payload, getActorContext("Saved draft"));
+      const vacancy = await vacancyService.saveDraftAsync(payload, getActorContext("Saved draft"));
       toast.success("Draft saved");
       navigate({ to: "/staff/vacancies/$vacancyId", params: { vacancyId: vacancy.id } });
     } catch (e) {
@@ -302,15 +302,25 @@ function NewVacancy() {
     }
   };
 
-  const onSubmitForm = (values: FormValues) => {
+  const onSubmitForm = async (values: FormValues) => {
     try {
       const payload = mapFormToVacancyPayload(values);
-      const vacancy = vacancyService.saveDraft(payload, getActorContext("Initial draft creation"));
-      vacancyService.submitForApproval(
+      const vacancy = await vacancyService.saveDraftAsync(
+        payload,
+        getActorContext("Initial draft creation"),
+      );
+      await vacancyService.transitionStatusAsync(
         vacancy.id,
+        "Pending Approval",
+        "Confirmed vacancy details for publication",
         getActorContext("Confirmed vacancy details for publication"),
       );
-      vacancyService.publishVacancy(vacancy.id, getActorContext("Published vacancy"));
+      await vacancyService.transitionStatusAsync(
+        vacancy.id,
+        "Open",
+        "Published vacancy",
+        getActorContext("Published vacancy"),
+      );
       toast.success("Vacancy published");
       navigate({ to: "/staff/vacancies/$vacancyId", params: { vacancyId: vacancy.id } });
     } catch (e) {

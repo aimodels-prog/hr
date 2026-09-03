@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "overtime_claims_employee_date_active_unique" ON "overtime_claims" USING btree ("employee_id","date") WHERE "overtime_claims"."archived_at" IS NULL AND "overtime_claims"."status" NOT IN ('Rejected', 'Corrected');

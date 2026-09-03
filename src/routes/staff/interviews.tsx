@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { CalendarClock, Users, ClipboardCheck, AlertTriangle, CheckCircle2 } from "lucide-react";
 
@@ -57,7 +57,7 @@ function InterviewsWrapper() {
 }
 
 function Interviews() {
-  const { userId, can, getActorContext } = useCurrentUser();
+  const { userId, role, can, getActorContext } = useCurrentUser();
   const canViewAll = can("recruitment:view_interviews");
   const canManage = can("recruitment:manage_interviews");
 
@@ -73,18 +73,48 @@ function Interviews() {
   const [respondingInterview, setRespondingInterview] = useState<InterviewEvent | null>(null);
   const [chosenSlotIndex, setChosenSlotIndex] = useState<number | null>(null);
   const [declineNote, setDeclineNote] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoading(true);
+    setLoadError("");
+    void candidateService
+      .hydrateCompatibilityCache(getActorContext())
+      .then(() => {
+        if (!cancelled) setRefreshKey((key) => key + 1);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled)
+          setLoadError(error instanceof Error ? error.message : "Could not load interviews.");
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // The active identity and role define the server-side interview scope.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidateService, userId, role]);
 
   const submitCandidateResponse = async (response: "Accepted" | "Declined") => {
     if (!respondingInterview) return;
     try {
-      await interviewService.recordCandidateResponse(
+      await interviewService.updateWorkflowAsync(
         respondingInterview.id,
-        response,
+        {
+          action: response === "Accepted" ? "candidate-accepted" : "candidate-declined",
+          ...(response === "Accepted" && chosenSlotIndex !== null
+            ? { slot: respondingInterview.proposedSlots[chosenSlotIndex] }
+            : {}),
+          reason:
+            response === "Accepted"
+              ? "Candidate accepted the proposed interview time"
+              : declineNote || "Candidate declined the proposed interview times",
+        },
         getActorContext(),
-        response === "Accepted" && chosenSlotIndex !== null
-          ? respondingInterview.proposedSlots[chosenSlotIndex]
-          : undefined,
-        declineNote,
       );
       toast.success(response === "Accepted" ? "Interview confirmed" : "Marked as declined");
       setRespondingInterview(null);
@@ -128,7 +158,7 @@ function Interviews() {
     void refreshKey;
     const map = new Map(empService.getUsers(getActorContext()).map((u) => [u.id, u]));
     return map;
-  }, [empService, refreshKey]);
+  }, [empService, getActorContext, refreshKey]);
 
   const candidateName = (id: string) => {
     const c = candidateById.get(id);
@@ -171,7 +201,7 @@ function Interviews() {
     setStatusChangeTarget({ interview, status });
   };
 
-  const submitStatusChange = () => {
+  const submitStatusChange = async () => {
     if (!statusChangeTarget) return;
     if (!statusChangeReason.trim()) {
       toast.error("A reason is required.");
@@ -182,12 +212,15 @@ function Interviews() {
       return;
     }
     try {
-      interviewService.changeStatus(
+      await interviewService.updateWorkflowAsync(
         statusChangeTarget.interview.id,
-        statusChangeTarget.status,
-        statusChangeReason,
+        {
+          action: "change-status",
+          status: statusChangeTarget.status,
+          reason: statusChangeReason,
+          waiver: statusChangeNeedsWaiver,
+        },
         { ...getActorContext(), reason: statusChangeReason },
-        statusChangeNeedsWaiver,
       );
       toast.success(`Interview marked ${statusChangeTarget.status}`);
       setStatusChangeTarget(null);
@@ -202,12 +235,16 @@ function Interviews() {
     const start = new Date(rescheduleStart);
     const end = new Date(start.getTime() + reschedulingInterview.durationMinutes * 60_000);
     try {
-      await interviewService.rescheduleInterview(
+      await interviewService.updateWorkflowAsync(
         reschedulingInterview.id,
         {
-          startTime: start.toISOString(),
-          endTime: end.toISOString(),
-          timezone: reschedulingInterview.confirmedSlot?.timezone || "Asia/Dubai",
+          action: "reschedule",
+          slot: {
+            startTime: start.toISOString(),
+            endTime: end.toISOString(),
+            timezone: reschedulingInterview.confirmedSlot?.timezone || "Asia/Dubai",
+          },
+          reason: "Interview rescheduled by HR",
         },
         { ...getActorContext(), reason: "Interview rescheduled by HR" },
       );
@@ -233,7 +270,19 @@ function Interviews() {
         <h2 className="text-base font-semibold flex items-center gap-2">
           <ClipboardCheck className="h-4 w-4 text-primary" /> My Interviews to Score
         </h2>
-        {myInterviews.length === 0 ? (
+        {isLoading ? (
+          <Card>
+            <CardContent className="py-10 text-center text-muted-foreground text-sm">
+              Loading your assigned interviews…
+            </CardContent>
+          </Card>
+        ) : loadError ? (
+          <Card className="border-destructive/40">
+            <CardContent className="py-10 text-center text-destructive text-sm">
+              {loadError}
+            </CardContent>
+          </Card>
+        ) : myInterviews.length === 0 ? (
           <Card>
             <CardContent className="py-10 text-center text-muted-foreground text-sm">
               You are not on the panel for any interview right now. When someone schedules you as an
@@ -441,10 +490,24 @@ function Interviews() {
                                   disabled={interview.proposedSlots.length === 0}
                                   onClick={() => {
                                     try {
-                                      interviewService.sendSlotsToCandidate(
-                                        interview.id,
-                                        getActorContext(),
-                                      );
+                                      void interviewService
+                                        .updateWorkflowAsync(
+                                          interview.id,
+                                          {
+                                            action: "send-slots",
+                                            reason:
+                                              "Sent proposed interview times to the candidate",
+                                          },
+                                          getActorContext(),
+                                        )
+                                        .then(() => refresh())
+                                        .catch((error) =>
+                                          toast.error(
+                                            error instanceof Error
+                                              ? error.message
+                                              : "Could not send interview times",
+                                          ),
+                                        );
                                       toast.success("Slots sent to candidate");
                                       refresh();
                                     } catch (error) {

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { format, parseISO } from "date-fns";
 import {
   AlertTriangle,
@@ -56,8 +56,32 @@ function OnboardingDashboard() {
   const [templateId, setTemplateId] = useState("");
   const [assignedHRId, setAssignedHRId] = useState("");
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const navigate = useNavigate();
-  const actorContext = currentUser.getActorContext();
+  const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError("");
+    void Promise.all([
+      employeeService.hydrateCompatibilityCache(actorContext),
+      onboardingService.hydrateCompatibilityCache(actorContext),
+    ])
+      .then(() => {
+        if (active) setRevision((value) => value + 1);
+      })
+      .catch((error) => {
+        if (active)
+          setLoadError(error instanceof Error ? error.message : "Onboarding could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [actorContext, employeeService, onboardingService]);
   const cases = onboardingService.getCasesForContext(actorContext);
   const employees = employeeService.getEmployees(actorContext);
   const templates = onboardingService
@@ -113,14 +137,14 @@ function OnboardingDashboard() {
     setTemplateId("");
     setAssignedHRId("");
   };
-  const createCase = () => {
+  const createCase = async () => {
     if (!employeeId || !templateId) {
       toast.error("Select an employee and onboarding template.");
       return;
     }
     setSaving(true);
     try {
-      const created = onboardingService.createCaseForEmployee(employeeId, actorContext, {
+      const created = await onboardingService.createCaseForEmployeeAsync(employeeId, actorContext, {
         templateId,
         ...(assignedHRId ? { assignedHRId } : {}),
       });
@@ -148,6 +172,18 @@ function OnboardingDashboard() {
             </Button>
           }
         />
+        {loading && (
+          <Card>
+            <CardContent className="p-6 text-sm text-muted-foreground">
+              Loading onboarding records...
+            </CardContent>
+          </Card>
+        )}
+        {loadError && (
+          <Card className="border-destructive/40">
+            <CardContent className="p-6 text-sm text-destructive">{loadError}</CardContent>
+          </Card>
+        )}
         <Tabs defaultValue="cases" className="space-y-6">
           <TabsList>
             <TabsTrigger value="cases">Employee onboarding</TabsTrigger>

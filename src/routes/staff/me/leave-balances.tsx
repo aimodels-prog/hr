@@ -246,10 +246,14 @@ function LeaveBalancesRoute() {
 
   const refreshData = () => setRevision((value) => value + 1);
 
-  const confirmWithdraw = () => {
+  const confirmWithdraw = async () => {
     if (!withdrawTarget) return;
     try {
-      leaveService.withdrawRequest(withdrawTarget.id, currentUser.getActorContext());
+      await leaveService.requestChangeAsync(
+        withdrawTarget.id,
+        { kind: "withdraw" },
+        currentUser.getActorContext(),
+      );
       refreshData();
       toast.success("Leave request withdrawn");
     } catch (error) {
@@ -259,16 +263,16 @@ function LeaveBalancesRoute() {
     }
   };
 
-  const confirmCancellation = () => {
+  const confirmCancellation = async () => {
     if (!cancelTarget) return;
     if (cancellationReason.trim().length < 3) {
       toast.error("A reason is required to cancel leave.");
       return;
     }
     try {
-      leaveService.requestCancellation(
+      await leaveService.requestChangeAsync(
         cancelTarget.id,
-        cancellationReason,
+        { kind: "cancel", reason: cancellationReason },
         currentUser.getActorContext(),
       );
       refreshData();
@@ -281,14 +285,17 @@ function LeaveBalancesRoute() {
     }
   };
 
-  const confirmAmendment = () => {
+  const confirmAmendment = async () => {
     if (!amendTarget) return;
     try {
-      leaveService.requestAmendment(
+      await leaveService.requestChangeAsync(
         amendTarget.id,
-        amendment.startDate,
-        amendment.endDate,
-        amendment.reason,
+        {
+          kind: "amend",
+          startDate: amendment.startDate,
+          endDate: amendment.endDate,
+          reason: amendment.reason,
+        },
         currentUser.getActorContext(),
       );
       refreshData();

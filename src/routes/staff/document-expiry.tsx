@@ -73,26 +73,34 @@ function DocumentExpiryRoute() {
   const documentService = useMemo(() => new DocumentService(), []);
   const documentExpiryService = useMemo(() => new DocumentExpiryService(), []);
 
-  // Run the reminder engine when accessing this page
-  useEffect(() => {
-    if (currentUser) {
-      documentExpiryService
-        .runReminderEngine({
-          actor: {
-            userId: currentUser.userId,
-            employeeId: currentUser.employeeId,
-            displayName: currentUser.displayName,
-            roles: currentUser.assignedRoles,
-            activeRole: currentUser.activeRole,
-          },
-          reason: "Background reminder check",
-        })
-        .catch(console.error);
-    }
-  }, [currentUser, documentExpiryService]);
-
   const [refreshKey, setRefreshKey] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const refresh = () => setRefreshKey((k) => k + 1);
+
+  // Reminders are created by the durable background worker. This page only reads current data.
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError("");
+    void documentExpiryService
+      .hydrateCompatibilityCache(currentUser.getActorContext())
+      .then(() => {
+        if (active) refresh();
+      })
+      .catch((error) => {
+        if (active)
+          setLoadError(
+            error instanceof Error ? error.message : "Document tracking could not be loaded.",
+          );
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentUser, documentExpiryService]);
 
   const allDocs = useMemo(
     () =>
@@ -148,13 +156,7 @@ function DocumentExpiryRoute() {
   const filteredDocs = docsWithMetadata.filter((d) => d.bucket === activeTab);
 
   const getActorContext = (reason: string) => ({
-    actor: {
-      userId: currentUser!.userId,
-      employeeId: currentUser!.employeeId,
-      displayName: currentUser!.displayName,
-      roles: currentUser!.assignedRoles,
-      activeRole: currentUser!.activeRole,
-    },
+    ...currentUser.getActorContext(),
     reason,
   });
 
@@ -164,9 +166,9 @@ function DocumentExpiryRoute() {
   const waiveForm = useForm<z.infer<typeof waiveSchema>>({ resolver: zodResolver(waiveSchema) });
   const assignForm = useForm<z.infer<typeof assignSchema>>({ resolver: zodResolver(assignSchema) });
 
-  const onSnooze = (values: z.infer<typeof snoozeSchema>) => {
+  const onSnooze = async (values: z.infer<typeof snoozeSchema>) => {
     try {
-      documentExpiryService.snoozeDocument(
+      await documentExpiryService.snoozeDocumentAsync(
         actionDocId!,
         values.snoozedUntil,
         values.snoozeReason,
@@ -180,9 +182,9 @@ function DocumentExpiryRoute() {
     }
   };
 
-  const onWaive = (values: z.infer<typeof waiveSchema>) => {
+  const onWaive = async (values: z.infer<typeof waiveSchema>) => {
     try {
-      documentExpiryService.waiveDocument(
+      await documentExpiryService.waiveDocumentAsync(
         actionDocId!,
         values.waiverReason,
         getActorContext("Authorized waiver"),
@@ -195,9 +197,9 @@ function DocumentExpiryRoute() {
     }
   };
 
-  const onAssign = (values: z.infer<typeof assignSchema>) => {
+  const onAssign = async (values: z.infer<typeof assignSchema>) => {
     try {
-      documentExpiryService.assignOwner(
+      await documentExpiryService.assignOwnerAsync(
         actionDocId!,
         values.ownerId,
         getActorContext("Assign owner"),
@@ -217,6 +219,8 @@ function DocumentExpiryRoute() {
           title="Document Expiry Centre"
           description="Monitor and track expiring employee documents globally."
         />
+        {loading && <p className="text-sm text-muted-foreground">Loading document tracking...</p>}
+        {loadError && <p className="text-sm text-destructive">{loadError}</p>}
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card className="bg-destructive/5 border-destructive/20">
@@ -370,7 +374,7 @@ function DocumentExpiryRoute() {
                                     className="space-y-4"
                                   >
                                     <FormField
-                                      control={assignForm.control as any}
+                                      control={assignForm.control}
                                       name="ownerId"
                                       render={({ field }) => (
                                         <FormItem>
@@ -407,7 +411,7 @@ function DocumentExpiryRoute() {
                                     className="space-y-4"
                                   >
                                     <FormField
-                                      control={snoozeForm.control as any}
+                                      control={snoozeForm.control}
                                       name="snoozedUntil"
                                       render={({ field }) => (
                                         <FormItem>
@@ -420,7 +424,7 @@ function DocumentExpiryRoute() {
                                       )}
                                     />
                                     <FormField
-                                      control={snoozeForm.control as any}
+                                      control={snoozeForm.control}
                                       name="snoozeReason"
                                       render={({ field }) => (
                                         <FormItem>
@@ -447,7 +451,7 @@ function DocumentExpiryRoute() {
                                       replacement upload.
                                     </p>
                                     <FormField
-                                      control={waiveForm.control as any}
+                                      control={waiveForm.control}
                                       name="waiverReason"
                                       render={({ field }) => (
                                         <FormItem>

@@ -28,6 +28,14 @@ import type { OvertimeClaim } from "./overtime-types.ts";
 import type { OffboardingCase } from "./offboarding-types.ts";
 import { LocalRepository } from "./repository.ts";
 import type { BaseRecord } from "./types.ts";
+import {
+  deleteReportViewFn,
+  exportReportCsvFn,
+  generateReportFn,
+  getAvailableReportsFn,
+  getSavedReportViewsFn,
+  saveReportViewFn,
+} from "../server-functions/report.server.ts";
 
 export type ReportColumn = {
   key: string;
@@ -70,6 +78,50 @@ export class ReportService {
     this.userId = userId;
     this.activeRole = activeRole;
     this.currentEmployee = currentEmployee;
+  }
+
+  private getServerActor() {
+    return {
+      actorId: this.userId,
+      actorEmail: this.currentEmployee?.workEmail,
+      activeRole: this.activeRole,
+    };
+  }
+
+  async getAvailableReportsFromDatabase() {
+    return getAvailableReportsFn({ data: { actor: this.getServerActor() } });
+  }
+
+  async generateReportFromDatabase(reportId: string, filters: ReportFilters) {
+    return generateReportFn({ data: { actor: this.getServerActor(), reportId, filters } });
+  }
+
+  async getSavedViewsFromDatabase(reportId: string): Promise<ReportSavedView[]> {
+    const views = await getSavedReportViewsFn({
+      data: { actor: this.getServerActor(), reportId },
+    });
+    return views.map((view) => ({
+      ...view,
+      createdAt: new Date(view.createdAt).toISOString(),
+      updatedAt: new Date(view.updatedAt).toISOString(),
+      archivedAt: view.archivedAt ? new Date(view.archivedAt).toISOString() : undefined,
+    }));
+  }
+
+  async saveViewToDatabase(reportId: string, name: string, filters: ReportFilters) {
+    return saveReportViewFn({
+      data: { actor: this.getServerActor(), reportId, name, filters },
+    });
+  }
+
+  async deleteSavedViewFromDatabase(viewId: string) {
+    return deleteReportViewFn({ data: { actor: this.getServerActor(), viewId } });
+  }
+
+  async exportReportFromDatabase(reportId: string, filters: ReportFilters) {
+    return exportReportCsvFn({
+      data: { actor: this.getServerActor(), reportId, filters },
+    });
   }
 
   private getActorContext(): ActorContext {

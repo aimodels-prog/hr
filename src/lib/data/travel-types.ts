@@ -37,6 +37,8 @@ export interface ExpenseLine {
 }
 
 export interface TravelRequest extends BaseRecord {
+  /** Authoritative PostgreSQL UUID while the legacy browser cache remains during cutover. */
+  databaseId?: string;
   employeeId: RecordId;
   purpose: string;
   destination: string;

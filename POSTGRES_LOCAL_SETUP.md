@@ -17,6 +17,8 @@ Production runs as a Node/Nitro container on Contabo. See
 5. Set `DATABASE_URL` and `DATABASE_POOL_SIZE` in the terminal environment used
    for the application and Drizzle commands. Do not prefix either value with
    `VITE_`.
+   If the database intentionally contains multiple active organisations, also
+   set `VIA_HR_ORGANISATION_ID`; VIA HR refuses to guess between organisations.
 6. Run `npm run db:smoke` and expect `PostgreSQL is reachable`.
 
 The example uses host port `55432` to avoid colliding with another PostgreSQL
@@ -30,6 +32,10 @@ installation that may already use the standard `5432` port.
 
 Every schema migration is committed. Credentials, `.env.database`, database
 volumes and production data are never committed.
+
+Database integration tests never default to this development database. They run
+only when `VIA_HR_TEST_DATABASE_URL` points to a database whose name visibly
+contains `test` or `scratch`.
 
 ## Dropdown ownership
 

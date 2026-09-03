@@ -120,7 +120,33 @@ export class CandidatePoolService {
       files.getMetadata(record.fileId),
       files.getBlob(record.fileId),
     ]);
-    if (!metadata || !blob) throw new Error("The original CV file could not be found.");
+    if (!metadata || !blob) {
+      const { downloadCandidateCvFn } = await import("../server-functions/candidate.server.ts");
+      const users = getApplicationDataServices().storage.readCollection<{
+        id: string;
+        workspaceEmail?: string;
+      }>("users");
+      const actorEmail =
+        context.actor.workspaceEmail ??
+        users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+      const downloaded = await downloadCandidateCvFn({
+        data: {
+          actor: {
+            actorId: context.actor.userId,
+            ...(actorEmail ? { actorEmail } : {}),
+            activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+          },
+          cvRecordId,
+          reason: context.reason || "Viewed candidate CV",
+        },
+      });
+      const binary = atob(downloaded.fileBase64);
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      return {
+        metadata: downloaded.metadata,
+        blob: new Blob([bytes], { type: downloaded.metadata.mimeType }),
+      };
+    }
     audit.record({
       context,
       action: "candidate_cv_download",
@@ -240,77 +266,114 @@ export class CandidatePoolService {
       throw new Error("The selected vacancy no longer exists.");
     }
 
-    const intakeId = crypto.randomUUID();
-    const cvBlob =
-      input.file.type === mimeType ? input.file : input.file.slice(0, input.file.size, mimeType);
-    const { files } = getApplicationDataServices();
-    const file = await files.save(
-      {
-        blob: cvBlob,
-        name: input.fileName,
-        mimeType,
-        owner: { entityType: "candidate-cv", entityId: intakeId },
-      },
-      context,
-    );
-
-    let record: CandidateCvRecord;
-    try {
-      record = this.cvRepo.create(
+    // Service tests and local scripts do not have a TanStack Start request context.
+    // Keep their deterministic preview path; all browser calls use the server path below.
+    if (typeof window === "undefined") {
+      const intakeId = crypto.randomUUID();
+      const { files } = getApplicationDataServices();
+      const file = await files.save(
         {
-          id: intakeId,
-          fileId: file.id,
-          originalFileName: input.fileName,
-          source: input.source,
-          receivedAt: receivedAt.toISOString(),
-          processingStatus: "Extracting",
-          extractionMethod: "Local Preview",
-          extractedFields: {},
-          fieldConfidence: {},
-          extractionWarnings: [],
-          consentStatus: input.consentStatus,
-          ...(input.vacancyId ? { vacancyId: input.vacancyId } : {}),
-          ...(input.notes?.trim() ? { notes: input.notes.trim() } : {}),
-          ...(input.isRecommended ? { recommendationPending: true } : {}),
+          blob: input.file,
+          name: input.fileName,
+          mimeType,
+          owner: { entityType: "candidate-cv", entityId: intakeId },
         },
-        { ...context, reason: context.reason || "Uploaded a directly received CV" },
+        context,
       );
-    } catch (error) {
-      await files.delete(file.id, {
-        ...context,
-        reason: "Removed CV after intake creation failed",
-      });
-      throw error;
+      try {
+        const record = this.cvRepo.create(
+          {
+            id: intakeId,
+            fileId: file.id,
+            originalFileName: input.fileName,
+            source: input.source,
+            receivedAt: receivedAt.toISOString(),
+            processingStatus: "Extracting",
+            extractionMethod: "Local Preview",
+            extractedFields: {},
+            fieldConfidence: {},
+            extractionWarnings: [],
+            consentStatus: input.consentStatus,
+            ...(input.vacancyId ? { vacancyId: input.vacancyId } : {}),
+            ...(input.notes?.trim() ? { notes: input.notes.trim() } : {}),
+            ...(input.isRecommended ? { recommendationPending: true } : {}),
+          },
+          context,
+        );
+        try {
+          const extraction = await this.extractor.extract({
+            file: input.file,
+            fileName: input.fileName,
+          });
+          return this.cvRepo.update(
+            record.id,
+            {
+              processingStatus: "Awaiting HR Review",
+              extractionMethod: extraction.method,
+              extractedFields: extraction.fields,
+              fieldConfidence: extraction.confidence,
+              extractionWarnings: extraction.warnings,
+            },
+            context,
+          );
+        } catch (error) {
+          return this.cvRepo.update(
+            record.id,
+            {
+              processingStatus: "Processing Failed",
+              extractionWarnings: [
+                error instanceof Error ? error.message : "The CV could not be processed.",
+              ],
+            },
+            context,
+          );
+        }
+      } catch (error) {
+        await files.delete(file.id, {
+          ...context,
+          reason: "Removed CV after intake creation failed",
+        });
+        throw error;
+      }
     }
-
-    try {
-      const extraction = await this.extractor.extract({
-        file: cvBlob,
+    if (mimeType === "text/plain") throw new Error("Upload the original PDF, DOC or DOCX CV.");
+    const { uploadCandidateCvFn } = await import("../server-functions/candidate.server.ts");
+    const users = getApplicationDataServices().storage.readCollection<{
+      id: string;
+      workspaceEmail?: string;
+    }>("users");
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    const vacancy = input.vacancyId ? this.vacancyRepo.getById(input.vacancyId) : undefined;
+    const bytes = new Uint8Array(await input.file.arrayBuffer());
+    let binary = "";
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+    }
+    const result = await uploadCandidateCvFn({
+      data: {
+        actor: {
+          actorId: context.actor.userId,
+          ...(actorEmail ? { actorEmail } : {}),
+          activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+        },
         fileName: input.fileName,
-      });
-      return this.cvRepo.update(
-        record.id,
-        {
-          processingStatus: "Awaiting HR Review",
-          extractionMethod: extraction.method,
-          extractedFields: extraction.fields,
-          fieldConfidence: extraction.confidence,
-          extractionWarnings: extraction.warnings,
-        },
-        { ...context, reason: "Prepared CV information for HR review" },
-      );
-    } catch (error) {
-      return this.cvRepo.update(
-        record.id,
-        {
-          processingStatus: "Processing Failed",
-          extractionWarnings: [
-            error instanceof Error ? error.message : "The CV could not be processed.",
-          ],
-        },
-        { ...context, reason: "Recorded a CV processing failure" },
-      );
-    }
+        mimeType,
+        fileBase64: btoa(binary),
+        source: input.source,
+        receivedAt: receivedAt.toISOString(),
+        consentStatus: input.consentStatus,
+        ...(vacancy ? { vacancyId: vacancy.databaseId ?? vacancy.id } : {}),
+        ...(input.notes?.trim() ? { notes: input.notes.trim() } : {}),
+        isRecommended: input.isRecommended ?? false,
+      },
+    });
+    const { CandidateService } = await import("./candidate-service.ts");
+    await new CandidateService().hydrateCompatibilityCache(context);
+    const record = this.cvRepo.getById(result.cvRecordId);
+    if (!record) throw new Error("The saved CV could not be loaded. Refresh and try again.");
+    return record;
   }
 
   async registerPortalCv(input: {
@@ -396,6 +459,65 @@ export class CandidatePoolService {
   }
 
   finaliseCvIntake(
+    input: Parameters<CandidatePoolService["finaliseCvIntakeLegacy"]>[0],
+    context: ActorContext,
+  ):
+    | { candidate: Candidate; application?: CandidateApplication; cvRecord: CandidateCvRecord }
+    | Promise<{
+        candidate: Candidate;
+        application?: CandidateApplication;
+        cvRecord: CandidateCvRecord;
+      }> {
+    assertHr(context, "candidate_cv_review_denied", input.cvRecordId);
+    if (typeof window === "undefined") return this.finaliseCvIntakeLegacy(input, context);
+    return this.finaliseCvIntakeDatabase(input, context);
+  }
+
+  private async finaliseCvIntakeDatabase(
+    input: Parameters<CandidatePoolService["finaliseCvIntakeLegacy"]>[0],
+    context: ActorContext,
+  ): Promise<{
+    candidate: Candidate;
+    application?: CandidateApplication;
+    cvRecord: CandidateCvRecord;
+  }> {
+    assertHr(context, "candidate_cv_review_denied", input.cvRecordId);
+    const { finaliseCandidateCvFn } = await import("../server-functions/candidate.server.ts");
+    const users = getApplicationDataServices().storage.readCollection<{
+      id: string;
+      workspaceEmail?: string;
+    }>("users");
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    const vacancy = input.vacancyId ? this.vacancyRepo.getById(input.vacancyId) : undefined;
+    const result = await finaliseCandidateCvFn({
+      data: {
+        actor: {
+          actorId: context.actor.userId,
+          ...(actorEmail ? { actorEmail } : {}),
+          activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+        },
+        cvRecordId: input.cvRecordId,
+        ...(input.existingCandidateId ? { existingCandidateId: input.existingCandidateId } : {}),
+        ...(vacancy ? { vacancyId: vacancy.databaseId ?? vacancy.id } : {}),
+        consentStatus: input.consentStatus,
+        candidate: input.candidate,
+      },
+    });
+    const { CandidateService } = await import("./candidate-service.ts");
+    await new CandidateService().hydrateCompatibilityCache(context);
+    const candidate = this.candidateRepo.getById(result.candidateId);
+    const cvRecord = this.cvRepo.getById(result.cvRecordId);
+    const application = result.applicationId
+      ? this.applicationRepo.getById(result.applicationId)
+      : undefined;
+    if (!candidate || !cvRecord)
+      throw new Error("The confirmed Candidate Pool record could not be loaded.");
+    return { candidate, ...(application ? { application } : {}), cvRecord };
+  }
+
+  private finaliseCvIntakeLegacy(
     input: {
       cvRecordId: string;
       existingCandidateId?: string;
@@ -606,7 +728,7 @@ export class CandidatePoolService {
     const services = getApplicationDataServices();
     const snapshot = services.storage.exportState();
     try {
-      const result = this.finaliseCvIntake(finaliseInput, context);
+      const result = await this.finaliseCvIntake(finaliseInput, context);
       const { CandidateService } = await import("./candidate-service.ts");
       const recommendation = new CandidateService().addRecommendation(
         {

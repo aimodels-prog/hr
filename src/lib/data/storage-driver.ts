@@ -30,6 +30,18 @@ export class MemoryStorageDriver implements StorageDriver {
   }
 }
 
+let browserCacheDriver: MemoryStorageDriver | undefined;
+
+/**
+ * Session-only compatibility cache for screens that are hydrated from PostgreSQL.
+ * Operational HR records must never regain authority merely because a browser value survived a
+ * refresh. Development identity preferences use the separate browser-preference driver below.
+ */
+export function getBrowserCacheStorageDriver(): StorageDriver {
+  browserCacheDriver ??= new MemoryStorageDriver();
+  return browserCacheDriver;
+}
+
 export function getBrowserStorageDriver(): StorageDriver {
   if (typeof window === "undefined" || !window.localStorage) {
     return new MemoryStorageDriver();

@@ -1,26 +1,86 @@
 import "@tanstack/react-start/server-only";
 
+import { getRequest } from "@tanstack/react-start/server";
 import { and, eq } from "drizzle-orm";
 
+import { getPortalPrincipalForRequest } from "../auth/portal-auth-http.server.ts";
+import { isPortalSsoEnabled } from "../auth/portal-sso-config.server.ts";
 import { getDatabaseClient } from "./client.ts";
 import { roles, userRoles, users } from "./schema/employee.ts";
-import { organisations } from "./schema/organisation.ts";
 import type { Role } from "../data/types.ts";
+export {
+  clearDefaultOrganisationCacheForTests,
+  resolveDefaultOrganisationId,
+} from "./organisation.server.ts";
 
-let cachedDefaultOrgId: string | null = null;
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
 
-export async function resolveDefaultOrganisationId(): Promise<string> {
-  if (cachedDefaultOrgId) return cachedDefaultOrgId;
+async function authenticatedPortalActor(
+  actorUserId: string,
+  workspaceEmail?: string,
+): Promise<{ userId: string; employeeId: string; organisationId: string } | null> {
+  if (!isPortalSsoEnabled()) return null;
+  let request: Request;
+  try {
+    request = getRequest();
+  } catch {
+    throw new Error("An authenticated VIA Portal request is required.");
+  }
+  const principal = await getPortalPrincipalForRequest(request);
+  if (!principal) throw new Error("Your VIA HR session is missing or has expired.");
+  const actorMatches = actorUserId === principal.user.id || actorUserId === principal.employee.id;
+  const emailMatches =
+    !workspaceEmail || workspaceEmail.trim().toLowerCase() === principal.user.workspaceEmail;
+  if (!actorMatches || !emailMatches) {
+    throw new Error("The requested actor does not match the authenticated VIA Portal session.");
+  }
+  return {
+    userId: principal.user.id,
+    employeeId: principal.employee.id,
+    organisationId: principal.organisationId,
+  };
+}
+
+export async function resolveOrganisationIdForActor(
+  actorUserId: string,
+  workspaceEmail?: string,
+): Promise<string> {
+  const authenticated = await authenticatedPortalActor(actorUserId, workspaceEmail);
+  if (authenticated) return authenticated.organisationId;
   const db = getDatabaseClient();
-  const [org] = await db
-    .select({ id: organisations.id })
-    .from(organisations)
-    .where(eq(organisations.isActive, true))
-    .limit(1);
+  if (isUuid(actorUserId)) {
+    const [user] = await db
+      .select({ organisationId: users.organisationId })
+      .from(users)
+      .where(and(eq(users.status, "Active"), eq(users.id, actorUserId)))
+      .limit(1);
+    if (user) return user.organisationId;
 
-  if (!org) throw new Error("No active organisation found.");
-  cachedDefaultOrgId = org.id;
-  return org.id;
+    const [employeeUser] = await db
+      .select({ organisationId: users.organisationId })
+      .from(users)
+      .where(and(eq(users.status, "Active"), eq(users.employeeId, actorUserId)))
+      .limit(1);
+    if (employeeUser) return employeeUser.organisationId;
+  }
+
+  if (workspaceEmail) {
+    const [emailUser] = await db
+      .select({ organisationId: users.organisationId })
+      .from(users)
+      .where(
+        and(
+          eq(users.status, "Active"),
+          eq(users.workspaceEmail, workspaceEmail.trim().toLowerCase()),
+        ),
+      )
+      .limit(1);
+    if (emailUser) return emailUser.organisationId;
+  }
+
+  throw new Error("Actor is not linked to an active VIA HR user.");
 }
 
 export interface VerifiedActor {
@@ -37,29 +97,58 @@ export async function verifyServerActorRole(
   orgId: string,
   actorUserId: string,
   requiredRole?: Role | Role[],
+  workspaceEmail?: string,
 ): Promise<{ verified: boolean; actor?: VerifiedActor; error?: string }> {
+  try {
+    const authenticated = await authenticatedPortalActor(actorUserId, workspaceEmail);
+    if (authenticated && authenticated.organisationId !== orgId) {
+      return { verified: false, error: "The authenticated user is outside this organisation." };
+    }
+  } catch (error) {
+    return {
+      verified: false,
+      error: error instanceof Error ? error.message : "VIA Portal authentication failed.",
+    };
+  }
   const db = getDatabaseClient();
 
-  // Find user by ID or fallback by employee ID for system compatibility
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(
-      and(eq(users.organisationId, orgId), eq(users.status, "Active"), eq(users.id, actorUserId)),
-    );
-
-  if (!user) {
-    // Try matching if actorUserId is deterministic or employeeId
-    const [fallbackUser] = await db
+  let user: typeof users.$inferSelect | undefined;
+  if (isUuid(actorUserId)) {
+    [user] = await db
       .select()
       .from(users)
       .where(
-        and(
-          eq(users.organisationId, orgId),
-          eq(users.status, "Active"),
-          eq(users.employeeId, actorUserId),
-        ),
+        and(eq(users.organisationId, orgId), eq(users.status, "Active"), eq(users.id, actorUserId)),
       );
+  }
+
+  if (!user) {
+    let fallbackUser: typeof users.$inferSelect | undefined;
+    if (isUuid(actorUserId)) {
+      [fallbackUser] = await db
+        .select()
+        .from(users)
+        .where(
+          and(
+            eq(users.organisationId, orgId),
+            eq(users.status, "Active"),
+            eq(users.employeeId, actorUserId),
+          ),
+        );
+    }
+
+    if (!fallbackUser && workspaceEmail) {
+      [fallbackUser] = await db
+        .select()
+        .from(users)
+        .where(
+          and(
+            eq(users.organisationId, orgId),
+            eq(users.status, "Active"),
+            eq(users.workspaceEmail, workspaceEmail.trim().toLowerCase()),
+          ),
+        );
+    }
 
     if (!fallbackUser) {
       return { verified: false, error: `Actor user ${actorUserId} not found or inactive.` };

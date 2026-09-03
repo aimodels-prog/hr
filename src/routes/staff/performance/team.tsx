@@ -64,9 +64,9 @@ function TeamPerformancePage() {
     employees.find((employee) => employee.id === id)?.preferredName ||
     employees.find((employee) => employee.id === id)?.legalName ||
     "Employee";
-  const perform = (action: () => void, success: string) => {
+  const perform = async (action: () => Promise<unknown>, success: string) => {
     try {
-      action();
+      await action();
       refresh();
       toast.success(success);
     } catch (error) {
@@ -170,11 +170,21 @@ function TeamPerformancePage() {
                       </Button>
                       <Button
                         onClick={() =>
-                          perform(
+                          void perform(
                             () =>
                               goal.status === "Completion Pending"
-                                ? goalService.approveCompletion(goal.id, context)
-                                : goalService.approveGoal(goal.id, context),
+                                ? goalService.decideGoalAsync(
+                                    goal.id,
+                                    "complete",
+                                    undefined,
+                                    context,
+                                  )
+                                : goalService.decideGoalAsync(
+                                    goal.id,
+                                    "approve",
+                                    undefined,
+                                    context,
+                                  ),
                             goal.status === "Completion Pending"
                               ? "Completion confirmed"
                               : "Objective approved",
@@ -332,8 +342,8 @@ function TeamPerformancePage() {
             <Button
               onClick={() => {
                 if (!returning) return;
-                perform(
-                  () => goalService.returnGoal(returning.id, returnReason, context),
+                void perform(
+                  () => goalService.decideGoalAsync(returning.id, "return", returnReason, context),
                   "Objective returned to the employee",
                 );
                 setReturning(null);

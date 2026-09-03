@@ -131,7 +131,7 @@ export function InterviewDialog({
     const slot = proposedSlots[selectedSlotIndex]!;
 
     try {
-      const interview = interviewService.createInterview(
+      const interview = await interviewService.createInterviewAsync(
         {
           vacancyId,
           candidateId,
@@ -147,7 +147,30 @@ export function InterviewDialog({
         currentUser!.getActorContext(),
       );
 
-      await interviewService.confirmInterview(interview.id, slot, currentUser!.getActorContext());
+      await interviewService
+        .updateWorkflowAsync(
+          interview.id,
+          {
+            action: "candidate-accepted",
+            slot,
+            reason: "HR confirmed the selected interview time",
+          },
+          currentUser!.getActorContext(),
+        )
+        .catch(async (error) => {
+          // A newly created interview has not yet been sent to the candidate, so HR may
+          // confirm the chosen availability directly through the status action.
+          if (!(error instanceof Error) || !error.message.includes("awaiting")) throw error;
+          return interviewService.updateWorkflowAsync(
+            interview.id,
+            {
+              action: "change-status",
+              status: "Scheduled",
+              reason: "HR confirmed the selected interview time",
+            },
+            currentUser!.getActorContext(),
+          );
+        });
 
       toast.success("Interview scheduled and invitation details saved");
       onOpenChange(false);

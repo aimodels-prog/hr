@@ -28,13 +28,81 @@ export class DocumentExpiryService {
 
   constructor() {}
 
+  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+    await Promise.all([
+      this.employeeService.hydrateCompatibilityCache(context),
+      this.documentService.hydrateCompatibilityCache(context),
+    ]);
+  }
+
+  private async updateTracking(
+    documentId: string,
+    action:
+      | { kind: "assign"; ownerEmployeeId: string }
+      | { kind: "snooze"; until: string; reason: string }
+      | { kind: "waive"; reason: string },
+    context: ActorContext,
+  ): Promise<void> {
+    const { storage } = getApplicationDataServices();
+    const users = storage.readCollection<{ id: string; workspaceEmail?: string }>("users");
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    const { updateDocumentExpiryTrackingFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    await updateDocumentExpiryTrackingFn({
+      data: {
+        actor: {
+          actorId: context.actor.userId,
+          ...(actorEmail ? { actorEmail } : {}),
+          activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+        },
+        documentId,
+        ...action,
+      },
+    });
+    await this.documentService.hydrateCompatibilityCache(context);
+  }
+
+  async assignOwnerAsync(docId: string, ownerUserId: string, context: ActorContext): Promise<void> {
+    const { storage } = getApplicationDataServices();
+    const user = storage
+      .readCollection<{ id: string; employeeId?: string }>("users")
+      .find((item) => item.id === ownerUserId);
+    const employee = storage
+      .readCollection<{ id: string; databaseId?: string }>("employees")
+      .find((item) => item.id === user?.employeeId);
+    if (!user?.employeeId || !employee)
+      throw new Error("The selected HR owner has no employee record.");
+    await this.updateTracking(
+      docId,
+      { kind: "assign", ownerEmployeeId: employee.databaseId ?? employee.id },
+      context,
+    );
+  }
+
+  async snoozeDocumentAsync(
+    docId: string,
+    until: string,
+    reason: string,
+    context: ActorContext,
+  ): Promise<void> {
+    await this.updateTracking(docId, { kind: "snooze", until, reason }, context);
+  }
+
+  async waiveDocumentAsync(docId: string, reason: string, context: ActorContext): Promise<void> {
+    await this.updateTracking(docId, { kind: "waive", reason }, context);
+  }
+
   async runReminderEngine(actorContext: ActorContext) {
     const { notifications, audit } = getApplicationDataServices();
     const allDocs = this.documentService.getDocumentRepository(SYSTEM_CONTEXT).list();
     // The organisation's own configured advance-notice days (e.g. 90/60/30/14/7/1), not a
     // hardcoded list - HR can tune how much warning employees and HR get before a document
     // expires without a code change.
-    const configuredDays = [...new Set(this.settingsService.getAppSettingsSync().documentReminderDays)]
+    const configuredDays = [
+      ...new Set(this.settingsService.getAppSettingsSync().documentReminderDays),
+    ]
       .filter((day) => Number.isFinite(day) && day > 0)
       .sort((a, b) => b - a);
     const reminderThresholds = [...configuredDays, ...OVERDUE_THRESHOLDS];

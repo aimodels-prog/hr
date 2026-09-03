@@ -1,6 +1,24 @@
 name: via-hr-system
 
 services:
+  object-storage:
+    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${VIA_HR_OBJECT_STORAGE_ACCESS_KEY_ID:?Set VIA_HR_OBJECT_STORAGE_ACCESS_KEY_ID in .env.database}
+      MINIO_ROOT_PASSWORD: ${VIA_HR_OBJECT_STORAGE_SECRET_ACCESS_KEY:?Set VIA_HR_OBJECT_STORAGE_SECRET_ACCESS_KEY in .env.database}
+    ports:
+      - "${VIA_HR_OBJECT_STORAGE_PORT:-59000}:9000"
+      - "${VIA_HR_OBJECT_STORAGE_CONSOLE_PORT:-59001}:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - via_hr_object_data:/data
+
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
@@ -20,3 +38,4 @@ services:
 
 volumes:
   via_hr_postgres_data:
+  via_hr_object_data:

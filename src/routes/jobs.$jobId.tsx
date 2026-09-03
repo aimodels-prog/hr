@@ -22,17 +22,15 @@ import {
 } from "@/components/ui/form";
 import { Label } from "@/components/ui/label";
 import { VacancyService } from "@/lib/data/vacancy-service";
-import { CandidateService } from "@/lib/data/candidate-service";
-import { getApplicationDataServices, initializeApplicationData } from "@/lib/data/application-data";
+import { initializeApplicationData } from "@/lib/data/application-data";
 import type { Vacancy } from "@/lib/data/types";
-import { SYSTEM_ACTOR } from "@/lib/data/types";
 import { getSupportedCvMimeType } from "@/lib/data/cv-file-validation";
 
 export const Route = createFileRoute("/jobs/$jobId")({
   head: ({ params }) => {
     const vacancyService = new VacancyService();
     const job = vacancyService.getVacancyRepository().getById(params.jobId);
-    const title = job ? `${job.title} — Careers at VIA International` : "Role — VIA International";
+    const title = job ? `${job.title} | Careers at VIA International` : "Role | VIA International";
     const description = job?.summary ?? "Open role at VIA International.";
     return {
       meta: [
@@ -65,9 +63,7 @@ const formSchema = z.object({
       answer: z.string().min(1, "This question requires an answer"),
     }),
   ),
-  consent: z.literal(true, {
-    errorMap: () => ({ message: "You must agree to the privacy policy" }),
-  }),
+  consent: z.boolean().refine((value) => value, "You must agree to the privacy policy"),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -81,12 +77,25 @@ function JobDetail() {
 
   useEffect(() => {
     initializeApplicationData();
-    const vacancy = new VacancyService().getVacancyRepository().getById(jobId);
-    setJob(vacancy?.status === "Open" ? vacancy : null);
+    let cancelled = false;
+    const service = new VacancyService();
+    service
+      .hydrateCompatibilityCache()
+      .then(() => {
+        if (cancelled) return;
+        const vacancy = service.getVacancyRepository().getById(jobId);
+        setJob(vacancy?.status === "Open" ? vacancy : null);
+      })
+      .catch(() => {
+        if (!cancelled) setJob(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [jobId]);
 
   const form = useForm<FormValues>({
-    resolver: zodResolver(formSchema) as any,
+    resolver: zodResolver(formSchema),
     defaultValues: {
       firstName: "",
       lastName: "",
@@ -103,7 +112,7 @@ function JobDetail() {
       screeningAnswers: [],
       // Consent must be an affirmative, unprompted action - defaulting it to checked defeats the
       // entire point of asking for consent, since most applicants would never notice or uncheck it.
-      consent: false as any,
+      consent: false,
     },
   });
 
@@ -169,67 +178,60 @@ function JobDetail() {
 
     setSubmitting(true);
     try {
-      // Process file to array buffer
       const buffer = await cvFile.arrayBuffer();
-
-      const { files } = getApplicationDataServices();
       const resolvedMimeType = getSupportedCvMimeType(cvFile);
       if (!resolvedMimeType) throw new Error("Unsupported CV file type.");
-      const fileRecord = await files.save(
-        {
-          blob: new Blob([buffer], { type: resolvedMimeType }),
-          name: cvFile.name,
-          mimeType: resolvedMimeType,
-          owner: { entityType: "CandidateApplication", entityId: "pending" },
-        },
-        { actor: SYSTEM_ACTOR },
-      );
-
-      const candidateService = new CandidateService();
-
-      let applicationSaved = false;
+      if (!job.databaseId) throw new Error("This vacancy is temporarily unavailable.");
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+      }
       try {
-        const result = await candidateService.submitApplication({
-          firstName: values.firstName,
-          lastName: values.lastName,
-          email: values.email,
-          phone: values.phone,
-          nationality: values.nationality || undefined,
-          location: values.location,
-          currentCompany: values.currentCompany || undefined,
-          currentTitle: values.currentTitle || undefined,
-          yearsOfExperience: values.yearsOfExperience,
-          noticePeriod: values.noticePeriod,
-          salaryExpectation: values.salaryExpectation || undefined,
-          coverNote: values.coverNote || undefined,
-          screeningAnswers: values.screeningAnswers,
-          cvFileId: fileRecord.id,
-          vacancyId: job.id,
-          consent: values.consent,
+        const response = await fetch("/api/public/applications", {
+          method: "POST",
+          headers: { "content-type": "application/json", accept: "application/json" },
+          body: JSON.stringify({
+            vacancyId: job.databaseId,
+            firstName: values.firstName,
+            lastName: values.lastName,
+            email: values.email,
+            phone: values.phone,
+            nationality: values.nationality || undefined,
+            location: values.location,
+            currentCompany: values.currentCompany || undefined,
+            currentTitle: values.currentTitle || undefined,
+            yearsOfExperience: values.yearsOfExperience,
+            noticePeriod: values.noticePeriod,
+            salaryExpectation: values.salaryExpectation || undefined,
+            coverNote: values.coverNote || undefined,
+            screeningAnswers: values.screeningAnswers,
+            consent: values.consent,
+            fileName: cvFile.name,
+            mimeType: resolvedMimeType,
+            fileBase64: btoa(binary),
+          }),
         });
-        applicationSaved = true;
-        navigate({ to: "/jobs/applied", search: { ref: result.referenceId } });
-      } catch (err: any) {
-        if (!applicationSaved) {
-          try {
-            await files.delete(fileRecord.id, {
-              actor: SYSTEM_ACTOR,
-              reason: "Removed an unattached CV after application submission did not complete",
-            });
-          } catch {
-            // Preserve the original application error. A later file-maintenance pass can still
-            // identify the pending owner if IndexedDB itself is unavailable during cleanup.
-          }
+        const result = (await response.json()) as {
+          referenceId?: string;
+          error?: string;
+        };
+        if (!response.ok || !result.referenceId) {
+          throw new Error(result.error || "Your application could not be submitted.");
         }
-        if (err.message === "DUPLICATE_APPLICATION") {
+        navigate({ to: "/jobs/applied", search: { ref: result.referenceId } });
+      } catch (error: unknown) {
+        if (error instanceof Error && error.message === "DUPLICATE_APPLICATION") {
           // Safe rule: Don't leak existing record, just pretend it worked or softly warn.
           // The prompt says "prevent accidental repeated submissions" and "show a safe message without exposing existing private data."
           navigate({ to: "/jobs/applied", search: { ref: "DUPLICATE" } });
         } else {
-          toast.error("Application failed", { description: err.message });
+          toast.error("Application failed", {
+            description: error instanceof Error ? error.message : "Please try again.",
+          });
         }
       }
-    } catch (err: any) {
+    } catch {
       toast.error("Error processing application", { description: "Please try again." });
     } finally {
       setSubmitting(false);
@@ -308,10 +310,10 @@ function JobDetail() {
           <h2 className="font-display text-lg font-semibold mb-5">Apply for this role</h2>
 
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit as any)} className="space-y-4">
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="firstName"
                   render={({ field }) => (
                     <FormItem>
@@ -326,7 +328,7 @@ function JobDetail() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="lastName"
                   render={({ field }) => (
                     <FormItem>
@@ -342,7 +344,7 @@ function JobDetail() {
                 />
               </div>
               <FormField
-                control={form.control as any}
+                control={form.control}
                 name="email"
                 render={({ field }) => (
                   <FormItem>
@@ -357,7 +359,7 @@ function JobDetail() {
                 )}
               />
               <FormField
-                control={form.control as any}
+                control={form.control}
                 name="phone"
                 render={({ field }) => (
                   <FormItem>
@@ -372,7 +374,7 @@ function JobDetail() {
                 )}
               />
               <FormField
-                control={form.control as any}
+                control={form.control}
                 name="location"
                 render={({ field }) => (
                   <FormItem>
@@ -389,7 +391,7 @@ function JobDetail() {
 
               <div className="grid grid-cols-2 gap-4">
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="yearsOfExperience"
                   render={({ field }) => (
                     <FormItem>
@@ -409,7 +411,7 @@ function JobDetail() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="noticePeriod"
                   render={({ field }) => (
                     <FormItem>
@@ -427,7 +429,7 @@ function JobDetail() {
 
               <div className="grid grid-cols-2 gap-4">
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="currentCompany"
                   render={({ field }) => (
                     <FormItem>
@@ -440,7 +442,7 @@ function JobDetail() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="currentTitle"
                   render={({ field }) => (
                     <FormItem>
@@ -455,7 +457,7 @@ function JobDetail() {
               </div>
 
               <FormField
-                control={form.control as any}
+                control={form.control}
                 name="salaryExpectation"
                 render={({ field }) => (
                   <FormItem>
@@ -471,7 +473,7 @@ function JobDetail() {
               {screeningFields.map((field, index) => (
                 <FormField
                   key={field.id}
-                  control={form.control as any}
+                  control={form.control}
                   name={`screeningAnswers.${index}.answer`}
                   render={({ field: f }) => (
                     <FormItem>
@@ -512,7 +514,7 @@ function JobDetail() {
               </div>
 
               <FormField
-                control={form.control as any}
+                control={form.control}
                 name="coverNote"
                 render={({ field }) => (
                   <FormItem>
@@ -530,7 +532,7 @@ function JobDetail() {
               />
 
               <FormField
-                control={form.control as any}
+                control={form.control}
                 name="consent"
                 render={({ field }) => (
                   <FormItem className="flex flex-row items-start space-x-3 space-y-0 p-4 border rounded-md bg-muted/50">

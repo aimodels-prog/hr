@@ -65,10 +65,10 @@ export function InterviewDispositionActions({
 
   if (interview.status !== "Completed" && interview.status !== "No Show") return null;
 
-  const save = () => {
+  const save = async () => {
     setSaving(true);
     try {
-      service.recordDisposition(
+      await service.recordDispositionAsync(
         interview.id,
         {
           outcome,

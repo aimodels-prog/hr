@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -66,7 +66,7 @@ const REASON_CATEGORIES: OffboardingReasonCategory[] = [
 const startCaseSchema = z.object({
   employeeId: z.string().min(1, "Select an employee"),
   templateId: z.string().min(1, "Select an offboarding template"),
-  assignedHRId: z.string().optional(),
+  assignedHRId: z.string().min(1, "Select the HR case owner"),
   reasonCategory: z.enum([
     "Resignation",
     "Termination",
@@ -87,8 +87,33 @@ function OffboardingDashboard() {
   const [obService] = useState(() => new OffboardingService());
   const [empService] = useState(() => new EmployeeService());
   const [isStartOpen, setIsStartOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   const [, setRefresh] = useState(0);
+  const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError("");
+    void Promise.all([
+      empService.hydrateCompatibilityCache(actorContext),
+      obService.hydrateCompatibilityCache(actorContext),
+    ])
+      .then(() => {
+        if (active) setRefresh((value) => value + 1);
+      })
+      .catch((error) => {
+        if (active)
+          setLoadError(error instanceof Error ? error.message : "Offboarding could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [actorContext, empService, obService]);
   const cases = obService.getCasesForContext(currentUser.getActorContext());
   const activeCases = cases.filter((c) => c.status !== "Completed" && c.status !== "Cancelled");
   const employees = empService.getEmployees(currentUser.getActorContext());
@@ -120,9 +145,9 @@ function OffboardingDashboard() {
     },
   });
 
-  const onStartCase = (values: z.infer<typeof startCaseSchema>) => {
+  const onStartCase = async (values: z.infer<typeof startCaseSchema>) => {
     try {
-      obService.startCase(
+      await obService.startCaseAsync(
         values.employeeId,
         values.reasonCategory,
         values.noticeDate,
@@ -132,7 +157,7 @@ function OffboardingDashboard() {
         currentUser.getActorContext(),
         {
           templateId: values.templateId,
-          ...(values.assignedHRId ? { assignedHRId: values.assignedHRId } : {}),
+          assignedHRId: values.assignedHRId,
           confidentialityLevel: values.confidentialityLevel,
         },
       );
@@ -356,6 +381,18 @@ function OffboardingDashboard() {
             </Dialog>
           }
         />
+        {loading && (
+          <Card>
+            <CardContent className="p-6 text-sm text-muted-foreground">
+              Loading offboarding records...
+            </CardContent>
+          </Card>
+        )}
+        {loadError && (
+          <Card className="border-destructive/40">
+            <CardContent className="p-6 text-sm text-destructive">{loadError}</CardContent>
+          </Card>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <Card>

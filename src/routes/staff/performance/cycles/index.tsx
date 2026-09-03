@@ -145,25 +145,27 @@ function PerformanceCyclesPage() {
                             size="sm"
                             variant="outline"
                             onClick={() => {
-                              try {
-                                perfService.updateCycleStatus(
+                              void perfService
+                                .updateCycleStatusAsync(
                                   c.id,
                                   c.status === "Draft" ? "Active" : "Completed",
                                   context,
-                                );
-                                setVersion((value) => value + 1);
-                                toast.success(
-                                  c.status === "Draft"
-                                    ? "Review cycle launched"
-                                    : "Review cycle completed",
-                                );
-                              } catch (error) {
-                                toast.error(
-                                  error instanceof Error
-                                    ? error.message
-                                    : "The cycle could not be updated.",
-                                );
-                              }
+                                )
+                                .then(() => {
+                                  setVersion((value) => value + 1);
+                                  toast.success(
+                                    c.status === "Draft"
+                                      ? "Review cycle launched"
+                                      : "Review cycle completed",
+                                  );
+                                })
+                                .catch((error) => {
+                                  toast.error(
+                                    error instanceof Error
+                                      ? error.message
+                                      : "The cycle could not be updated.",
+                                  );
+                                });
                             }}
                           >
                             {c.status === "Draft" ? (

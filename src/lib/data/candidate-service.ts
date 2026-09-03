@@ -86,6 +86,395 @@ export class CandidateService {
     });
   }
 
+  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+    if (typeof window === "undefined") return;
+    const { getRecruitmentSnapshotFn } = await import("../server-functions/candidate.server.ts");
+    const users = getApplicationDataServices().storage.readCollection<{
+      id: string;
+      databaseId?: string;
+      workspaceEmail?: string;
+    }>("users");
+    const employees = getApplicationDataServices().storage.readCollection<{
+      id: string;
+      databaseId?: string;
+    }>("employees");
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    const snapshot = await getRecruitmentSnapshotFn({
+      data: {
+        actorId: context.actor.userId,
+        ...(actorEmail ? { actorEmail } : {}),
+        activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+      },
+    });
+    const employeeIdMap = new Map(
+      employees.filter((item) => item.databaseId).map((item) => [item.databaseId!, item.id]),
+    );
+    const userIdMap = new Map(
+      users.filter((item) => item.databaseId).map((item) => [item.databaseId!, item.id]),
+    );
+    const { storage } = getApplicationDataServices();
+    const vacancyIdMap = new Map(
+      storage
+        .readCollection<{ id: string; databaseId?: string }>("vacancies")
+        .filter((item) => item.databaseId)
+        .map((item) => [item.databaseId!, item.id]),
+    );
+    const localVacancyId = (id: string) => vacancyIdMap.get(id) ?? id;
+    storage.writeCollection(
+      "candidates",
+      snapshot.candidates.map((candidate) => ({
+        ...candidate,
+        ...(candidate.hrOwnerId
+          ? { hrOwnerId: employeeIdMap.get(candidate.hrOwnerId) ?? candidate.hrOwnerId }
+          : {}),
+        ...(candidate.convertedToEmployeeId
+          ? {
+              convertedToEmployeeId:
+                employeeIdMap.get(candidate.convertedToEmployeeId) ??
+                candidate.convertedToEmployeeId,
+            }
+          : {}),
+      })),
+    );
+    storage.writeCollection(
+      "applications",
+      snapshot.applications.map((record) => ({
+        ...record,
+        vacancyId: localVacancyId(record.vacancyId),
+      })),
+    );
+    storage.writeCollection(
+      "candidate_cv_records",
+      snapshot.candidateCvRecords.map((record) => ({
+        ...record,
+        ...(record.vacancyId ? { vacancyId: localVacancyId(record.vacancyId) } : {}),
+      })),
+    );
+    storage.writeCollection(
+      "candidate_preparation_runs",
+      snapshot.candidatePreparationRuns.map((record) => ({
+        ...record,
+        vacancyId: localVacancyId(record.vacancyId),
+      })),
+    );
+    storage.writeCollection(
+      "candidate_assessment_inclusions",
+      snapshot.candidateAssessmentInclusions.map((record) => ({
+        ...record,
+        vacancyId: localVacancyId(record.vacancyId),
+      })),
+    );
+    storage.writeCollection(
+      "candidate_assessment_batches",
+      snapshot.candidateAssessmentBatches.map((record) => ({
+        ...record,
+        vacancyId: localVacancyId(record.vacancyId),
+      })),
+    );
+    storage.writeCollection(
+      "candidate_scores",
+      snapshot.candidateScores.map((record) => ({
+        ...record,
+        vacancyId: localVacancyId(record.vacancyId),
+      })),
+    );
+    storage.writeCollection(
+      "candidate_interview_recommendations",
+      snapshot.candidateInterviewRecommendations.map((recommendation) => ({
+        ...recommendation,
+        vacancyId: localVacancyId(recommendation.vacancyId),
+        recommendedByUserId:
+          userIdMap.get(recommendation.recommendedByUserId) ?? recommendation.recommendedByUserId,
+      })),
+    );
+    storage.writeCollection(
+      "candidate_contacts",
+      snapshot.candidateContacts.map((contact) => ({
+        ...contact,
+        ...(contact.vacancyId ? { vacancyId: localVacancyId(contact.vacancyId) } : {}),
+        contactedByUserId: userIdMap.get(contact.contactedByUserId) ?? contact.contactedByUserId,
+      })),
+    );
+    storage.writeCollection(
+      "candidate_recommendations",
+      snapshot.candidateRecommendations.map((recommendation) => ({
+        ...recommendation,
+        ...(recommendation.vacancyId
+          ? { vacancyId: localVacancyId(recommendation.vacancyId) }
+          : {}),
+        hrOwnerId: employeeIdMap.get(recommendation.hrOwnerId) ?? recommendation.hrOwnerId,
+        ...(recommendation.employeeId
+          ? {
+              employeeId: employeeIdMap.get(recommendation.employeeId) ?? recommendation.employeeId,
+            }
+          : {}),
+      })),
+    );
+    storage.writeCollection(
+      "shortlist_snapshots",
+      snapshot.shortlistSnapshots.map((record) => ({
+        ...record,
+        vacancyId: localVacancyId(record.vacancyId),
+      })),
+    );
+    storage.writeCollection(
+      "interview_templates",
+      snapshot.interviewTemplates.map((record) => ({
+        ...record,
+        ...(record.vacancyId ? { vacancyId: localVacancyId(record.vacancyId) } : {}),
+      })),
+    );
+    storage.writeCollection(
+      "interview_events",
+      snapshot.interviewEvents.map((record) => ({
+        ...record,
+        ...(record.vacancyId ? { vacancyId: localVacancyId(record.vacancyId) } : {}),
+        panelUserIds: record.panelUserIds.map((id) => userIdMap.get(id) ?? id),
+      })),
+    );
+    storage.writeCollection(
+      "interview_dispositions",
+      snapshot.interviewDispositions.map((record) => ({
+        ...record,
+        ...(record.vacancyId ? { vacancyId: localVacancyId(record.vacancyId) } : {}),
+        futureVacancyIds: record.futureVacancyIds.map(localVacancyId),
+        recordedByUserId: userIdMap.get(record.recordedByUserId) ?? record.recordedByUserId,
+      })),
+    );
+    storage.writeCollection(
+      "interview_scorecards",
+      snapshot.interviewScorecards.map((record) => ({
+        ...record,
+        panelUserId: userIdMap.get(record.panelUserId) ?? record.panelUserId,
+      })),
+    );
+    storage.writeCollection(
+      "hiring_decisions",
+      snapshot.hiringDecisions.map((record) => ({
+        ...record,
+        vacancyId: localVacancyId(record.vacancyId),
+      })),
+    );
+    storage.writeCollection(
+      "job_offers",
+      snapshot.jobOffers.map((record) => ({
+        ...record,
+        vacancyId: localVacancyId(record.vacancyId),
+        ...(record.convertedToEmployeeId
+          ? {
+              convertedToEmployeeId:
+                employeeIdMap.get(record.convertedToEmployeeId) ?? record.convertedToEmployeeId,
+            }
+          : {}),
+      })),
+    );
+    window.dispatchEvent(new CustomEvent("via_hr:data_changed"));
+  }
+
+  private actorServerData(context: ActorContext) {
+    const users = getApplicationDataServices().storage.readCollection<{
+      id: string;
+      workspaceEmail?: string;
+    }>("users");
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    return {
+      actorId: context.actor.userId,
+      ...(actorEmail ? { actorEmail } : {}),
+      activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+    };
+  }
+
+  private databaseVacancyId(id?: string): string | undefined {
+    if (!id) return undefined;
+    const vacancy = getApplicationDataServices()
+      .storage.readCollection<{ id: string; databaseId?: string }>("vacancies")
+      .find((item) => item.id === id || item.databaseId === id);
+    return vacancy?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
+  }
+
+  async updateCandidateStageAsync(
+    candidateId: string,
+    stage: Candidate["stage"],
+    context: ActorContext,
+  ): Promise<void> {
+    const { updateCandidateStageFn } = await import("../server-functions/candidate.server.ts");
+    await updateCandidateStageFn({
+      data: {
+        actor: this.actorServerData(context),
+        candidateId,
+        stage,
+        reason: context.reason || `Changed candidate stage to ${stage}`,
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+  }
+
+  async reassignOwnerAsync(
+    candidateId: string,
+    ownerUserId: string,
+    context: ActorContext,
+  ): Promise<void> {
+    const owner = getApplicationDataServices()
+      .storage.readCollection<{ id: string; databaseId?: string }>("users")
+      .find((user) => user.id === ownerUserId || user.databaseId === ownerUserId);
+    if (!owner?.databaseId)
+      throw new Error("The selected HR owner is not connected to the database.");
+    const { reassignCandidateOwnerFn } = await import("../server-functions/candidate.server.ts");
+    await reassignCandidateOwnerFn({
+      data: {
+        actor: this.actorServerData(context),
+        candidateId,
+        ownerUserId: owner.databaseId,
+        reason: context.reason || "Reassigned candidate ownership",
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+  }
+
+  async updateCandidateDetailsAsync(
+    candidateId: string,
+    details: Partial<Candidate>,
+    context: ActorContext,
+  ): Promise<void> {
+    if (
+      !details.email ||
+      !details.phone ||
+      !details.location ||
+      details.yearsOfExperience === undefined
+    ) {
+      throw new Error("Email, phone, location and experience are required.");
+    }
+    const project = details.projectId
+      ? getApplicationDataServices()
+          .storage.readCollection<{ id: string; databaseId?: string }>("projects")
+          .find((item) => item.id === details.projectId || item.databaseId === details.projectId)
+      : undefined;
+    if (details.projectId && !project?.databaseId) {
+      throw new Error("The selected project is not connected to the database.");
+    }
+    const { updateCandidateDetailsFn } = await import("../server-functions/candidate.server.ts");
+    await updateCandidateDetailsFn({
+      data: {
+        actor: this.actorServerData(context),
+        candidateId,
+        reason: context.reason || "Updated candidate recruitment details",
+        details: {
+          email: details.email,
+          phone: details.phone,
+          yearsOfExperience: details.yearsOfExperience,
+          location: details.location,
+          ...(details.currentTitle ? { currentTitle: details.currentTitle } : {}),
+          ...(details.currentCompany ? { currentCompany: details.currentCompany } : {}),
+          ...(details.nationality ? { nationality: details.nationality } : {}),
+          ...(project?.databaseId ? { projectId: project.databaseId } : {}),
+          ...(details.projectName ? { projectName: details.projectName } : {}),
+          ...(details.projectType ? { projectType: details.projectType } : {}),
+          ...(details.shortlistStatus ? { shortlistStatus: details.shortlistStatus } : {}),
+          ...(details.trackerStatus ? { trackerStatus: details.trackerStatus } : {}),
+          ...(details.visaStatus ? { visaStatus: details.visaStatus } : {}),
+          ...(details.maritalStatus ? { maritalStatus: details.maritalStatus } : {}),
+          ...(details.noticePeriod ? { noticePeriod: details.noticePeriod } : {}),
+          ...(details.currentSalary ? { currentSalary: details.currentSalary } : {}),
+          ...(details.expectedSalary ? { expectedSalary: details.expectedSalary } : {}),
+          ...(details.acceptedSalary ? { acceptedSalary: details.acceptedSalary } : {}),
+          ...(details.interviewDate ? { interviewDate: details.interviewDate } : {}),
+          ...(details.remarks ? { remarks: details.remarks } : {}),
+        },
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+  }
+
+  async mergeCandidatesAsync(
+    primaryId: string,
+    duplicateId: string,
+    context: ActorContext,
+  ): Promise<void> {
+    const { mergeCandidatesFn } = await import("../server-functions/candidate.server.ts");
+    await mergeCandidatesFn({
+      data: {
+        actor: this.actorServerData(context),
+        primaryId,
+        duplicateId,
+        reason: context.reason || `Merged duplicate candidate ${duplicateId} into ${primaryId}`,
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+  }
+
+  async logContactAsync(
+    payload: Parameters<CandidateService["logContact"]>[0],
+    context: ActorContext,
+  ): Promise<void> {
+    const occurredAt = payload.occurredAt ? new Date(payload.occurredAt) : new Date();
+    if (Number.isNaN(occurredAt.getTime()) || occurredAt.getTime() > Date.now()) {
+      throw new Error("Enter a valid contact date that is not in the future.");
+    }
+    const vacancyId = this.databaseVacancyId(payload.vacancyId);
+    const { logCandidateContactFn } = await import("../server-functions/candidate.server.ts");
+    await logCandidateContactFn({
+      data: {
+        actor: this.actorServerData(context),
+        contact: {
+          candidateId: payload.candidateId,
+          channel: payload.channel,
+          date: occurredAt.toISOString().slice(0, 10),
+          ...(vacancyId ? { vacancyId } : {}),
+          outcome: payload.outcome,
+          notes: payload.notes,
+          ...(payload.nextFollowUpDate ? { nextFollowUpDate: payload.nextFollowUpDate } : {}),
+        },
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+  }
+
+  async addRecommendationAsync(
+    payload: Parameters<CandidateService["addRecommendation"]>[0],
+    context: ActorContext,
+  ): Promise<void> {
+    const vacancyId = this.databaseVacancyId(payload.vacancyId);
+    const { addCandidateRecommendationFn } =
+      await import("../server-functions/candidate.server.ts");
+    await addCandidateRecommendationFn({
+      data: {
+        actor: this.actorServerData(context),
+        recommendation: {
+          candidateId: payload.candidateId,
+          ...(vacancyId ? { vacancyId } : {}),
+          recommenderType: payload.recommenderType,
+          recommenderName: payload.recommenderName,
+          ...(payload.recommenderCompany ? { recommenderCompany: payload.recommenderCompany } : {}),
+          ...(payload.recommenderPosition
+            ? { recommenderPosition: payload.recommenderPosition }
+            : {}),
+          recommenderEmail: payload.recommenderEmail,
+          ...(payload.recommenderPhone ? { recommenderPhone: payload.recommenderPhone } : {}),
+          ...(payload.relationship ? { relationship: payload.relationship } : {}),
+          date: payload.date.slice(0, 10),
+          notes: payload.notes,
+          ...(payload.commercialTerms ? { commercialTerms: payload.commercialTerms } : {}),
+        },
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+  }
+
+  async exportCandidatesAsync(candidateIds: string[], context: ActorContext): Promise<string> {
+    const { exportCandidatesFn } = await import("../server-functions/candidate.server.ts");
+    return exportCandidatesFn({
+      data: {
+        actor: this.actorServerData(context),
+        candidateIds,
+        reason: context.reason || "Exported the selected Candidate Pool records",
+      },
+    });
+  }
+
   getCandidateRepository() {
     return this.candidateRepo;
   }

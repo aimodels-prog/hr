@@ -50,6 +50,7 @@ export interface PayrollOvertimeLedgerRow {
 }
 
 export interface OvertimeClaim extends BaseRecord {
+  databaseId?: string;
   employeeId: RecordId;
   date: string; // YYYY-MM-DD
   hours: number;

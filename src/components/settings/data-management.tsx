@@ -1,287 +1,209 @@
-import { useState, useRef } from "react";
-import { Download, Upload, RotateCcw, AlertTriangle, CheckCircle2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useCallback, useEffect, useState } from "react";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+  Activity,
+  ArchiveRestore,
+  Clock3,
+  DatabaseBackup,
+  FileLock2,
+  RefreshCcw,
+  ShieldCheck,
+} from "lucide-react";
+
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { useCurrentUser } from "@/lib/auth";
-import {
-  exportApplicationBackup,
-  previewApplicationRestore,
-  restoreApplicationBackup,
-  resetApplicationDemoData,
-} from "@/lib/data/application-data";
-import type { RestorePreview } from "@/lib/data/backup-service";
-import { toast } from "sonner";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+
+const safeguards = [
+  {
+    title: "Complete system backup",
+    description:
+      "All VIA HR records are encrypted and included in a protected backup before it leaves the system.",
+    icon: DatabaseBackup,
+  },
+  {
+    title: "Document backup",
+    description:
+      "Encrypted employee and candidate documents are copied to the separate backup destination with their original record links.",
+    icon: FileLock2,
+  },
+  {
+    title: "Isolated recovery test",
+    description:
+      "A backup is accepted only after it is recovered safely and all records and files are checked.",
+    icon: ArchiveRestore,
+  },
+];
+
+interface WorkerStatus {
+  status: string;
+  activeWorkers: number;
+  staleWorkers: number;
+  queuedJobs: number;
+  retryJobs: number;
+  failedJobs: number;
+  overdueSchedules: number;
+  checkedAt: string;
+}
 
 export function DataManagement() {
-  const { getActorContext, refreshRecords } = useCurrentUser();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
-  const [isRestoreDialogOpen, setIsRestoreDialogOpen] = useState(false);
-  const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
-  const [rawRestoreData, setRawRestoreData] = useState<string>("");
-
-  const handleExport = () => {
+  const [worker, setWorker] = useState<WorkerStatus | null>(null);
+  const [workerError, setWorkerError] = useState("");
+  const [workerLoading, setWorkerLoading] = useState(true);
+  const refreshWorker = useCallback(async () => {
+    setWorkerLoading(true);
+    setWorkerError("");
     try {
-      const data = exportApplicationBackup(getActorContext());
-      const blob = new Blob([data], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `via-hr-backup-${new Date().toISOString().split("T")[0]}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast.success("Backup downloaded");
-    } catch (error: unknown) {
-      toast.error(`Export failed: ${error instanceof Error ? error.message : "Unexpected error"}`);
-    }
-  };
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const content = event.target?.result as string;
-        const preview = previewApplicationRestore(content);
-        setRawRestoreData(content);
-        setRestorePreview(preview);
-        setIsRestoreDialogOpen(true);
-      } catch (error: unknown) {
-        toast.error(
-          `Invalid backup file: ${error instanceof Error ? error.message : "Unexpected error"}`,
-        );
-      } finally {
-        if (fileInputRef.current) fileInputRef.current.value = "";
+      const response = await fetch("/health/worker", { cache: "no-store" });
+      const payload = (await response.json()) as Partial<WorkerStatus>;
+      if (
+        typeof payload.activeWorkers !== "number" ||
+        typeof payload.queuedJobs !== "number" ||
+        typeof payload.failedJobs !== "number"
+      ) {
+        throw new Error("Worker monitoring returned an invalid response.");
       }
-    };
-    reader.readAsText(file);
-  };
-
-  const confirmRestore = () => {
-    try {
-      const result = restoreApplicationBackup(rawRestoreData, getActorContext());
-      const collectionsRestored = Object.keys(result.collectionCounts).length;
-      const totalRecordsRestored = Object.values(result.collectionCounts).reduce(
-        (a, b) => a + b,
-        0,
-      );
-      toast.success(
-        `Restore complete: ${collectionsRestored} sections and ${totalRecordsRestored} records.`,
-      );
-      setIsRestoreDialogOpen(false);
-      refreshRecords();
-      window.dispatchEvent(new CustomEvent("via_hr:data_changed"));
-    } catch (error: unknown) {
-      toast.error(`Restore failed: ${error instanceof Error ? error.message : "Unexpected error"}`);
+      setWorker(payload as WorkerStatus);
+      if (!response.ok) setWorkerError("Background work needs administrator attention.");
+    } catch (error) {
+      setWorker(null);
+      setWorkerError(error instanceof Error ? error.message : "Worker monitoring is unavailable.");
+    } finally {
+      setWorkerLoading(false);
     }
-  };
+  }, []);
 
-  const confirmReset = async () => {
-    try {
-      await resetApplicationDemoData(getActorContext());
-      toast.success("The sample workspace has been restored.");
-      setIsResetDialogOpen(false);
-      refreshRecords();
-      window.dispatchEvent(new CustomEvent("via_hr:data_changed"));
-    } catch (error: unknown) {
-      toast.error(`Reset failed: ${error instanceof Error ? error.message : "Unexpected error"}`);
-    }
-  };
+  useEffect(() => {
+    void refreshWorker();
+  }, [refreshWorker]);
 
   return (
-    <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Download className="h-5 w-5" /> Export Backup
-          </CardTitle>
-          <CardDescription>Download a copy of your VIA HR records and settings.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            Uploaded documents and profile pictures are not included. Keep a separate copy of those
-            files.
-          </p>
-        </CardContent>
-        <CardFooter>
-          <Button onClick={handleExport} className="w-full">
-            Export Data
-          </Button>
-        </CardFooter>
-      </Card>
+    <div className="space-y-6">
+      <Alert className="border-emerald-200 bg-emerald-50/70 text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
+        <ShieldCheck className="h-4 w-4" />
+        <AlertTitle>Protected production backups</AlertTitle>
+        <AlertDescription>
+          VIA HR backups are handled by the authorised server administrator. Browser downloads and
+          uploads cannot replace the organisation&apos;s records or employee documents.
+        </AlertDescription>
+      </Alert>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        {safeguards.map(({ title, description, icon: Icon }) => (
+          <Card key={title}>
+            <CardHeader>
+              <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <Icon className="h-5 w-5" />
+              </div>
+              <CardTitle className="text-base">{title}</CardTitle>
+              <CardDescription>{description}</CardDescription>
+            </CardHeader>
+          </Card>
+        ))}
+      </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Upload className="h-5 w-5" /> Restore Backup
-          </CardTitle>
-          <CardDescription>Restore VIA HR System from a previous backup.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            Restoring will replace the current VIA HR records. You can review the backup before
-            confirming.
-          </p>
-          <input
-            type="file"
-            accept=".json"
-            className="hidden"
-            ref={fileInputRef}
-            onChange={handleFileSelect}
-          />
-        </CardContent>
-        <CardFooter>
-          <Button
-            onClick={() => fileInputRef.current?.click()}
-            variant="secondary"
-            className="w-full"
-          >
-            Select File
-          </Button>
-        </CardFooter>
-      </Card>
-
-      <Card className="border-rose-200 bg-rose-50/50 dark:border-rose-900/50 dark:bg-rose-950/20">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-rose-700 dark:text-rose-500">
-            <RotateCcw className="h-5 w-5" /> Reset Sample Workspace
-          </CardTitle>
-          <CardDescription className="text-rose-600/80 dark:text-rose-400/80">
-            Delete current records and restore the original sample information.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-rose-700/80 dark:text-rose-400/80">
-            All changes, new employees and settings will be permanently removed.
-          </p>
-        </CardContent>
-        <CardFooter>
-          <Button
-            onClick={() => setIsResetDialogOpen(true)}
-            variant="destructive"
-            className="w-full"
-          >
-            Reset System
-          </Button>
-        </CardFooter>
-      </Card>
-
-      {/* Restore Confirmation Dialog */}
-      <Dialog open={isRestoreDialogOpen} onOpenChange={setIsRestoreDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Confirm Restore</DialogTitle>
-            <DialogDescription>
-              Review the backup before replacing the current records.
-            </DialogDescription>
-          </DialogHeader>
-
-          {restorePreview && (
-            <div className="space-y-4 py-2">
-              <Alert variant={restorePreview.valid ? "default" : "destructive"}>
-                {restorePreview.valid ? (
-                  <CheckCircle2 className="h-4 w-4" />
-                ) : (
-                  <AlertTriangle className="h-4 w-4" />
-                )}
-                <AlertTitle>{restorePreview.valid ? "Valid Backup" : "Invalid Backup"}</AlertTitle>
-                <AlertDescription>
-                  {restorePreview.valid
-                    ? "This backup is ready to restore."
-                    : restorePreview.errors.join(" ")}
-                </AlertDescription>
-              </Alert>
-
-              {restorePreview.valid && (
-                <div className="rounded-md bg-muted p-4 text-sm">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="font-medium">Sections:</div>
-                    <div>{Object.keys(restorePreview.collectionCounts).length}</div>
-                    <div className="font-medium">Total Records:</div>
-                    <div>
-                      {Object.values(restorePreview.collectionCounts).reduce(
-                        (total, count) => total + count,
-                        0,
-                      )}
-                    </div>
-                    <div className="font-medium">Created:</div>
-                    <div>
-                      {restorePreview.exportedAt
-                        ? new Date(restorePreview.exportedAt).toLocaleString()
-                        : "Not recorded"}
-                    </div>
-                  </div>
-                  {restorePreview.warnings.length > 0 && (
-                    <div className="mt-3 border-t pt-3 text-amber-700">
-                      {restorePreview.warnings.join(" ")}
-                    </div>
-                  )}
-                </div>
-              )}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Activity className="h-5 w-5" /> Background processing
+              </CardTitle>
+              <CardDescription>
+                Current worker availability, queued work and failed jobs.
+              </CardDescription>
             </div>
-          )}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsRestoreDialogOpen(false)}>
-              Cancel
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void refreshWorker()}
+              disabled={workerLoading}
+            >
+              <RefreshCcw className={`h-4 w-4 ${workerLoading ? "animate-spin" : ""}`} /> Refresh
             </Button>
-            <Button disabled={!restorePreview?.valid} onClick={confirmRestore}>
-              Confirm Restore
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Reset Confirmation Dialog */}
-      <Dialog open={isResetDialogOpen} onOpenChange={setIsResetDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="text-rose-600 flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5" /> Reset Sample Workspace?
-            </DialogTitle>
-            <DialogDescription>
-              This will permanently delete the current VIA HR records saved on this device.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-4">
-            <p className="text-sm font-medium">This action will:</p>
-            <ul className="list-disc pl-5 text-sm text-muted-foreground mt-2 space-y-1">
-              <li>Delete all custom employees, vacancies, and records.</li>
-              <li>Remove current settings, departments and other company lists.</li>
-              <li>Restore the seven original sample employees and default settings.</li>
-            </ul>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsResetDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={confirmReset}>
-              Yes, Reset System
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {workerError ? (
+            <Alert variant="destructive">
+              <AlertTitle>Attention required</AlertTitle>
+              <AlertDescription>{workerError}</AlertDescription>
+            </Alert>
+          ) : null}
+          {workerLoading && !worker ? (
+            <p className="text-sm text-muted-foreground">Checking background processing…</p>
+          ) : worker ? (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+              {[
+                ["Active workers", worker.activeWorkers],
+                ["Stale workers", worker.staleWorkers],
+                ["Queued", worker.queuedJobs],
+                ["Retrying", worker.retryJobs],
+                ["Failed", worker.failedJobs],
+                ["Overdue schedules", worker.overdueSchedules],
+              ].map(([label, value]) => (
+                <div key={String(label)} className="rounded-xl border p-3">
+                  <p className="text-xs text-muted-foreground">{label}</p>
+                  <p className="mt-1 text-xl font-semibold tabular-nums">{value}</p>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {worker ? (
+            <p className="text-xs text-muted-foreground">
+              Last checked {new Date(worker.checkedAt).toLocaleString()}.
+            </p>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <CardTitle>Recovery and retention</CardTitle>
+              <CardDescription>
+                Controls applied to the organisation&apos;s protected records.
+              </CardDescription>
+            </div>
+            <Badge variant="outline" className="gap-1.5">
+              <Clock3 className="h-3.5 w-3.5" /> Administrator managed
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 text-sm md:grid-cols-2">
+            <div className="rounded-xl border p-4">
+              <p className="font-medium">Backup retention</p>
+              <p className="mt-1 text-muted-foreground">
+                Daily and pre-release backups are retained in separate off-server storage according
+                to VIA&apos;s approved retention period.
+              </p>
+            </div>
+            <div className="rounded-xl border p-4">
+              <p className="font-medium">Safe restore</p>
+              <p className="mt-1 text-muted-foreground">
+                Recovery cannot overwrite the live system. It must first be completed and checked in
+                a separate, empty recovery area.
+              </p>
+            </div>
+            <div className="rounded-xl border p-4">
+              <p className="font-medium">Employee information</p>
+              <p className="mt-1 text-muted-foreground">
+                Employment records are retained for the approved legal and operational period, then
+                archived, anonymised or deleted through an authorised process.
+              </p>
+            </div>
+            <div className="rounded-xl border p-4">
+              <p className="font-medium">Legal hold</p>
+              <p className="mt-1 text-muted-foreground">
+                An active investigation, claim or legal obligation pauses deletion until the
+                authorised record owner releases the hold.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

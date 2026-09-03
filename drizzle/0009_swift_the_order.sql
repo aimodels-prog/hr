@@ -1,0 +1,2 @@
+DROP INDEX "timesheets_employee_period_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "timesheets_employee_period_unique" ON "timesheets" USING btree ("employee_id","period_id") WHERE "timesheets"."archived_at" IS NULL;

@@ -127,8 +127,8 @@ function ConversionWizardRoute() {
       );
       toast.success("Employee profile created");
       navigate({ to: "/staff/employees/$employeeId", params: { employeeId: newEmpId } });
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Unable to create the employee profile");
     }
   };
 
@@ -288,17 +288,17 @@ function ConversionWizardRoute() {
                 </div>
                 <div className="space-y-1">
                   <label className="font-medium text-xs uppercase text-muted-foreground">
-                    Workspace Email Mapping (Future)
+                    VIA email address
                   </label>
                   <Input
                     value={employeeData.workspaceEmail}
                     onChange={(e) =>
                       setEmployeeData({ ...employeeData, workspaceEmail: e.target.value })
                     }
-                    placeholder="e.g. john.doe@company.com"
+                    placeholder="e.g. john.doe@via-int.com"
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    This will be used later for Google Workspace / Active Directory provisioning.
+                    This address links the employee to their VIA Portal sign-in.
                   </p>
                 </div>
 

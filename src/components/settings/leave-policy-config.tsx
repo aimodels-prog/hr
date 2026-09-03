@@ -57,9 +57,12 @@ export function LeavePolicyConfig() {
     return "secondary" as const;
   };
 
-  const handleToggleEnabled = (policy: LeavePolicy, next: boolean) => {
+  const handleToggleEnabled = async (policy: LeavePolicy, next: boolean) => {
     try {
-      leaveService.updatePolicy(policy.id, { isEnabled: next }, currentUser.getActorContext());
+      await leaveService.updatePolicyAsync(
+        { ...policy, isEnabled: next },
+        currentUser.getActorContext(),
+      );
       toast.success(`${policy.name} ${next ? "turned on" : "turned off"}.`);
       setPolicies(leaveService.getPolicies());
     } catch (error: unknown) {
@@ -67,10 +70,10 @@ export function LeavePolicyConfig() {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!editingPolicy) return;
     try {
-      leaveService.updatePolicy(editingPolicy.id, editingPolicy, currentUser.getActorContext());
+      await leaveService.updatePolicyAsync(editingPolicy, currentUser.getActorContext());
       toast.success(`${editingPolicy.name} updated for all staff covered by this policy.`);
       setPolicies(leaveService.getPolicies());
       setEditingPolicy(null);

@@ -68,7 +68,7 @@ function ContactsQueue() {
   const userById = useMemo(
     () =>
       new Map(empService.getUsers(currentUser.getActorContext()).map((u) => [u.id, u.displayName])),
-    [empService],
+    [empService, currentUser],
   );
 
   const [searchQuery, setSearchQuery] = useState("");

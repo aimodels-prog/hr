@@ -35,6 +35,7 @@ export interface PublicHoliday extends MasterRecord {
 }
 
 export interface AttendancePolicy extends BaseRecord {
+  databaseId?: string | undefined;
   standardDailyHours: number;
   expectedClockIn: string;
   expectedClockOut: string;
@@ -42,9 +43,11 @@ export interface AttendancePolicy extends BaseRecord {
   lateGraceMinutes: number;
   maximumLocationAccuracyMeters: number;
   signOutReminderOffsetsMinutes: [number, number, number];
+  approvedNetworkCidrs?: string[] | undefined;
 }
 
 export interface AttendanceRecord extends BaseRecord {
+  databaseId?: string | undefined;
   employeeId: RecordId;
   date: string;
   shiftId?: string | undefined;
@@ -77,6 +80,7 @@ export type CorrectionStatus = "Pending Manager" | "Pending HR" | "Approved" | "
 export type AttendanceCorrectionType = "Punch Correction" | "Missed Sign-out";
 
 export interface AttendanceCorrection extends BaseRecord {
+  databaseId?: string | undefined;
   attendanceRecordId: RecordId;
   employeeId: RecordId;
   correctionType: AttendanceCorrectionType;
@@ -100,6 +104,7 @@ export type SiteVisitOrigin = "Office" | "Home";
 export type SiteVisitStatus = "Pending HR" | "Approved" | "Rejected" | "Cancelled" | "Completed";
 
 export interface SiteVisitRequest extends BaseRecord {
+  databaseId?: string | undefined;
   employeeId: RecordId;
   date: string;
   startTime: string;
@@ -124,6 +129,7 @@ export type AttendanceExceptionStatus = "Open" | "Investigating" | "Resolved";
 // clock-in. Distinct from AttendanceCorrection: a correction is the EMPLOYEE proposing a fix to
 // their own punch; an exception case is HR investigating an anomaly nobody has explained yet.
 export interface AttendanceExceptionCase extends BaseRecord {
+  databaseId?: string | undefined;
   employeeId: RecordId;
   type: AttendanceExceptionType;
   siteVisitId: RecordId;

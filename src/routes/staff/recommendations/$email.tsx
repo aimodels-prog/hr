@@ -1,4 +1,5 @@
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useMemo } from "react";
 import { ArrowLeft, Building2, Mail, Phone, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,25 +14,9 @@ import {
 } from "@/components/ui/table";
 import { CandidateService } from "@/lib/data/candidate-service";
 import { VacancyService } from "@/lib/data/vacancy-service";
-import { RequirePermission, getRouteActorContext, useCurrentUser } from "@/lib/auth";
+import { RequirePermission, useCurrentUser } from "@/lib/auth";
 
 export const Route = createFileRoute("/staff/recommendations/$email")({
-  loader: ({ params }) => {
-    const recommenderKey = decodeURIComponent(params.email).toLowerCase();
-    const candidateService = new CandidateService();
-    const context = getRouteActorContext();
-    const profiles = candidateService.getRecommenderProfiles(context);
-    const profile = profiles.find((p) => p.key === recommenderKey);
-
-    if (!profile) {
-      throw notFound();
-    }
-
-    const candidates = candidateService.getDetailedCandidates(context);
-    const vacancies = new VacancyService().getVacancyRepository().list();
-
-    return { profile, candidates, vacancies };
-  },
   component: RecommenderProfileWrapper,
 });
 
@@ -44,12 +29,37 @@ function RecommenderProfileWrapper() {
 }
 
 function RecommenderProfile() {
-  const { profile: loadedProfile, candidates, vacancies } = Route.useLoaderData();
+  const { email } = Route.useParams();
   const currentUser = useCurrentUser();
-  const profile =
-    new CandidateService()
-      .getRecommenderProfiles(currentUser.getActorContext())
-      .find((item) => item.key === loadedProfile.key) ?? loadedProfile;
+  const candidateService = useMemo(() => new CandidateService(), []);
+  const vacancyService = useMemo(() => new VacancyService(), []);
+  const context = currentUser.getActorContext();
+  const recommenderKey = decodeURIComponent(email).toLowerCase();
+  const profile = candidateService
+    .getRecommenderProfiles(context)
+    .find((item) => item.key === recommenderKey);
+  const candidates = candidateService.getDetailedCandidates(context);
+  const vacancies = vacancyService.getVacancyRepository().list();
+
+  if (!profile) {
+    return (
+      <div className="p-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Recommendation source not found</CardTitle>
+            <CardDescription>
+              This recommendation source may have been archived or the link may be out of date.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild variant="outline">
+              <Link to="/staff/recommendations">Return to recommendations</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
   const canViewCommercialTerms = ["HR", "Accounts", "Super Admin"].includes(currentUser.activeRole);
 
   const successRate =

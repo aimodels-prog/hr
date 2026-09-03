@@ -29,29 +29,26 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
 
   await page.goto("/staff");
   await expect(page.getByText("VIA HR System").first()).toBeVisible();
-  await page.waitForFunction(() => {
-    const raw = localStorage.getItem("via_hr:collection:appSettings");
-    if (!raw) return false;
-    try {
-      return JSON.parse(raw).items?.length > 0;
-    } catch {
-      return false;
-    }
-  });
+  await expect(page.getByText("VIA HR System").first()).toBeVisible();
 
   const records = await page.evaluate(
     async ({ labels }) => {
+      const { initializeApplicationData } = await import("/src/lib/data/application-data.ts");
       const { LeaveService } = await import("/src/lib/data/leave-service.ts");
       const { AttendanceService } = await import("/src/lib/data/attendance-service.ts");
       const { TimesheetService } = await import("/src/lib/data/timesheet-service.ts");
       const { OvertimeService } = await import("/src/lib/data/overtime-service.ts");
       const { TravelService } = await import("/src/lib/data/travel-service.ts");
+      const { EmployeeService } = await import("/src/lib/data/employee-service.ts");
+      const { MasterDataService } = await import("/src/lib/data/master-data.ts");
+      initializeApplicationData();
 
       const employee = {
         actor: {
           userId: "user-omar",
           employeeId: "employee-omar",
           displayName: "Omar Rahman",
+          workspaceEmail: "omar.rahman@via.example",
           activeRole: "Employee" as const,
           roles: ["Employee" as const],
         },
@@ -61,12 +58,16 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
           userId: "user-rana",
           employeeId: "employee-rana",
           displayName: "Rana Nair",
+          workspaceEmail: "rana.nair@via.example",
           activeRole: "HR" as const,
           roles: ["Employee" as const, "HR" as const],
         },
       };
 
+      await new EmployeeService().hydrateCompatibilityCache(hr);
+      await new MasterDataService().hydrateCompatibilityCache();
       const leaveService = new LeaveService();
+      await leaveService.hydrateCompatibilityCache(employee);
       const annualPolicy = leaveService
         .getEligiblePolicies("employee-omar", employee)
         .find((policy) => policy.type === "Annual");
@@ -75,8 +76,8 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
         {
           employeeId: "employee-omar",
           policyId: annualPolicy.id,
-          startDate: "2027-11-08",
-          endDate: "2027-11-08",
+          startDate: "2026-11-09",
+          endDate: "2026-11-09",
           reason: labels.leave,
           handoverContactId: "employee-layla",
         },
@@ -84,7 +85,8 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
       );
 
       const attendanceService = new AttendanceService();
-      const attendance = attendanceService.saveRecord(
+      await attendanceService.hydrateFromDatabase(hr);
+      const attendance = await attendanceService.saveRecordAsync(
         {
           employeeId: "employee-omar",
           date: "2026-06-03",
@@ -104,7 +106,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
         },
         hr,
       );
-      const correction = await attendanceService.requestCorrection(
+      const correction = await attendanceService.requestCorrectionAsync(
         attendance.id,
         "09:00",
         "18:00",
@@ -113,12 +115,17 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
       );
 
       const timesheetService = new TimesheetService(attendanceService);
-      timesheetService.generatePeriods("2026-06-01", "2026-06-07", hr);
+      await timesheetService.hydrateCompatibilityCache(hr);
+      await timesheetService.generatePeriodsAsync("2026-06-01", "2026-06-07", hr);
       const period = timesheetService
         .getPeriods()
         .find((item) => item.startDate === "2026-06-01" && item.endDate === "2026-06-07");
       if (!period) throw new Error("The browser test timesheet period was not generated.");
-      const timesheet = timesheetService.getOrCreateTimesheet("employee-omar", period.id, employee);
+      const timesheet = await timesheetService.getOrCreateTimesheetAsync(
+        "employee-omar",
+        period.id,
+        employee,
+      );
       const workHours: Record<string, number> = {};
       const explanations: Record<string, string> = {};
       for (
@@ -143,14 +150,19 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
         notes: "Client delivery and operational coordination.",
       });
       timesheet.attendanceDiscrepancyExplanations = explanations;
-      const savedTimesheet = timesheetService.saveTimesheetDraft(timesheet, employee);
-      const submittedTimesheet = timesheetService.submitTimesheet(savedTimesheet.id, employee);
+      const savedTimesheet = await timesheetService.saveTimesheetDraftAsync(timesheet, employee);
+      const submittedTimesheet = await timesheetService.submitTimesheetAsync(
+        savedTimesheet.id,
+        employee,
+      );
 
       timesheetService.saveSettings(
         { ...timesheetService.getSettings(), requireHrOvertimeVerification: true },
         hr,
       );
-      const overtime = await new OvertimeService().submitClaim(
+      const overtimeService = new OvertimeService();
+      await overtimeService.hydrateCompatibilityCache(employee);
+      const overtime = await overtimeService.submitClaim(
         {
           employeeId: "employee-omar",
           date: "2026-06-04",
@@ -165,7 +177,9 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
         employee,
       );
 
-      const travel = await new TravelService().submitRequest(
+      const travelService = new TravelService();
+      await travelService.hydrateCompatibilityCache(employee);
+      const travel = await travelService.submitRequest(
         {
           employeeId: "employee-omar",
           purpose: labels.travel,
@@ -310,25 +324,11 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   await page.evaluate(
     async ({ travelId }) => {
       const { TravelService } = await import("/src/lib/data/travel-service.ts");
-      const { getApplicationDataServices } = await import("/src/lib/data/application-data.ts");
       const expenseLineId = crypto.randomUUID();
-      const receipt = await getApplicationDataServices().files.save(
-        {
-          blob: new Blob(["E2E taxi receipt"], { type: "application/pdf" }),
-          name: "e2e-taxi-receipt.pdf",
-          mimeType: "application/pdf",
-          owner: { entityType: "travel-expense-line", entityId: expenseLineId },
-        },
-        {
-          actor: {
-            userId: "user-omar",
-            employeeId: "employee-omar",
-            displayName: "Omar Rahman",
-            activeRole: "Employee",
-            roles: ["Employee"],
-          },
-        },
-      );
+      const receipt = new File(["%PDF-1.4\nE2E taxi receipt\n%%EOF"], "e2e-taxi-receipt.pdf", {
+        type: "application/pdf",
+      });
+      const receiptFiles = new Map<string, File>([[expenseLineId, receipt]]);
       await new TravelService().submitExpenses(
         travelId,
         [
@@ -339,7 +339,6 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
             amount: 110,
             currency: "OMR",
             reference: "E2E-TAXI-110",
-            receiptFileId: receipt.id,
           },
         ],
         "Actual cost remained below the approved estimate.",
@@ -348,10 +347,12 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
             userId: "user-omar",
             employeeId: "employee-omar",
             displayName: "Omar Rahman",
+            workspaceEmail: "omar.rahman@via.example",
             activeRole: "Employee",
             roles: ["Employee"],
           },
         },
+        receiptFiles,
       );
     },
     { travelId: records.travelId },
@@ -377,6 +378,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   await expect(page.getByText("Approved", { exact: true }).first()).toBeVisible();
 
   await page.goto("/staff/me/attendance");
+  await page.getByRole("button", { name: "Previous" }).click();
   await page.getByRole("button", { name: "Previous" }).click();
   await page.getByRole("button", { name: "Previous" }).click();
   const correctedAttendanceRow = page.getByRole("row").filter({ hasText: "03 Jun" });

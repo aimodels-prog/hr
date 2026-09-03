@@ -37,7 +37,9 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useCurrentUser } from "@/lib/auth";
 import { EmployeeService } from "@/lib/data/employee-service";
+import { MasterDataService } from "@/lib/data/master-data";
 import { TrainingService } from "@/lib/data/training-service";
+import { ROLE_VALUES } from "@/lib/data/types";
 import type {
   TrainingCourse,
   TrainingEnrollment,
@@ -91,6 +93,7 @@ function StaffTrainingRoute() {
   const isHr = currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
   const service = useMemo(() => new TrainingService(), []);
   const employeeService = useMemo(() => new EmployeeService(), []);
+  const masterDataService = useMemo(() => new MasterDataService(), []);
   const [version, setVersion] = useState(0);
   const [search, setSearch] = useState("");
   const [courseDialog, setCourseDialog] = useState(false);
@@ -121,7 +124,8 @@ function StaffTrainingRoute() {
     actualCost: "0",
   });
   const [reasonAction, setReasonAction] = useState<{
-    kind: "No Show" | "Cancel Enrollment" | "Reject Certificate";
+    kind:
+      "No Show" | "Cancel Enrollment" | "Reject Certificate" | "Cancel Session" | "Archive Course";
     id: string;
   } | null>(null);
   const [reason, setReason] = useState("");
@@ -133,6 +137,24 @@ function StaffTrainingRoute() {
   const sessions = service.getSessions(context);
   const records = service.getTeamRecords(context);
   const employees = employeeService.getEmployees(context);
+  const locations = masterDataService.list("locations", false).filter((item) => item.isActive);
+  const projects = masterDataService.listProjects(false).filter((item) => item.isActive);
+  const selectedValues = (value: string) =>
+    value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  const toggleCourseScope = (
+    field: "requiredRoles" | "requiredLocations" | "requiredProjects",
+    value: string,
+    checked: boolean,
+  ) => {
+    const current = selectedValues(courseForm[field]);
+    const next = checked
+      ? [...new Set([...current, value])]
+      : current.filter((item) => item !== value);
+    setCourseForm({ ...courseForm, [field]: next.join(", ") });
+  };
   const employeeName = (id: string) =>
     employees.find((item) => item.id === id)?.preferredName ||
     employees.find((item) => item.id === id)?.legalName ||
@@ -140,9 +162,9 @@ function StaffTrainingRoute() {
   const courseName = (id: string) =>
     courses.find((item) => item.id === id)?.title || "Training course";
   const refresh = () => setVersion((value) => value + 1);
-  const run = (action: () => unknown, success: string) => {
+  const run = async (action: () => unknown | Promise<unknown>, success: string) => {
     try {
-      action();
+      await action();
       refresh();
       toast.success(success);
       return true;
@@ -191,15 +213,15 @@ function StaffTrainingRoute() {
     );
     setCourseDialog(true);
   };
-  const saveCourse = () => {
+  const saveCourse = async () => {
     const split = (value: string) =>
       value
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean);
-    const ok = run(
+    const ok = await run(
       () =>
-        service.saveCourse(
+        service.saveCourseAsync(
           {
             ...(courseForm.id ? { id: courseForm.id } : {}),
             code: courseForm.code,
@@ -229,13 +251,11 @@ function StaffTrainingRoute() {
     );
     if (ok) setCourseDialog(false);
   };
-  const decide = () => {
+  const decide = async () => {
     if (!decision) return;
-    const ok = run(
+    const ok = await run(
       () =>
-        isHr
-          ? service.decideHr(decision.request.id, decision.value, decisionComment, context)
-          : service.decideSupervisor(decision.request.id, decision.value, decisionComment, context),
+        service.decideRequestAsync(decision.request.id, decision.value, decisionComment, context),
       decision.value === "Approve" ? "Training request approved" : "Training request declined",
     );
     if (ok) {
@@ -446,7 +466,7 @@ function StaffTrainingRoute() {
                                 onClick={() =>
                                   run(
                                     () =>
-                                      service.recordAttendance(
+                                      service.recordAttendanceAsync(
                                         item.id,
                                         true,
                                         "Attendance confirmed",
@@ -542,10 +562,34 @@ function StaffTrainingRoute() {
                       {course.category} · {course.deliveryType} · {course.durationHours} hours ·{" "}
                       {course.currency} {course.cost.toLocaleString()}
                     </p>
-                    <div className="flex justify-end">
+                    <div className="flex flex-wrap justify-end gap-2">
                       <Button size="sm" variant="outline" onClick={() => openCourse(course)}>
                         Edit course
                       </Button>
+                      {course.archivedAt ? (
+                        <Button
+                          size="sm"
+                          onClick={() =>
+                            void run(
+                              () => service.restoreCourseAsync(course.id, context),
+                              "Course restored",
+                            )
+                          }
+                        >
+                          Restore
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setReasonAction({ kind: "Archive Course", id: course.id });
+                            setReason("");
+                          }}
+                        >
+                          Archive
+                        </Button>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -572,6 +616,7 @@ function StaffTrainingRoute() {
                     <TableHead>Facilitator</TableHead>
                     <TableHead>Capacity</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -593,10 +638,24 @@ function StaffTrainingRoute() {
                       <TableCell>
                         <Badge variant="outline">{session.status}</Badge>
                       </TableCell>
+                      <TableCell className="text-right">
+                        {session.status === "Scheduled" && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setReasonAction({ kind: "Cancel Session", id: session.id });
+                              setReason("");
+                            }}
+                          >
+                            Cancel session
+                          </Button>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
                   {sessions.length === 0 && (
-                    <EmptyRow columns={7} text="No training sessions are scheduled." />
+                    <EmptyRow columns={8} text="No training sessions are scheduled." />
                   )}
                 </TableBody>
               </Table>
@@ -661,7 +720,13 @@ function StaffTrainingRoute() {
                             size="sm"
                             onClick={() =>
                               run(
-                                () => service.verifyRecord(record.id, context),
+                                () =>
+                                  service.decideRecordAsync(
+                                    record.id,
+                                    "Verify",
+                                    "Certificate checked against the uploaded evidence",
+                                    context,
+                                  ),
                                 "Certificate verified",
                               )
                             }
@@ -747,10 +812,10 @@ function StaffTrainingRoute() {
               Cancel
             </Button>
             <Button
-              onClick={() => {
-                const ok = run(
+              onClick={async () => {
+                const ok = await run(
                   () =>
-                    service.assignCourse(
+                    service.assignCourseAsync(
                       assignment.employeeId,
                       assignment.courseId,
                       assignment.reason,
@@ -900,30 +965,63 @@ function StaffTrainingRoute() {
                 }
               />
             </Field>
-            <Field label="Required roles (comma separated)">
-              <Input
-                value={courseForm.requiredRoles}
-                onChange={(event) =>
-                  setCourseForm({ ...courseForm, requiredRoles: event.target.value })
-                }
-              />
+            <Field label="Who must complete this course">
+              <div className="grid gap-2 rounded-lg border p-3">
+                {ROLE_VALUES.map((role) => (
+                  <label key={role} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={selectedValues(courseForm.requiredRoles).includes(role)}
+                      onCheckedChange={(checked) =>
+                        toggleCourseScope("requiredRoles", role, Boolean(checked))
+                      }
+                    />
+                    {role}
+                  </label>
+                ))}
+              </div>
             </Field>
-            <Field label="Required locations (comma separated)">
-              <Input
-                value={courseForm.requiredLocations}
-                onChange={(event) =>
-                  setCourseForm({ ...courseForm, requiredLocations: event.target.value })
-                }
-              />
+            <Field label="Applicable offices">
+              <div className="grid max-h-40 gap-2 overflow-y-auto rounded-lg border p-3">
+                {locations.length ? (
+                  locations.map((location) => (
+                    <label key={location.id} className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={selectedValues(courseForm.requiredLocations).includes(location.id)}
+                        onCheckedChange={(checked) =>
+                          toggleCourseScope("requiredLocations", location.id, Boolean(checked))
+                        }
+                      />
+                      {location.name}
+                    </label>
+                  ))
+                ) : (
+                  <span className="text-sm text-muted-foreground">
+                    No active offices available.
+                  </span>
+                )}
+              </div>
             </Field>
             <div className="sm:col-span-2">
-              <Field label="Required projects (comma separated)">
-                <Input
-                  value={courseForm.requiredProjects}
-                  onChange={(event) =>
-                    setCourseForm({ ...courseForm, requiredProjects: event.target.value })
-                  }
-                />
+              <Field label="Applicable projects">
+                <div className="grid max-h-40 gap-2 overflow-y-auto rounded-lg border p-3 sm:grid-cols-2">
+                  {projects.length ? (
+                    projects.map((project) => (
+                      <label key={project.id} className="flex items-center gap-2 text-sm">
+                        <Checkbox
+                          checked={selectedValues(courseForm.requiredProjects).includes(project.id)}
+                          onCheckedChange={(checked) =>
+                            toggleCourseScope("requiredProjects", project.id, Boolean(checked))
+                          }
+                        />
+                        {project.name}
+                      </label>
+                    ))
+                  ) : (
+                    <span className="text-sm text-muted-foreground">
+                      No active projects available.
+                    </span>
+                  )}
+                </div>
               </Field>
             </div>
             <label className="flex items-center gap-2 text-sm">
@@ -1037,10 +1135,10 @@ function StaffTrainingRoute() {
               Cancel
             </Button>
             <Button
-              onClick={() => {
-                const ok = run(
+              onClick={async () => {
+                const ok = await run(
                   () =>
-                    service.saveSession(
+                    service.saveSessionAsync(
                       {
                         courseId: sessionForm.courseId,
                         title: sessionForm.title,
@@ -1101,10 +1199,10 @@ function StaffTrainingRoute() {
               Cancel
             </Button>
             <Button
-              onClick={() => {
+              onClick={async () => {
                 if (!schedule) return;
-                const ok = run(
-                  () => service.scheduleEnrollment(schedule.id, sessionId, context),
+                const ok = await run(
+                  () => service.scheduleEnrollmentAsync(schedule.id, sessionId, context),
                   "Employee scheduled",
                 );
                 if (ok) setSchedule(null);
@@ -1159,11 +1257,11 @@ function StaffTrainingRoute() {
               Cancel
             </Button>
             <Button
-              onClick={() => {
+              onClick={async () => {
                 if (!completion) return;
-                const ok = run(
+                const ok = await run(
                   () =>
-                    service.completeEnrollment(
+                    service.completeEnrollmentAsync(
                       completion.id,
                       completionForm.result,
                       completionForm.completionDate,
@@ -1199,15 +1297,19 @@ function StaffTrainingRoute() {
               Cancel
             </Button>
             <Button
-              onClick={() => {
+              onClick={async () => {
                 if (!reasonAction) return;
-                const ok = run(
+                const ok = await run(
                   () =>
                     reasonAction.kind === "No Show"
-                      ? service.recordAttendance(reasonAction.id, false, reason, context)
+                      ? service.recordAttendanceAsync(reasonAction.id, false, reason, context)
                       : reasonAction.kind === "Cancel Enrollment"
-                        ? service.cancelEnrollment(reasonAction.id, reason, context)
-                        : service.rejectRecord(reasonAction.id, reason, context),
+                        ? service.cancelEnrollmentAsync(reasonAction.id, reason, context)
+                        : reasonAction.kind === "Cancel Session"
+                          ? service.cancelSessionAsync(reasonAction.id, reason, context)
+                          : reasonAction.kind === "Archive Course"
+                            ? service.archiveCourseAsync(reasonAction.id, reason, context)
+                            : service.decideRecordAsync(reasonAction.id, "Reject", reason, context),
                   "Record updated",
                 );
                 if (ok) setReasonAction(null);

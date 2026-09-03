@@ -22,11 +22,24 @@ export interface BaseRecord {
 }
 
 export interface MasterRecord extends BaseRecord {
+  /** PostgreSQL UUID used while unmigrated browser records still reference their legacy IDs. */
+  databaseId?: string;
   name: string;
   code?: string | undefined;
   description?: string | undefined;
   isActive: boolean;
   orderIndex: number;
+  date?: string | undefined;
+  latitude?: number | undefined;
+  longitude?: number | undefined;
+  radiusMeters?: number | undefined;
+  isClockInSite?: boolean | undefined;
+  startTime?: string | undefined;
+  endTime?: string | undefined;
+  breakMinutes?: number | undefined;
+  workingDays?: number[] | undefined;
+  symbol?: string | undefined;
+  decimalPlaces?: number | undefined;
 }
 
 export interface Project extends MasterRecord {
@@ -45,6 +58,8 @@ export type EmployeeStatus =
   "Onboarding" | "Active" | "Probation" | "Notice" | "Inactive" | "Archived";
 
 export interface User extends BaseRecord {
+  /** PostgreSQL UUID used while dependent modules still hold legacy browser IDs. */
+  databaseId?: string;
   employeeId?: RecordId | undefined;
   displayName: string;
   workspaceEmail: string;
@@ -78,6 +93,8 @@ export type Gender = "Male" | "Female";
 export type EmployeeMaritalStatus = "Single" | "Married" | "Divorced" | "Widowed";
 
 export interface Employee extends BaseRecord {
+  /** PostgreSQL UUID used while dependent modules still hold legacy browser IDs. */
+  databaseId?: string;
   employeeNumber: string;
   legalName: string;
   preferredName: string;
@@ -199,6 +216,8 @@ export type VacancyStatus =
   "Draft" | "Pending Approval" | "Open" | "Paused" | "Closed" | "Archived";
 
 export interface Vacancy extends BaseRecord {
+  /** PostgreSQL UUID used while recruitment records still retain legacy browser IDs. */
+  databaseId?: string;
   title: string;
   department: string;
   location: string;
@@ -768,6 +787,7 @@ export interface AuditActor {
   userId: RecordId;
   employeeId?: RecordId | undefined;
   displayName: string;
+  workspaceEmail?: string | undefined;
   activeRole?: Role | undefined;
   roles: Role[];
   sessionId?: string | undefined;

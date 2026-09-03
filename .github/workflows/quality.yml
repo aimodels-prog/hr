@@ -1,0 +1,284 @@
+name: VIA HR quality gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: via-hr-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  application:
+    name: Application checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out approved source
+        uses: actions/checkout@v4
+
+      - name: Use the production Node version
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Check formatting
+        run: npx prettier --check .
+
+      - name: Check code quality
+        run: npm run lint
+
+      - name: Check TypeScript
+        run: npm run typecheck
+
+      - name: Run environment-free service tests
+        run: npm test
+
+      - name: Check dependency advisories
+        run: npm run security:audit
+
+      - name: Build the production Node application
+        run: npm run build
+
+  authoritative-stores:
+    name: PostgreSQL and encrypted object-storage tests
+    needs: application
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: via_hr_test
+          POSTGRES_USER: via_hr_test
+          POSTGRES_PASSWORD: ci-database-password-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U via_hr_test -d via_hr_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://via_hr_test:ci-database-password-only@127.0.0.1:5432/via_hr_test
+      VIA_HR_TEST_DATABASE_URL: postgresql://via_hr_test:ci-database-password-only@127.0.0.1:5432/via_hr_test
+      DATABASE_POOL_SIZE: 5
+      VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID: ci-v1
+      VIA_HR_FIELD_ENCRYPTION_KEYS: '{"ci-v1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}'
+      VIA_HR_OBJECT_STORAGE_ENDPOINT: http://127.0.0.1:9000
+      VIA_HR_OBJECT_STORAGE_REGION: us-east-1
+      VIA_HR_OBJECT_STORAGE_BUCKET: via-hr-ci-files
+      VIA_HR_OBJECT_STORAGE_ACCESS_KEY_ID: via_hr_ci_access
+      VIA_HR_OBJECT_STORAGE_SECRET_ACCESS_KEY: ci-object-storage-secret-1234567890
+      VIA_HR_OBJECT_STORAGE_FORCE_PATH_STYLE: "true"
+      VIA_HR_OBJECT_STORAGE_AUTO_CREATE_BUCKET: "true"
+      VIA_HR_OBJECT_STORAGE_ALLOW_PRIVATE_HTTP: "true"
+      VIA_HR_MALWARE_SCAN_REQUIRED: "false"
+    steps:
+      - name: Check out approved source
+        uses: actions/checkout@v4
+
+      - name: Use the production Node version
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Start isolated MinIO
+        run: |
+          docker run --detach --name via-hr-ci-minio \
+            --publish 9000:9000 \
+            --env MINIO_ROOT_USER=via_hr_ci_access \
+            --env MINIO_ROOT_PASSWORD=ci-object-storage-secret-1234567890 \
+            minio/minio:RELEASE.2025-07-23T15-54-02Z server /data
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/ready >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs via-hr-ci-minio
+          exit 1
+
+      - name: Apply the complete migration history
+        run: npm run db:migrate
+
+      - name: Import and verify deterministic staging data
+        run: |
+          npm run db:seed:preview
+          npm run db:seed:import
+          npm run db:seed:verify
+
+      - name: Run every service and repository test with no infrastructure skips
+        run: |
+          npm run test:postgresql | tee live-tests.tap
+          grep --quiet '^# skipped 0$' live-tests.tap
+
+      - name: Upload authoritative-store test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: authoritative-store-test-evidence-${{ github.sha }}
+          path: live-tests.tap
+          if-no-files-found: error
+          retention-days: 30
+
+  browser-journeys:
+    name: PostgreSQL/MinIO browser journeys
+    needs: application
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: via_hr_browser_test
+          POSTGRES_USER: via_hr_browser_test
+          POSTGRES_PASSWORD: ci-browser-database-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U via_hr_browser_test -d via_hr_browser_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      malware-scanner:
+        image: clamav/clamav:1.4.6@sha256:b25d9199257ae7ef45e0cc4c7eaa60ce7e5447796f0090d5ff311d1a30980cc3
+        ports:
+          - 3310:3310
+        options: >-
+          --health-cmd "clamdscan --ping 5"
+          --health-interval 30s
+          --health-timeout 15s
+          --health-start-period 120s
+          --health-retries 5
+    env:
+      CI: "true"
+      NODE_ENV: production
+      HOST: 127.0.0.1
+      PORT: 4173
+      DATABASE_URL: postgresql://via_hr_browser_test:ci-browser-database-password@127.0.0.1:5432/via_hr_browser_test
+      VIA_HR_TEST_DATABASE_URL: postgresql://via_hr_browser_test:ci-browser-database-password@127.0.0.1:5432/via_hr_browser_test
+      DATABASE_POOL_SIZE: 5
+      VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID: ci-browser-v1
+      VIA_HR_FIELD_ENCRYPTION_KEYS: '{"ci-browser-v1":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="}'
+      VIA_HR_OBJECT_STORAGE_ENDPOINT: http://127.0.0.1:9000
+      VIA_HR_OBJECT_STORAGE_REGION: us-east-1
+      VIA_HR_OBJECT_STORAGE_BUCKET: via-hr-browser-files
+      VIA_HR_OBJECT_STORAGE_ACCESS_KEY_ID: via_hr_browser_access
+      VIA_HR_OBJECT_STORAGE_SECRET_ACCESS_KEY: ci-browser-object-secret-123456789
+      VIA_HR_OBJECT_STORAGE_FORCE_PATH_STYLE: "true"
+      VIA_HR_OBJECT_STORAGE_AUTO_CREATE_BUCKET: "true"
+      VIA_HR_OBJECT_STORAGE_ALLOW_PRIVATE_HTTP: "true"
+      VIA_HR_MALWARE_SCANNER_HOST: 127.0.0.1
+      VIA_HR_MALWARE_SCANNER_PORT: 3310
+      VIA_HR_MALWARE_SCAN_REQUIRED: "true"
+      VIA_HR_IMAGE_TAG: ci-browser
+      VIA_HR_E2E_WEB_SERVER_COMMAND: npm run build && npm start
+      PORTAL_SSO_ENABLED: "true"
+      PORTAL_URL: https://portal.via-int.com
+      PORTAL_SSO_ISSUER: via-portal
+      PORTAL_SSO_AUDIENCE: via-hr
+      PORTAL_APP_SLUG: via-hr
+      PORTAL_SSO_ALGORITHM: HS256
+      PORTAL_TOKEN_LIFETIME_SECONDS: 120
+      PORTAL_SSO_SECRET: ci-only-portal-sso-secret-at-least-32-bytes
+      ALLOWED_EMAIL_DOMAIN: via-int.com
+      APP_ORIGIN: http://127.0.0.1:4173
+      PORTAL_CALLBACK_URL: http://127.0.0.1:4173/auth/portal/callback
+      POST_LOGIN_URL: http://127.0.0.1:4173/dashboard
+      POST_LOGOUT_URL: https://portal.via-int.com
+      VIA_HR_SESSION_LIFETIME_SECONDS: 28800
+      VIA_HR_ALLOW_PASSWORD_LOGIN: "false"
+      VIA_HR_ALLOW_INSECURE_LOOPBACK: "true"
+    steps:
+      - name: Check out approved source
+        uses: actions/checkout@v4
+
+      - name: Use the production Node version
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies and Chromium
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Start isolated MinIO
+        run: |
+          docker run --detach --name via-hr-browser-minio \
+            --publish 9000:9000 \
+            --env MINIO_ROOT_USER=via_hr_browser_access \
+            --env MINIO_ROOT_PASSWORD=ci-browser-object-secret-123456789 \
+            minio/minio:RELEASE.2025-07-23T15-54-02Z server /data
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/ready >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs via-hr-browser-minio
+          exit 1
+
+      - name: Prepare the browser-test database
+        run: |
+          npm run db:migrate
+          npm run db:seed:import
+          npm run db:seed:verify
+
+      - name: Run database-backed browser journeys and the production release smoke
+        run: |
+          npm run worker:background > worker.log 2>&1 &
+          worker_pid=$!
+          trap 'kill "$worker_pid" 2>/dev/null || true' EXIT
+          NODE_ENV=test PORTAL_SSO_ENABLED=false \
+            VIA_HR_E2E_WEB_SERVER_COMMAND="npm run dev -- --host 127.0.0.1 --port 4173" \
+            npx playwright test --grep-invert "production release smoke" --reporter=line \
+            | tee browser-tests.txt
+          NODE_ENV=production \
+            VIA_HR_E2E_WEB_SERVER_COMMAND="npm run build && npm start" \
+            npx playwright test tests/e2e/production-smoke.spec.ts --reporter=line \
+            | tee production-smoke.txt
+
+      - name: Upload browser and worker evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-test-evidence-${{ github.sha }}
+          path: |
+            browser-tests.txt
+            production-smoke.txt
+            worker.log
+            test-results/
+          if-no-files-found: warn
+          retention-days: 30
+
+  containers:
+    name: Linux release images
+    needs: [application, authoritative-stores, browser-journeys]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out approved source
+        uses: actions/checkout@v4
+
+      - name: Build the application image
+        run: docker build --target runtime --tag via-hr-system:${{ github.sha }} .
+
+      - name: Build the background-worker image
+        run: docker build --target worker --tag via-hr-system-worker:${{ github.sha }} .

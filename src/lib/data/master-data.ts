@@ -14,6 +14,45 @@ export type MasterDataCollection =
   | "currencies"
   | "activityCodes";
 
+export const MASTER_DATA_COLLECTIONS: readonly MasterDataCollection[] = [
+  "departments",
+  "locations",
+  "costCentres",
+  "positions",
+  "grades",
+  "employmentTypes",
+  "workingTimes",
+  "publicHolidays",
+  "currencies",
+  "activityCodes",
+];
+
+function usesBrowserServerFunctions(): boolean {
+  return typeof window !== "undefined";
+}
+
+function naturalKey(record: Pick<MasterRecord, "code" | "name">): string {
+  return `${record.code?.trim().toLowerCase() || ""}|${record.name.trim().toLowerCase()}`;
+}
+
+function replaceCompatibilityCache<T extends MasterRecord>(collection: string, records: T[]): T[] {
+  const storage = getApplicationDataServices().storage;
+  const existingByNaturalKey = new Map(
+    storage.readCollection<T>(collection).map((record) => [naturalKey(record), record] as const),
+  );
+  const compatible = records.map((record) => {
+    const existing = existingByNaturalKey.get(naturalKey(record));
+    if (!existing || existing.id === record.id) return record;
+    return { ...record, id: existing.id, databaseId: record.id };
+  });
+  storage.writeCollection(collection, compatible);
+  return compatible;
+}
+
+function resolveDatabaseId(record: MasterRecord | null | undefined, requestedId: string): string {
+  return record?.databaseId || requestedId;
+}
+
 export function getMasterDataRepository(collection: MasterDataCollection) {
   const { storage, audit } = getApplicationDataServices();
   return new LocalRepository<MasterRecord>(collection, storage, audit, {
@@ -50,35 +89,31 @@ export class MasterDataService {
     collection: MasterDataCollection,
     includeArchived = true,
   ): Promise<MasterRecord[]> {
-    try {
-      const { listMasterDataFn } = await import("../server-functions/master-data.server.ts");
-      const result = (await listMasterDataFn({
-        data: { collection, includeArchived },
-      })) as unknown as MasterRecord[];
-      if (result) return result;
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!message.includes("No Start context") && !message.includes("is not a function")) {
-        throw err;
-      }
-    }
-    return this.list(collection, includeArchived);
+    if (!usesBrowserServerFunctions()) return this.list(collection, includeArchived);
+
+    const { listMasterDataFn } = await import("../server-functions/master-data.server.ts");
+    const result = (await listMasterDataFn({
+      data: { collection, includeArchived },
+    })) as unknown as MasterRecord[];
+    return replaceCompatibilityCache(collection, result);
   }
 
   async listProjectsAsync(includeArchived = true): Promise<Project[]> {
-    try {
-      const { listProjectsFn } = await import("../server-functions/master-data.server.ts");
-      const result = (await listProjectsFn({
-        data: { includeArchived },
-      })) as unknown as Project[];
-      if (result) return result;
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!message.includes("No Start context") && !message.includes("is not a function")) {
-        throw err;
-      }
-    }
-    return this.listProjects(includeArchived);
+    if (!usesBrowserServerFunctions()) return this.listProjects(includeArchived);
+
+    const { listProjectsFn } = await import("../server-functions/master-data.server.ts");
+    const result = (await listProjectsFn({
+      data: { includeArchived },
+    })) as unknown as Project[];
+    return replaceCompatibilityCache("projects", result);
+  }
+
+  async hydrateCompatibilityCache(): Promise<void> {
+    if (!usesBrowserServerFunctions()) return;
+    await Promise.all([
+      ...MASTER_DATA_COLLECTIONS.map((collection) => this.listAsync(collection, true)),
+      this.listProjectsAsync(true),
+    ]);
   }
 
   async create(
@@ -88,41 +123,27 @@ export class MasterDataService {
   ): Promise<MasterRecord> {
     this.requireAdministrator(context, `create a ${collection} record`);
     this.validateMasterRecord(collection, input);
-    this.requireUnique(collection, input.name, input.code);
-
-    try {
-      const { createMasterDataFn } = await import("../server-functions/master-data.server.ts");
-      const result = (await createMasterDataFn({
-        data: {
-          collection,
-          input: {
-            name: input.name,
-            code: input.code,
-            description: input.description,
-            isActive: input.isActive,
-            orderIndex: input.orderIndex,
-            date: "date" in input && typeof input.date === "string" ? input.date : undefined,
-          },
-          actorId: context.actor.userId,
-        },
-      })) as unknown as MasterRecord;
-
-      if (result) {
-        try {
-          getMasterDataRepository(collection).create(result, context);
-        } catch {
-          // Ignore
-        }
-        return result;
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!message.includes("No Start context") && !message.includes("is not a function")) {
-        throw err;
-      }
+    if (!usesBrowserServerFunctions()) {
+      this.requireUnique(collection, input.name, input.code);
+      return getMasterDataRepository(collection).create(input, context);
     }
 
-    return getMasterDataRepository(collection).create(input, context);
+    const { createMasterDataFn } = await import("../server-functions/master-data.server.ts");
+    const result = (await createMasterDataFn({
+      data: {
+        collection,
+        input: {
+          ...this.toServerMasterDataInput(input),
+          name: input.name,
+          isActive: input.isActive,
+          orderIndex: input.orderIndex,
+        },
+        actorId: context.actor.userId,
+        ...(context.actor.workspaceEmail ? { actorEmail: context.actor.workspaceEmail } : {}),
+      },
+    })) as unknown as MasterRecord;
+    await this.listAsync(collection, true);
+    return result;
   }
 
   async update(
@@ -133,46 +154,27 @@ export class MasterDataService {
   ): Promise<MasterRecord> {
     this.requireAdministrator(context, `update a ${collection} record`);
     const repository = getMasterDataRepository(collection);
-    const existing = repository.getById(id);
-    if (!existing) throw new Error("The selected setting was not found.");
-    const candidate = { ...existing, ...changes };
-    this.validateMasterRecord(collection, candidate);
-    this.requireUnique(collection, candidate.name, candidate.code, id);
-
-    try {
-      const { updateMasterDataFn } = await import("../server-functions/master-data.server.ts");
-      const result = (await updateMasterDataFn({
-        data: {
-          collection,
-          id,
-          changes: {
-            name: changes.name,
-            code: changes.code,
-            description: changes.description,
-            isActive: changes.isActive,
-            orderIndex: changes.orderIndex,
-            date: "date" in changes && typeof changes.date === "string" ? changes.date : undefined,
-          },
-          actorId: context.actor.userId,
-        },
-      })) as unknown as MasterRecord;
-
-      if (result) {
-        try {
-          repository.update(id, result, context);
-        } catch {
-          // Ignore
-        }
-        return result;
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!message.includes("No Start context") && !message.includes("is not a function")) {
-        throw err;
-      }
+    if (!usesBrowserServerFunctions()) {
+      const existing = repository.getById(id);
+      if (!existing) throw new Error("The selected setting was not found.");
+      const candidate = { ...existing, ...changes };
+      this.validateMasterRecord(collection, candidate);
+      this.requireUnique(collection, candidate.name, candidate.code, id);
+      return repository.update(id, changes, context);
     }
 
-    return repository.update(id, changes, context);
+    const { updateMasterDataFn } = await import("../server-functions/master-data.server.ts");
+    const result = (await updateMasterDataFn({
+      data: {
+        collection,
+        id: resolveDatabaseId(repository.getById(id), id),
+        changes: this.toServerMasterDataInput(changes),
+        actorId: context.actor.userId,
+        ...(context.actor.workspaceEmail ? { actorEmail: context.actor.workspaceEmail } : {}),
+      },
+    })) as unknown as MasterRecord;
+    await this.listAsync(collection, true);
+    return result;
   }
 
   async archive(
@@ -182,39 +184,27 @@ export class MasterDataService {
   ): Promise<MasterRecord> {
     this.requireAdministrator(context, `archive a ${collection} record`);
     const repository = getMasterDataRepository(collection);
-    const existing = repository.getById(id);
-    if (!existing || existing.archivedAt) {
-      throw new Error("The selected setting was not found or is already archived.");
-    }
-    const dependencyBlock = this.findActiveDependency(collection, existing);
-    if (dependencyBlock) throw new Error(dependencyBlock);
-
-    try {
-      const { archiveMasterDataFn } = await import("../server-functions/master-data.server.ts");
-      const result = (await archiveMasterDataFn({
-        data: {
-          collection,
-          id,
-          actorId: context.actor.userId,
-        },
-      })) as unknown as MasterRecord;
-
-      if (result) {
-        try {
-          repository.archive(id, context);
-        } catch {
-          // Ignore
-        }
-        return result;
+    if (!usesBrowserServerFunctions()) {
+      const existing = repository.getById(id);
+      if (!existing || existing.archivedAt) {
+        throw new Error("The selected setting was not found or is already archived.");
       }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!message.includes("No Start context") && !message.includes("is not a function")) {
-        throw err;
-      }
+      const dependencyBlock = this.findActiveDependency(collection, existing);
+      if (dependencyBlock) throw new Error(dependencyBlock);
+      return repository.archive(id, context);
     }
 
-    return repository.archive(id, context);
+    const { archiveMasterDataFn } = await import("../server-functions/master-data.server.ts");
+    const result = (await archiveMasterDataFn({
+      data: {
+        collection,
+        id: resolveDatabaseId(repository.getById(id), id),
+        actorId: context.actor.userId,
+        ...(context.actor.workspaceEmail ? { actorEmail: context.actor.workspaceEmail } : {}),
+      },
+    })) as unknown as MasterRecord;
+    await this.listAsync(collection, true);
+    return result;
   }
 
   async restore(
@@ -224,82 +214,51 @@ export class MasterDataService {
   ): Promise<MasterRecord> {
     this.requireAdministrator(context, `restore a ${collection} record`);
     const repository = getMasterDataRepository(collection);
-    const existing = repository.getById(id);
-    if (!existing) throw new Error("The selected setting was not found.");
-    this.requireUnique(collection, existing.name, existing.code, id);
-
-    try {
-      const { restoreMasterDataFn } = await import("../server-functions/master-data.server.ts");
-      const result = (await restoreMasterDataFn({
-        data: {
-          collection,
-          id,
-          actorId: context.actor.userId,
-        },
-      })) as unknown as MasterRecord;
-
-      if (result) {
-        try {
-          repository.restore(id, context);
-        } catch {
-          // Ignore
-        }
-        return result;
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!message.includes("No Start context") && !message.includes("is not a function")) {
-        throw err;
-      }
+    if (!usesBrowserServerFunctions()) {
+      const existing = repository.getById(id);
+      if (!existing) throw new Error("The selected setting was not found.");
+      this.requireUnique(collection, existing.name, existing.code, id);
+      return repository.restore(id, context);
     }
 
-    return repository.restore(id, context);
+    const { restoreMasterDataFn } = await import("../server-functions/master-data.server.ts");
+    const result = (await restoreMasterDataFn({
+      data: {
+        collection,
+        id: resolveDatabaseId(repository.getById(id), id),
+        actorId: context.actor.userId,
+        ...(context.actor.workspaceEmail ? { actorEmail: context.actor.workspaceEmail } : {}),
+      },
+    })) as unknown as MasterRecord;
+    await this.listAsync(collection, true);
+    return result;
   }
 
   async createProject(input: NewRecord<Project>, context: ActorContext): Promise<Project> {
     this.requireAdministrator(context, "create a project");
-    this.validateProject(input);
-    this.requireUniqueProject(input.name, input.code);
-
-    try {
-      const { createProjectFn } = await import("../server-functions/master-data.server.ts");
-      const result = (await createProjectFn({
-        data: {
-          input: {
-            name: input.name,
-            code: input.code,
-            description: input.description,
-            client: input.client,
-            type: input.type,
-            startDate: input.startDate ?? new Date().toISOString().slice(0, 10),
-            endDate: input.endDate,
-            costCentreId: input.costCentreId,
-            managerId: input.managerId,
-            locationId: input.locationId,
-            status: input.status ?? "Draft",
-            orderIndex: input.orderIndex,
-            isActive: input.isActive,
-          },
-          actorId: context.actor.userId,
-        },
-      })) as unknown as Project;
-
-      if (result) {
-        try {
-          getProjectRepository().create(result, context);
-        } catch {
-          // Ignore
-        }
-        return result;
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!message.includes("No Start context") && !message.includes("is not a function")) {
-        throw err;
-      }
+    if (!usesBrowserServerFunctions()) {
+      this.validateProject(input);
+      this.requireUniqueProject(input.name, input.code);
+      return getProjectRepository().create(input, context);
     }
 
-    return getProjectRepository().create(input, context);
+    const { createProjectFn } = await import("../server-functions/master-data.server.ts");
+    const result = (await createProjectFn({
+      data: {
+        input: {
+          ...this.toServerProjectInput(input, true),
+          name: input.name,
+          startDate: input.startDate ?? new Date().toISOString().slice(0, 10),
+          status: input.status ?? "Draft",
+          orderIndex: input.orderIndex,
+          isActive: input.isActive,
+        },
+        actorId: context.actor.userId,
+        ...(context.actor.workspaceEmail ? { actorEmail: context.actor.workspaceEmail } : {}),
+      },
+    })) as unknown as Project;
+    await this.listProjectsAsync(true);
+    return result;
   }
 
   async updateProject(
@@ -309,133 +268,122 @@ export class MasterDataService {
   ): Promise<Project> {
     this.requireAdministrator(context, "update a project");
     const repository = getProjectRepository();
-    const existing = repository.getById(id);
-    if (!existing) throw new Error("The selected project was not found.");
-    const candidate = { ...existing, ...changes };
-    this.validateProject(candidate);
-    this.requireUniqueProject(candidate.name, candidate.code, id);
-
-    try {
-      const { updateProjectFn } = await import("../server-functions/master-data.server.ts");
-      const result = (await updateProjectFn({
-        data: {
-          id,
-          changes: {
-            name: changes.name,
-            code: changes.code,
-            description: changes.description,
-            client: changes.client,
-            type: changes.type,
-            startDate: changes.startDate,
-            endDate: changes.endDate,
-            costCentreId: changes.costCentreId,
-            managerId: changes.managerId,
-            locationId: changes.locationId,
-            status: changes.status,
-            orderIndex: changes.orderIndex,
-            isActive: changes.isActive,
-          },
-          actorId: context.actor.userId,
-        },
-      })) as unknown as Project;
-
-      if (result) {
-        try {
-          repository.update(id, result, context);
-        } catch {
-          // Ignore
-        }
-        return result;
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!message.includes("No Start context") && !message.includes("is not a function")) {
-        throw err;
-      }
+    if (!usesBrowserServerFunctions()) {
+      const existing = repository.getById(id);
+      if (!existing) throw new Error("The selected project was not found.");
+      const candidate = { ...existing, ...changes };
+      this.validateProject(candidate);
+      this.requireUniqueProject(candidate.name, candidate.code, id);
+      return repository.update(id, changes, context);
     }
 
-    return repository.update(id, changes, context);
+    const { updateProjectFn } = await import("../server-functions/master-data.server.ts");
+    const result = (await updateProjectFn({
+      data: {
+        id: resolveDatabaseId(repository.getById(id), id),
+        changes: this.toServerProjectInput(changes, false),
+        actorId: context.actor.userId,
+        ...(context.actor.workspaceEmail ? { actorEmail: context.actor.workspaceEmail } : {}),
+      },
+    })) as unknown as Project;
+    await this.listProjectsAsync(true);
+    return result;
   }
 
   async archiveProject(id: string, context: ActorContext): Promise<Project> {
     this.requireAdministrator(context, "archive a project");
     const repository = getProjectRepository();
-    const existing = repository.getById(id);
-    if (!existing || existing.archivedAt) {
-      throw new Error("The selected project was not found or is already archived.");
-    }
-    const { storage } = getApplicationDataServices();
-    const activeEmployees = storage
-      .readCollection<Employee>("employees")
-      .filter(
-        (employee) =>
-          employee.projectId === id && !["Inactive", "Archived"].includes(employee.status),
-      );
-    if (activeEmployees.length) {
-      throw new Error(
-        `Reassign ${activeEmployees.length} active employee${activeEmployees.length === 1 ? "" : "s"} before archiving this project.`,
-      );
-    }
-
-    try {
-      const { archiveProjectFn } = await import("../server-functions/master-data.server.ts");
-      const result = (await archiveProjectFn({
-        data: {
-          id,
-          actorId: context.actor.userId,
-        },
-      })) as unknown as Project;
-
-      if (result) {
-        try {
-          repository.archive(id, context);
-        } catch {
-          // Ignore
-        }
-        return result;
+    if (!usesBrowserServerFunctions()) {
+      const existing = repository.getById(id);
+      if (!existing || existing.archivedAt) {
+        throw new Error("The selected project was not found or is already archived.");
       }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!message.includes("No Start context") && !message.includes("is not a function")) {
-        throw err;
+      const { storage } = getApplicationDataServices();
+      const activeEmployees = storage
+        .readCollection<Employee>("employees")
+        .filter(
+          (employee) =>
+            employee.projectId === id && !["Inactive", "Archived"].includes(employee.status),
+        );
+      if (activeEmployees.length) {
+        throw new Error(
+          `Reassign ${activeEmployees.length} active employee${activeEmployees.length === 1 ? "" : "s"} before archiving this project.`,
+        );
       }
+      return repository.archive(id, context);
     }
 
-    return repository.archive(id, context);
+    const { archiveProjectFn } = await import("../server-functions/master-data.server.ts");
+    const result = (await archiveProjectFn({
+      data: {
+        id: resolveDatabaseId(repository.getById(id), id),
+        actorId: context.actor.userId,
+        ...(context.actor.workspaceEmail ? { actorEmail: context.actor.workspaceEmail } : {}),
+      },
+    })) as unknown as Project;
+    await this.listProjectsAsync(true);
+    return result;
   }
 
   async restoreProject(id: string, context: ActorContext): Promise<Project> {
     this.requireAdministrator(context, "restore a project");
     const repository = getProjectRepository();
-    const existing = repository.getById(id);
-    if (!existing) throw new Error("The selected project was not found.");
-    this.requireUniqueProject(existing.name, existing.code, id);
-
-    try {
-      const { restoreProjectFn } = await import("../server-functions/master-data.server.ts");
-      const result = (await restoreProjectFn({
-        data: {
-          id,
-          actorId: context.actor.userId,
-        },
-      })) as unknown as Project;
-
-      if (result) {
-        try {
-          repository.restore(id, context);
-        } catch {
-          // Ignore
-        }
-        return result;
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!message.includes("No Start context") && !message.includes("is not a function")) {
-        throw err;
-      }
+    if (!usesBrowserServerFunctions()) {
+      const existing = repository.getById(id);
+      if (!existing) throw new Error("The selected project was not found.");
+      this.requireUniqueProject(existing.name, existing.code, id);
+      return repository.restore(id, context);
     }
 
-    return repository.restore(id, context);
+    const { restoreProjectFn } = await import("../server-functions/master-data.server.ts");
+    const result = (await restoreProjectFn({
+      data: {
+        id: resolveDatabaseId(repository.getById(id), id),
+        actorId: context.actor.userId,
+        ...(context.actor.workspaceEmail ? { actorEmail: context.actor.workspaceEmail } : {}),
+      },
+    })) as unknown as Project;
+    await this.listProjectsAsync(true);
+    return result;
+  }
+
+  private toServerMasterDataInput(input: Partial<MasterRecord>) {
+    return {
+      name: input.name,
+      code: input.code,
+      description: input.description,
+      isActive: input.isActive,
+      orderIndex: input.orderIndex,
+      date: input.date,
+      latitude: input.latitude,
+      longitude: input.longitude,
+      radiusMeters: input.radiusMeters,
+      isClockInSite: input.isClockInSite,
+      startTime: input.startTime,
+      endTime: input.endTime,
+      breakMinutes: input.breakMinutes,
+      workingDays: input.workingDays,
+      symbol: input.symbol,
+      decimalPlaces: input.decimalPlaces,
+    };
+  }
+
+  private toServerProjectInput(input: Partial<Project>, creating: boolean) {
+    return {
+      name: input.name,
+      code: input.code,
+      description: input.description,
+      client: input.client,
+      type: input.type,
+      startDate: input.startDate ?? (creating ? new Date().toISOString().slice(0, 10) : undefined),
+      endDate: input.endDate,
+      costCentreId: input.costCentreId,
+      managerId: input.managerId,
+      locationId: input.locationId,
+      status: input.status ?? (creating ? "Draft" : undefined),
+      orderIndex: input.orderIndex,
+      isActive: input.isActive,
+    };
   }
 
   private requireAdministrator(context: ActorContext, action: string): void {

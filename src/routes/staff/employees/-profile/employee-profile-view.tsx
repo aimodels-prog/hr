@@ -292,7 +292,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
     try {
       if (!currentUser) return;
       const { effectiveDate, reason, ...changes } = values;
-      employeeService.updateEmploymentRecord(
+      await employeeService.updateEmploymentRecordAsync(
         employeeId,
         {
           ...changes,
@@ -348,7 +348,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
           : {}),
       };
 
-      employeeService.updateEmploymentRecord(
+      await employeeService.updateEmploymentRecordAsync(
         employeeId,
         { salary },
         values.effectiveDate,
@@ -363,7 +363,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
     }
   };
 
-  const handleStatusChange = () => {
+  const handleStatusChange = async () => {
     if (!currentUser) return;
     if (!statusAction) return;
     try {
@@ -423,7 +423,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
         // (e.g. Archiving after finalization already set the employee Inactive) is allowed.
       }
 
-      employeeService.changeEmployeeStatus(
+      await employeeService.changeEmployeeStatusAsync(
         employeeId,
         targetStatus,
         reason,
@@ -1743,7 +1743,10 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
 
             {canViewAudit && (
               <TabsContent value="audit" className="mt-0 min-h-[500px]">
-                <AuditViewer entityId={employeeId} entityType="employee" />
+                <AuditViewer
+                  entityId={rawEmployee?.databaseId ?? employeeId}
+                  entityType="employee"
+                />
               </TabsContent>
             )}
           </div>

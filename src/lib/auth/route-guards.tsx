@@ -30,7 +30,8 @@ export function AccessDenied({
   requiredRoles,
   attemptedPath,
 }: AccessDeniedProps) {
-  const { displayName, activeRole, switchIdentity, userId } = useCurrentUser();
+  const { displayName, activeRole, switchIdentity, userId, isDevelopmentPreview } =
+    useCurrentUser();
 
   useEffect(() => {
     try {
@@ -97,31 +98,33 @@ export function AccessDenied({
             )}
           </div>
 
-          <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-3 text-xs text-amber-900 dark:text-amber-200">
-            <p className="font-medium mb-1 flex items-center gap-1.5">
-              <RefreshCw className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-              Try another assigned role
-            </p>
-            <p className="text-muted-foreground text-[11px] mb-2">
-              Your current role cannot open this area. Choose another assigned role below:
-            </p>
-            <div className="grid grid-cols-2 gap-1.5 pt-1">
-              {PRESET_IDENTITIES.map((preset) => (
-                <Button
-                  key={preset.key}
-                  variant={activeRole === preset.roleName ? "default" : "outline"}
-                  size="sm"
-                  className="text-xs h-7 justify-start"
-                  onClick={() => switchIdentity(preset.userId, preset.roleName)}
-                >
-                  <UserCheck className="mr-1.5 h-3 w-3" />
-                  <span className="truncate">
-                    {preset.roleName} ({preset.employeeName.split(" ")[0]})
-                  </span>
-                </Button>
-              ))}
+          {isDevelopmentPreview && (
+            <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-3 text-xs text-amber-900 dark:text-amber-200">
+              <p className="font-medium mb-1 flex items-center gap-1.5">
+                <RefreshCw className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                Try another assigned role
+              </p>
+              <p className="text-muted-foreground text-[11px] mb-2">
+                Your current role cannot open this area. Choose another assigned role below:
+              </p>
+              <div className="grid grid-cols-2 gap-1.5 pt-1">
+                {PRESET_IDENTITIES.map((preset) => (
+                  <Button
+                    key={preset.key}
+                    variant={activeRole === preset.roleName ? "default" : "outline"}
+                    size="sm"
+                    className="text-xs h-7 justify-start"
+                    onClick={() => switchIdentity(preset.userId, preset.roleName)}
+                  >
+                    <UserCheck className="mr-1.5 h-3 w-3" />
+                    <span className="truncate">
+                      {preset.roleName} ({preset.employeeName.split(" ")[0]})
+                    </span>
+                  </Button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </CardContent>
         <CardFooter className="flex justify-between pt-2">
           <Button asChild variant="outline" size="sm">

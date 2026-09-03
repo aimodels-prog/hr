@@ -96,7 +96,7 @@ function CandidatesIndex() {
   const userById = useMemo(
     () =>
       new Map(empService.getUsers(currentUser.getActorContext()).map((u) => [u.id, u.displayName])),
-    [empService],
+    [empService, currentUser],
   );
 
   const locations = useMemo(
@@ -181,19 +181,23 @@ function CandidatesIndex() {
 
   const [archiveTarget, setArchiveTarget] = useState<{ id: string; name: string } | null>(null);
 
-  const handleStageChange = (candidateId: string, newStage: Candidate["stage"]) => {
+  const handleStageChange = async (candidateId: string, newStage: Candidate["stage"]) => {
     try {
-      candidateService.updateCandidateStage(candidateId, newStage, currentUser.getActorContext());
+      await candidateService.updateCandidateStageAsync(
+        candidateId,
+        newStage,
+        currentUser.getActorContext(),
+      );
       setRefreshKey((k) => k + 1);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update candidate stage");
     }
   };
 
-  const confirmArchiveCandidate = () => {
+  const confirmArchiveCandidate = async () => {
     if (!archiveTarget) return;
     try {
-      candidateService.updateCandidateStage(
+      await candidateService.updateCandidateStageAsync(
         archiveTarget.id,
         "Archived",
         currentUser.getActorContext(),
@@ -290,10 +294,10 @@ function CandidatesIndex() {
     );
   });
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
     let csvContent: string;
     try {
-      csvContent = candidateService.exportCandidates(
+      csvContent = await candidateService.exportCandidatesAsync(
         filteredCandidates.map((c) => c.id),
         currentUser.getActorContext(),
       );

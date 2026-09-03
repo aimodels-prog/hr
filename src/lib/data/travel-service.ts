@@ -14,6 +14,15 @@ import { parseISO, isAfter, isBefore, isValid } from "date-fns";
 
 const LEGACY_SUPPORTED_CURRENCIES = new Set(["OMR", "GBP", "USD", "EUR"]);
 
+function travelUploadMime(file: File): "application/pdf" | "image/jpeg" | "image/png" {
+  const mime = file.type.toLowerCase();
+  if (mime === "application/pdf" || mime === "image/jpeg" || mime === "image/png") return mime;
+  if (/\.pdf$/i.test(file.name)) return "application/pdf";
+  if (/\.jpe?g$/i.test(file.name)) return "image/jpeg";
+  if (/\.png$/i.test(file.name)) return "image/png";
+  throw new Error("Upload a PDF, JPG or PNG file.");
+}
+
 export function calculateTravelVariancePercent(estimate: number, actual: number): number {
   if (estimate > 0) return ((actual - estimate) / estimate) * 100;
   return actual > 0 ? 100 : 0;
@@ -28,6 +37,67 @@ export class TravelService {
       module: "travel",
       entityType: "request",
     });
+  }
+
+  private async serverActor(context: ActorContext) {
+    const users = getApplicationDataServices().storage.readCollection<{
+      id: string;
+      workspaceEmail?: string;
+    }>("users");
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    return {
+      actorId: context.actor.userId,
+      ...(actorEmail ? { actorEmail } : {}),
+      activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+    } as const;
+  }
+
+  private databaseId(collection: string, id: string): string {
+    const item = getApplicationDataServices()
+      .storage.readCollection<{ id: string; databaseId?: string; code?: string }>(collection)
+      .find((record) => record.id === id || record.databaseId === id || record.code === id);
+    const value = item?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
+    if (!value) throw new Error("This record is not connected to PostgreSQL yet.");
+    return value;
+  }
+
+  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+    if (typeof window === "undefined") return;
+    const { storage } = getApplicationDataServices();
+    const relation = new Map<string, string>();
+    for (const collection of ["employees", "users", "projects", "costCentres", "payrollPeriods"])
+      for (const item of storage.readCollection<{ id: string; databaseId?: string }>(collection))
+        if (item.databaseId) relation.set(item.databaseId, item.id);
+    const { getTravelRequestsFn } = await import("../server-functions/travel.server.ts");
+    const rows = await getTravelRequestsFn({ data: { actor: await this.serverActor(context) } });
+    storage.writeCollection(
+      "travelRequests",
+      rows.map((request) => ({
+        ...request,
+        employeeId: relation.get(request.employeeId) ?? request.employeeId,
+        ...(request.projectId
+          ? { projectId: relation.get(request.projectId) ?? request.projectId }
+          : {}),
+        ...(request.costCentreId
+          ? { costCentreId: relation.get(request.costCentreId) ?? request.costCentreId }
+          : {}),
+        ...(request.payrollPeriodId
+          ? { payrollPeriodId: relation.get(request.payrollPeriodId) ?? request.payrollPeriodId }
+          : {}),
+      })),
+    );
+  }
+
+  async getRequestsAsync(context: ActorContext): Promise<TravelRequest[]> {
+    await this.hydrateCompatibilityCache(context);
+    return this.repo.list();
+  }
+
+  async getRequestByIdAsync(id: string, context: ActorContext): Promise<TravelRequest | null> {
+    await this.hydrateCompatibilityCache(context);
+    return this.getRequestById(id, context);
   }
 
   private deny(action: string, entityId: string, reason: string, context: ActorContext): never {
@@ -158,6 +228,19 @@ export class TravelService {
     requestId: string,
     context: ActorContext,
   ): Promise<{ blob: Blob; fileName: string }> {
+    if (typeof window !== "undefined") {
+      const { readTravelFileFn } = await import("../server-functions/travel.server.ts");
+      const result = await readTravelFileFn({
+        data: {
+          actor: await this.serverActor(context),
+          requestId: this.databaseId("travelRequests", requestId),
+        },
+      });
+      return {
+        blob: new Blob([Uint8Array.from(result.bytes)], { type: result.metadata.mimeType }),
+        fileName: result.metadata.name,
+      };
+    }
     const req = this.repo.getById(requestId);
     if (!req) throw new Error("Request not found");
     if (!req.evidenceFileId) throw new Error("This request has no supporting evidence.");
@@ -193,6 +276,20 @@ export class TravelService {
     lineId: string,
     context: ActorContext,
   ): Promise<{ blob: Blob; fileName: string }> {
+    if (typeof window !== "undefined") {
+      const { readTravelFileFn } = await import("../server-functions/travel.server.ts");
+      const result = await readTravelFileFn({
+        data: {
+          actor: await this.serverActor(context),
+          requestId: this.databaseId("travelRequests", requestId),
+          expenseLineId: lineId,
+        },
+      });
+      return {
+        blob: new Blob([Uint8Array.from(result.bytes)], { type: result.metadata.mimeType }),
+        fileName: result.metadata.name,
+      };
+    }
     const req = this.repo.getById(requestId);
     if (!req) throw new Error("Request not found");
     const line = req.expenses?.find((e) => e.id === lineId);
@@ -224,7 +321,55 @@ export class TravelService {
     return { blob, fileName: metadata.name ?? "receipt" };
   }
 
-  async submitRequest(data: Partial<TravelRequest>, context: ActorContext): Promise<TravelRequest> {
+  async submitRequest(
+    data: Partial<TravelRequest>,
+    context: ActorContext,
+    evidenceFile?: File,
+  ): Promise<TravelRequest> {
+    if (typeof window !== "undefined") {
+      if (
+        !data.employeeId ||
+        !data.purpose ||
+        !data.destination ||
+        !data.startDate ||
+        !data.endDate ||
+        !data.currency
+      )
+        throw new Error("Missing required travel information.");
+      const { createTravelRequestFn } = await import("../server-functions/travel.server.ts");
+      const currencyId = this.databaseId("currencies", data.currency);
+      const id = await createTravelRequestFn({
+        data: {
+          actor: await this.serverActor(context),
+          employeeId: this.databaseId("employees", data.employeeId),
+          purpose: data.purpose,
+          destination: data.destination,
+          startDate: data.startDate,
+          endDate: data.endDate,
+          estTransport: data.estTransport ?? 0,
+          estAccommodation: data.estAccommodation ?? 0,
+          estPerDiem: data.estPerDiem ?? 0,
+          estOther: data.estOther ?? 0,
+          currencyId,
+          ...(data.projectId ? { projectId: this.databaseId("projects", data.projectId) } : {}),
+          ...(data.costCentreId
+            ? { costCentreId: this.databaseId("costCentres", data.costCentreId) }
+            : {}),
+          ...(data.notes ? { notes: data.notes } : {}),
+          ...(evidenceFile
+            ? {
+                evidence: {
+                  fileName: evidenceFile.name,
+                  mimeType: travelUploadMime(evidenceFile),
+                  bytes: Array.from(new Uint8Array(await evidenceFile.arrayBuffer())),
+                },
+              }
+            : {}),
+        },
+      });
+      await this.hydrateCompatibilityCache(context);
+      return this.repo.list().find((request) => request.databaseId === id || request.id === id)!;
+    }
     if (!data.employeeId) {
       throw new Error("Missing required travel information.");
     }
@@ -346,6 +491,19 @@ export class TravelService {
     return this.repo.update(req.id, req, context);
   }
 
+  async withdrawRequestAsync(id: string, context: ActorContext): Promise<TravelRequest> {
+    if (typeof window === "undefined") return this.withdrawRequest(id, context);
+    const { withdrawTravelRequestFn } = await import("../server-functions/travel.server.ts");
+    await withdrawTravelRequestFn({
+      data: {
+        actor: await this.serverActor(context),
+        requestId: this.databaseId("travelRequests", id),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    return this.repo.list().find((request) => request.id === id || request.databaseId === id)!;
+  }
+
   hrApprove(id: string, approve: boolean, notes: string, context: ActorContext): TravelRequest {
     const req = this.repo.getById(id);
     if (!req) throw new Error("Not found");
@@ -374,6 +532,25 @@ export class TravelService {
     this.recordEvent(approve ? "travel_hr_approved" : "travel_hr_rejected", updated, context);
     this.notifyStatusChange(updated, context);
     return updated;
+  }
+
+  async hrApproveAsync(
+    id: string,
+    approve: boolean,
+    notes: string,
+    context: ActorContext,
+  ): Promise<void> {
+    const { decideTravelRequestFn } = await import("../server-functions/travel.server.ts");
+    await decideTravelRequestFn({
+      data: {
+        actor: await this.serverActor(context),
+        requestId: this.databaseId("travelRequests", id),
+        stage: "HR",
+        decision: approve ? "approve" : "reject",
+        ...(notes.trim() ? { reason: notes.trim() } : {}),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
   }
 
   accountsApprove(
@@ -415,12 +592,68 @@ export class TravelService {
     return updated;
   }
 
+  async accountsApproveAsync(
+    id: string,
+    approve: boolean,
+    notes: string,
+    context: ActorContext,
+  ): Promise<void> {
+    const { decideTravelRequestFn } = await import("../server-functions/travel.server.ts");
+    await decideTravelRequestFn({
+      data: {
+        actor: await this.serverActor(context),
+        requestId: this.databaseId("travelRequests", id),
+        stage: "Accounts",
+        decision: approve ? "approve" : "reject",
+        ...(notes.trim() ? { reason: notes.trim() } : {}),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+  }
+
   async submitExpenses(
     id: string,
     expenses: ExpenseLine[],
     varianceExplanation: string,
     context: ActorContext,
+    receiptFiles?: Map<string, File>,
   ): Promise<TravelRequest> {
+    if (typeof window !== "undefined") {
+      const { submitTravelExpensesFn } = await import("../server-functions/travel.server.ts");
+      await submitTravelExpensesFn({
+        data: {
+          actor: await this.serverActor(context),
+          requestId: this.databaseId("travelRequests", id),
+          varianceExplanation,
+          lines: await Promise.all(
+            expenses.map(async (line) => {
+              const receipt = receiptFiles?.get(line.id);
+              if (!receipt)
+                throw new Error(
+                  `Upload the receipt or invoice for the ${line.category} expense dated ${line.date}.`,
+                );
+              return {
+                id: /^[0-9a-f-]{36}$/i.test(line.id) ? line.id : crypto.randomUUID(),
+                category: line.category,
+                amount: Number(line.amount),
+                currencyId: this.databaseId("currencies", line.currency),
+                ...(line.exchangeRate !== undefined ? { exchangeRate: line.exchangeRate } : {}),
+                reference: line.reference,
+                date: line.date,
+                ...(line.notes ? { notes: line.notes } : {}),
+                receipt: {
+                  fileName: receipt.name,
+                  mimeType: travelUploadMime(receipt),
+                  bytes: Array.from(new Uint8Array(await receipt.arrayBuffer())),
+                },
+              };
+            }),
+          ),
+        },
+      });
+      await this.hydrateCompatibilityCache(context);
+      return this.repo.list().find((request) => request.id === id || request.databaseId === id)!;
+    }
     const req = this.repo.getById(id);
     if (!req) throw new Error("Not found");
     this.requireSelfOrHr(req, context, "submit expenses for this trip", id);
@@ -455,12 +688,13 @@ export class TravelService {
       ) {
         throw new Error("Select a valid expense category.");
       }
-      const lineCurrency = this.requireActiveCurrency(line.currency);
+      const lineCurrency = line.currency.trim().toUpperCase();
       if (lineCurrency !== req.currency) {
         throw new Error(
           `Expense lines must use the pre-authorised trip currency (${req.currency}).`,
         );
       }
+      this.requireActiveCurrency(lineCurrency);
       if (!Number.isFinite(line.amount) || line.amount <= 0) {
         throw new Error(`Expense line "${line.category}" must have a positive amount.`);
       }
@@ -600,6 +834,24 @@ export class TravelService {
     return updated;
   }
 
+  async superAdminCloseAsync(
+    id: string,
+    approve: boolean,
+    notes: string,
+    context: ActorContext,
+  ): Promise<void> {
+    const { closeTravelReimbursementFn } = await import("../server-functions/travel.server.ts");
+    await closeTravelReimbursementFn({
+      data: {
+        actor: await this.serverActor(context),
+        requestId: this.databaseId("travelRequests", id),
+        decision: approve ? "close" : "reject",
+        ...(notes.trim() ? { notes: notes.trim() } : {}),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+  }
+
   markIncludedInPayroll(
     requestIds: string[],
     payrollPeriodId: string,
@@ -631,6 +883,23 @@ export class TravelService {
       if (request.payrollPeriodId === payrollPeriodId) continue;
       this.repo.update(request.id, { payrollPeriodId }, context);
     }
+  }
+
+  async markIncludedInPayrollAsync(
+    requestIds: string[],
+    payrollPeriodId: string,
+    context: ActorContext,
+  ): Promise<void> {
+    const { assignTravelReimbursementsToPayrollFn } =
+      await import("../server-functions/travel.server.ts");
+    await assignTravelReimbursementsToPayrollFn({
+      data: {
+        actor: await this.serverActor(context),
+        requestIds: requestIds.map((id) => this.databaseId("travelRequests", id)),
+        payrollPeriodId: this.databaseId("payrollPeriods", payrollPeriodId),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
   }
 
   private capturePreAuthorisation(request: TravelRequest): void {

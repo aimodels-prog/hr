@@ -31,6 +31,16 @@ export interface MasterRecordDTO {
   isActive: boolean;
   orderIndex: number;
   date?: string;
+  latitude?: number;
+  longitude?: number;
+  radiusMeters?: number;
+  isClockInSite?: boolean;
+  startTime?: string;
+  endTime?: string;
+  breakMinutes?: number;
+  workingDays?: number[];
+  symbol?: string;
+  decimalPlaces?: number;
   createdAt: string;
   updatedAt: string;
   createdBy: string;
@@ -79,6 +89,16 @@ function mapMasterRecordToDTO(record: any): MasterRecordDTO {
     isActive: Boolean(record.isActive),
     orderIndex: Number(record.orderIndex ?? 0),
     date: record.holidayDate ?? record.date ?? undefined,
+    latitude: record.latitude ?? undefined,
+    longitude: record.longitude ?? undefined,
+    radiusMeters: record.radiusMeters ?? undefined,
+    isClockInSite: record.isClockInSite ?? undefined,
+    startTime: record.startTime ?? undefined,
+    endTime: record.endTime ?? undefined,
+    breakMinutes: record.breakMinutes ?? undefined,
+    workingDays: record.workingDays ?? undefined,
+    symbol: record.symbol ?? undefined,
+    decimalPlaces: record.decimalPlaces ?? undefined,
     createdAt:
       record.createdAt instanceof Date ? record.createdAt.toISOString() : String(record.createdAt),
     updatedAt:
@@ -167,6 +187,16 @@ export async function createCollectionRecord(
     isActive?: boolean | undefined;
     orderIndex?: number | undefined;
     date?: string | undefined;
+    latitude?: number | undefined;
+    longitude?: number | undefined;
+    radiusMeters?: number | undefined;
+    isClockInSite?: boolean | undefined;
+    startTime?: string | undefined;
+    endTime?: string | undefined;
+    breakMinutes?: number | undefined;
+    workingDays?: number[] | undefined;
+    symbol?: string | undefined;
+    decimalPlaces?: number | undefined;
   },
   actor: AuditActorContext,
 ): Promise<MasterRecordDTO> {
@@ -183,13 +213,24 @@ export async function createCollectionRecord(
         isActive: input.isActive ?? true,
         orderIndex: input.orderIndex ?? 0,
         ...(collection === "publicHolidays" && input.date ? { holidayDate: input.date } : {}),
+        ...(collection === "locations"
+          ? {
+              latitude: input.latitude,
+              longitude: input.longitude,
+              radiusMeters: input.radiusMeters,
+              isClockInSite: input.isClockInSite ?? false,
+            }
+          : {}),
         ...(collection === "workingTimes"
           ? {
-              startTime: (input as any).startTime ?? "08:00:00",
-              endTime: (input as any).endTime ?? "17:00:00",
-              breakMinutes: (input as any).breakMinutes ?? 60,
-              workingDays: (input as any).workingDays ?? [0, 1, 2, 3, 4],
+              startTime: input.startTime ?? "08:00:00",
+              endTime: input.endTime ?? "17:00:00",
+              breakMinutes: input.breakMinutes ?? 60,
+              workingDays: input.workingDays ?? [0, 1, 2, 3, 4],
             }
+          : {}),
+        ...(collection === "currencies"
+          ? { symbol: input.symbol, decimalPlaces: input.decimalPlaces ?? 2 }
           : {}),
         organisationId: orgId,
         createdBy: actor.userId ?? orgId,
@@ -231,6 +272,16 @@ export async function updateCollectionRecord(
     isActive?: boolean | undefined;
     orderIndex?: number | undefined;
     date?: string | undefined;
+    latitude?: number | undefined;
+    longitude?: number | undefined;
+    radiusMeters?: number | undefined;
+    isClockInSite?: boolean | undefined;
+    startTime?: string | undefined;
+    endTime?: string | undefined;
+    breakMinutes?: number | undefined;
+    workingDays?: number[] | undefined;
+    symbol?: string | undefined;
+    decimalPlaces?: number | undefined;
   },
   actor: AuditActorContext,
 ): Promise<MasterRecordDTO> {
@@ -245,11 +296,42 @@ export async function updateCollectionRecord(
 
     if (!existing) throw new Error("Record not found.");
 
+    const { date } = changes;
     const [record] = await tx
       .update(table)
       .set({
-        ...changes,
-        ...(collection === "publicHolidays" && changes.date ? { holidayDate: changes.date } : {}),
+        ...(changes.name !== undefined ? { name: changes.name } : {}),
+        ...(changes.code !== undefined ? { code: changes.code } : {}),
+        ...(changes.description !== undefined ? { description: changes.description } : {}),
+        ...(changes.isActive !== undefined ? { isActive: changes.isActive } : {}),
+        ...(changes.orderIndex !== undefined ? { orderIndex: changes.orderIndex } : {}),
+        ...(collection === "publicHolidays" && date ? { holidayDate: date } : {}),
+        ...(collection === "locations"
+          ? {
+              ...(changes.latitude !== undefined ? { latitude: changes.latitude } : {}),
+              ...(changes.longitude !== undefined ? { longitude: changes.longitude } : {}),
+              ...(changes.radiusMeters !== undefined ? { radiusMeters: changes.radiusMeters } : {}),
+              ...(changes.isClockInSite !== undefined
+                ? { isClockInSite: changes.isClockInSite }
+                : {}),
+            }
+          : {}),
+        ...(collection === "workingTimes"
+          ? {
+              ...(changes.startTime !== undefined ? { startTime: changes.startTime } : {}),
+              ...(changes.endTime !== undefined ? { endTime: changes.endTime } : {}),
+              ...(changes.breakMinutes !== undefined ? { breakMinutes: changes.breakMinutes } : {}),
+              ...(changes.workingDays !== undefined ? { workingDays: changes.workingDays } : {}),
+            }
+          : {}),
+        ...(collection === "currencies"
+          ? {
+              ...(changes.symbol !== undefined ? { symbol: changes.symbol } : {}),
+              ...(changes.decimalPlaces !== undefined
+                ? { decimalPlaces: changes.decimalPlaces }
+                : {}),
+            }
+          : {}),
         updatedAt: new Date(),
         updatedBy: actor.userId ?? orgId,
         recordVersion: sql`${table.recordVersion} + 1`,

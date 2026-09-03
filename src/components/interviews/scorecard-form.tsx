@@ -87,7 +87,7 @@ export function ScorecardForm({
         else setScorecard(null);
       }
     }
-  }, [open, interviewId, templateId, panelUserId]);
+  }, [open, interviewId, templateId, panelUserId, currentUser, scorecardService]);
 
   useEffect(() => {
     if (scorecard) {
@@ -142,23 +142,24 @@ export function ScorecardForm({
     }));
   };
 
-  const handleSaveDraft = () => {
+  const handleSaveDraft = async () => {
     if (!scorecard) return;
     try {
-      scorecardService.saveDraft(
+      await scorecardService.saveScorecardAsync(
         scorecard.id,
         buildScoresArray(),
         (recommendation as ScorecardRecommendation) || null,
+        false,
         currentUser!.getActorContext(),
       );
       toast.success("Draft saved");
       onSuccess?.();
-    } catch (e: any) {
-      toast.error(e.message || "Failed to save draft");
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Failed to save draft");
     }
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!scorecard) return;
 
     // Validate
@@ -180,34 +181,39 @@ export function ScorecardForm({
     }
 
     try {
-      scorecardService.submitScorecard(
+      await scorecardService.saveScorecardAsync(
         scorecard.id,
         buildScoresArray(),
         recommendation as ScorecardRecommendation,
+        true,
         currentUser!.getActorContext(),
       );
       toast.success("Scorecard submitted");
       onOpenChange(false);
       onSuccess?.();
-    } catch (e: any) {
-      toast.error(e.message || "Failed to submit");
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Failed to submit");
     }
   };
 
-  const handleReopen = () => {
+  const handleReopen = async () => {
     if (!scorecard) return;
     if (reopenReason.trim().length < 5) {
       toast.error("Please provide a valid reason for reopening");
       return;
     }
     try {
-      scorecardService.reopenScorecard(scorecard.id, reopenReason, currentUser!.getActorContext());
+      await scorecardService.reopenScorecardAsync(
+        scorecard.id,
+        reopenReason,
+        currentUser!.getActorContext(),
+      );
       toast.success("Scorecard reopened");
       setIsReopening(false);
       onSuccess?.();
       onOpenChange(false);
-    } catch (e: any) {
-      toast.error(e.message || "Failed to reopen");
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Failed to reopen");
     }
   };
 

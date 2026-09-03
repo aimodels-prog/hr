@@ -188,9 +188,7 @@ export const recruitmentDocuments = pgTable(
       table.ownerEntityType,
       table.ownerEntityId,
     ),
-    uniqueIndex("recruitment_documents_org_checksum_unique")
-      .on(table.organisationId, table.checksum)
-      .where(sql`${table.checksum} IS NOT NULL`),
+    index("recruitment_documents_org_checksum_idx").on(table.organisationId, table.checksum),
     check("recruitment_documents_name_not_blank", sql`btrim(${table.name}) <> ''`),
     check("recruitment_documents_mime_not_blank", sql`btrim(${table.mimeType}) <> ''`),
     check("recruitment_documents_size_positive", sql`${table.size} > 0`),

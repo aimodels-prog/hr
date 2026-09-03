@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -23,7 +23,6 @@ import {
 import { LeaveService } from "@/lib/data/leave-service";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { getMasterDataRepository } from "@/lib/data/master-data";
-import { getApplicationDataServices } from "@/lib/data/application-data";
 import type { MasterRecord } from "@/lib/data/types";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { Download, Calendar as CalendarIcon, List, RotateCw } from "lucide-react";
@@ -47,19 +46,20 @@ export const Route = createFileRoute("/staff/leave-admin")({
 });
 
 function LeaveAdminRoute() {
+  return (
+    <RequirePermission permission="leave:admin_all" resourceName="Leave Administration">
+      <LeaveAdminContent />
+    </RequirePermission>
+  );
+}
+
+function LeaveAdminContent() {
   const currentUser = useCurrentUser();
   const leaveService = useMemo(() => new LeaveService(), []);
   const empService = useMemo(() => new EmployeeService(), []);
 
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = () => setRefreshKey((k) => k + 1);
-
-  // Run reconciliation once on mount
-  useEffect(() => {
-    if (currentUser) {
-      leaveService.reconcileLeaveStates(currentUser.getActorContext());
-    }
-  }, [currentUser, leaveService, refreshKey]);
 
   const employees = empService.getEmployees(currentUser.getActorContext());
   const departments = getMasterDataRepository("departments").list() as MasterRecord[];
@@ -98,15 +98,10 @@ function LeaveAdminRoute() {
     return eachDayOfInterval({ start, end });
   }, [calendarMonth]);
 
-  // The current calendar year now also rolls over automatically and unattended, the moment
-  // anyone has the app open (see LeaveService.autoRunAnnualRollover, wired into staff.tsx's
-  // background reconciliation) - there is still no true backend-scheduled job, since this app has
-  // no backend to run one on. This manual action remains for catching up a specific past/future
-  // year on demand, or re-running immediately without waiting for the next reconciliation tick.
   const [isRolloverOpen, setIsRolloverOpen] = useState(false);
   const [rolloverYear, setRolloverYear] = useState(String(new Date().getFullYear()));
 
-  const handleRunAnnualRollover = () => {
+  const handleRunAnnualRollover = async () => {
     if (!currentUser) return;
     const targetYear = parseInt(rolloverYear, 10);
     if (!Number.isFinite(targetYear) || targetYear < 2000 || targetYear > 2100) {
@@ -114,12 +109,15 @@ function LeaveAdminRoute() {
       return;
     }
     try {
-      const results = leaveService.runAnnualRollover(targetYear, currentUser.getActorContext());
-      if (results.length === 0) {
+      const created = await leaveService.runAnnualRolloverAsync(
+        targetYear,
+        currentUser.getActorContext(),
+      );
+      if (created === 0) {
         toast.success(`${targetYear} balances are already up to date.`);
       } else {
         toast.success(
-          `Annual rollover complete for ${targetYear}: ${results.length} employee/policy grant(s) created.`,
+          `Annual rollover complete for ${targetYear}: ${created} employee/policy grant(s) created.`,
         );
       }
       setIsRolloverOpen(false);
@@ -129,55 +127,34 @@ function LeaveAdminRoute() {
     }
   };
 
-  const handleExportData = () => {
-    const headers = [
-      "Employee",
-      "Department",
-      "Policy",
-      "Start Date",
-      "End Date",
-      "Working Days",
-      "Status",
-      "Reason",
-    ];
-    const rows = filteredRequests.map((req) => {
-      const emp = employees.find((e) => e.id === req.employeeId);
-      return [
-        emp ? `${emp.preferredName} ${emp.legalName}` : req.employeeId,
-        emp?.department ?? "",
-        req.policySnapshot?.name ?? policies.find((p) => p.id === req.policyId)?.name ?? "",
-        req.startDate,
-        req.endDate,
-        req.workingDaysRequested,
-        req.status,
-        req.reason,
-      ];
-    });
-    const csv = [headers, ...rows]
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.setAttribute("download", `leave_requests_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    getApplicationDataServices().audit.record({
-      context: currentUser!.getActorContext(),
-      action: "leave_data_export",
-      module: "leave",
-      entityType: "leave-export",
-      entityId: "bulk",
-      after: { requestCount: filteredRequests.length },
-      riskLevel: "Medium",
-    });
+  const handleExportData = async () => {
+    try {
+      const department = departments.find((item) => item.id === deptFilter) as
+        (MasterRecord & { databaseId?: string }) | undefined;
+      const result = await leaveService.exportRequestsCsv(
+        {
+          ...(statusFilter !== "all" ? { status: statusFilter } : {}),
+          ...(department?.databaseId ? { departmentId: department.databaseId } : {}),
+        },
+        currentUser.getActorContext(),
+      );
+      const blob = new Blob([result.content], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", result.fileName);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.success(`${result.rowCount} leave record(s) exported.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Leave records could not be exported.");
+    }
   };
 
   return (
-    <RequirePermission permission="leave:admin_all" resourceName="Leave Administration">
+    <>
       <div className="flex flex-col gap-6 max-w-[1400px] mx-auto pb-10">
         <PageHeader
           title="Leave Administration & Calendar"
@@ -462,6 +439,6 @@ function LeaveAdminRoute() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </RequirePermission>
+    </>
   );
 }

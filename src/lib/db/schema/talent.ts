@@ -137,7 +137,9 @@ export const performanceReviews = pgTable(
     ),
   },
   (table) => [
-    uniqueIndex("performance_reviews_employee_cycle_unique").on(table.employeeId, table.cycleId),
+    uniqueIndex("performance_reviews_employee_cycle_unique")
+      .on(table.employeeId, table.cycleId)
+      .where(sql`${table.archivedAt} IS NULL`),
     index("performance_reviews_org_status_idx").on(table.organisationId, table.status),
     index("performance_reviews_org_employee_idx").on(table.organisationId, table.employeeId),
     check(
@@ -152,6 +154,88 @@ export const performanceReviews = pgTable(
       "performance_reviews_lock_consistency",
       sql`${table.lockedAt} IS NULL OR ${table.lockedBy} IS NOT NULL`,
     ),
+  ],
+);
+
+export const employeeGoals = pgTable(
+  "employee_goals",
+  {
+    ...mutableRecordColumns,
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "restrict" }),
+    employeeId: uuid("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "restrict" }),
+    cycleId: uuid("cycle_id")
+      .notNull()
+      .references(() => performanceCycles.id, { onDelete: "restrict" }),
+    title: text("title").notNull(),
+    description: text("description").notNull(),
+    successMeasure: text("success_measure").notNull(),
+    targetValue: text("target_value").notNull(),
+    startDate: date("start_date", { mode: "string" }).notNull(),
+    dueDate: date("due_date", { mode: "string" }).notNull(),
+    weight: integer("weight").notNull(),
+    progressPercent: integer("progress_percent").notNull().default(0),
+    status: text("status").notNull().default("Draft"),
+    managerFeedback: text("manager_feedback"),
+    submittedAt: timestamp("submitted_at", { withTimezone: true, mode: "string" }),
+    submittedBy: uuid("submitted_by").references(() => users.id, { onDelete: "restrict" }),
+    approvedAt: timestamp("approved_at", { withTimezone: true, mode: "string" }),
+    approvedBy: uuid("approved_by").references(() => users.id, { onDelete: "restrict" }),
+    completedAt: timestamp("completed_at", { withTimezone: true, mode: "string" }),
+    completedBy: uuid("completed_by").references(() => users.id, { onDelete: "restrict" }),
+  },
+  (table) => [
+    index("employee_goals_org_employee_cycle_idx").on(
+      table.organisationId,
+      table.employeeId,
+      table.cycleId,
+    ),
+    index("employee_goals_org_status_idx").on(table.organisationId, table.status),
+    check("employee_goals_title_not_blank", sql`btrim(${table.title}) <> ''`),
+    check("employee_goals_description_not_blank", sql`btrim(${table.description}) <> ''`),
+    check("employee_goals_measure_not_blank", sql`btrim(${table.successMeasure}) <> ''`),
+    check("employee_goals_target_not_blank", sql`btrim(${table.targetValue}) <> ''`),
+    check("employee_goals_date_order", sql`${table.dueDate} >= ${table.startDate}`),
+    check("employee_goals_weight_range", sql`${table.weight} BETWEEN 1 AND 100`),
+    check("employee_goals_progress_range", sql`${table.progressPercent} BETWEEN 0 AND 100`),
+    check(
+      "employee_goals_status",
+      sql`${table.status} IN ('Draft','Pending Approval','Changes Requested','Active','Completion Pending','Completed','Cancelled')`,
+    ),
+  ],
+);
+
+export const goalCheckIns = pgTable(
+  "goal_check_ins",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "restrict" }),
+    goalId: uuid("goal_id")
+      .notNull()
+      .references(() => employeeGoals.id, { onDelete: "restrict" }),
+    progressPercent: integer("progress_percent").notNull(),
+    progressComment: text("progress_comment").notNull(),
+    evidenceFileId: uuid("evidence_file_id").references(() => fileMetadata.id, {
+      onDelete: "restrict",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .notNull()
+      .defaultNow(),
+    createdBy: uuid("created_by").notNull(),
+  },
+  (table) => [
+    index("goal_check_ins_org_goal_created_idx").on(
+      table.organisationId,
+      table.goalId,
+      table.createdAt,
+    ),
+    check("goal_check_ins_progress_range", sql`${table.progressPercent} BETWEEN 0 AND 100`),
+    check("goal_check_ins_comment_not_blank", sql`btrim(${table.progressComment}) <> ''`),
   ],
 );
 
@@ -314,6 +398,11 @@ export const trainingAssignments = pgTable(
       table.courseId,
       table.sessionId,
     ),
+    uniqueIndex("training_assignments_employee_course_open_unique")
+      .on(table.employeeId, table.courseId)
+      .where(
+        sql`${table.archivedAt} IS NULL AND ${table.status} IN ('Assigned','Scheduled','Attended')`,
+      ),
     index("training_assignments_org_status_idx").on(table.organisationId, table.status),
     index("training_assignments_org_employee_idx").on(table.organisationId, table.employeeId),
     check(

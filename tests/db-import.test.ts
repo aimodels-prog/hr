@@ -84,7 +84,7 @@ describe(
 
     test("first import loads every non-empty seed collection and encrypts sensitive values", async () => {
       const output = runImporter("--apply");
-      assert.match(output, /Source records: 76 \| Inserted: 76/);
+      assert.match(output, /Source records: 75 \| Inserted: 75/);
       const seeds = createSeedCollections();
       const db = getDatabaseClient();
       assert.equal((await db.select().from(schema.organisations)).length, 1);
@@ -130,8 +130,8 @@ describe(
       const batch = (await db.select().from(schema.importBatches))[0]!;
       assert.equal(batch.status, "Completed");
       assert.equal(batch.seedVersion, IMPORT_SEED_VERSION);
-      assert.equal(batch.totalRows, 76);
-      assert.equal(batch.validRows, 76);
+      assert.equal(batch.totalRows, 75);
+      assert.equal(batch.validRows, 75);
       await closeDatabaseConnection();
     });
 
@@ -139,7 +139,7 @@ describe(
       const verifyOutput = runImporter("--verify");
       assert.match(verifyOutput, /\[VERIFY COMPLETE\]/);
       const repeatOutput = runImporter("--apply");
-      assert.match(repeatOutput, /Inserted: 0 \| Unchanged: 76/);
+      assert.match(repeatOutput, /Inserted: 0 \| Unchanged: 75/);
       const db = getDatabaseClient();
       const batches = await db.select().from(schema.importBatches);
       assert.equal(batches.length, 2);

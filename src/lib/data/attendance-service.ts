@@ -7,7 +7,9 @@ import { LocalRepository, type NewRecord } from "./repository.ts";
 import { SettingsService } from "./settings-service.ts";
 import type {
   AttendanceCorrection,
+  AttendanceCorrectionType,
   AttendanceExceptionCase,
+  AttendanceExceptionType,
   AttendanceExceptionStatus,
   AttendanceImportPreview,
   AttendanceImportRow,
@@ -15,11 +17,14 @@ import type {
   AttendancePolicy,
   AttendanceRecord,
   AttendanceStatus,
+  AttendanceWorkMode,
   GeoReading,
   GeofenceResult,
   SiteVisitRequest,
+  SiteVisitOrigin,
+  SiteVisitStatus,
 } from "./attendance-types.ts";
-import type { ActorContext, Role, User } from "./types.ts";
+import type { ActorContext, Employee, Role, User } from "./types.ts";
 
 const POLICY_ID = "attendance-policy-primary";
 const ADMIN_ROLES: Role[] = ["HR", "Super Admin"];
@@ -147,6 +152,662 @@ export class AttendanceService {
     );
   }
 
+  private serverActor(context: ActorContext) {
+    const { storage } = getApplicationDataServices();
+    const user = storage
+      .readCollection<User>("users")
+      .find((item) => item.id === context.actor.userId || item.databaseId === context.actor.userId);
+    return {
+      actorId: context.actor.userId,
+      ...(user?.workspaceEmail ? { actorEmail: user.workspaceEmail } : {}),
+      activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+    };
+  }
+
+  private databaseId(collection: "employees" | "projects", id: string): string {
+    const record = getApplicationDataServices()
+      .storage.readCollection<{ id: string; databaseId?: string }>(collection)
+      .find((item) => item.id === id || item.databaseId === id);
+    const databaseId = record?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
+    if (!databaseId) throw new Error("This record is not linked to PostgreSQL yet.");
+    return databaseId;
+  }
+
+  private localAttendanceDatabaseId(
+    collection:
+      | "attendanceRecords"
+      | "attendanceCorrections"
+      | "attendanceSiteVisits"
+      | "attendanceExceptions",
+    id: string,
+  ): string {
+    const record = getApplicationDataServices()
+      .storage.readCollection<{ id: string; databaseId?: string }>(collection)
+      .find((item) => item.id === id || item.databaseId === id);
+    const databaseId = record?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
+    if (!databaseId) throw new Error("This attendance record has not been migrated to PostgreSQL.");
+    return databaseId;
+  }
+
+  async hydrateFromDatabase(context: ActorContext): Promise<void> {
+    if (typeof window === "undefined") return;
+    const { listAttendanceFn } = await import("../server-functions/attendance.server.ts");
+    const snapshot = await listAttendanceFn({ data: { actor: this.serverActor(context) } });
+    const { storage } = getApplicationDataServices();
+    const employeeMap = new Map(
+      storage
+        .readCollection<Employee>("employees")
+        .filter((employee) => employee.databaseId)
+        .map((employee) => [employee.databaseId!, employee.id]),
+    );
+    const userMap = new Map(
+      storage
+        .readCollection<User>("users")
+        .filter((user) => user.databaseId)
+        .map((user) => [user.databaseId!, user.id]),
+    );
+    const relationMap = new Map<string, string>();
+    for (const collection of ["locations", "projects"] as const)
+      for (const item of storage.readCollection<{ id: string; databaseId?: string }>(collection))
+        if (item.databaseId) relationMap.set(item.databaseId, item.id);
+    const iso = (value: Date | string) =>
+      value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+    const optionalIso = (value: Date | string | null) => (value ? iso(value) : undefined);
+    const localTime = (value: string | null) =>
+      value
+        ? new Date(value).toLocaleTimeString([], {
+            timeZone: snapshot.timezone,
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          })
+        : undefined;
+    const scopedEmployeeIds = new Set(snapshot.employeeIds.map((id) => employeeMap.get(id) ?? id));
+
+    const existingRecords = storage.readCollection<AttendanceRecord>("attendanceRecords");
+    const recordIdMap = new Map<string, string>();
+    const compatibleRecords = snapshot.records.map((row): AttendanceRecord => {
+      const employeeId = employeeMap.get(row.employeeId) ?? row.employeeId;
+      const existing = existingRecords.find(
+        (item) =>
+          item.databaseId === row.id || (item.employeeId === employeeId && item.date === row.date),
+      );
+      const id = existing?.id ?? row.id;
+      recordIdMap.set(row.id, id);
+      return {
+        id,
+        databaseId: row.id,
+        employeeId,
+        date: row.date,
+        ...(row.shiftId ? { shiftId: row.shiftId } : {}),
+        ...(row.expectedClockIn ? { expectedClockIn: row.expectedClockIn } : {}),
+        ...(row.expectedClockOut ? { expectedClockOut: row.expectedClockOut } : {}),
+        ...(localTime(row.clockInAt) ? { clockIn: localTime(row.clockInAt) } : {}),
+        ...(localTime(row.clockOutAt) ? { clockOut: localTime(row.clockOutAt) } : {}),
+        ...(row.clockInAt ? { clockInAt: row.clockInAt } : {}),
+        ...(row.clockOutAt ? { clockOutAt: row.clockOutAt } : {}),
+        breakMinutes: row.breakMinutes,
+        ...(row.location ? { location: row.location } : {}),
+        ...(row.locationId
+          ? { locationId: relationMap.get(row.locationId) ?? row.locationId }
+          : {}),
+        ...(row.capturedLatitude !== null ? { capturedLatitude: row.capturedLatitude } : {}),
+        ...(row.capturedLongitude !== null ? { capturedLongitude: row.capturedLongitude } : {}),
+        ...(row.capturedAccuracyMeters !== null
+          ? { capturedAccuracyMeters: row.capturedAccuracyMeters }
+          : {}),
+        ...(row.clockOutLocationId
+          ? {
+              clockOutLocationId: relationMap.get(row.clockOutLocationId) ?? row.clockOutLocationId,
+            }
+          : {}),
+        ...(row.clockOutCapturedLatitude !== null
+          ? { clockOutCapturedLatitude: row.clockOutCapturedLatitude }
+          : {}),
+        ...(row.clockOutCapturedLongitude !== null
+          ? { clockOutCapturedLongitude: row.clockOutCapturedLongitude }
+          : {}),
+        ...(row.clockOutCapturedAccuracyMeters !== null
+          ? { clockOutCapturedAccuracyMeters: row.clockOutCapturedAccuracyMeters }
+          : {}),
+        source: row.source,
+        ...(row.workMode ? { workMode: row.workMode as AttendanceWorkMode } : {}),
+        ...(row.siteVisitId ? { siteVisitId: row.siteVisitId } : {}),
+        status: row.status,
+        calculatedHours: Number(row.calculatedHours),
+        isLate: row.isLate,
+        isEarlyDeparture: row.isEarlyDeparture,
+        createdAt: iso(row.createdAt),
+        createdBy: userMap.get(row.createdBy) ?? row.createdBy,
+        updatedAt: iso(row.updatedAt),
+        updatedBy: userMap.get(row.updatedBy) ?? row.updatedBy,
+        ...(optionalIso(row.archivedAt) ? { archivedAt: optionalIso(row.archivedAt) } : {}),
+        recordVersion: row.recordVersion,
+      };
+    });
+    storage.writeCollection("attendanceRecords", [
+      ...existingRecords.filter(
+        (row) =>
+          !scopedEmployeeIds.has(row.employeeId) ||
+          (import.meta.env.DEV &&
+            !row.databaseId &&
+            !compatibleRecords.some((item) => item.id === row.id)),
+      ),
+      ...compatibleRecords,
+    ]);
+
+    const existingCorrections =
+      storage.readCollection<AttendanceCorrection>("attendanceCorrections");
+    const compatibleCorrections = snapshot.corrections.map((row): AttendanceCorrection => {
+      const employeeId = employeeMap.get(row.employeeId) ?? row.employeeId;
+      const existing = existingCorrections.find((item) => item.databaseId === row.id);
+      return {
+        id: existing?.id ?? row.id,
+        databaseId: row.id,
+        attendanceRecordId: recordIdMap.get(row.attendanceRecordId) ?? row.attendanceRecordId,
+        employeeId,
+        correctionType: row.correctionType as AttendanceCorrectionType,
+        ...(row.originalClockIn ? { originalClockIn: localTime(row.originalClockIn) } : {}),
+        ...(row.originalClockOut ? { originalClockOut: localTime(row.originalClockOut) } : {}),
+        originalStatus: row.originalStatus,
+        ...(row.proposedClockIn ? { proposedClockIn: localTime(row.proposedClockIn) } : {}),
+        ...(row.proposedClockOut ? { proposedClockOut: localTime(row.proposedClockOut) } : {}),
+        explanation: row.explanation,
+        ...(row.evidenceFileId ? { evidenceFileId: row.evidenceFileId } : {}),
+        status: row.status,
+        ...(row.managerNotes ? { managerNotes: row.managerNotes } : {}),
+        ...(row.managerReviewedBy
+          ? { managerReviewedBy: userMap.get(row.managerReviewedBy) ?? row.managerReviewedBy }
+          : {}),
+        ...(row.managerReviewedAt ? { managerReviewedAt: row.managerReviewedAt } : {}),
+        ...(row.hrNotes ? { hrNotes: row.hrNotes } : {}),
+        ...(row.hrReviewedBy
+          ? { hrReviewedBy: userMap.get(row.hrReviewedBy) ?? row.hrReviewedBy }
+          : {}),
+        ...(row.hrReviewedAt ? { hrReviewedAt: row.hrReviewedAt } : {}),
+        createdAt: iso(row.createdAt),
+        createdBy: userMap.get(row.createdBy) ?? row.createdBy,
+        updatedAt: iso(row.updatedAt),
+        updatedBy: userMap.get(row.updatedBy) ?? row.updatedBy,
+        ...(optionalIso(row.archivedAt) ? { archivedAt: optionalIso(row.archivedAt) } : {}),
+        recordVersion: row.recordVersion,
+      };
+    });
+    storage.writeCollection("attendanceCorrections", [
+      ...existingCorrections.filter(
+        (row) =>
+          !scopedEmployeeIds.has(row.employeeId) ||
+          (import.meta.env.DEV &&
+            !row.databaseId &&
+            !compatibleCorrections.some((item) => item.id === row.id)),
+      ),
+      ...compatibleCorrections,
+    ]);
+
+    const existingVisits = storage.readCollection<SiteVisitRequest>("attendanceSiteVisits");
+    const visitIdMap = new Map<string, string>();
+    const compatibleVisits = snapshot.siteVisits.map((row): SiteVisitRequest => {
+      const employeeId = employeeMap.get(row.employeeId) ?? row.employeeId;
+      const existing = existingVisits.find((item) => item.databaseId === row.id);
+      const id = existing?.id ?? row.id;
+      visitIdMap.set(row.id, id);
+      return {
+        id,
+        databaseId: row.id,
+        employeeId,
+        date: row.date,
+        startTime: row.startTime,
+        endTime: row.endTime,
+        origin: row.origin as SiteVisitOrigin,
+        destination: row.destination,
+        purpose: row.purpose,
+        ...(row.projectId ? { projectId: relationMap.get(row.projectId) ?? row.projectId } : {}),
+        status: row.status as SiteVisitStatus,
+        requestedAt: row.requestedAt,
+        ...(row.hrReviewedBy
+          ? { hrReviewedBy: userMap.get(row.hrReviewedBy) ?? row.hrReviewedBy }
+          : {}),
+        ...(row.hrReviewedAt ? { hrReviewedAt: row.hrReviewedAt } : {}),
+        ...(row.hrNotes ? { hrNotes: row.hrNotes } : {}),
+        ...(row.attendanceRecordId
+          ? {
+              attendanceRecordId: recordIdMap.get(row.attendanceRecordId) ?? row.attendanceRecordId,
+            }
+          : {}),
+        createdAt: iso(row.createdAt),
+        createdBy: userMap.get(row.createdBy) ?? row.createdBy,
+        updatedAt: iso(row.updatedAt),
+        updatedBy: userMap.get(row.updatedBy) ?? row.updatedBy,
+        ...(optionalIso(row.archivedAt) ? { archivedAt: optionalIso(row.archivedAt) } : {}),
+        recordVersion: row.recordVersion,
+      };
+    });
+    storage.writeCollection("attendanceSiteVisits", [
+      ...existingVisits.filter(
+        (row) =>
+          !scopedEmployeeIds.has(row.employeeId) ||
+          (import.meta.env.DEV &&
+            !row.databaseId &&
+            !compatibleVisits.some((item) => item.id === row.id)),
+      ),
+      ...compatibleVisits,
+    ]);
+
+    const existingExceptions =
+      storage.readCollection<AttendanceExceptionCase>("attendanceExceptions");
+    const compatibleExceptions = snapshot.exceptions.map((row): AttendanceExceptionCase => {
+      const employeeId = employeeMap.get(row.employeeId) ?? row.employeeId;
+      const existing = existingExceptions.find((item) => item.databaseId === row.id);
+      return {
+        id: existing?.id ?? row.id,
+        databaseId: row.id,
+        employeeId,
+        type: row.type as AttendanceExceptionType,
+        siteVisitId: visitIdMap.get(row.siteVisitId) ?? row.siteVisitId,
+        date: row.date,
+        destination: row.destination,
+        status: row.status as AttendanceExceptionStatus,
+        ...(row.ownerId ? { ownerId: userMap.get(row.ownerId) ?? row.ownerId } : {}),
+        ...(row.investigationNotes ? { investigationNotes: row.investigationNotes } : {}),
+        ...(row.resolutionNotes ? { resolutionNotes: row.resolutionNotes } : {}),
+        ...(row.resolvedBy ? { resolvedBy: userMap.get(row.resolvedBy) ?? row.resolvedBy } : {}),
+        ...(row.resolvedAt ? { resolvedAt: row.resolvedAt } : {}),
+        createdAt: iso(row.createdAt),
+        createdBy: userMap.get(row.createdBy) ?? row.createdBy,
+        updatedAt: iso(row.updatedAt),
+        updatedBy: userMap.get(row.updatedBy) ?? row.updatedBy,
+        ...(optionalIso(row.archivedAt) ? { archivedAt: optionalIso(row.archivedAt) } : {}),
+        recordVersion: row.recordVersion,
+      };
+    });
+    storage.writeCollection("attendanceExceptions", [
+      ...existingExceptions.filter(
+        (row) =>
+          !scopedEmployeeIds.has(row.employeeId) ||
+          (import.meta.env.DEV &&
+            !row.databaseId &&
+            !compatibleExceptions.some((item) => item.id === row.id)),
+      ),
+      ...compatibleExceptions,
+    ]);
+
+    if (snapshot.policy) {
+      const existingPolicy = this.getPolicy();
+      storage.writeCollection("attendancePolicies", [
+        {
+          ...existingPolicy,
+          databaseId: snapshot.policy.id,
+          standardDailyHours: Number(snapshot.policy.standardDailyHours),
+          expectedClockIn: snapshot.policy.expectedClockIn,
+          expectedClockOut: snapshot.policy.expectedClockOut,
+          defaultBreakMinutes: snapshot.policy.defaultBreakMinutes,
+          lateGraceMinutes: snapshot.policy.lateGraceMinutes,
+          maximumLocationAccuracyMeters: snapshot.policy.maximumLocationAccuracyMeters,
+          signOutReminderOffsetsMinutes: snapshot.policy.signOutReminderOffsetsMinutes as [
+            number,
+            number,
+            number,
+          ],
+          approvedNetworkCidrs: snapshot.policy.approvedNetworkCidrs,
+          updatedAt: iso(snapshot.policy.updatedAt),
+          updatedBy: userMap.get(snapshot.policy.updatedBy) ?? snapshot.policy.updatedBy,
+          recordVersion: snapshot.policy.recordVersion,
+        },
+      ]);
+    }
+    window.dispatchEvent(new CustomEvent("via_hr:data_changed"));
+  }
+
+  async clockAsync(
+    employeeId: string,
+    direction: "in" | "out",
+    reading: GeoReading,
+    context: ActorContext,
+  ): Promise<AttendanceRecord> {
+    const { captureAttendancePunchFn } = await import("../server-functions/attendance.server.ts");
+    const databaseRecordId = await captureAttendancePunchFn({
+      data: {
+        actor: this.serverActor(context),
+        employeeId: this.databaseId("employees", employeeId),
+        direction,
+        latitude: reading.latitude,
+        longitude: reading.longitude,
+        accuracyMeters: reading.accuracyMeters,
+      },
+    });
+    await this.hydrateFromDatabase(context);
+    const record = this.recordRepo.list().find((item) => item.databaseId === databaseRecordId);
+    if (!record) throw new Error("The attendance record could not be refreshed.");
+    return record;
+  }
+
+  async requestCorrectionAsync(
+    recordId: string,
+    proposedIn: string,
+    proposedOut: string,
+    explanation: string,
+    context: ActorContext,
+    localEvidenceFileId?: string,
+  ): Promise<AttendanceCorrection> {
+    const record = this.recordRepo.getById(recordId);
+    if (!record) throw new Error("Attendance record was not found.");
+    const {
+      deleteUnattachedAttendanceEvidenceFn,
+      requestAttendanceCorrectionFn,
+      uploadAttendanceCorrectionEvidenceFn,
+    } = await import("../server-functions/attendance.server.ts");
+    let databaseEvidenceFileId: string | undefined;
+    if (localEvidenceFileId) {
+      const { files } = getApplicationDataServices();
+      const [metadata, blob] = await Promise.all([
+        files.getMetadata(localEvidenceFileId),
+        files.getBlob(localEvidenceFileId),
+      ]);
+      if (!metadata || !blob) throw new Error("The uploaded evidence could not be read.");
+      if (!["application/pdf", "image/png", "image/jpeg"].includes(metadata.mimeType))
+        throw new Error("Attendance evidence must be a PDF, PNG or JPEG file.");
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      let binary = "";
+      for (let offset = 0; offset < bytes.length; offset += 32_768)
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
+      const uploaded = await uploadAttendanceCorrectionEvidenceFn({
+        data: {
+          actor: this.serverActor(context),
+          name: metadata.name,
+          mimeType: metadata.mimeType as "application/pdf" | "image/png" | "image/jpeg",
+          base64: btoa(binary),
+        },
+      });
+      databaseEvidenceFileId = uploaded.id;
+    }
+    try {
+      const databaseCorrectionId = await requestAttendanceCorrectionFn({
+        data: {
+          actor: this.serverActor(context),
+          attendanceRecordId: this.localAttendanceDatabaseId("attendanceRecords", recordId),
+          ...(proposedIn ? { proposedClockIn: proposedIn } : {}),
+          ...(proposedOut ? { proposedClockOut: proposedOut } : {}),
+          explanation,
+          ...(databaseEvidenceFileId ? { evidenceFileId: databaseEvidenceFileId } : {}),
+        },
+      });
+      if (localEvidenceFileId)
+        await getApplicationDataServices().files.delete(localEvidenceFileId, {
+          ...context,
+          reason: "Evidence moved to VIA secure file storage",
+        });
+      await this.hydrateFromDatabase(context);
+      const correction = this.correctionRepo
+        .list()
+        .find((item) => item.databaseId === databaseCorrectionId);
+      if (!correction) throw new Error("The attendance correction could not be refreshed.");
+      return correction;
+    } catch (error) {
+      if (databaseEvidenceFileId)
+        await deleteUnattachedAttendanceEvidenceFn({
+          data: { actor: this.serverActor(context), fileId: databaseEvidenceFileId },
+        }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async requestSiteVisitAsync(
+    input: Parameters<AttendanceService["requestSiteVisit"]>[0],
+    context: ActorContext,
+  ): Promise<SiteVisitRequest> {
+    const { requestSiteVisitFn } = await import("../server-functions/attendance.server.ts");
+    const databaseId = await requestSiteVisitFn({
+      data: {
+        actor: this.serverActor(context),
+        employeeId: this.databaseId("employees", input.employeeId),
+        date: input.date,
+        startTime: input.startTime,
+        endTime: input.endTime,
+        origin: input.origin,
+        destination: input.destination,
+        purpose: input.purpose,
+        ...(input.projectId ? { projectId: this.databaseId("projects", input.projectId) } : {}),
+      },
+    });
+    await this.hydrateFromDatabase(context);
+    const visit = this.siteVisitRepo.list().find((item) => item.databaseId === databaseId);
+    if (!visit) throw new Error("The site visit could not be refreshed.");
+    return visit;
+  }
+
+  async reviewSiteVisitAsync(
+    visitId: string,
+    approve: boolean,
+    notes: string,
+    context: ActorContext,
+  ): Promise<SiteVisitRequest> {
+    const storedVisit = this.siteVisitRepo.getById(visitId);
+    if (!storedVisit?.databaseId && import.meta.env.DEV)
+      return this.reviewSiteVisit(visitId, approve, notes, context);
+    const { decideSiteVisitFn } = await import("../server-functions/attendance.server.ts");
+    await decideSiteVisitFn({
+      data: {
+        actor: this.serverActor(context),
+        visitId: this.localAttendanceDatabaseId("attendanceSiteVisits", visitId),
+        decision: approve ? "approve" : "reject",
+        ...(notes.trim() ? { notes } : {}),
+      },
+    });
+    await this.hydrateFromDatabase(context);
+    const visit = this.siteVisitRepo.getById(visitId);
+    if (!visit) throw new Error("The site visit could not be refreshed.");
+    return visit;
+  }
+
+  async cancelSiteVisitAsync(
+    visitId: string,
+    reason: string,
+    context: ActorContext,
+  ): Promise<void> {
+    const storedVisit = this.siteVisitRepo.getById(visitId);
+    if (!storedVisit?.databaseId && import.meta.env.DEV) {
+      this.cancelSiteVisit(visitId, { ...context, reason });
+      return;
+    }
+    const { cancelSiteVisitFn } = await import("../server-functions/attendance.server.ts");
+    await cancelSiteVisitFn({
+      data: {
+        actor: this.serverActor(context),
+        visitId: this.localAttendanceDatabaseId("attendanceSiteVisits", visitId),
+        reason,
+      },
+    });
+    await this.hydrateFromDatabase(context);
+  }
+
+  async decideCorrectionAsync(
+    correctionId: string,
+    approve: boolean,
+    notes: string,
+    context: ActorContext,
+  ): Promise<void> {
+    const storedCorrection = this.correctionRepo.getById(correctionId);
+    if (!storedCorrection?.databaseId && import.meta.env.DEV) {
+      if (storedCorrection?.status === "Pending Manager") {
+        if (approve) this.managerApproveCorrection(correctionId, context, notes);
+        else this.managerRejectCorrection(correctionId, notes, context);
+      } else this.hrFinaliseCorrection(correctionId, approve, notes, context);
+      return;
+    }
+    const { decideAttendanceCorrectionFn } =
+      await import("../server-functions/attendance.server.ts");
+    await decideAttendanceCorrectionFn({
+      data: {
+        actor: this.serverActor(context),
+        correctionId: this.localAttendanceDatabaseId("attendanceCorrections", correctionId),
+        decision: approve ? "approve" : "reject",
+        ...(notes.trim() ? { notes } : {}),
+      },
+    });
+    await this.hydrateFromDatabase(context);
+  }
+
+  async resolveExceptionCaseAsync(id: string, notes: string, context: ActorContext): Promise<void> {
+    const storedException = this.exceptionRepo.getById(id);
+    if (!storedException?.databaseId && import.meta.env.DEV) {
+      this.resolveExceptionCase(id, notes, context);
+      return;
+    }
+    const { resolveAttendanceExceptionFn } =
+      await import("../server-functions/attendance.server.ts");
+    await resolveAttendanceExceptionFn({
+      data: {
+        actor: this.serverActor(context),
+        exceptionId: this.localAttendanceDatabaseId("attendanceExceptions", id),
+        resolution: notes,
+      },
+    });
+    await this.hydrateFromDatabase(context);
+  }
+
+  async investigateExceptionCaseAsync(
+    id: string,
+    input: { assignToMe?: boolean; notes?: string },
+    context: ActorContext,
+  ): Promise<void> {
+    const stored = this.exceptionRepo.getById(id);
+    if (!stored?.databaseId && import.meta.env.DEV) {
+      if (input.assignToMe) this.assignExceptionCase(id, context.actor.userId, context);
+      if (input.notes) this.updateExceptionCaseNotes(id, input.notes, context);
+      return;
+    }
+    const { updateAttendanceExceptionInvestigationFn } =
+      await import("../server-functions/attendance.server.ts");
+    await updateAttendanceExceptionInvestigationFn({
+      data: {
+        actor: this.serverActor(context),
+        exceptionId: this.localAttendanceDatabaseId("attendanceExceptions", id),
+        ...(input.assignToMe ? { assignToActor: true } : {}),
+        ...(input.notes ? { investigationNotes: input.notes } : {}),
+      },
+    });
+    await this.hydrateFromDatabase(context);
+  }
+
+  async savePolicyAsync(
+    input: NewRecord<AttendancePolicy>,
+    approvedNetworkCidrs: string[],
+    reason: string,
+    context: ActorContext,
+  ): Promise<AttendancePolicy> {
+    const { saveAttendancePolicyFn } = await import("../server-functions/attendance.server.ts");
+    await saveAttendancePolicyFn({
+      data: {
+        actor: this.serverActor(context),
+        standardDailyHours: input.standardDailyHours,
+        expectedClockIn: input.expectedClockIn,
+        expectedClockOut: input.expectedClockOut,
+        defaultBreakMinutes: input.defaultBreakMinutes,
+        lateGraceMinutes: input.lateGraceMinutes,
+        maximumLocationAccuracyMeters: input.maximumLocationAccuracyMeters,
+        signOutReminderOffsetsMinutes: input.signOutReminderOffsetsMinutes,
+        approvedNetworkCidrs,
+        reason,
+      },
+    });
+    await this.hydrateFromDatabase(context);
+    return this.getPolicy();
+  }
+
+  async saveRecordAsync(
+    data: Omit<
+      AttendanceRecord,
+      "id" | "createdAt" | "createdBy" | "updatedAt" | "updatedBy" | "recordVersion"
+    >,
+    context: ActorContext,
+    recordId?: string,
+  ): Promise<AttendanceRecord> {
+    const { saveAttendanceRecordFn } = await import("../server-functions/attendance.server.ts");
+    const databaseId = await saveAttendanceRecordFn({
+      data: {
+        actor: this.serverActor(context),
+        ...(recordId
+          ? { recordId: this.localAttendanceDatabaseId("attendanceRecords", recordId) }
+          : {}),
+        row: {
+          employeeId: this.databaseId("employees", data.employeeId),
+          date: data.date,
+          ...(data.clockIn ? { clockIn: data.clockIn } : {}),
+          ...(data.clockOut ? { clockOut: data.clockOut } : {}),
+          breakMinutes: data.breakMinutes,
+          ...(data.location ? { location: data.location } : {}),
+          source: data.source === "Hardware Terminal" ? "Hardware Terminal" : "Manual Entry",
+        },
+        reason: context.reason ?? "HR attendance record update",
+      },
+    });
+    await this.hydrateFromDatabase(context);
+    const record = this.recordRepo.list().find((item) => item.databaseId === databaseId);
+    if (!record) throw new Error("The attendance record could not be refreshed.");
+    return record;
+  }
+
+  async importRowsAsync(rows: AttendanceImportRow[], context: ActorContext): Promise<number> {
+    const { importAttendanceRecordsFn } = await import("../server-functions/attendance.server.ts");
+    const ids = await importAttendanceRecordsFn({
+      data: {
+        actor: this.serverActor(context),
+        rows: rows.map((row) => ({
+          employeeId: this.databaseId("employees", row.employeeId),
+          date: row.date,
+          ...(row.clockIn ? { clockIn: row.clockIn } : {}),
+          ...(row.clockOut ? { clockOut: row.clockOut } : {}),
+          breakMinutes: row.breakMinutes,
+          ...(row.location ? { location: row.location } : {}),
+          source: "Import" as const,
+        })),
+        reason: context.reason ?? "Validated attendance CSV import",
+      },
+    });
+    await this.hydrateFromDatabase(context);
+    return ids.length;
+  }
+
+  async exportCsvAsync(date: string, context: ActorContext): Promise<string> {
+    const { exportAttendanceRecordsFn } = await import("../server-functions/attendance.server.ts");
+    const records = await exportAttendanceRecordsFn({
+      data: { actor: this.serverActor(context), date },
+    });
+    const headers = [
+      "Employee Number",
+      "Employee",
+      "Date",
+      "Status",
+      "Clock In",
+      "Clock Out",
+      "Break Minutes",
+      "Worked Hours",
+      "Location",
+      "Source",
+      "Work Mode",
+    ];
+    return [
+      headers.join(","),
+      ...records.map((record) =>
+        [
+          record.employeeNumber,
+          record.employeeName,
+          record.date,
+          record.status,
+          record.clockInAt,
+          record.clockOutAt,
+          record.breakMinutes,
+          record.calculatedHours,
+          record.location,
+          record.source,
+          record.workMode,
+        ]
+          .map(escapeCsv)
+          .join(","),
+      ),
+    ].join("\n");
+  }
+
   getAllRecords(context: ActorContext): AttendanceRecord[] {
     this.requireAdmin(context, "view all attendance records");
     return this.recordRepo.list().map((record) => this.presentRecord(record));
@@ -225,6 +886,24 @@ export class AttendanceService {
       throw new Error("You are not authorised to view this correction's evidence.");
     }
 
+    if (correction.databaseId) {
+      const { readAttendanceCorrectionEvidenceFn } =
+        await import("../server-functions/attendance.server.ts");
+      const result = await readAttendanceCorrectionEvidenceFn({
+        data: {
+          actor: this.serverActor(context),
+          correctionId: correction.databaseId,
+          reason: `Viewed supporting evidence for attendance correction ${correction.id}`,
+        },
+      });
+      const binary = atob(result.base64);
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      return {
+        blob: new Blob([bytes], { type: result.metadata.mimeType }),
+        fileName: result.metadata.name,
+      };
+    }
+
     const { files } = getApplicationDataServices();
     const [metadata, blob] = await Promise.all([
       files.getMetadata(correction.evidenceFileId),
@@ -297,6 +976,7 @@ export class AttendanceService {
       | "lateGraceMinutes"
       | "maximumLocationAccuracyMeters"
       | "signOutReminderOffsetsMinutes"
+      | "approvedNetworkCidrs"
     >,
     context: ActorContext,
   ): AttendancePolicy {
@@ -342,12 +1022,12 @@ export class AttendanceService {
     );
   }
 
-  configureOfficeLocation(
+  async configureOfficeLocation(
     locationId: string,
     reading: GeoReading,
     radiusMeters: number,
     context: ActorContext,
-  ): AttendanceLocation {
+  ): Promise<AttendanceLocation> {
     this.requireAdmin(context, "configure the office geofence");
     this.validateReading(reading);
     if (reading.accuracyMeters > this.getPolicy().maximumLocationAccuracyMeters) {
@@ -358,18 +1038,30 @@ export class AttendanceService {
     if (radiusMeters < 20 || radiusMeters > 10_000) {
       throw new Error("Office radius must be between 20 and 10,000 metres.");
     }
-    const repository = getMasterDataRepository("locations");
-    if (!repository.getById(locationId)) throw new Error("Office location was not found.");
-    return repository.update(
-      locationId,
-      {
+    const location = this.getLocations(true).find((item) => item.id === locationId);
+    const databaseId =
+      location?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(locationId) ? locationId : undefined);
+    if (!databaseId) throw new Error("This office location is not linked to PostgreSQL.");
+    const { configureAttendanceOfficeFn } =
+      await import("../server-functions/attendance.server.ts");
+    await configureAttendanceOfficeFn({
+      data: {
+        actor: this.serverActor(context),
+        locationId: databaseId,
         latitude: reading.latitude,
         longitude: reading.longitude,
+        accuracyMeters: reading.accuracyMeters,
         radiusMeters,
-        isClockInSite: true,
-      } as Partial<AttendanceLocation>,
-      { ...context, reason: context.reason ?? "Office geofence captured from current location" },
-    ) as AttendanceLocation;
+        reason: context.reason ?? "Office geofence captured from current location",
+      },
+    });
+    const { MasterDataService } = await import("./master-data.ts");
+    await new MasterDataService().hydrateCompatibilityCache();
+    const refreshed = this.getLocations(true).find(
+      (item) => item.databaseId === databaseId || item.id === locationId,
+    );
+    if (!refreshed) throw new Error("The office location could not be refreshed.");
+    return refreshed;
   }
 
   evaluateGeofence(reading: GeoReading): GeofenceResult {

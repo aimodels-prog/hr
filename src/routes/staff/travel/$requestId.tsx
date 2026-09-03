@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -21,7 +21,6 @@ import {
   FileText,
   Paperclip,
 } from "lucide-react";
-import { getApplicationDataServices } from "@/lib/data/application-data";
 import {
   Select,
   SelectContent,
@@ -32,7 +31,7 @@ import {
 import { parseISO, isAfter } from "date-fns";
 import { AuditViewer } from "@/components/audit-viewer";
 
-const generateId = () => Math.random().toString(36).substring(2, 9);
+const generateId = () => crypto.randomUUID();
 
 export const Route = createFileRoute("/staff/travel/$requestId")({
   component: TravelDetailRoute,
@@ -43,23 +42,34 @@ function TravelDetailRoute() {
   const navigate = useNavigate();
   const currentUser = useCurrentUser();
   const travelService = useMemo(() => new TravelService(), []);
-  const pendingReceiptIds = useRef(new Set<string>());
+  const [receiptFiles, setReceiptFiles] = useState<Map<string, File>>(() => new Map());
 
   const [request, setRequest] = useState<TravelRequest | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
     if (!currentUser?.employeeId) return;
-    try {
-      setRequest(travelService.getRequestById(requestId, currentUser.getActorContext()));
-      setLoadError(null);
-    } catch (error: unknown) {
-      setRequest(null);
-      setLoadError(
-        error instanceof Error
-          ? error.message
-          : "You are not authorised to view this travel request.",
-      );
-    }
+    let cancelled = false;
+    travelService
+      .getRequestByIdAsync(requestId, currentUser.getActorContext())
+      .then((record) => {
+        if (!cancelled) {
+          setRequest(record);
+          setLoadError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setRequest(null);
+          setLoadError(
+            error instanceof Error
+              ? error.message
+              : "You are not authorised to view this travel request.",
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestId, currentUser?.employeeId]);
 
@@ -71,20 +81,6 @@ function TravelDetailRoute() {
     setVarianceExplanation(request.varianceExplanation || "");
   }, [request]);
 
-  useEffect(() => {
-    const actorContext = currentUser.getActorContext();
-    const pendingIds = pendingReceiptIds.current;
-    return () => {
-      for (const fileId of pendingIds) {
-        void getApplicationDataServices().files.delete(fileId, {
-          ...actorContext,
-          reason: "Unused travel receipt removed when the expense draft was closed",
-        });
-      }
-      pendingIds.clear();
-    };
-  }, [currentUser]);
-
   if (!currentUser?.employeeId) return <div>Employee profile required.</div>;
   if (loadError) return <div className="p-8 text-destructive">{loadError}</div>;
   if (!request) return <div className="p-8">Travel request not found.</div>;
@@ -94,9 +90,12 @@ function TravelDetailRoute() {
     ? getMasterDataRepository("costCentres").getById(request.costCentreId)
     : null;
 
-  const handleWithdraw = () => {
+  const handleWithdraw = async () => {
     try {
-      const updated = travelService.withdrawRequest(request.id, currentUser!.getActorContext());
+      const updated = await travelService.withdrawRequestAsync(
+        request.id,
+        currentUser!.getActorContext(),
+      );
       setRequest(updated);
       toast.success("Travel request withdrawn");
     } catch (error: unknown) {
@@ -157,41 +156,24 @@ function TravelDetailRoute() {
   };
 
   const removeLine = (id: string) => {
-    const receiptFileId = expenseLines.find((line) => line.id === id)?.receiptFileId;
-    if (receiptFileId && pendingReceiptIds.current.delete(receiptFileId)) {
-      void getApplicationDataServices().files.delete(receiptFileId, {
-        ...currentUser.getActorContext(),
-        reason: "Unused receipt removed with the expense line",
-      });
-    }
+    setReceiptFiles((current) => {
+      const next = new Map(current);
+      next.delete(id);
+      return next;
+    });
     setExpenseLines(expenseLines.filter((line) => line.id !== id));
   };
 
   const uploadReceipt = async (lineId: string, file: File | undefined | null) => {
     if (!file) return;
     try {
-      const { files } = getApplicationDataServices();
-      const previousReceiptId = expenseLines.find((line) => line.id === lineId)?.receiptFileId;
-      const saved = await files.save(
-        {
-          blob: file,
-          name: file.name,
-          mimeType: file.type,
-          owner: { entityType: "travel-expense-line", entityId: lineId },
-        },
-        currentUser!.getActorContext(),
-      );
-      pendingReceiptIds.current.add(saved.id);
-      updateLine(lineId, "receiptFileId", saved.id);
-      if (previousReceiptId && pendingReceiptIds.current.delete(previousReceiptId)) {
-        await files.delete(previousReceiptId, {
-          ...currentUser.getActorContext(),
-          reason: "Travel receipt replaced before expense submission",
-        });
-      }
+      if (file.size > 10 * 1024 * 1024) throw new Error("Receipts must be 10 MB or smaller.");
+      if (!/\.(pdf|jpe?g|png)$/i.test(file.name))
+        throw new Error("Upload a PDF, JPG or PNG receipt.");
+      setReceiptFiles((current) => new Map(current).set(lineId, file));
       toast.success("Receipt attached");
-    } catch {
-      toast.error("Failed to upload receipt");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to attach receipt");
     }
   };
 
@@ -208,7 +190,7 @@ function TravelDetailRoute() {
         );
         return;
       }
-      const lineMissingReceipt = expenseLines.find((line) => !line.receiptFileId);
+      const lineMissingReceipt = expenseLines.find((line) => !receiptFiles.has(line.id));
       if (lineMissingReceipt) {
         toast.error(
           `Upload the receipt or invoice for the ${lineMissingReceipt.category} expense dated ${lineMissingReceipt.date}.`,
@@ -231,8 +213,9 @@ function TravelDetailRoute() {
         expenseLines,
         varianceExplanation,
         currentUser!.getActorContext(),
+        receiptFiles,
       );
-      pendingReceiptIds.current.clear();
+      setReceiptFiles(new Map());
       setRequest(updated);
       toast.success("Expenses sent for final review");
     } catch (error: unknown) {
@@ -503,8 +486,10 @@ function TravelDetailRoute() {
                       <div className="col-span-1 text-center">
                         {!isSubmissionLocked && (
                           <label
-                            className={`inline-flex cursor-pointer items-center justify-center ${line.receiptFileId ? "text-emerald-600" : "text-muted-foreground"}`}
-                            title={line.receiptFileId ? "Receipt attached" : "Attach receipt"}
+                            className={`inline-flex cursor-pointer items-center justify-center ${receiptFiles.has(line.id) ? "text-emerald-600" : "text-muted-foreground"}`}
+                            title={
+                              receiptFiles.has(line.id) ? "Receipt attached" : "Attach receipt"
+                            }
                           >
                             <Paperclip className="w-4 h-4" />
                             <input

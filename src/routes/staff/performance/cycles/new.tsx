@@ -82,7 +82,7 @@ function NewCyclePage() {
     (employee) => !employee.lineManagerId || employee.lineManagerId === employee.id,
   );
 
-  const save = (status: "Draft" | "Active") => {
+  const save = async (status: "Draft" | "Active") => {
     if (
       !name ||
       !templateId ||
@@ -109,9 +109,10 @@ function NewCyclePage() {
         employeeCanSeeManagerRatings: true,
       };
       if (existing) {
-        perfService.updateDraftCycle(existing.id, input, context);
-        if (status === "Active") perfService.updateCycleStatus(existing.id, "Active", context);
-      } else perfService.createCycle({ ...input, status }, context);
+        await perfService.updateDraftCycleAsync(existing.id, input, context);
+        if (status === "Active")
+          await perfService.updateCycleStatusAsync(existing.id, "Active", context);
+      } else await perfService.createCycleAsync({ ...input, status }, context);
 
       toast.success(status === "Active" ? "Review cycle started" : "Review cycle saved as a draft");
       navigate({ to: "/staff/performance/cycles" });

@@ -1,8 +1,7 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { AccessDenied, useCurrentUser } from "@/lib/auth";
 import { ReportService, type ReportData, type ReportSavedView } from "@/lib/data/report-service";
-import { exportToCsv } from "@/components/reports/report-exporter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +12,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Bookmark, Download, Printer, Filter, ChevronRight, BarChart3, Trash2 } from "lucide-react";
+import {
+  Bookmark,
+  Download,
+  Printer,
+  Filter,
+  ChevronRight,
+  BarChart3,
+  Trash2,
+  Loader2,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -60,7 +68,9 @@ function ReportsDashboard() {
     [currentUserId, activeRole, currentEmployee],
   );
 
-  const availableReports = useMemo(() => reportService.getAvailableReports(), [reportService]);
+  const [availableReports, setAvailableReports] = useState<
+    { id: string; name: string; category: string }[]
+  >([]);
 
   const [activeReportId, setActiveReportId] = useState<string | null>(null);
   const [reportData, setReportData] = useState<ReportData | null>(null);
@@ -70,6 +80,8 @@ function ReportsDashboard() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [departmentFilter, setDepartmentFilter] = useState("all");
   const [loadError, setLoadError] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isExporting, setIsExporting] = useState(false);
   const [savedViews, setSavedViews] = useState<ReportSavedView[]>([]);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [viewName, setViewName] = useState("");
@@ -84,42 +96,73 @@ function ReportsDashboard() {
       .catch(() => {});
   }, []);
 
-  const loadReport = (id: string) => {
+  useEffect(() => {
+    let active = true;
+    setIsLoading(true);
+    reportService
+      .getAvailableReportsFromDatabase()
+      .then((reports) => {
+        if (active) setAvailableReports([...reports]);
+      })
+      .catch((error) => {
+        if (active)
+          setLoadError(error instanceof Error ? error.message : "Reports could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [reportService]);
+
+  const currentFilters = useCallback(
+    () => ({
+      search: filterQuery,
+      dateFrom,
+      dateTo,
+      department: departmentFilter,
+      status: statusFilter,
+    }),
+    [dateFrom, dateTo, departmentFilter, filterQuery, statusFilter],
+  );
+
+  const loadReport = async (
+    id: string,
+    filters = { search: "", dateFrom: "", dateTo: "", department: "all", status: "all" },
+  ) => {
     try {
+      setIsLoading(true);
       setLoadError("");
       setActiveReportId(id);
-      setReportData(reportService.generateReport(id));
-      setFilterQuery("");
-      setDateFrom("");
-      setDateTo("");
-      setStatusFilter("all");
-      setDepartmentFilter("all");
-      setSavedViews(reportService.getSavedViews(id));
+      const [data, views] = await Promise.all([
+        reportService.generateReportFromDatabase(id, filters),
+        reportService.getSavedViewsFromDatabase(id),
+      ]);
+      setReportData(data);
+      setSavedViews(views);
     } catch (error) {
       setReportData(null);
       setLoadError(error instanceof Error ? error.message : "The report could not be loaded.");
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const applySavedView = (view: ReportSavedView) => {
+  const applySavedView = async (view: ReportSavedView) => {
     setFilterQuery(view.filters.search);
     setDateFrom(view.filters.dateFrom);
     setDateTo(view.filters.dateTo);
     setDepartmentFilter(view.filters.department);
     setStatusFilter(view.filters.status);
+    await loadReport(view.reportId, view.filters);
   };
 
-  const saveCurrentView = () => {
+  const saveCurrentView = async () => {
     if (!activeReportId) return;
     try {
-      reportService.saveView(activeReportId, viewName, {
-        search: filterQuery,
-        dateFrom,
-        dateTo,
-        department: departmentFilter,
-        status: statusFilter,
-      });
-      setSavedViews(reportService.getSavedViews(activeReportId));
+      await reportService.saveViewToDatabase(activeReportId, viewName, currentFilters());
+      setSavedViews(await reportService.getSavedViewsFromDatabase(activeReportId));
       setSaveDialogOpen(false);
       setViewName("");
       toast.success("Report view saved");
@@ -128,9 +171,9 @@ function ReportsDashboard() {
     }
   };
 
-  const deleteView = (view: ReportSavedView) => {
+  const deleteView = async (view: ReportSavedView) => {
     try {
-      reportService.deleteSavedView(view.id);
+      await reportService.deleteSavedViewFromDatabase(view.id);
       setSavedViews((current) => current.filter((item) => item.id !== view.id));
       toast.success("Saved view removed");
     } catch (error) {
@@ -138,37 +181,29 @@ function ReportsDashboard() {
     }
   };
 
-  const handleExport = () => {
-    if (reportData && activeReportId) {
-      const exported = { ...reportData, rows: filteredRows };
-      exportToCsv(exported);
-      reportService.logReportExport(activeReportId, "CSV", filteredRows.length);
+  const handleExport = async () => {
+    if (!reportData || !activeReportId) return;
+    try {
+      setIsExporting(true);
+      const exported = await reportService.exportReportFromDatabase(
+        activeReportId,
+        currentFilters(),
+      );
+      const url = URL.createObjectURL(new Blob([exported.csv], { type: "text/csv;charset=utf-8" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = exported.fileName;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      toast.success(`${exported.rowCount} records exported`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The report could not be exported.");
+    } finally {
+      setIsExporting(false);
     }
   };
 
-  const filteredRows = useMemo(() => {
-    if (!reportData) return [];
-    const q = filterQuery.toLowerCase();
-    const dateKeys = reportData.columns
-      .filter((column) => column.type === "date")
-      .map((c) => c.key);
-    return reportData.rows.filter((row) => {
-      if (q && !Object.values(row).some((value) => String(value).toLowerCase().includes(q))) {
-        return false;
-      }
-      if (statusFilter !== "all" && String(row["status"] ?? "") !== statusFilter) return false;
-      if (departmentFilter !== "all" && String(row["department"] ?? "") !== departmentFilter) {
-        return false;
-      }
-      if (dateFrom || dateTo) {
-        const values = dateKeys.map((key) => String(row[key] ?? "")).filter(Boolean);
-        if (!values.length) return false;
-        if (dateFrom && !values.some((value) => value >= dateFrom)) return false;
-        if (dateTo && !values.some((value) => value <= dateTo)) return false;
-      }
-      return true;
-    });
-  }, [dateFrom, dateTo, departmentFilter, filterQuery, reportData, statusFilter]);
+  const filteredRows = useMemo(() => reportData?.rows ?? [], [reportData]);
 
   const statuses = useMemo(
     () =>
@@ -204,6 +239,25 @@ function ReportsDashboard() {
     return cats;
   }, [availableReports]);
 
+  const selectReport = async (id: string) => {
+    setFilterQuery("");
+    setDateFrom("");
+    setDateTo("");
+    setStatusFilter("all");
+    setDepartmentFilter("all");
+    await loadReport(id);
+  };
+
+  const clearFilters = async () => {
+    if (!activeReportId) return;
+    setFilterQuery("");
+    setDateFrom("");
+    setDateTo("");
+    setStatusFilter("all");
+    setDepartmentFilter("all");
+    await loadReport(activeReportId);
+  };
+
   return (
     <div className="mx-auto max-w-6xl space-y-6 pb-10">
       <div>
@@ -226,7 +280,8 @@ function ReportsDashboard() {
                 {reports.map((r) => (
                   <button
                     key={r.id}
-                    onClick={() => loadReport(r.id)}
+                    onClick={() => selectReport(r.id)}
+                    disabled={isLoading}
                     className={`w-full text-left px-2 py-1.5 rounded-md text-sm flex items-center justify-between group transition-colors ${
                       activeReportId === r.id
                         ? "bg-primary/10 text-primary font-medium"
@@ -270,8 +325,18 @@ function ReportsDashboard() {
                     <Button variant="outline" size="sm" onClick={() => window.print()}>
                       <Printer className="w-4 h-4 mr-2" /> Print
                     </Button>
-                    <Button variant="default" size="sm" onClick={handleExport}>
-                      <Download className="w-4 h-4 mr-2" /> Export CSV
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={handleExport}
+                      disabled={isExporting || isLoading}
+                    >
+                      {isExporting ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="mr-2 h-4 w-4" />
+                      )}
+                      Export CSV
                     </Button>
                   </div>
                 </div>
@@ -372,6 +437,18 @@ function ReportsDashboard() {
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="mb-4 flex flex-wrap justify-end gap-2">
+                  <Button variant="outline" onClick={clearFilters} disabled={isLoading}>
+                    Clear filters
+                  </Button>
+                  <Button
+                    onClick={() => activeReportId && loadReport(activeReportId, currentFilters())}
+                    disabled={isLoading || !activeReportId}
+                  >
+                    {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Apply filters
+                  </Button>
                 </div>
 
                 <div className="rounded-md border overflow-x-auto">

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
   Clock3,
@@ -34,7 +34,6 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useCurrentUser } from "@/lib/auth";
-import { getApplicationDataServices } from "@/lib/data/application-data";
 import { GoalService, type EmployeeGoal, type GoalDraftInput } from "@/lib/data/goal-service";
 import { PerformanceService } from "@/lib/data/performance-service";
 
@@ -98,12 +97,14 @@ export function ObjectivesWorkspace() {
     if (!cycleId && cycles[0]) setCycleId(cycles[0].id);
   }, [cycleId, cycles]);
 
-  const refresh = () => {
+  const refresh = useCallback(async () => {
     if (!employeeId || !cycleId) return setGoals([]);
-    setGoals(goalService.getGoalsForEmployee(employeeId, context, cycleId));
-  };
+    setGoals(await goalService.getGoalsForEmployeeAsync(employeeId, context, cycleId));
+  }, [cycleId, context, employeeId, goalService]);
 
-  useEffect(refresh, [cycleId, context, employeeId, goalService]);
+  useEffect(() => {
+    void refresh().catch((error) => toast.error(errorMessage(error)));
+  }, [refresh]);
 
   const selectedCycle = cycles.find((cycle) => cycle.id === cycleId);
   const totalWeight = goals
@@ -138,23 +139,23 @@ export function ObjectivesWorkspace() {
     setGoalDialogOpen(true);
   };
 
-  const saveGoal = () => {
+  const saveGoal = async () => {
     if (!employeeId || !cycleId) return;
     try {
-      if (editing) goalService.updateGoal(editing.id, form, context);
-      else goalService.createGoal({ ...form, employeeId, cycleId }, context);
+      if (editing) await goalService.updateGoalAsync(editing.id, form, context);
+      else await goalService.createGoalAsync({ ...form, employeeId, cycleId }, context);
       setGoalDialogOpen(false);
-      refresh();
+      await refresh();
       toast.success(editing ? "Objective updated" : "Objective saved as a draft");
     } catch (error) {
       toast.error(errorMessage(error));
     }
   };
 
-  const submitObjectives = () => {
+  const submitObjectives = async () => {
     try {
-      goalService.submitCycleGoalsForApproval(employeeId, cycleId, context);
-      refresh();
+      await goalService.submitCycleGoalsForApprovalAsync(employeeId, cycleId, context);
+      await refresh();
       toast.success("Objectives sent to your supervisor");
     } catch (error) {
       toast.error(errorMessage(error));
@@ -164,41 +165,22 @@ export function ObjectivesWorkspace() {
   const saveProgress = async () => {
     if (!progressGoal) return;
     setBusy(true);
-    let uploadedId: string | undefined;
     try {
-      if (evidence) {
-        const metadata = await getApplicationDataServices().files.save(
-          {
-            blob: evidence,
-            name: evidence.name,
-            mimeType: evidence.type,
-            owner: { entityType: "performance-goal", entityId: progressGoal.id },
-          },
-          context,
-        );
-        uploadedId = metadata.id;
-      }
-      await goalService.recordProgress(
+      await goalService.recordProgressAsync(
         progressGoal.id,
         progressPercent,
         progressComment,
-        uploadedId,
+        evidence,
         context,
       );
       setProgressGoal(null);
       setProgressComment("");
       setEvidence(null);
-      refresh();
+      await refresh();
       toast.success(
         progressPercent === 100 ? "Completion sent to your supervisor" : "Progress update recorded",
       );
     } catch (error) {
-      if (uploadedId) {
-        await getApplicationDataServices().files.delete(uploadedId, {
-          ...context,
-          reason: "Removed objective evidence after the progress update failed",
-        });
-      }
       toast.error(errorMessage(error));
     } finally {
       setBusy(false);
@@ -557,14 +539,14 @@ export function ObjectivesWorkspace() {
               variant="destructive"
               onClick={() => {
                 if (!deleteGoal) return;
-                try {
-                  goalService.deleteGoal(deleteGoal.id, context);
-                  setDeleteGoal(null);
-                  refresh();
-                  toast.success("Objective removed");
-                } catch (error) {
-                  toast.error(errorMessage(error));
-                }
+                void goalService
+                  .archiveGoalAsync(deleteGoal.id, context)
+                  .then(async () => {
+                    setDeleteGoal(null);
+                    await refresh();
+                    toast.success("Objective removed");
+                  })
+                  .catch((error) => toast.error(errorMessage(error)));
               }}
             >
               Remove objective

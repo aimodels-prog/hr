@@ -51,10 +51,14 @@ import {
   type ConflictResolution,
 } from "@/lib/data/import-service";
 import { CandidateService } from "@/lib/data/candidate-service";
-import { useCurrentUser } from "@/lib/auth";
+import { RequirePermission, useCurrentUser } from "@/lib/auth";
 
 export const Route = createFileRoute("/staff/candidates/import")({
-  component: ImportWizard,
+  component: () => (
+    <RequirePermission permission="recruitment:manage_candidates" resourceName="Candidate import">
+      <ImportWizard />
+    </RequirePermission>
+  ),
 });
 
 function ImportWizard() {
@@ -80,6 +84,7 @@ function ImportWizard() {
     updated: number;
     skipped: number;
   } | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
 
   const resetWizard = () => {
     setStep(1);
@@ -99,10 +104,13 @@ function ImportWizard() {
       if (acceptedFiles.length === 0) return;
       const f = acceptedFiles[0];
       if (!f) return;
-      setFile(f);
-
+      setIsParsing(true);
       try {
-        const parsedSheets = await importService.parseWorkbook(f);
+        const [parsedSheets] = await Promise.all([
+          importService.parseWorkbook(f, currentUser.getActorContext()),
+          candidateService.hydrateCompatibilityCache(currentUser.getActorContext()),
+        ]);
+        setFile(f);
         setSheets(parsedSheets);
         setSelectedSheetNames(parsedSheets.map((s) => s.name));
 
@@ -115,20 +123,27 @@ function ImportWizard() {
 
         setStep(2);
       } catch (e) {
-        toast.error("Failed to parse file. Make sure it's a valid XLSX or CSV.");
+        toast.error(e instanceof Error ? e.message : "Could not read the XLSX or CSV file.");
+      } finally {
+        setIsParsing(false);
       }
     },
-    [importService],
+    [candidateService, currentUser, importService],
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
-      "application/vnd.ms-excel": [".xls"],
       "text/csv": [".csv"],
     },
     maxFiles: 1,
+    maxSize: 10 * 1024 * 1024,
+    disabled: isParsing,
+    onDropRejected: (rejections) => {
+      const message = rejections[0]?.errors[0]?.message;
+      toast.error(message || "Upload one XLSX or CSV file no larger than 10 MB.");
+    },
   });
 
   // Step 2 -> 3
@@ -171,16 +186,16 @@ function ImportWizard() {
   };
 
   // Step 4 -> 5
-  const commitImport = () => {
+  const commitImport = async () => {
     try {
-      const res = importService.commitImportBatch(newCandidates, conflicts, candidateService, {
+      const res = await importService.commitImportBatchAsync(newCandidates, conflicts, {
         ...currentUser.getActorContext(),
         reason: "Committed reviewed candidate spreadsheet import",
       });
       setResults(res);
       setStep(5);
     } catch (e) {
-      toast.error("Failed to commit import.");
+      toast.error(e instanceof Error ? e.message : "Failed to commit import.");
     }
   };
 
@@ -229,10 +244,12 @@ function ImportWizard() {
         >
           <input {...getInputProps()} />
           <UploadCloud className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-          <h3 className="text-lg font-semibold">Drag & drop spreadsheet here</h3>
-          <p className="text-sm text-muted-foreground mt-2">Supports .xlsx, .xls, .csv</p>
-          <Button className="mt-6" variant="secondary">
-            Browse Files
+          <h3 className="text-lg font-semibold">
+            {isParsing ? "Checking spreadsheet…" : "Drag & drop spreadsheet here"}
+          </h3>
+          <p className="text-sm text-muted-foreground mt-2">Supports .xlsx and .csv, up to 10 MB</p>
+          <Button className="mt-6" variant="secondary" disabled={isParsing}>
+            {isParsing ? "Please wait" : "Browse Files"}
           </Button>
         </div>
       )}
@@ -288,7 +305,7 @@ function ImportWizard() {
           <CardHeader>
             <CardTitle>Map Columns</CardTitle>
             <CardDescription>
-              Match your spreadsheet columns to the database fields.
+              Match your spreadsheet columns to the candidate fields.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -374,7 +391,7 @@ function ImportWizard() {
                   <AlertTriangle className="h-5 w-5" /> Resolve Duplicates ({conflicts.length})
                 </CardTitle>
                 <CardDescription>
-                  These rows appear to already exist in the database.
+                  These people appear to already have candidate records.
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-0">

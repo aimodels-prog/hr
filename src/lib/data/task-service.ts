@@ -26,7 +26,9 @@ import type {
   NotificationPriority,
   ProfileChangeRequest,
   Role,
+  ActorContext,
 } from "./types.ts";
+import { notificationServerActor } from "./notification-cache.ts";
 
 export type TaskState = "Open" | "Due Soon" | "Overdue" | "Blocked";
 
@@ -73,6 +75,11 @@ export class TaskService {
 
   constructor(options: TaskServiceOptions = {}) {
     this.now = options.now ?? (() => new Date());
+  }
+
+  async getMyTasksAsync(context: ActorContext): Promise<AppTask[]> {
+    const { getMyTasksFn } = await import("../server-functions/task.server.ts");
+    return getMyTasksFn({ data: { actor: await notificationServerActor(context) } });
   }
 
   getMyTasks(viewer: TaskViewer): AppTask[] {

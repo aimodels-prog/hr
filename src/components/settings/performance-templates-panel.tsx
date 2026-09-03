@@ -50,19 +50,19 @@ export function PerformanceTemplatesPanel() {
       }
     : { userId: "system", displayName: "System", roles: [] };
 
-  const refresh = () => setTemplates(perfService.getTemplates(context));
-
   const deleteTemplate = (id: string) => {
-    try {
-      perfService.deleteTemplate(id, { actor: currentActor });
-      toast.success("Template deleted");
-      refresh();
-    } catch {
-      toast.error("Failed to delete template");
-    }
+    void perfService
+      .deleteTemplateAsync(id, { actor: currentActor })
+      .then((items) => {
+        setTemplates(items);
+        toast.success("Template deleted");
+      })
+      .catch((error) =>
+        toast.error(error instanceof Error ? error.message : "Failed to delete template"),
+      );
   };
 
-  const createTemplate = () => {
+  const createTemplate = async () => {
     const competencyItems = competencies
       .split("\n")
       .map((item) => item.trim())
@@ -78,7 +78,7 @@ export function PerformanceTemplatesPanel() {
       return;
     }
     try {
-      perfService.saveTemplate(
+      const items = await perfService.saveTemplateAsync(
         {
           name,
           description,
@@ -120,7 +120,7 @@ export function PerformanceTemplatesPanel() {
       setOpen(false);
       setName("");
       setDescription("");
-      refresh();
+      setTemplates(items);
       toast.success("Performance template created");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "The template could not be created.");

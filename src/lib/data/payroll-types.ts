@@ -20,7 +20,12 @@ export interface PayrollException {
     | "Extreme Value"
     | "Duplicate Input"
     | "Unmatched Overtime"
-    | "Unmatched Reimbursement";
+    | "Unmatched Reimbursement"
+    | "Attendance Conflict"
+    | "Joiner / Leaver"
+    | "Pending Travel"
+    | "Expired Contract"
+    | "Invalid Currency";
   description: string;
   severity: "High" | "Medium" | "Low";
   acknowledged: boolean;
@@ -35,7 +40,7 @@ export interface PayrollManualAdjustment {
   amount: number;
   currency: string;
   reason: string;
-  evidenceUrl?: string;
+  evidenceFileId?: string;
   createdAt: string;
   createdBy: string;
 }
@@ -53,6 +58,8 @@ export interface PayrollInputReport {
 }
 
 export interface PayrollPeriod extends BaseRecord {
+  /** Authoritative PostgreSQL UUID while the compatibility cache remains during cutover. */
+  databaseId?: string;
   name: string;
   startDate: string;
   endDate: string;

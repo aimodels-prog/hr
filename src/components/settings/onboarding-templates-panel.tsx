@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Copy, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -72,13 +72,33 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
   const [editing, setEditing] = useState<OnboardingTemplate | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<OnboardingTemplate | null>(null);
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
   const users = employeeService
     .getUsers(currentUser.getActorContext())
     .filter((user) => user.status === "Active");
-  const refresh = () => {
+  const refresh = useCallback(() => {
     setTemplates(service.getTemplates(currentUser.getActorContext()));
     onChanged?.();
-  };
+  }, [currentUser, onChanged, service]);
+  useEffect(() => {
+    let active = true;
+    void Promise.all([
+      employeeService.hydrateCompatibilityCache(currentUser.getActorContext()),
+      service.hydrateCompatibilityCache(currentUser.getActorContext()),
+    ])
+      .then(() => {
+        if (active) refresh();
+      })
+      .catch((error) =>
+        toast.error(error instanceof Error ? error.message : "Checklists could not be loaded."),
+      )
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentUser, employeeService, refresh, service]);
   const blankTemplate = (): OnboardingTemplate => {
     const now = new Date().toISOString();
     return {
@@ -122,11 +142,11 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
         : current,
     );
 
-  const save = () => {
+  const save = async () => {
     if (!editing) return;
     setSaving(true);
     try {
-      service.saveTemplate(editing, {
+      await service.saveTemplateAsync(editing, {
         ...currentUser.getActorContext(),
         reason: "Saved onboarding checklist template",
       });
@@ -139,13 +159,14 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
       setSaving(false);
     }
   };
-  const archive = () => {
+  const archive = async () => {
     if (!archiveTarget) return;
     try {
-      service.deleteTemplate(archiveTarget.id, {
-        ...currentUser.getActorContext(),
-        reason: "Archived onboarding checklist template",
-      });
+      await service.archiveTemplateAsync(
+        archiveTarget.id,
+        "Archived onboarding checklist template",
+        currentUser.getActorContext(),
+      );
       toast.success("Checklist template archived");
       setArchiveTarget(null);
       refresh();
@@ -156,6 +177,7 @@ export function OnboardingTemplatesPanel({ onChanged }: { onChanged?: () => void
 
   return (
     <div className="space-y-6">
+      {loading && <p className="text-sm text-muted-foreground">Loading checklist templates...</p>}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold">Checklist templates</h2>

@@ -2,8 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { AuditViewer } from "@/components/audit-viewer";
-import { getApplicationDataServices } from "@/lib/data/application-data";
 import { useCurrentUser, RequireRole } from "@/lib/auth";
+import { exportAuditCsvFn } from "@/lib/server-functions/audit.server";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import { toast } from "sonner";
@@ -32,21 +32,28 @@ function GlobalAuditRoute() {
   const handleExport = async () => {
     setIsExporting(true);
     try {
-      const { audit } = getApplicationDataServices();
+      const exported = await exportAuditCsvFn({
+        data: {
+          actor: {
+            actorId: currentUser.id,
+            actorEmail: currentUser.currentEmployee?.workEmail,
+            activeRole: currentUser.activeRole,
+          },
+          filters: { global: true },
+        },
+      });
 
-      const csvContent = audit.exportCsv(currentUser.getActorContext());
-
-      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const blob = new Blob([exported.csv], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.setAttribute("href", url);
-      link.setAttribute("download", `audit_export_${new Date().toISOString().split("T")[0]}.csv`);
+      link.setAttribute("download", exported.fileName);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
-      toast.success("Audit history downloaded");
+      toast.success(`${exported.rowCount} audit records downloaded`);
       setExportDialogOpen(false);
     } catch (error: unknown) {
       toast.error(

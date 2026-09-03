@@ -79,8 +79,32 @@ function OffboardingCaseRoute() {
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
-  const actorContext = currentUser.getActorContext();
+  const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError("");
+    void Promise.all([
+      employeeService.hydrateCompatibilityCache(actorContext),
+      offboardingService.hydrateCompatibilityCache(actorContext),
+    ])
+      .then(() => {
+        if (active) setOffboardingCase(offboardingService.getCaseForViewer(caseId, actorContext));
+      })
+      .catch((error) => {
+        if (active)
+          setLoadError(error instanceof Error ? error.message : "Offboarding could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [actorContext, caseId, employeeService, offboardingService]);
   const hasAccess = caseExists && offboardingCase !== undefined;
 
   // Every mutating service call returns the full, unredacted case - route every update through
@@ -102,6 +126,17 @@ function OffboardingCaseRoute() {
     [actorContext, hasAccess, offboardingCase, offboardingService],
   );
 
+  if (loading) {
+    return (
+      <SafeMessage
+        title="Loading offboarding"
+        message="Retrieving the latest clearance checklist..."
+      />
+    );
+  }
+  if (loadError) {
+    return <SafeMessage title="Offboarding could not be loaded" message={loadError} />;
+  }
   if (!caseExists) {
     return (
       <SafeMessage
@@ -199,9 +234,9 @@ function OffboardingCaseRoute() {
 
   const activeUsers = employeeService.getUsers(actorContext).filter((u) => u.status === "Active");
 
-  const handleAssign = (task: OffboardingTask, userId: string) => {
+  const handleAssign = async (task: OffboardingTask, userId: string) => {
     try {
-      const updated = offboardingService.assignTaskOwner(
+      const updated = await offboardingService.assignTaskOwnerAsync(
         offboardingCase.id,
         task.id,
         userId === "role" ? undefined : userId,
@@ -214,18 +249,21 @@ function OffboardingCaseRoute() {
     }
   };
 
-  const updateCase = (action: () => NonNullable<typeof offboardingCase>, message: string) => {
+  const updateCase = async (
+    action: () => Promise<NonNullable<typeof offboardingCase>>,
+    message: string,
+  ) => {
     try {
-      applyCaseUpdate(action());
+      applyCaseUpdate(await action());
       toast.success(message);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "The case could not be updated");
     }
   };
 
-  const handleCancel = () => {
+  const handleCancel = async () => {
     try {
-      const updated = offboardingService.cancelCase(offboardingCase.id, cancelReason, {
+      const updated = await offboardingService.cancelCaseAsync(offboardingCase.id, cancelReason, {
         ...currentUser.getActorContext(),
         reason: cancelReason,
       });
@@ -309,10 +347,11 @@ function OffboardingCaseRoute() {
                       variant="outline"
                       disabled={offboardingCase.progressPercentage < 100}
                       onClick={() =>
-                        updateCase(
+                        void updateCase(
                           () =>
-                            offboardingService.grantFinancialClearance(
+                            offboardingService.applyActionAsync(
                               offboardingCase.id,
+                              "financial-clearance",
                               currentUser.getActorContext(),
                             ),
                           "Financial clearance confirmed",
@@ -340,10 +379,11 @@ function OffboardingCaseRoute() {
                       variant="outline"
                       disabled={offboardingCase.progressPercentage < 100}
                       onClick={() =>
-                        updateCase(
+                        void updateCase(
                           () =>
-                            offboardingService.grantLegalClearance(
+                            offboardingService.applyActionAsync(
                               offboardingCase.id,
+                              "legal-clearance",
                               currentUser.getActorContext(),
                             ),
                           "HR and document clearance confirmed",
@@ -374,10 +414,11 @@ function OffboardingCaseRoute() {
                         !offboardingCase.legalClearanceAt
                       }
                       onClick={() =>
-                        updateCase(
+                        void updateCase(
                           () =>
-                            offboardingService.finalizeCase(
+                            offboardingService.applyActionAsync(
                               offboardingCase.id,
+                              "finalise",
                               currentUser.getActorContext(),
                             ),
                           "Offboarding completed and employee access made inactive",

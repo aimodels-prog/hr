@@ -35,6 +35,68 @@ export class OvertimeService {
     });
   }
 
+  private async serverActor(context: ActorContext) {
+    const users = getApplicationDataServices().storage.readCollection<{
+      id: string;
+      workspaceEmail?: string;
+    }>("users");
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    return {
+      actorId: context.actor.userId,
+      ...(actorEmail ? { actorEmail } : {}),
+      activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+    } as const;
+  }
+
+  private databaseId(collection: string, id: string): string {
+    const item = getApplicationDataServices()
+      .storage.readCollection<{ id: string; databaseId?: string }>(collection)
+      .find((record) => record.id === id || record.databaseId === id);
+    const databaseId = item?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
+    if (!databaseId) throw new Error("This record is not connected to PostgreSQL yet.");
+    return databaseId;
+  }
+
+  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+    if (typeof window === "undefined") return;
+    const { storage } = getApplicationDataServices();
+    const relation = new Map<string, string>();
+    for (const collection of [
+      "employees",
+      "users",
+      "projects",
+      "costCentres",
+      "activityCodes",
+      "locations",
+      "payrollPeriods",
+    ]) {
+      for (const item of storage.readCollection<{ id: string; databaseId?: string }>(collection))
+        if (item.databaseId) relation.set(item.databaseId, item.id);
+    }
+    const { getOvertimeClaimsFn } = await import("../server-functions/overtime.server.ts");
+    const claims = await getOvertimeClaimsFn({ data: { actor: await this.serverActor(context) } });
+    storage.writeCollection(
+      "overtimeClaims",
+      claims.map((claim) => ({
+        ...claim,
+        employeeId: relation.get(claim.employeeId) ?? claim.employeeId,
+        ...(claim.projectId ? { projectId: relation.get(claim.projectId) ?? claim.projectId } : {}),
+        costCentreId: relation.get(claim.costCentreId) ?? claim.costCentreId,
+        activityCodeId: relation.get(claim.activityCodeId) ?? claim.activityCodeId,
+        locationCodeId: relation.get(claim.locationCodeId) ?? claim.locationCodeId,
+        ...(claim.approvedBy
+          ? { approvedBy: relation.get(claim.approvedBy) ?? claim.approvedBy }
+          : {}),
+        ...(claim.payrollPeriodId
+          ? { payrollPeriodId: relation.get(claim.payrollPeriodId) ?? claim.payrollPeriodId }
+          : {}),
+        ...(claim.originalClaimId ? { originalClaimId: claim.originalClaimId } : {}),
+      })),
+    );
+  }
+
   private hasAdminOrPayrollView(context: ActorContext): boolean {
     const permissions = context.actor.activeRole
       ? getRolePermissions(context.actor.activeRole)
@@ -433,11 +495,92 @@ export class OvertimeService {
     };
   }
 
-  async submitClaim(data: Partial<OvertimeClaim>, context: ActorContext): Promise<OvertimeClaim> {
+  async submitClaim(
+    data: Partial<OvertimeClaim>,
+    context: ActorContext,
+    evidenceFile?: File,
+  ): Promise<OvertimeClaim> {
+    if (typeof window !== "undefined") {
+      if (
+        !data.employeeId ||
+        !data.date ||
+        !data.hours ||
+        !data.reason ||
+        !data.costCentreId ||
+        !data.activityCodeId ||
+        !data.locationCodeId
+      )
+        throw new Error("Date, hours, allocation and reason are required.");
+      const mimeType = evidenceFile?.type as
+        "application/pdf" | "image/jpeg" | "image/png" | undefined;
+      if (evidenceFile && !["application/pdf", "image/jpeg", "image/png"].includes(mimeType ?? ""))
+        throw new Error("Upload overtime evidence as PDF, JPG or PNG.");
+      const { createOvertimeClaimFn } = await import("../server-functions/overtime.server.ts");
+      const databaseId = await createOvertimeClaimFn({
+        data: {
+          actor: await this.serverActor(context),
+          employeeId: this.databaseId("employees", data.employeeId),
+          date: data.date,
+          hours: data.hours,
+          reason: data.reason,
+          compensationType: data.compensationType === "TOIL" ? "TOIL" : "Payment",
+          ...(data.projectId ? { projectId: this.databaseId("projects", data.projectId) } : {}),
+          costCentreId: this.databaseId("costCentres", data.costCentreId),
+          activityCodeId: this.databaseId("activityCodes", data.activityCodeId),
+          locationId: this.databaseId("locations", data.locationCodeId),
+          ...(evidenceFile && mimeType
+            ? {
+                evidence: {
+                  fileName: evidenceFile.name,
+                  mimeType,
+                  bytes: Array.from(new Uint8Array(await evidenceFile.arrayBuffer())),
+                },
+              }
+            : {}),
+        },
+      });
+      await this.hydrateCompatibilityCache(context);
+      const created = this.claimRepo
+        .list()
+        .find((item) => item.databaseId === databaseId || item.id === databaseId);
+      if (!created) throw new Error("The overtime claim could not be reloaded.");
+      return created;
+    }
     const claim = await this.buildClaimPayload(data, context);
     const created = this.claimRepo.create(claim, context);
     this.notifyManager(created, context);
     return created;
+  }
+
+  async decideClaimAsync(
+    claimId: string,
+    decision: "approve" | "reject",
+    notes: string | undefined,
+    context: ActorContext,
+  ): Promise<OvertimeClaim> {
+    if (typeof window === "undefined") {
+      const claim = this.claimRepo.getById(claimId);
+      if (claim?.status === "Pending HR")
+        return this.hrVerify(claimId, decision === "approve", notes ?? "", context);
+      return decision === "approve"
+        ? this.managerApprove(claimId, context)
+        : this.managerReject(claimId, notes ?? "Rejected", context);
+    }
+    const { decideOvertimeClaimFn } = await import("../server-functions/overtime.server.ts");
+    await decideOvertimeClaimFn({
+      data: {
+        actor: await this.serverActor(context),
+        claimId: this.databaseId("overtimeClaims", claimId),
+        decision,
+        ...(notes?.trim() ? { notes: notes.trim() } : {}),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const updated = this.claimRepo
+      .list()
+      .find((item) => item.id === claimId || item.databaseId === claimId);
+    if (!updated) throw new Error("The overtime claim could not be reloaded.");
+    return updated;
   }
 
   managerApprove(claimId: string, context: ActorContext): OvertimeClaim {
@@ -514,7 +657,44 @@ export class OvertimeService {
     newReason: string,
     context: ActorContext,
     replacementEvidenceFileId?: string,
+    replacementEvidenceFile?: File,
   ): Promise<OvertimeClaim> {
+    if (typeof window !== "undefined") {
+      const mimeType = replacementEvidenceFile?.type as
+        "application/pdf" | "image/jpeg" | "image/png" | undefined;
+      if (
+        replacementEvidenceFile &&
+        !["application/pdf", "image/jpeg", "image/png"].includes(mimeType ?? "")
+      )
+        throw new Error("Upload correction evidence as PDF, JPG or PNG.");
+      const { correctOvertimeClaimFn } = await import("../server-functions/overtime.server.ts");
+      const databaseId = await correctOvertimeClaimFn({
+        data: {
+          actor: await this.serverActor(context),
+          claimId: this.databaseId("overtimeClaims", originalClaimId),
+          hours: newHours,
+          reason: newReason,
+          ...(replacementEvidenceFileId
+            ? { evidenceFileId: this.databaseId("files", replacementEvidenceFileId) }
+            : {}),
+          ...(replacementEvidenceFile && mimeType
+            ? {
+                evidence: {
+                  fileName: replacementEvidenceFile.name,
+                  mimeType,
+                  bytes: Array.from(new Uint8Array(await replacementEvidenceFile.arrayBuffer())),
+                },
+              }
+            : {}),
+        },
+      });
+      await this.hydrateCompatibilityCache(context);
+      const created = this.claimRepo
+        .list()
+        .find((item) => item.databaseId === databaseId || item.id === databaseId);
+      if (!created) throw new Error("The corrected overtime claim could not be reloaded.");
+      return created;
+    }
     const original = this.claimRepo.getById(originalClaimId);
     if (!original) throw new Error("Claim not found");
     if (original.status !== "Approved")
@@ -628,6 +808,19 @@ export class OvertimeService {
     claimId: string,
     context: ActorContext,
   ): Promise<{ blob: Blob; fileName: string }> {
+    if (typeof window !== "undefined") {
+      const { readOvertimeEvidenceFn } = await import("../server-functions/overtime.server.ts");
+      const result = await readOvertimeEvidenceFn({
+        data: {
+          actor: await this.serverActor(context),
+          claimId: this.databaseId("overtimeClaims", claimId),
+        },
+      });
+      return {
+        blob: new Blob([Uint8Array.from(result.bytes)], { type: result.metadata.mimeType }),
+        fileName: result.metadata.name,
+      };
+    }
     const claim = this.claimRepo.getById(claimId);
     if (!claim) throw new Error("Claim not found");
     if (!claim.evidenceFileId) throw new Error("This claim has no supporting evidence.");
@@ -659,6 +852,46 @@ export class OvertimeService {
     });
 
     return { blob, fileName: metadata.name ?? "evidence" };
+  }
+
+  async getPayrollOvertimeLedgerAsync(context: ActorContext): Promise<PayrollOvertimeLedgerRow[]> {
+    if (typeof window === "undefined") return this.getPayrollOvertimeLedger(context);
+    const { getPayrollOvertimeLedgerFn } = await import("../server-functions/overtime.server.ts");
+    return (await getPayrollOvertimeLedgerFn({
+      data: { actor: await this.serverActor(context) },
+    })) as PayrollOvertimeLedgerRow[];
+  }
+
+  async exportPayrollOvertimeLedgerCsvAsync(
+    context: ActorContext,
+    filters: PayrollOvertimeLedgerFilters = {},
+  ): Promise<string> {
+    if (typeof window === "undefined") return this.exportPayrollOvertimeLedgerCsv(context);
+    const { exportPayrollOvertimeLedgerFn } =
+      await import("../server-functions/overtime.server.ts");
+    return exportPayrollOvertimeLedgerFn({
+      data: { actor: await this.serverActor(context), filters },
+    });
+  }
+
+  async markIncludedInPayrollAsync(
+    claimIds: string[],
+    payrollPeriodId: string,
+    context: ActorContext,
+  ): Promise<void> {
+    if (typeof window === "undefined") {
+      this.markIncludedInPayroll(claimIds, payrollPeriodId, context);
+      return;
+    }
+    const { assignOvertimeToPayrollFn } = await import("../server-functions/overtime.server.ts");
+    await assignOvertimeToPayrollFn({
+      data: {
+        actor: await this.serverActor(context),
+        claimIds: claimIds.map((id) => this.databaseId("overtimeClaims", id)),
+        payrollPeriodId: this.databaseId("payrollPeriods", payrollPeriodId),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
   }
 
   private notifyManager(claim: OvertimeClaim, context: ActorContext): void {

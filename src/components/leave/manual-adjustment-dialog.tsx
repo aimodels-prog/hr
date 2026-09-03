@@ -103,7 +103,7 @@ export function ManualAdjustmentDialog({
     );
   }, [actorContext, employeeId, leaveService, open, policyId]);
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!employeeId || !policyId || newBalance === "" || !reason.trim()) {
       toast.error("Complete the employee, leave type, new balance and reason.");
@@ -112,7 +112,7 @@ export function ManualAdjustmentDialog({
 
     try {
       setIsSubmitting(true);
-      leaveService.setEmployeeAvailableBalance(
+      await leaveService.setEmployeeAvailableBalanceAsync(
         employeeId,
         policyId,
         Number(newBalance),

@@ -96,9 +96,9 @@ function OvertimeApprovalsContent() {
     }
   };
 
-  const handleApprove = (id: string) => {
+  const handleApprove = async (id: string) => {
     try {
-      otService.managerApprove(id, actorContext);
+      await otService.decideClaimAsync(id, "approve", undefined, actorContext);
       refresh();
       toast.success("Overtime claim approved.");
     } catch (e) {
@@ -112,10 +112,10 @@ function OvertimeApprovalsContent() {
     setRejectDialogOpen(true);
   };
 
-  const handleReject = () => {
+  const handleReject = async () => {
     if (!selectedClaim) return;
     try {
-      otService.managerReject(selectedClaim.id, rejectReason, actorContext);
+      await otService.decideClaimAsync(selectedClaim.id, "reject", rejectReason, actorContext);
       refresh();
       setRejectDialogOpen(false);
       setSelectedClaim(null);
@@ -131,10 +131,15 @@ function OvertimeApprovalsContent() {
     setHrNotes("");
   };
 
-  const handleHrFinalise = () => {
+  const handleHrFinalise = async () => {
     if (!hrSelectedClaim) return;
     try {
-      otService.hrVerify(hrSelectedClaim.id, hrActionType === "approve", hrNotes, actorContext);
+      await otService.decideClaimAsync(
+        hrSelectedClaim.id,
+        hrActionType === "approve" ? "approve" : "reject",
+        hrNotes,
+        actorContext,
+      );
       refresh();
       setHrSelectedClaim(null);
       toast.success(`Overtime ${hrActionType === "approve" ? "verified" : "rejected"}.`);

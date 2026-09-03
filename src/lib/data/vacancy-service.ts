@@ -75,6 +75,163 @@ export class VacancyService {
     return this.vacancyRepo;
   }
 
+  async hydrateCompatibilityCache(context?: ActorContext): Promise<void> {
+    if (typeof window === "undefined") return;
+    const databaseVacancies = context
+      ? await (
+          await import("../server-functions/vacancy.server.ts")
+        ).getRecruitmentVacanciesFn({
+          data: {
+            actorId: context.actor.userId,
+            ...(context.actor.workspaceEmail ? { actorEmail: context.actor.workspaceEmail } : {}),
+            activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+          },
+        })
+      : await fetch("/api/public/vacancies", {
+          headers: { accept: "application/json" },
+        }).then(async (response) => {
+          if (!response.ok) throw new Error("Open roles could not be loaded.");
+          return (await response.json()) as Vacancy[];
+        });
+    const { storage } = getApplicationDataServices();
+    const existing = storage.readCollection<Vacancy>("vacancies");
+    const employees = storage.readCollection<{ id: string; databaseId?: string }>("employees");
+    const projects = storage.readCollection<{ id: string; databaseId?: string }>("projects");
+    const employeeIdMap = new Map(
+      employees.filter((item) => item.databaseId).map((item) => [item.databaseId!, item.id]),
+    );
+    const projectIdMap = new Map(
+      projects.filter((item) => item.databaseId).map((item) => [item.databaseId!, item.id]),
+    );
+    const compatible = databaseVacancies.map((vacancy) => {
+      const prior = existing.find(
+        (item) =>
+          item.databaseId === vacancy.id ||
+          (item.title.trim().toLowerCase() === vacancy.title.trim().toLowerCase() &&
+            !item.databaseId),
+      );
+      return {
+        ...vacancy,
+        id: prior?.id ?? vacancy.id,
+        databaseId: vacancy.id,
+        ...(vacancy.hiringManagerId
+          ? {
+              hiringManagerId:
+                employeeIdMap.get(vacancy.hiringManagerId) ?? vacancy.hiringManagerId,
+            }
+          : {}),
+        ...(vacancy.assignedOwnerId
+          ? {
+              assignedOwnerId:
+                employeeIdMap.get(vacancy.assignedOwnerId) ?? vacancy.assignedOwnerId,
+            }
+          : {}),
+        ...(vacancy.projectId
+          ? { projectId: projectIdMap.get(vacancy.projectId) ?? vacancy.projectId }
+          : {}),
+      };
+    });
+    storage.writeCollection("vacancies", compatible);
+    window.dispatchEvent(new CustomEvent("via_hr:data_changed"));
+  }
+
+  private actorServerData(context: ActorContext) {
+    const users = getApplicationDataServices().storage.readCollection<{
+      id: string;
+      workspaceEmail: string;
+    }>("users");
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    return {
+      actorId: context.actor.userId,
+      ...(actorEmail ? { actorEmail } : {}),
+      activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+    };
+  }
+
+  private resolveDatabaseRelation(collection: "employees" | "projects", id?: string) {
+    if (!id) return undefined;
+    const record = getApplicationDataServices()
+      .storage.readCollection<{ id: string; databaseId?: string }>(collection)
+      .find((item) => item.id === id || item.databaseId === id);
+    return record?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
+  }
+
+  async saveDraftAsync(data: Partial<Vacancy>, context: ActorContext): Promise<Vacancy> {
+    if (typeof window === "undefined") return this.saveDraft(data, context);
+    const { saveVacancyDraftFn } = await import("../server-functions/vacancy.server.ts");
+    const existing = data.id ? this.vacancyRepo.getById(data.id) : null;
+    const databaseId =
+      existing?.databaseId ?? (data.id && /^[0-9a-f-]{36}$/i.test(data.id) ? data.id : undefined);
+    const hiringManagerId = this.resolveDatabaseRelation("employees", data.hiringManagerId);
+    const assignedOwnerId = this.resolveDatabaseRelation("employees", data.assignedOwnerId);
+    const projectId = this.resolveDatabaseRelation("projects", data.projectId);
+    const id = await saveVacancyDraftFn({
+      data: {
+        actor: this.actorServerData(context),
+        vacancy: {
+          ...(databaseId ? { id: databaseId } : {}),
+          title: data.title ?? "",
+          department: data.department ?? "",
+          location: data.location ?? "",
+          position: data.position ?? "",
+          grade: data.grade ?? "",
+          employmentType: data.employmentType ?? "",
+          ...(hiringManagerId ? { hiringManagerId } : {}),
+          ...(assignedOwnerId ? { assignedOwnerId } : {}),
+          ...(projectId ? { projectId } : {}),
+          ...(data.targetStartDate ? { targetStartDate: data.targetStartDate } : {}),
+          summary: data.summary ?? "",
+          responsibilities: data.responsibilities ?? [],
+          requirements: data.requirements ?? [],
+          headcount: data.headcount ?? 1,
+          ...(data.salaryRange ? { salaryRange: data.salaryRange } : {}),
+          hiringReason: data.hiringReason ?? "",
+          education: data.education ?? "",
+          minimumExperience: data.minimumExperience ?? "",
+          skills: data.skills ?? { required: [], preferred: [] },
+          certifications: data.certifications ?? [],
+          languages: data.languages ?? [],
+          mandatoryCriteria: data.mandatoryCriteria ?? [],
+          notes: data.notes ?? "",
+          screeningQuestions: data.screeningQuestions ?? [],
+        },
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const saved = this.vacancyRepo
+      .list({ includeArchived: true })
+      .find((item) => item.databaseId === id);
+    if (!saved) throw new Error("The saved vacancy could not be reloaded.");
+    return saved;
+  }
+
+  async transitionStatusAsync(
+    id: string,
+    newStatus: VacancyStatus,
+    reason: string,
+    context: ActorContext,
+  ): Promise<void> {
+    if (typeof window === "undefined") {
+      this.transitionStatus(id, newStatus, reason, context);
+      return;
+    }
+    const vacancy = this.vacancyRepo.getById(id, { includeArchived: true });
+    const databaseId = vacancy?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
+    if (!databaseId) throw new Error("This vacancy is not linked to PostgreSQL.");
+    const { transitionVacancyFn } = await import("../server-functions/vacancy.server.ts");
+    await transitionVacancyFn({
+      data: {
+        actor: this.actorServerData(context),
+        vacancyId: databaseId,
+        status: newStatus,
+        reason,
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+  }
+
   private transitionStatus(
     id: string,
     newStatus: VacancyStatus,
@@ -222,5 +379,21 @@ export class VacancyService {
     );
 
     return newVacancy;
+  }
+
+  async duplicateVacancyAsync(id: string, context: ActorContext): Promise<Vacancy> {
+    if (typeof window === "undefined") return this.duplicateVacancy(id, context);
+    const vacancy = this.vacancyRepo.getById(id);
+    if (!vacancy) throw new Error("Vacancy not found");
+    const { id: _id, databaseId: _databaseId, ...copy } = vacancy;
+    return this.saveDraftAsync(
+      {
+        ...copy,
+        title: `${vacancy.title} (Copy)`,
+        applicantCount: 0,
+        status: "Draft",
+      },
+      { ...context, reason: context.reason || "Vacancy duplicated" },
+    );
   }
 }

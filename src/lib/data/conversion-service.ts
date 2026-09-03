@@ -42,10 +42,10 @@ export class ConversionService {
         .map((user) => user.workspaceEmail.toLowerCase()),
     );
     let suffix = 0;
-    let email = `${base}@via.example`;
+    let email = `${base}@via-int.com`;
     while (used.has(email)) {
       suffix += 1;
-      email = `${base}${suffix}@via.example`;
+      email = `${base}${suffix}@via-int.com`;
     }
     return email;
   }

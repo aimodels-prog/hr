@@ -34,7 +34,7 @@ function isManagerRoleName(role: string): boolean {
 
 // The 15 statutory + company-policy leave types required under Royal Decree 53/2023,
 // seeded exactly once when the policy collection is empty. No randomized demo data.
-const POLICY_DEFINITIONS = [
+export const POLICY_DEFINITIONS = [
   {
     code: "A/L",
     name: "Annual Leave",
@@ -421,6 +421,74 @@ export class LeaveService {
     this.ensureSeedData();
   }
 
+  private async serverActor(context: ActorContext) {
+    const users = getApplicationDataServices().storage.readCollection<User>("users");
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    return {
+      actorId: context.actor.userId,
+      ...(actorEmail ? { actorEmail } : {}),
+      activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+    } as const;
+  }
+
+  /** PostgreSQL is authoritative; these collections are a read-only compatibility projection. */
+  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+    if (typeof window === "undefined") return;
+    const { storage } = getApplicationDataServices();
+    const employees = storage.readCollection<Employee & { databaseId?: string }>("employees");
+    const users = storage.readCollection<User & { databaseId?: string }>("users");
+    const employeeIdMap = new Map(
+      employees.filter((item) => item.databaseId).map((item) => [item.databaseId!, item.id]),
+    );
+    const userIdMap = new Map(
+      users.filter((item) => item.databaseId).map((item) => [item.databaseId!, item.id]),
+    );
+    const { getLeaveSnapshotFn } = await import("../server-functions/leave.server.ts");
+    const snapshot = await getLeaveSnapshotFn({ data: { actor: await this.serverActor(context) } });
+    const mapEmployee = (id: string) => employeeIdMap.get(id) ?? id;
+    storage.writeCollection("leave_policies", snapshot.policies);
+    storage.writeCollection(
+      "leave_requests",
+      snapshot.requests.map((request) => ({
+        ...request,
+        employeeId: mapEmployee(request.employeeId),
+        ...(request.handoverContactId
+          ? { handoverContactId: mapEmployee(request.handoverContactId) }
+          : {}),
+        chainApprovals: request.chainApprovals.map((step) => ({
+          ...step,
+          ...(step.approvedBy
+            ? { approvedBy: userIdMap.get(step.approvedBy) ?? step.approvedBy }
+            : {}),
+        })),
+      })),
+    );
+    storage.writeCollection(
+      "leave_transactions",
+      snapshot.transactions.map((transaction) => ({
+        ...transaction,
+        employeeId: mapEmployee(transaction.employeeId),
+        actorUserId: userIdMap.get(transaction.actorUserId) ?? transaction.actorUserId,
+      })),
+    );
+    storage.writeCollection(
+      "leave_entitlement_overrides",
+      snapshot.entitlementOverrides.map((override) => ({
+        ...override,
+        employeeId: mapEmployee(override.employeeId),
+      })),
+    );
+    storage.writeCollection(
+      "leave_database_balances",
+      snapshot.balances.map((balance) => ({
+        ...balance,
+        employeeId: mapEmployee(balance.employeeId),
+      })),
+    );
+  }
+
   private denyAccess(
     action: string,
     entityId: string,
@@ -490,6 +558,16 @@ export class LeaveService {
       );
     }
 
+    if (typeof window !== "undefined") {
+      const { readLeaveAttachmentFn } = await import("../server-functions/leave.server.ts");
+      const result = await readLeaveAttachmentFn({
+        data: { actor: await this.serverActor(context), requestId },
+      });
+      return {
+        blob: new Blob([Uint8Array.from(result.bytes)], { type: result.metadata.mimeType }),
+        fileName: result.metadata.name,
+      };
+    }
     const { files } = getApplicationDataServices();
     const [metadata, blob] = await Promise.all([
       files.getMetadata(req.attachmentFileId),
@@ -708,6 +786,42 @@ export class LeaveService {
 
   getPolicies(): LeavePolicy[] {
     return this.policyRepo.list();
+  }
+
+  async updatePolicyAsync(policy: LeavePolicy, context: ActorContext): Promise<LeavePolicy> {
+    if (typeof window === "undefined") return this.updatePolicy(policy.id, policy, context);
+    const { updateLeavePolicyFn } = await import("../server-functions/leave.server.ts");
+    await updateLeavePolicyFn({
+      data: {
+        actor: await this.serverActor(context),
+        policyId: policy.id,
+        policy: {
+          recordVersion: policy.recordVersion,
+          description: policy.description,
+          isPaid: policy.isPaid,
+          ...(policy.payTiers ? { payTiers: policy.payTiers } : {}),
+          baseEntitlementDays: policy.baseEntitlementDays,
+          accrualMode: policy.accrualMode,
+          carryForwardLimit: policy.carryForwardLimit,
+          allowNegativeBalance: policy.allowNegativeBalance,
+          ...(policy.maxNegativeBalance !== undefined
+            ? { maxNegativeBalance: policy.maxNegativeBalance }
+            : {}),
+          requiresAttachment: policy.requiresAttachment,
+          requiresHandoverContact: policy.requiresHandoverContact,
+          countsTowardGratuity: policy.countsTowardGratuity,
+          ...(policy.eligibility ? { eligibility: policy.eligibility } : {}),
+          approvalChain: ["Line Manager", "HR"],
+          ...(policy.noticeRules ? { noticeRules: policy.noticeRules } : {}),
+          isEnabled: policy.isEnabled,
+          consumesBalance: policy.consumesBalance,
+        },
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const updated = this.policyRepo.getById(policy.id);
+    if (!updated) throw new Error("The leave policy was saved but could not be reloaded.");
+    return updated;
   }
 
   updatePolicy(id: string, updates: Partial<LeavePolicy>, context: ActorContext): LeavePolicy {
@@ -1077,6 +1191,32 @@ export class LeaveService {
     });
   }
 
+  async decideRequestAsync(
+    requestId: string,
+    decision: "approve" | "decline",
+    reason: string | undefined,
+    context: ActorContext,
+  ): Promise<LeaveRequest> {
+    if (typeof window === "undefined") {
+      return decision === "approve"
+        ? this.approveRequest(requestId, context)
+        : this.rejectRequest(requestId, reason ?? "", context);
+    }
+    const { decideLeaveRequestFn } = await import("../server-functions/leave.server.ts");
+    await decideLeaveRequestFn({
+      data: {
+        actor: await this.serverActor(context),
+        requestId,
+        decision,
+        ...(reason?.trim() ? { reason: reason.trim() } : {}),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const updated = this.requestRepo.getById(requestId);
+    if (!updated) throw new Error("Leave was updated but could not be reloaded.");
+    return updated;
+  }
+
   approveRequest(requestId: string, context: ActorContext): LeaveRequest {
     const req = this.requestRepo.getById(requestId);
     if (!req) throw new Error("Request not found");
@@ -1421,6 +1561,7 @@ export class LeaveService {
   async submitLeaveRequest(
     payload: Partial<LeaveRequest>,
     context: ActorContext,
+    attachment?: File,
   ): Promise<LeaveRequest> {
     if (
       !payload.employeeId ||
@@ -1439,6 +1580,47 @@ export class LeaveService {
         "You can only submit a leave request for yourself.",
         context,
       );
+    }
+
+    if (typeof window !== "undefined") {
+      const employees = getApplicationDataServices().storage.readCollection<
+        Employee & { databaseId?: string }
+      >("employees");
+      const employeeById = new Map(employees.map((item) => [item.id, item]));
+      const employee = employeeById.get(payload.employeeId);
+      if (!employee?.databaseId)
+        throw new Error("Your employee record is not linked to PostgreSQL.");
+      const handover = payload.handoverContactId
+        ? employeeById.get(payload.handoverContactId)
+        : undefined;
+      if (payload.handoverContactId && !handover?.databaseId)
+        throw new Error("The covering colleague is not linked to PostgreSQL.");
+      const { createLeaveRequestFn } = await import("../server-functions/leave.server.ts");
+      const requestId = await createLeaveRequestFn({
+        data: {
+          actor: await this.serverActor(context),
+          employeeId: employee.databaseId,
+          policyId: payload.policyId,
+          startDate: payload.startDate,
+          endDate: payload.endDate,
+          reason: payload.reason.trim(),
+          ...(payload.isHalfDay !== undefined ? { isHalfDay: payload.isHalfDay } : {}),
+          ...(handover?.databaseId ? { handoverContactId: handover.databaseId } : {}),
+          ...(attachment
+            ? {
+                attachment: {
+                  fileName: attachment.name,
+                  mimeType: attachment.type as "application/pdf" | "image/jpeg" | "image/png",
+                  bytes: Array.from(new Uint8Array(await attachment.arrayBuffer())),
+                },
+              }
+            : {}),
+        },
+      });
+      await this.hydrateCompatibilityCache(context);
+      const created = this.requestRepo.getById(requestId);
+      if (!created) throw new Error("Leave was submitted but could not be reloaded.");
+      return created;
     }
 
     const policy = this.policyRepo.getById(payload.policyId);
@@ -1761,6 +1943,36 @@ export class LeaveService {
     req.status = "Cancelled";
     req.cancellationReason = "Withdrawn by employee before approval";
     return this.requestRepo.update(req.id, req, context);
+  }
+
+  async requestChangeAsync(
+    requestId: string,
+    action:
+      | { kind: "withdraw" }
+      | { kind: "cancel"; reason: string }
+      | { kind: "amend"; startDate: string; endDate: string; reason: string },
+    context: ActorContext,
+  ): Promise<LeaveRequest> {
+    if (typeof window === "undefined") {
+      if (action.kind === "withdraw") return this.withdrawRequest(requestId, context);
+      if (action.kind === "cancel")
+        return this.requestCancellation(requestId, action.reason, context);
+      return this.requestAmendment(
+        requestId,
+        action.startDate,
+        action.endDate,
+        action.reason,
+        context,
+      );
+    }
+    const { requestLeaveChangeFn } = await import("../server-functions/leave.server.ts");
+    await requestLeaveChangeFn({
+      data: { actor: await this.serverActor(context), requestId, ...action },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const updated = this.requestRepo.getById(requestId);
+    if (!updated) throw new Error("Leave was changed but could not be reloaded.");
+    return updated;
   }
 
   requestCancellation(requestId: string, reason: string, context: ActorContext): LeaveRequest {
@@ -2422,6 +2634,34 @@ export class LeaveService {
     );
   }
 
+  async setEmployeeAvailableBalanceAsync(
+    employeeId: string,
+    policyId: string,
+    newBalance: number,
+    reason: string,
+    context: ActorContext,
+  ): Promise<void> {
+    if (typeof window === "undefined") {
+      this.setEmployeeAvailableBalance(employeeId, policyId, newBalance, reason, context);
+      return;
+    }
+    const employee = getApplicationDataServices()
+      .storage.readCollection<Employee & { databaseId?: string }>("employees")
+      .find((item) => item.id === employeeId);
+    if (!employee?.databaseId) throw new Error("The employee is not linked to PostgreSQL.");
+    const { adjustEmployeeLeaveBalanceFn } = await import("../server-functions/leave.server.ts");
+    await adjustEmployeeLeaveBalanceFn({
+      data: {
+        actor: await this.serverActor(context),
+        employeeId: employee.databaseId,
+        policyId,
+        newValue: newBalance,
+        reason: reason.trim(),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+  }
+
   getEmployeeEntitlementLimit(employeeId: string, policyId: string, context: ActorContext): number {
     this.requireEmployeeRead(employeeId, context, "view this employee's leave allowance");
     const policy = this.policyRepo.getById(policyId);
@@ -2478,7 +2718,22 @@ export class LeaveService {
     context: ActorContext,
   ): LeaveBalanceReport {
     this.requireEmployeeRead(employeeId, context, "view this employee's leave balance");
-    const txs = this.getTransactionsForEmployee(employeeId, policyId, context);
+    const settings = new SettingsService().getAppSettingsSync();
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const todayKey = [
+      currentYear,
+      String(today.getMonth() + 1).padStart(2, "0"),
+      String(today.getDate()).padStart(2, "0"),
+    ].join("-");
+    const candidateStartKey = `${currentYear}-${settings.leaveYearStart}`;
+    const leaveYear = todayKey >= candidateStartKey ? currentYear : currentYear - 1;
+    const leaveYearStartKey = `${leaveYear}-${settings.leaveYearStart}`;
+    const nextLeaveYearStartKey = `${leaveYear + 1}-${settings.leaveYearStart}`;
+    const txs = this.getTransactionsForEmployee(employeeId, policyId, context).filter((item) => {
+      const date = item.date.slice(0, 10);
+      return date >= leaveYearStartKey && date < nextLeaveYearStartKey;
+    });
 
     let entitlement = 0;
     let carriedForward = 0;
@@ -2490,7 +2745,10 @@ export class LeaveService {
 
     // Get all requests for this policy
     const requests = this.getLeaveRequestsForEmployee(employeeId, context).filter(
-      (r) => r.policyId === policyId,
+      (request) =>
+        request.policyId === policyId &&
+        request.startDate >= leaveYearStartKey &&
+        request.startDate < nextLeaveYearStartKey,
     );
     for (const req of requests) {
       if (
@@ -2508,7 +2766,6 @@ export class LeaveService {
       }
     }
 
-    const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     for (const tx of txs) {
@@ -2656,6 +2913,32 @@ export class LeaveService {
     }
 
     return results;
+  }
+
+  async runAnnualRolloverAsync(targetYear: number, context: ActorContext): Promise<number> {
+    if (typeof window === "undefined") return this.runAnnualRollover(targetYear, context).length;
+    const { rolloverLeaveBalancesFn } = await import("../server-functions/leave.server.ts");
+    const created = await rolloverLeaveBalancesFn({
+      data: { actor: await this.serverActor(context), leaveYear: targetYear },
+    });
+    await this.hydrateCompatibilityCache(context);
+    return created;
+  }
+
+  async exportRequestsCsv(
+    filters: { status?: string; departmentId?: string },
+    context: ActorContext,
+  ): Promise<{ fileName: string; content: string; rowCount: number }> {
+    if (typeof window === "undefined")
+      throw new Error("Leave exports must run through the server.");
+    const { exportLeaveRequestsFn } = await import("../server-functions/leave.server.ts");
+    return exportLeaveRequestsFn({
+      data: {
+        actor: await this.serverActor(context),
+        ...(filters.status ? { status: filters.status } : {}),
+        ...(filters.departmentId ? { departmentId: filters.departmentId } : {}),
+      },
+    });
   }
 
   /**

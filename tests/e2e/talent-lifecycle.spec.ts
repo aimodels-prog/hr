@@ -27,28 +27,22 @@ test("objectives, appraisal, acknowledgement and certification complete across r
 
   await page.goto("/staff");
   await expect(page.getByText("VIA HR System").first()).toBeVisible();
-  await page.waitForFunction(() => {
-    const raw = localStorage.getItem("via_hr:collection:employees");
-    if (!raw) return false;
-    try {
-      return JSON.parse(raw).items?.some(
-        (employee: { id: string; lineManagerId?: string }) =>
-          employee.id === "employee-omar" && employee.lineManagerId === "employee-layla",
-      );
-    } catch {
-      return false;
-    }
-  });
+  await expect(page.getByText("VIA HR System").first()).toBeVisible();
 
   const reviewId = await page.evaluate(
     async ({ cycleName, firstObjective, secondObjective }) => {
+      const { initializeApplicationData } = await import("/src/lib/data/application-data.ts");
       const { PerformanceService } = await import("/src/lib/data/performance-service.ts");
       const { GoalService } = await import("/src/lib/data/goal-service.ts");
+      const { MasterDataService } = await import("/src/lib/data/master-data.ts");
+      const { EmployeeService } = await import("/src/lib/data/employee-service.ts");
+      initializeApplicationData();
       const hr = {
         actor: {
           userId: "user-rana",
           employeeId: "employee-rana",
           displayName: "Rana Nair",
+          workspaceEmail: "rana.nair@via.example",
           activeRole: "HR" as const,
           roles: ["Employee" as const, "HR" as const],
         },
@@ -58,6 +52,7 @@ test("objectives, appraisal, acknowledgement and certification complete across r
           userId: "user-omar",
           employeeId: "employee-omar",
           displayName: "Omar Rahman",
+          workspaceEmail: "omar.rahman@via.example",
           activeRole: "Employee" as const,
           roles: ["Employee" as const],
         },
@@ -67,18 +62,26 @@ test("objectives, appraisal, acknowledgement and certification complete across r
           userId: "user-layla",
           employeeId: "employee-layla",
           displayName: "Layla Al Harthy",
+          workspaceEmail: "layla.harthy@via.example",
           activeRole: "Line Manager" as const,
           roles: ["Employee" as const, "Line Manager" as const],
         },
       };
+      await new EmployeeService().hydrateCompatibilityCache(hr);
+      const masterData = new MasterDataService();
+      await masterData.hydrateCompatibilityCache();
       const performance = new PerformanceService();
+      await performance.hydrateCompatibilityCache(hr);
       const template = performance.getTemplates(hr)[0]!;
-      const cycle = performance.createCycle(
+      const department = masterData
+        .list("departments", false)
+        .find((item) => item.name === "Operations")!;
+      const cycles = await performance.createCycleAsync(
         {
           name: cycleName,
           templateId: template.id,
           status: "Active",
-          departments: ["Operations"],
+          departments: [department.id],
           employmentTypes: [],
           objectiveSettingDeadline: "2026-09-30",
           selfAssessmentDeadline: "2026-10-31",
@@ -89,38 +92,43 @@ test("objectives, appraisal, acknowledgement and certification complete across r
         },
         hr,
       );
+      const cycle = cycles.find((item) => item.name === cycleName)!;
       const goals = new GoalService();
-      const goalOne = goals.createGoal(
-        {
-          employeeId: "employee-omar",
-          cycleId: cycle.id,
-          title: firstObjective,
-          description: "Reduce preventable processing errors in assigned shipments.",
-          successMeasure: "Monthly shipment audit",
-          targetValue: "At least 98% accuracy",
-          startDate: "2026-09-01",
-          dueDate: "2026-10-15",
-          weight: 60,
-        },
-        employee,
-      );
-      const goalTwo = goals.createGoal(
-        {
-          employeeId: "employee-omar",
-          cycleId: cycle.id,
-          title: secondObjective,
-          description: "Provide accurate milestone updates to assigned customers.",
-          successMeasure: "Updates delivered on schedule",
-          targetValue: "At least 96% on-time updates",
-          startDate: "2026-09-01",
-          dueDate: "2026-10-15",
-          weight: 40,
-        },
-        employee,
-      );
-      goals.submitCycleGoalsForApproval("employee-omar", cycle.id, employee);
-      goals.approveGoal(goalOne.id, manager);
-      goals.approveGoal(goalTwo.id, manager);
+      const goalOne = (
+        await goals.createGoalAsync(
+          {
+            employeeId: "employee-omar",
+            cycleId: cycle.id,
+            title: firstObjective,
+            description: "Reduce preventable processing errors in assigned shipments.",
+            successMeasure: "Monthly shipment audit",
+            targetValue: "At least 98% accuracy",
+            startDate: "2026-09-01",
+            dueDate: "2026-10-15",
+            weight: 60,
+          },
+          employee,
+        )
+      ).find((item) => item.title === firstObjective)!;
+      const goalTwo = (
+        await goals.createGoalAsync(
+          {
+            employeeId: "employee-omar",
+            cycleId: cycle.id,
+            title: secondObjective,
+            description: "Provide accurate milestone updates to assigned customers.",
+            successMeasure: "Updates delivered on schedule",
+            targetValue: "At least 96% on-time updates",
+            startDate: "2026-09-01",
+            dueDate: "2026-10-15",
+            weight: 40,
+          },
+          employee,
+        )
+      ).find((item) => item.title === secondObjective)!;
+      await goals.submitCycleGoalsForApprovalAsync("employee-omar", cycle.id, employee);
+      await goals.decideGoalAsync(goalOne.id, "approve", undefined, manager);
+      await goals.decideGoalAsync(goalTwo.id, "approve", undefined, manager);
       return performance
         .getReviewsForEmployee("employee-omar", employee)
         .find((review) => review.cycleId === cycle.id)!.id;
@@ -130,10 +138,15 @@ test("objectives, appraisal, acknowledgement and certification complete across r
 
   await previewAs(page, "user-omar", "Employee", "/staff/me/performance");
   await expect(page.getByRole("tab", { name: "Objectives" })).toBeVisible();
+  await page.getByRole("combobox").click();
+  await page.getByRole("option", { name: cycleName, exact: true }).click();
   await expect(page.getByText(firstObjective, { exact: true })).toBeVisible();
   await page.getByRole("tab", { name: "Reviews" }).click();
   await expect(page.getByText(cycleName, { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Open", exact: true }).click();
+  await page
+    .getByRole("row", { name: new RegExp(cycleName) })
+    .getByRole("button", { name: "Open", exact: true })
+    .click();
   const selfRatings = page.locator('input[type="number"]:not([disabled])');
   const selfComments = page.locator("textarea:not([disabled])");
   await expect(selfRatings.first()).toBeVisible();
@@ -186,6 +199,7 @@ test("objectives, appraisal, acknowledgement and certification complete across r
     .getByPlaceholder("Moderation outcome and any calibration decision")
     .fill("Ratings are consistent with the evidence and with comparable roles.");
   await page.getByRole("button", { name: "Complete moderation" }).click();
+  await expect(page.getByText("Discussion Pending", { exact: true })).toBeVisible();
 
   await previewAs(page, "user-layla", "Line Manager", `/staff/performance/reviews/${reviewId}`);
   await page.getByLabel("Discussion date").fill("2026-08-29");
@@ -201,6 +215,7 @@ test("objectives, appraisal, acknowledgement and certification complete across r
     .getByPlaceholder("Explain your concern")
     .fill("I acknowledge receipt but would like one rating discussed again.");
   await page.getByRole("button", { name: "Submit acknowledgement" }).click();
+  await expect(page.getByText("Acknowledged", { exact: true }).first()).toBeVisible();
 
   await previewAs(page, "user-rana", "HR", "/staff/performance/cycles");
   await page
@@ -219,7 +234,7 @@ test("objectives, appraisal, acknowledgement and certification complete across r
   await page.getByLabel(/Certificate \(PDF/).setInputFiles({
     name: "certificate.pdf",
     mimeType: "application/pdf",
-    buffer: Buffer.from("certificate evidence"),
+    buffer: Buffer.from("%PDF-1.4\ncertificate evidence"),
   });
   await page.getByRole("button", { name: "Save certification" }).click();
   await expect(page.getByText(certificateTitle, { exact: true })).toBeVisible();
@@ -233,18 +248,7 @@ test("objectives, appraisal, acknowledgement and certification complete across r
 
 test("Team Performance and Training Records open for every intended role", async ({ page }) => {
   await page.goto("/staff");
-  await page.waitForFunction(() => {
-    const raw = localStorage.getItem("via_hr:collection:users");
-    if (!raw) return false;
-    try {
-      return JSON.parse(raw).items?.some(
-        (user: { id: string; roles: string[] }) =>
-          user.id === "user-rana" && user.roles.includes("HR"),
-      );
-    } catch {
-      return false;
-    }
-  });
+  await expect(page.getByText("VIA HR System").first()).toBeVisible();
   await previewAs(page, "user-rana", "HR", "/staff/performance/team");
   await expect(page.getByRole("heading", { name: "Team Performance" })).toBeVisible();
   await expect(page.getByText("This page didn't load.")).toHaveCount(0);

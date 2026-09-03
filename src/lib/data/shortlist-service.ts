@@ -95,6 +95,66 @@ export class ShortlistService {
     this.candidateService = new CandidateService();
   }
 
+  private serverActor(context: ActorContext) {
+    const user = getApplicationDataServices()
+      .storage.readCollection<{ id: string; workspaceEmail?: string }>("users")
+      .find((item) => item.id === context.actor.userId);
+    return {
+      actorId: context.actor.userId,
+      ...(context.actor.workspaceEmail || user?.workspaceEmail
+        ? { actorEmail: context.actor.workspaceEmail ?? user?.workspaceEmail }
+        : {}),
+      activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+    };
+  }
+
+  private databaseVacancyId(vacancyId: string): string {
+    const record = getApplicationDataServices()
+      .storage.readCollection<{ id: string; databaseId?: string }>("vacancies")
+      .find((item) => item.id === vacancyId || item.databaseId === vacancyId);
+    const id = record?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(vacancyId) ? vacancyId : undefined);
+    if (!id) throw new Error("This vacancy is not linked to PostgreSQL.");
+    return id;
+  }
+
+  async saveDraftAsync(
+    payload: NewRecord<ShortlistSnapshot>,
+    context: ActorContext,
+  ): Promise<ShortlistSnapshot> {
+    const { saveShortlistDraftFn } = await import("../server-functions/candidate.server.ts");
+    const id = await saveShortlistDraftFn({
+      data: {
+        actor: this.serverActor(context),
+        vacancyId: this.databaseVacancyId(payload.vacancyId),
+        targetSize: payload.targetSize,
+        selectedCandidateIds: payload.selectedCandidateIds,
+        overrideReasons: payload.overrides.map((item) => ({
+          candidateId: item.candidateId,
+          reason: item.reason,
+        })),
+      },
+    });
+    await this.candidateService.hydrateCompatibilityCache(context);
+    const snapshot = this.shortlistRepo.getById(id);
+    if (!snapshot) throw new Error("The shortlist could not be refreshed.");
+    return snapshot;
+  }
+
+  async finalizeShortlistAsync(
+    snapshotId: string,
+    unselectedAction: "On Hold" | "Not Selected",
+    context: ActorContext,
+  ): Promise<ShortlistSnapshot> {
+    const { finaliseShortlistFn } = await import("../server-functions/candidate.server.ts");
+    await finaliseShortlistFn({
+      data: { actor: this.serverActor(context), shortlistId: snapshotId, unselectedAction },
+    });
+    await this.candidateService.hydrateCompatibilityCache(context);
+    const snapshot = this.shortlistRepo.getById(snapshotId);
+    if (!snapshot) throw new Error("The final shortlist could not be refreshed.");
+    return snapshot;
+  }
+
   getShortlistRepository() {
     return this.shortlistRepo;
   }

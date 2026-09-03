@@ -172,7 +172,7 @@ function EmployeeImportWizard() {
           description="Bring a batch of employees in from an XLSX or CSV spreadsheet, instead of adding them one at a time."
           breadcrumbs={[
             { label: "Core HR" },
-            { label: "Directory", href: "/staff/employees" as any },
+            { label: "Directory", href: "/staff/employees" },
             { label: "Import Employees" },
           ]}
         />
@@ -201,7 +201,7 @@ function EmployeeImportWizard() {
             <input {...getInputProps()} />
             <UploadCloud className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
             <h3 className="text-lg font-semibold">Drag & drop spreadsheet here</h3>
-            <p className="text-sm text-muted-foreground mt-2">Supports .xlsx, .xls, .csv</p>
+            <p className="text-sm text-muted-foreground mt-2">Supports .xlsx and .csv</p>
             <Button className="mt-6" variant="secondary">
               Browse Files
             </Button>
@@ -515,8 +515,17 @@ function EmployeeImportWizard() {
             onClick={() =>
               navigate({
                 to: "/staff/employees",
-                search: { page: 1, q: "", status: "", department: "", location: "" },
-              } as any)
+                search: {
+                  page: 1,
+                  q: "",
+                  status: "",
+                  department: "",
+                  location: "",
+                  project: "",
+                  manager: "",
+                  employmentType: "",
+                },
+              })
             }
           >
             <ArrowLeft className="mr-2 h-4 w-4" /> Back to Directory

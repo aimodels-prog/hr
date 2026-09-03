@@ -301,6 +301,9 @@ function MasterDataSection({
         );
         toast.success(`${title} updated`);
       } else {
+        const workingDays = Array.isArray(recordData.workingDays)
+          ? recordData.workingDays
+          : undefined;
         await service.create(
           collection,
           {
@@ -310,6 +313,20 @@ function MasterDataSection({
             isActive: recordData.isActive !== false,
             orderIndex: recordData.orderIndex ?? data.length,
             ...(collection === "publicHolidays" ? { date: holidayData.date } : {}),
+            ...(collection === "workingTimes"
+              ? {
+                  startTime: recordData.startTime,
+                  endTime: recordData.endTime,
+                  breakMinutes: recordData.breakMinutes ?? 0,
+                  workingDays,
+                }
+              : {}),
+            ...(collection === "currencies"
+              ? {
+                  symbol: recordData.symbol,
+                  decimalPlaces: recordData.decimalPlaces ?? 2,
+                }
+              : {}),
           },
           currentUser.getActorContext(),
         );
@@ -333,7 +350,22 @@ function MasterDataSection({
         onRestore={handleRestore}
         {...(collection === "publicHolidays"
           ? { columns: [{ key: "date", label: "Holiday Date" }] }
-          : {})}
+          : collection === "workingTimes"
+            ? {
+                columns: [
+                  { key: "startTime", label: "Starts" },
+                  { key: "endTime", label: "Ends" },
+                  { key: "breakMinutes", label: "Break (minutes)" },
+                ],
+              }
+            : collection === "currencies"
+              ? {
+                  columns: [
+                    { key: "symbol", label: "Symbol" },
+                    { key: "decimalPlaces", label: "Decimal places" },
+                  ],
+                }
+              : {})}
       />
 
       <MasterDataForm
@@ -353,9 +385,101 @@ function MasterDataSection({
                 id="holiday-date"
                 type="date"
                 value={(formData as Partial<HolidayMasterRecord>).date || ""}
-                onChange={(event) => updateField("date" as keyof MasterRecord, event.target.value)}
+                onChange={(event) => updateField("date", event.target.value)}
                 required
               />
+            </div>
+          ) : collection === "workingTimes" ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <label htmlFor="working-start" className="text-sm font-medium">
+                  Start Time
+                </label>
+                <Input
+                  id="working-start"
+                  type="time"
+                  value={formData.startTime?.slice(0, 5) ?? ""}
+                  onChange={(event) => updateField("startTime", event.target.value)}
+                  required
+                />
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="working-end" className="text-sm font-medium">
+                  End Time
+                </label>
+                <Input
+                  id="working-end"
+                  type="time"
+                  value={formData.endTime?.slice(0, 5) ?? ""}
+                  onChange={(event) => updateField("endTime", event.target.value)}
+                  required
+                />
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="working-break" className="text-sm font-medium">
+                  Break Minutes
+                </label>
+                <Input
+                  id="working-break"
+                  type="number"
+                  min={0}
+                  max={1439}
+                  value={formData.breakMinutes ?? 0}
+                  onChange={(event) => updateField("breakMinutes", Number(event.target.value))}
+                  required
+                />
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="working-days" className="text-sm font-medium">
+                  Working Days
+                </label>
+                <Input
+                  id="working-days"
+                  value={formData.workingDays?.join(", ") ?? ""}
+                  onChange={(event) =>
+                    updateField(
+                      "workingDays",
+                      event.target.value
+                        .split(",")
+                        .map((value) => Number(value.trim()))
+                        .filter((value) => Number.isInteger(value)),
+                    )
+                  }
+                  placeholder="0, 1, 2, 3, 4"
+                  required
+                />
+                <p className="text-xs text-muted-foreground">
+                  Use 0 for Sunday through 6 for Saturday.
+                </p>
+              </div>
+            </div>
+          ) : collection === "currencies" ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <label htmlFor="currency-symbol" className="text-sm font-medium">
+                  Symbol
+                </label>
+                <Input
+                  id="currency-symbol"
+                  value={formData.symbol ?? ""}
+                  onChange={(event) => updateField("symbol", event.target.value)}
+                  maxLength={12}
+                />
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="currency-decimals" className="text-sm font-medium">
+                  Decimal Places
+                </label>
+                <Input
+                  id="currency-decimals"
+                  type="number"
+                  min={0}
+                  max={4}
+                  value={formData.decimalPlaces ?? 2}
+                  onChange={(event) => updateField("decimalPlaces", Number(event.target.value))}
+                  required
+                />
+              </div>
             </div>
           ) : null
         }

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +19,16 @@ import { PayrollService } from "@/lib/data/payroll-service";
 import type { PayrollException, PayrollManualAdjustment } from "@/lib/data/payroll-types";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
-import { ArrowLeft, Download, Lock, Play, AlertTriangle, CheckCircle, Plus } from "lucide-react";
+import {
+  ArrowLeft,
+  Download,
+  Lock,
+  Play,
+  AlertTriangle,
+  CheckCircle,
+  Plus,
+  FileText,
+} from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -64,12 +73,23 @@ function PayrollWorkbenchContent() {
   );
 
   const [period, setPeriod] = useState(() => payrollService.getPeriodById(periodId, actorContext));
+  useEffect(() => {
+    void payrollService
+      .getPeriodByIdAsync(periodId, actorContext)
+      .then(setPeriod)
+      .catch((error) => toast.error(getErrorMessage(error)));
+    // The preview identity remounts this route when its actor changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodId, payrollService]);
 
   const [activeTab, setActiveTab] = useState("aggregation");
   const [showAckDialog, setShowAckDialog] = useState<PayrollException | null>(null);
   const [ackNotes, setAckNotes] = useState("");
 
   const [showManualDialog, setShowManualDialog] = useState(false);
+  const [showReopenDialog, setShowReopenDialog] = useState(false);
+  const [reopenReason, setReopenReason] = useState("");
+  const [manualEvidence, setManualEvidence] = useState<File | null>(null);
   const [manualAdj, setManualAdj] = useState<ManualAdjustmentDraft>({
     employeeId: "",
     type: "Allowance",
@@ -88,9 +108,10 @@ function PayrollWorkbenchContent() {
 
   if (!period) return <div className="p-8">Period not found.</div>;
 
-  const handleCollect = () => {
+  const handleCollect = async () => {
     try {
-      const updated = payrollService.collectInputs(period.id, actorContext);
+      const updated = await payrollService.collectInputsAsync(period.id, actorContext);
+      if (!updated) throw new Error("Payroll period could not be reloaded.");
       setPeriod(updated);
       toast.success("Inputs collected and exceptions refreshed.");
       if (updated.status === "Exceptions") {
@@ -102,15 +123,16 @@ function PayrollWorkbenchContent() {
     }
   };
 
-  const handleAcknowledge = () => {
+  const handleAcknowledge = async () => {
     if (!showAckDialog) return;
     try {
-      const updated = payrollService.acknowledgeException(
+      const updated = await payrollService.acknowledgeExceptionAsync(
         period.id,
         showAckDialog.id,
         ackNotes,
         actorContext,
       );
+      if (!updated) throw new Error("Payroll period could not be reloaded.");
       setPeriod(updated);
       setShowAckDialog(null);
       toast.success("Exception acknowledged.");
@@ -119,21 +141,29 @@ function PayrollWorkbenchContent() {
     }
   };
 
-  const handleAddManual = () => {
+  const handleAddManual = async () => {
     try {
       if (
         !manualAdj.employeeId ||
         !manualAdj.reason ||
         manualAdj.amount <= 0 ||
-        !manualAdj.currency
+        !manualAdj.currency ||
+        !manualEvidence
       ) {
         toast.error("Please fill all required fields correctly.");
         return;
       }
-      const updated = payrollService.addManualAdjustment(period.id, manualAdj, actorContext);
+      const updated = await payrollService.addManualAdjustmentAsync(
+        period.id,
+        manualAdj,
+        actorContext,
+        manualEvidence,
+      );
+      if (!updated) throw new Error("Payroll period could not be reloaded.");
       setPeriod(updated);
       setShowManualDialog(false);
       setManualAdj({ employeeId: "", type: "Allowance", amount: 0, currency: "", reason: "" });
+      setManualEvidence(null);
       toast.success(
         "Payroll correction added. Collect the payroll information again to include it.",
       );
@@ -142,9 +172,30 @@ function PayrollWorkbenchContent() {
     }
   };
 
-  const handleLock = () => {
+  const handleViewEvidence = async (adjustmentId: string) => {
     try {
-      const updated = payrollService.lockPeriod(period.id, actorContext);
+      const file = await payrollService.readManualAdjustmentEvidenceAsync(
+        adjustmentId,
+        actorContext,
+      );
+      const url = URL.createObjectURL(file.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = file.fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Supporting evidence downloaded.");
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const handleLock = async () => {
+    try {
+      const updated = await payrollService.lockPeriodAsync(period.id, actorContext);
+      if (!updated) throw new Error("Payroll period could not be reloaded.");
       setPeriod(updated);
       toast.success("Payroll period locked");
     } catch (error: unknown) {
@@ -152,9 +203,20 @@ function PayrollWorkbenchContent() {
     }
   };
 
-  const handleExport = () => {
+  const handleApprove = async () => {
     try {
-      const csv = payrollService.exportCsv(period.id, actorContext);
+      const updated = await payrollService.approvePeriodAsync(period.id, actorContext);
+      if (!updated) throw new Error("Payroll period could not be reloaded.");
+      setPeriod(updated);
+      toast.success("Payroll input approved.");
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const handleExport = async () => {
+    try {
+      const csv = await payrollService.exportCsvAsync(period.id, actorContext);
       const blob = new Blob([csv], { type: "text/csv" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -164,8 +226,21 @@ function PayrollWorkbenchContent() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      setPeriod(payrollService.getPeriodById(period.id, actorContext));
+      setPeriod(await payrollService.getPeriodByIdAsync(period.id, actorContext));
       toast.success("Export successful.");
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const handleReopen = async () => {
+    try {
+      const updated = await payrollService.reopenPeriodAsync(period.id, reopenReason, actorContext);
+      if (!updated) throw new Error("Payroll period could not be reloaded.");
+      setPeriod(updated);
+      setShowReopenDialog(false);
+      setReopenReason("");
+      toast.success("Payroll reopened for a controlled correction.");
     } catch (error: unknown) {
       toast.error(getErrorMessage(error));
     }
@@ -174,7 +249,8 @@ function PayrollWorkbenchContent() {
   const isEditable =
     period.status === "Draft" ||
     period.status === "Collecting Inputs" ||
-    period.status === "Exceptions";
+    period.status === "Exceptions" ||
+    period.status === "Corrected";
 
   return (
     <div className="flex flex-col gap-6 max-w-[1200px] mx-auto pb-10">
@@ -208,19 +284,31 @@ function PayrollWorkbenchContent() {
             </Badge>
 
             {isEditable && (
-              <Button onClick={handleCollect} variant="outline">
+              <Button onClick={() => void handleCollect()} variant="outline">
                 <Play className="w-4 h-4 mr-2" /> Collect Inputs
               </Button>
             )}
-            {period.status === "Prepared" && (
-              <Button onClick={handleLock}>
+            {period.status === "Prepared" && currentUser.activeRole === "Super Admin" && (
+              <Button onClick={() => void handleApprove()}>
+                <CheckCircle className="w-4 h-4 mr-2" /> Approve Payroll
+              </Button>
+            )}
+            {period.status === "Approved" && (
+              <Button onClick={() => void handleLock()}>
                 <Lock className="w-4 h-4 mr-2" /> Lock Period
               </Button>
             )}
             {(period.status === "Locked" || period.status === "Exported") && (
-              <Button onClick={handleExport}>
-                <Download className="w-4 h-4 mr-2" /> Export CSV
-              </Button>
+              <>
+                {currentUser.activeRole === "Super Admin" && (
+                  <Button variant="outline" onClick={() => setShowReopenDialog(true)}>
+                    Reopen for Correction
+                  </Button>
+                )}
+                <Button onClick={() => void handleExport()}>
+                  <Download className="w-4 h-4 mr-2" /> Export CSV
+                </Button>
+              </>
             )}
           </div>
         }
@@ -333,6 +421,7 @@ function PayrollWorkbenchContent() {
                     <th className="text-left p-3 font-medium">Type</th>
                     <th className="text-left p-3 font-medium">Reason</th>
                     <th className="text-right p-3 font-medium">Amount</th>
+                    <th className="text-right p-3 font-medium">Evidence</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -351,12 +440,25 @@ function PayrollWorkbenchContent() {
                           {adj.type === "Deduction" ? "-" : "+"}
                           {adj.amount.toLocaleString()} {adj.currency}
                         </td>
+                        <td className="p-3 text-right">
+                          {adj.evidenceFileId ? (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => void handleViewEvidence(adj.id)}
+                            >
+                              <FileText className="mr-1 h-4 w-4" /> View
+                            </Button>
+                          ) : (
+                            <span className="text-muted-foreground">Unavailable</span>
+                          )}
+                        </td>
                       </tr>
                     );
                   })}
                   {period.manualAdjustments.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="text-center p-8 text-muted-foreground">
+                      <td colSpan={5} className="text-center p-8 text-muted-foreground">
                         No manual adjustments.
                       </td>
                     </tr>
@@ -456,7 +558,7 @@ function PayrollWorkbenchContent() {
             <Button variant="outline" onClick={() => setShowAckDialog(null)}>
               Cancel
             </Button>
-            <Button onClick={handleAcknowledge} disabled={ackNotes.trim().length < 2}>
+            <Button onClick={() => void handleAcknowledge()} disabled={ackNotes.trim().length < 5}>
               Confirm Acknowledgment
             </Button>
           </DialogFooter>
@@ -540,12 +642,50 @@ function PayrollWorkbenchContent() {
                 placeholder="e.g. Sign-on bonus, hardware deduction..."
               />
             </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium" htmlFor="payroll-adjustment-evidence">
+                Supporting evidence
+              </label>
+              <Input
+                id="payroll-adjustment-evidence"
+                type="file"
+                accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png"
+                onChange={(event) => setManualEvidence(event.target.files?.[0] ?? null)}
+              />
+              <p className="text-xs text-muted-foreground">PDF, JPG or PNG, up to 10 MB.</p>
+            </div>
           </div>
           <DialogFooter className="mt-4">
             <Button variant="outline" onClick={() => setShowManualDialog(false)}>
               Cancel
             </Button>
-            <Button onClick={handleAddManual}>Add Adjustment</Button>
+            <Button onClick={() => void handleAddManual()} disabled={!manualEvidence}>
+              Add Adjustment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showReopenDialog} onOpenChange={setShowReopenDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reopen payroll for correction</DialogTitle>
+            <DialogDescription>
+              This unlocks the workbench and records why the completed payroll changed.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={reopenReason}
+            onChange={(event) => setReopenReason(event.target.value)}
+            placeholder="Explain the correction required"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowReopenDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => void handleReopen()} disabled={reopenReason.trim().length < 5}>
+              Reopen Payroll
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

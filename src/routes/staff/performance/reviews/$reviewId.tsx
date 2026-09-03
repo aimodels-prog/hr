@@ -93,9 +93,9 @@ function PerformanceReviewPage() {
             },
       ),
     );
-  const act = (action: () => PerformanceReview, message: string) => {
+  const act = async (action: () => Promise<PerformanceReview>, message: string) => {
     try {
-      const updated = action();
+      const updated = await action();
       setReview(updated);
       setSections(structuredClone(updated.sections));
       setManagerSummary(updated.managerSummaryComment ?? "");
@@ -252,8 +252,8 @@ function PerformanceReviewPage() {
             </div>
             <Button
               onClick={() =>
-                act(
-                  () => service.submitSelfAssessment(review.id, sections, context),
+                void act(
+                  () => service.submitSelfAssessmentAsync(review.id, sections, context),
                   "Self-assessment sent to your supervisor",
                 )
               }
@@ -291,9 +291,9 @@ function PerformanceReviewPage() {
               <div className="flex justify-end">
                 <Button
                   onClick={() =>
-                    act(
+                    void act(
                       () =>
-                        service.submitManagerReview(
+                        service.submitManagerReviewAsync(
                           review.id,
                           sections,
                           managerSummary,
@@ -324,8 +324,8 @@ function PerformanceReviewPage() {
           />
           <Button
             onClick={() =>
-              act(
-                () => service.approveModeration(review.id, moderationComment, context),
+              void act(
+                () => service.approveModerationAsync(review.id, moderationComment, context),
                 "Moderation completed",
               )
             }
@@ -362,8 +362,14 @@ function PerformanceReviewPage() {
           </div>
           <Button
             onClick={() =>
-              act(
-                () => service.recordDiscussion(review.id, discussionDate, discussionNotes, context),
+              void act(
+                () =>
+                  service.recordDiscussionAsync(
+                    review.id,
+                    discussionDate,
+                    discussionNotes,
+                    context,
+                  ),
                 "Discussion recorded; employee acknowledgement requested",
               )
             }
@@ -409,9 +415,9 @@ function PerformanceReviewPage() {
           />
           <Button
             onClick={() =>
-              act(
+              void act(
                 () =>
-                  service.acknowledgeReview(
+                  service.acknowledgeReviewAsync(
                     review.id,
                     agrees === "yes",
                     acknowledgementComment || undefined,
@@ -448,7 +454,10 @@ function PerformanceReviewPage() {
         >
           <Button
             onClick={() =>
-              act(() => service.lockReview(review.id, context), "Review finalised and locked")
+              void act(
+                () => service.lockReviewAsync(review.id, context),
+                "Review finalised and locked",
+              )
             }
           >
             Finalise and lock
@@ -469,23 +478,25 @@ function PerformanceReviewPage() {
           <Button
             variant="outline"
             onClick={() => {
-              try {
-                const corrected = service.correctReview(
+              void service
+                .correctReviewAsync(
                   review.id,
                   sections,
                   managerSummary,
                   developmentPlan,
                   correctionReason,
                   context,
-                );
-                toast.success("Corrected review created");
-                navigate({ to: `/staff/performance/reviews/${corrected.id}`, replace: true });
-                setReview(corrected);
-              } catch (error) {
-                toast.error(
-                  error instanceof Error ? error.message : "The correction could not be saved.",
-                );
-              }
+                )
+                .then((corrected) => {
+                  toast.success("Corrected review created");
+                  navigate({ to: `/staff/performance/reviews/${corrected.id}`, replace: true });
+                  setReview(corrected);
+                })
+                .catch((error) => {
+                  toast.error(
+                    error instanceof Error ? error.message : "The correction could not be saved.",
+                  );
+                });
             }}
           >
             Create corrected record

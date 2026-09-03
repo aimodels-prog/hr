@@ -15,13 +15,9 @@ import { Button } from "@/components/ui/button";
 import { ArrowRight, Search, Users, CheckCircle2, TrendingUp, AlertCircle } from "lucide-react";
 import { CandidateService } from "@/lib/data/candidate-service";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { RequirePermission, getRouteActorContext } from "@/lib/auth";
+import { RequirePermission, useCurrentUser } from "@/lib/auth";
 
 export const Route = createFileRoute("/staff/recommendations/")({
-  loader: () => {
-    const candidateService = new CandidateService();
-    return { profiles: candidateService.getRecommenderProfiles(getRouteActorContext()) };
-  },
   component: RecommendationsIndexWrapper,
 });
 
@@ -37,7 +33,9 @@ function RecommendationsIndexWrapper() {
 }
 
 function RecommendationsIndex() {
-  const { profiles } = Route.useLoaderData();
+  const currentUser = useCurrentUser();
+  const [candidateService] = useState(() => new CandidateService());
+  const profiles = candidateService.getRecommenderProfiles(currentUser.getActorContext());
   const [searchTerm, setSearchTerm] = useState("");
 
   const filtered = profiles.filter(

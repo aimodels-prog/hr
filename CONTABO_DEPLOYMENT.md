@@ -2,8 +2,11 @@
 
 VIA HR System is deployed as a long-running Node/Nitro service behind the
 server's existing HTTPS reverse proxy. It has an isolated PostgreSQL database,
-database role, Docker network and persistent volume. Existing VIA pages still
-use browser storage until the numbered database migration steps are completed.
+database role, Docker network and persistent volume. PostgreSQL and encrypted
+object storage are the authoritative production stores for every operational
+module. VIA Portal is the only production login authority. The development
+identity preview is disabled in production, and this application does not
+implement its own Google OAuth or normal password login.
 
 ## Required decisions before production data
 
@@ -11,11 +14,16 @@ use browser storage until the numbered database migration steps are completed.
   residency requirements.
 - Confirm available CPU, RAM and disk headroom alongside the other applications.
 - Identify the existing reverse proxy and an unused loopback port.
-- Agree the subdomain, for example `hr.via-international.com`.
+- Production hostname: `career.via-int.com`.
 - Agree backup retention, off-server backup destination and restore owner.
 
+Use [the release acceptance record](docs/CONTABO_RELEASE_ACCEPTANCE.md) for the
+staging rehearsal and every production release. A release is not complete until
+the automated evidence, five-role UAT, restore drill, rollback rehearsal and
+named approvals are recorded there.
+
 Do not load real passport, bank, salary, medical or employee records until these
-decisions and Google Workspace authentication are complete.
+decisions, VIA Portal SSO, encrypted backup and access-control checks are complete.
 
 ## Isolation from other applications
 
@@ -30,12 +38,44 @@ decisions and Google Workspace authentication are complete.
 The applications may share the Contabo host and reverse proxy. They must not
 share tables, credentials, writable volumes or public internal-service ports.
 
+## VIA Portal single sign-on
+
+VIA Portal authenticates the person; VIA HR remains responsible for deciding what that person may
+see and do. The Portal must launch this application with a signed, 120-second HS256 token whose
+issuer is `via-portal`, audience and `appSlug` are `via-hr`, and email belongs to `via-int.com`.
+Unknown Portal role values never grant elevated HR access. Employee, Line Manager, HR, Accounts
+and Super Admin access continue to come from VIA HR user management.
+
+Production URLs:
+
+- Origin: `https://career.via-int.com`
+- Portal callback: `https://career.via-int.com/auth/portal/callback`
+- Post-login dashboard: `https://career.via-int.com/dashboard`
+- Post-logout destination: `https://portal.via-int.com`
+
+Before deployment:
+
+- Set `APP_ORIGIN=https://career.via-int.com` without a trailing path.
+- Register `https://career.via-int.com/auth/portal/callback` in VIA Portal as the exact callback URL.
+- Generate one dedicated random secret of at least 32 bytes and transfer it to both systems through
+  the approved secret channel. Put it only in the owner-readable `.env.production`; never commit it.
+- Keep `VIA_HR_ALLOW_PASSWORD_LOGIN=false`. VIA HR has no normal production password login and
+  does not implement Google OAuth directly.
+- Configure Nginx from the supplied example. Its exact callback location has access logging disabled
+  so the short-lived query token is never written to the proxy log.
+
+After successful verification, VIA HR replaces the callback URL immediately with `/dashboard`,
+creates an opaque database-backed session valid for no more than eight hours, and stores only a
+hash of the session token. The `__Host-via_hr_session` cookie is HttpOnly, Secure, SameSite=Lax and
+Path=/. Signing out revokes only this local session and returns the browser to VIA Portal.
+
 ## First deployment
 
 The commands below assume the repository is deployed to `/opt/via-hr-system` and
 Docker Engine with the Compose plugin is already installed.
 
-1. Clone or update the approved release in `/opt/via-hr-system`.
+1. Clone or update the approved release in `/opt/via-hr-system`. Confirm the
+   GitHub `VIA HR quality gate` passed for the exact commit before continuing.
 2. Copy `.env.production.example` to `.env.production`.
 3. Generate a long random database password. Put the same URL-encoded password
    in `VIA_HR_DATABASE_URL` and keep the raw value in
@@ -45,34 +85,95 @@ Docker Engine with the Compose plugin is already installed.
    `VIA_HR_FIELD_ENCRYPTION_KEYS` and set that ID as
    `VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID`. Never reuse the database password
    or remove an older key while records still depend on it.
+   Generate the separate Portal SSO secret, configure the final HR origin and callback values, and
+   confirm the same secret is active in VIA Portal before continuing.
 5. Run `chmod 600 .env.production`.
-6. Validate configuration without starting containers:
+6. Run VIA's fail-fast production preflight. It validates configuration without
+   printing secrets and stops on placeholders, mismatched credentials, unsafe
+   network binding, reused encryption keys, mutable image tags or an on-server
+   backup destination:
+
+   ```bash
+   npm run production:preflight
+   ```
+
+7. Validate the final Compose interpolation without starting containers:
 
    ```bash
    docker compose --env-file .env.production -f compose.production.yaml config --quiet
    ```
 
-7. Build and start the private database and application:
+8. Build the exact release images, including the migration tools image:
 
    ```bash
-   docker compose --env-file .env.production -f compose.production.yaml up -d --build
+   docker compose --env-file .env.production -f compose.production.yaml build tools app background-worker
    ```
 
-8. Confirm both services are healthy:
+9. Start only the private dependencies and wait until they are healthy:
 
    ```bash
+   docker compose --env-file .env.production -f compose.production.yaml up -d postgres object-storage malware-scanner
    docker compose --env-file .env.production -f compose.production.yaml ps
-   curl --fail http://127.0.0.1:8082/health/live
-   curl --fail http://127.0.0.1:8082/health/ready
    ```
 
-9. Configure the existing reverse proxy using
-   `deploy/contabo/nginx-via-hr.conf.example` as a reference. Replace the example
-   hostname and port, validate the proxy configuration, then obtain or attach the
-   site's TLS certificate.
-10. Allow public firewall access only to SSH, HTTP and HTTPS as required by the
+10. Apply migrations once from the release being deployed. The app and worker
+    must not be started against an unmigrated database:
+
+```bash
+docker compose --env-file .env.production -f compose.production.yaml --profile tools run --rm tools npm run db:migrate
+```
+
+11. For a new staging environment, preview, import and verify the deterministic
+    VIA dataset. Do not seed a live production database that will receive an
+    approved real-data import:
+
+    ```bash
+    docker compose --env-file .env.production -f compose.production.yaml --profile tools run --rm tools npm run db:seed:preview
+    docker compose --env-file .env.production -f compose.production.yaml --profile tools run --rm tools npm run db:seed:import
+    docker compose --env-file .env.production -f compose.production.yaml --profile tools run --rm tools npm run db:seed:verify
+    ```
+
+12. Start the web application and durable background worker:
+
+    ```bash
+    docker compose --env-file .env.production -f compose.production.yaml up -d app background-worker
+    ```
+
+13. Confirm the complete stack is healthy:
+
+```bash
+docker compose --env-file .env.production -f compose.production.yaml ps
+curl --fail http://127.0.0.1:8082/health/live
+curl --fail http://127.0.0.1:8082/health/ready
+curl --fail http://127.0.0.1:8082/health/worker
+```
+
+14. Configure the existing reverse proxy using
+    `deploy/contabo/nginx-via-hr.conf.example` as a reference. Replace the example
+    hostname and port, validate the proxy configuration, then obtain or attach the
+    site's TLS certificate.
+15. Allow public firewall access only to SSH, HTTP and HTTPS as required by the
     existing server policy. Do not open ports `3000`, `5432` or VIA's loopback
     port to the internet.
+
+## Attendance network verification
+
+Production attendance uses two independent checks: the employee must be inside
+an office geofence and the request must arrive through an office network saved
+in Attendance Administration. Record each office's public egress address as a
+single-address CIDR such as `203.0.113.24/32`, or use the approved corporate CIDR
+provided by the network administrator.
+
+Keep `VIA_HR_ATTENDANCE_NETWORK_ENFORCEMENT=true` and
+`VIA_HR_TRUST_PROXY=true` in production. The reverse proxy must overwrite
+`X-Forwarded-For` with the connection address; it must never trust or append a
+value supplied by the browser. The provided Nginx example follows this rule.
+If another trusted load balancer sits in front of Nginx, define its trusted
+proxy addresses explicitly before changing this configuration.
+
+This is the selected first production anti-spoofing control. Managed-device or
+trusted-mobile attestation can be added later without replacing the network and
+geofence evidence already stored with each immutable punch event.
 
 ## Loading the staging dataset
 
@@ -94,6 +195,23 @@ password or field-encryption key directly in the command or Git history; the
 tools container receives them from the protected `.env.production` file. The
 importer logs only the database host/name, checksum, counts and batch ID.
 
+## Request and upload security
+
+- The application and Nginx both enforce request limits. Keep the proxy's
+  `client_max_body_size` aligned with `VIA_HR_MAX_REQUEST_BYTES`; the default is
+  16 MB so a 10 MB file can be carried in an encoded server request.
+- All uploaded files pass through the private ClamAV service before encryption,
+  object storage or PostgreSQL metadata creation. Production fails closed when
+  the scanner is unavailable or returns an uncertain result.
+- ClamAV signatures persist in the dedicated scanner volume and the scanner has
+  outbound access only to retrieve definition updates. It publishes no host
+  port. Alert if the scanner is unhealthy or its definitions stop updating.
+- Run `npm run security:audit` before each release. A moderate, high or critical
+  dependency advisory blocks release until reviewed and resolved.
+- The application adds CSP, anti-framing, MIME-sniffing, referrer, permissions
+  and HSTS headers. The reverse proxy replaces forwarded-address headers and
+  applies an additional per-IP request limit.
+
 ## Health endpoints
 
 - `/health/live` confirms the Node service can answer requests.
@@ -111,16 +229,18 @@ for process restarts.
 3. Pull the approved release.
 4. Review pending migration SQL before applying it.
 5. Build the new image with a unique `VIA_HR_IMAGE_TAG`.
-6. Run database migrations once from the approved release.
-7. Start the updated application and wait for `/health/ready` to return 200.
-8. Smoke-test the public portal and one permitted page for every affected role.
+6. Run `npm run production:preflight` and stop if it reports any failure.
+7. Run database migrations once from the approved release.
+8. Recreate both `app` and `background-worker`, then wait for `/health/ready`
+   and `/health/worker` to return 200.
+9. Smoke-test the public portal and one permitted page for every affected role.
 
 Never run `docker compose down -v`: the `-v` flag deletes the PostgreSQL volume.
 
 ## Rollback
 
 - Application rollback: restore the previous Git commit/image tag and recreate
-  only the `app` service.
+  both the `app` and `background-worker` services so they run the same release.
 - Database rollback: use the reviewed reverse migration only when it is proven
   safe. If a destructive migration cannot be reversed, stop writes and restore
   the verified pre-deployment backup.
@@ -132,14 +252,41 @@ resolved or the entire approved release is rolled back.
 
 ## Backups and monitoring
 
-- Run encrypted PostgreSQL backups at least daily and before every migration.
-- Copy backups off the Contabo VPS; a backup stored only beside the live database
-  does not protect against host or disk loss.
-- Test a restoration into an isolated database on a scheduled basis.
+- Configure the `VIA_HR_BACKUP_*` values in `.env.production` for a bucket hosted
+  outside the Contabo VPS. The backup key must be different from the database,
+  MinIO and field-encryption credentials.
+- Run an encrypted PostgreSQL and object backup daily and before every migration:
+
+  ```bash
+  docker compose --env-file .env.production -f compose.production.yaml --profile administration run --rm backup
+  ```
+
+- Apply retention after confirming a recent backup completed. The command only
+  removes backup objects older than `VIA_HR_BACKUP_RETENTION_DAYS`:
+
+  ```bash
+  docker compose --env-file .env.production -f compose.production.yaml --profile administration run --rm backup npm run backup:prune
+  ```
+
+- Test restoration into a newly created, empty database whose name includes
+  `restore`, `drill`, `test` or `scratch`. Never point the drill at the live URL.
+  Use a separate empty object bucket when `--restore-objects` is supplied:
+
+  ```bash
+  docker compose --env-file .env.production -f compose.production.yaml --profile administration run --rm \
+    -e VIA_HR_RESTORE_DATABASE_URL='postgresql://.../via_hr_restore_drill' \
+    -e VIA_HR_RESTORE_OBJECT_STORAGE_BUCKET='via-hr-restore-drill' \
+    backup npm run backup:restore-drill -- --backup-id BACKUP_ID --restore-objects
+  ```
+
+- Record the backup ID, completion output, restore-drill output, operator and
+  reconciliation decision in the deployment log. A locally stored copy is not
+  accepted as the off-server backup.
 - Monitor disk space, memory, container restarts, `/health/ready`, PostgreSQL
   connection usage and backup completion.
 - Configure log rotation; the production Compose file limits each container to
   five 10 MB JSON log files.
 
-Object uploads will move to permission-controlled object storage in the later file
-storage step. They must not be placed in the application's read-only container.
+All production uploads already use permission-controlled, malware-scanned,
+encrypted object storage with PostgreSQL metadata. Files must never be placed in
+the application's read-only container or another application's volume.

@@ -1,8 +1,13 @@
 import { checkDatabaseConnection, type DatabaseHealth } from "./db/client.ts";
+import {
+  getWorkerHealthSnapshot,
+  type WorkerHealthSnapshot,
+} from "./db/repositories/worker.repository.server.ts";
 
 type DatabaseHealthCheck = () => Promise<DatabaseHealth>;
+type WorkerHealthCheck = () => Promise<WorkerHealthSnapshot>;
 
-const HEALTH_PATHS = new Set(["/health/live", "/health/ready"]);
+const HEALTH_PATHS = new Set(["/health/live", "/health/ready", "/health/worker"]);
 
 function jsonResponse(payload: unknown, status: number, method: string): Response {
   return new Response(method === "HEAD" ? null : JSON.stringify(payload), {
@@ -22,6 +27,7 @@ function jsonResponse(payload: unknown, status: number, method: string): Respons
 export async function resolveHealthRequest(
   request: Request,
   databaseCheck: DatabaseHealthCheck = checkDatabaseConnection,
+  workerCheck: WorkerHealthCheck = getWorkerHealthSnapshot,
 ): Promise<Response | undefined> {
   const path = new URL(request.url).pathname;
   if (!HEALTH_PATHS.has(path)) return undefined;
@@ -39,6 +45,37 @@ export async function resolveHealthRequest(
   const checkedAt = new Date().toISOString();
   if (path === "/health/live") {
     return jsonResponse({ status: "ok", service: "via-hr-system", checkedAt }, 200, request.method);
+  }
+
+  if (path === "/health/worker") {
+    try {
+      const worker = await workerCheck();
+      return jsonResponse(
+        {
+          status: worker.healthy ? "healthy" : "unhealthy",
+          service: "via-hr-background-worker",
+          activeWorkers: worker.activeWorkers,
+          staleWorkers: worker.staleWorkers,
+          queuedJobs: worker.queuedJobs,
+          retryJobs: worker.retryJobs,
+          failedJobs: worker.failedJobs,
+          overdueSchedules: worker.overdueSchedules,
+          checkedAt: worker.checkedAt,
+        },
+        worker.healthy ? 200 : 503,
+        request.method,
+      );
+    } catch {
+      return jsonResponse(
+        {
+          status: "unavailable",
+          service: "via-hr-background-worker",
+          checkedAt,
+        },
+        503,
+        request.method,
+      );
+    }
   }
 
   try {

@@ -44,8 +44,200 @@ function clearSavedPreviewState(): void {
   }
 }
 
+interface PortalSessionResponse {
+  mode: "portal";
+  user: User;
+  employee: Employee;
+  sessionExpiresAt: string;
+}
+
+type IdentityBootstrap =
+  | { status: "loading" }
+  | { status: "development" }
+  | { status: "portal"; session: PortalSessionResponse }
+  | { status: "error" };
+
 export function CurrentUserProvider({ children }: { children: ReactNode }) {
-  const [dataRevision, setDataRevision] = useState(0);
+  const [bootstrap, setBootstrap] = useState<IdentityBootstrap>({ status: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/auth/session", { credentials: "same-origin", headers: { accept: "application/json" } })
+      .then(async (response) => {
+        if (response.status === 401) {
+          window.location.assign(window.location.href);
+          return null;
+        }
+        if (!response.ok) throw new Error("Identity service unavailable.");
+        return (await response.json()) as {
+          mode?: unknown;
+          user?: User;
+          employee?: Employee;
+          sessionExpiresAt?: string;
+        };
+      })
+      .then((result) => {
+        if (cancelled || !result) return;
+        if (result.mode === "development") {
+          setBootstrap({ status: "development" });
+          return;
+        }
+        if (
+          result.mode !== "portal" ||
+          !result.user ||
+          !result.employee ||
+          typeof result.sessionExpiresAt !== "string"
+        ) {
+          throw new Error("Invalid identity response.");
+        }
+        setBootstrap({
+          status: "portal",
+          session: result as PortalSessionResponse,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setBootstrap({ status: "error" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (bootstrap.status === "loading") return <ApplicationBootScreen />;
+  if (bootstrap.status === "development") {
+    return <DevelopmentCurrentUserProvider>{children}</DevelopmentCurrentUserProvider>;
+  }
+  if (bootstrap.status === "error") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background p-6">
+        <div className="max-w-md rounded-2xl border bg-card p-8 text-center shadow-sm">
+          <h1 className="text-xl font-semibold">Your VIA Portal session could not be loaded</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Return to VIA Portal and open VIA HR again.
+          </p>
+          <a
+            className="mt-6 inline-flex rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
+            href="/staff"
+          >
+            Try again
+          </a>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <PortalCurrentUserProvider session={bootstrap.session}>{children}</PortalCurrentUserProvider>
+  );
+}
+
+function PortalCurrentUserProvider({
+  session,
+  children,
+}: {
+  session: PortalSessionResponse;
+  children: ReactNode;
+}) {
+  const [currentSession, setCurrentSession] = useState(session);
+  const defaultRole =
+    currentSession.user.roles.find((role) => role !== "Employee") ??
+    currentSession.user.roles[0] ??
+    "Employee";
+  const [activeRole, setActiveRoleState] = useState<Role>(defaultRole);
+  const assignedRoles = useMemo<Role[]>(
+    () => (currentSession.user.roles.length ? currentSession.user.roles : (["Employee"] as Role[])),
+    [currentSession.user.roles],
+  );
+  const permissions = useMemo(() => getRolePermissions(activeRole), [activeRole]);
+
+  const refreshRecords = useCallback(() => {
+    void fetch("/auth/session", {
+      credentials: "same-origin",
+      headers: { accept: "application/json" },
+    }).then(async (response) => {
+      if (response.status === 401) {
+        window.location.assign(window.location.href);
+        return;
+      }
+      if (!response.ok) return;
+      const updated = (await response.json()) as PortalSessionResponse;
+      if (updated.mode === "portal") setCurrentSession(updated);
+    });
+  }, []);
+
+  useEffect(() => {
+    const expiry = new Date(currentSession.sessionExpiresAt).getTime();
+    const remaining = Math.max(0, expiry - Date.now());
+    const timer = window.setTimeout(
+      () => window.location.assign(window.location.href),
+      Math.min(remaining + 1000, 2_147_000_000),
+    );
+    return () => window.clearTimeout(timer);
+  }, [currentSession.sessionExpiresAt]);
+
+  useEffect(() => {
+    window.addEventListener("via_hr:data_changed", refreshRecords);
+    return () => window.removeEventListener("via_hr:data_changed", refreshRecords);
+  }, [refreshRecords]);
+
+  const setActiveRole = useCallback(
+    (role: Role) => {
+      if (assignedRoles.includes(role)) setActiveRoleState(role);
+    },
+    [assignedRoles],
+  );
+  const switchIdentity = useCallback(() => {
+    throw new Error("Identity switching is unavailable during a VIA Portal session.");
+  }, []);
+  const resetToDefault = useCallback(() => setActiveRoleState(defaultRole), [defaultRole]);
+  const currentUser = currentSession.user;
+  const currentEmployee = currentSession.employee;
+  const userContext: CurrentUserContext = {
+    userId: currentUser.id,
+    employeeId: currentEmployee.id,
+    displayName: currentUser.displayName,
+    workspaceEmail: currentUser.workspaceEmail,
+    assignedRoles,
+    activeRole,
+    permissions,
+    isDevelopmentPreview: false,
+  };
+  const contextValue: DevPreviewContextValue = {
+    ...userContext,
+    id: currentUser.id,
+    role: activeRole,
+    roles: assignedRoles,
+    currentUser,
+    currentEmployee,
+    allUsers: [currentUser],
+    allEmployees: [currentEmployee],
+    switchIdentity,
+    setActiveRole,
+    resetToDefault,
+    refreshRecords,
+    can: (permission) => can(permission, userContext),
+    canAny: (requested) => canAny(requested, userContext),
+    canAll: (requested) => canAll(requested, userContext),
+    scopedEmployees: [currentEmployee],
+    getActorContext: () => ({
+      actor: {
+        userId: currentUser.id,
+        employeeId: currentEmployee.id,
+        displayName: currentUser.displayName,
+        workspaceEmail: currentUser.workspaceEmail,
+        activeRole,
+        roles: assignedRoles,
+      },
+    }),
+  };
+
+  return (
+    <DevPreviewContext.Provider value={contextValue}>
+      <div className="contents">{children}</div>
+    </DevPreviewContext.Provider>
+  );
+}
+
+function DevelopmentCurrentUserProvider({ children }: { children: ReactNode }) {
   const [users, setUsers] = useState<User[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string>("user-rana");
@@ -283,7 +475,6 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const handleDataChange = () => {
       refreshRecords();
-      setDataRevision((current) => current + 1);
     };
     window.addEventListener("via_hr:data_changed", handleDataChange);
     return () => window.removeEventListener("via_hr:data_changed", handleDataChange);
@@ -295,7 +486,7 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
       userId: currentUser?.id || "user-rana",
       employeeId: currentUser?.employeeId || "employee-rana",
       displayName: currentUser?.displayName || "Rana Nair",
-      workspaceEmail: currentUser?.workspaceEmail || "rana.nair@via.example",
+      workspaceEmail: currentUser?.workspaceEmail || "rana.nair@via-int.com",
       assignedRoles,
       activeRole,
       permissions,
@@ -314,6 +505,7 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
           userId: userCtx.userId,
           employeeId: userCtx.employeeId,
           displayName: userCtx.displayName,
+          workspaceEmail: userCtx.workspaceEmail,
           activeRole,
           roles: assignedRoles,
         },
@@ -349,9 +541,7 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
 
   return (
     <DevPreviewContext.Provider value={contextValue}>
-      <div key={dataRevision} className="contents">
-        {children}
-      </div>
+      <div className="contents">{children}</div>
     </DevPreviewContext.Provider>
   );
 }

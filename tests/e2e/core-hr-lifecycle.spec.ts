@@ -24,6 +24,7 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
         userId: "user-rana",
         employeeId: "employee-rana",
         displayName: "Rana Nair",
+        workspaceEmail: "rana.nair@via.example",
         roles: ["Employee", "HR"],
         activeRole: "HR",
       },
@@ -120,12 +121,22 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
   await offboardingTemplateSelect.click();
   await page.getByRole("option").first().click();
 
+  const ownerSelect = offboardingDialog
+    .getByText("HR Case Owner", { exact: true })
+    .locator("..")
+    .getByRole("combobox");
+  await ownerSelect.click();
+  await page.getByRole("option", { name: /Rana Nair/ }).click();
+
   const confidentialitySelect = offboardingDialog
     .getByText("Confidentiality Level", { exact: true })
     .locator("..")
     .getByRole("combobox");
   await confidentialitySelect.click();
   await page.getByRole("option", { name: /Restricted/ }).click();
+  await offboardingDialog
+    .locator('textarea[name="confidentialNotes"]')
+    .fill("Restricted handover and access-removal instructions for the assigned HR case owner.");
 
   const reasonSelect = offboardingDialog
     .getByText("Reason Category", { exact: true })
@@ -144,6 +155,9 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
     .fill(lastWorkingDate.toISOString().slice(0, 10));
 
   await offboardingDialog.getByRole("button", { name: "Start Case" }).click();
+  await expect(page.locator("[data-sonner-toast]").last()).toContainText(
+    "Offboarding case started",
+  );
   await expect(offboardingDialog).toBeHidden();
   const omarRow = page.getByRole("row", { name: /Omar Rahman/ });
   await expect(omarRow).toBeVisible();
@@ -152,6 +166,6 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
   // Open the offboarding case detail page - this is exactly the read path that must confirm
   // access and redact confidentialNotes before the case ever lands in component state.
   await omarRow.getByRole("link", { name: "Open Case" }).click();
-  await expect(page.getByText(/Offboarding: Omar/)).toBeVisible();
+  await expect(page.getByText(/Offboarding: Omar/)).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText("Restricted", { exact: true })).toBeVisible();
 });

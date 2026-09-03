@@ -34,6 +34,33 @@ export class LifecycleTaskService {
     }
     const task = lifecycleCase.tasks.find((item) => item.id === taskId);
     if (!task?.evidenceFileId) throw new Error("No evidence is attached to this task.");
+    if (typeof window !== "undefined") {
+      const users = getApplicationDataServices().storage.readCollection<{
+        id: string;
+        workspaceEmail?: string;
+      }>("users");
+      const actorEmail =
+        context.actor.workspaceEmail ??
+        users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+      const { readLifecycleTaskEvidenceFn } =
+        await import("../server-functions/core-hr-lifecycle.server.ts");
+      const result = await readLifecycleTaskEvidenceFn({
+        data: {
+          actor: {
+            actorId: context.actor.userId,
+            ...(actorEmail ? { actorEmail } : {}),
+            activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+          },
+          workflow,
+          caseId,
+          taskId,
+        },
+      });
+      return {
+        blob: new Blob([Uint8Array.from(result.bytes)], { type: result.metadata.mimeType }),
+        name: result.metadata.name,
+      };
+    }
     const employeeDocument = this.documents
       .getDocumentRepository(SYSTEM_CONTEXT)
       .list()
@@ -103,6 +130,45 @@ export class LifecycleTaskService {
       }
     }
     this.validateEvidence(file);
+    if (typeof window !== "undefined") {
+      const users = getApplicationDataServices().storage.readCollection<{
+        id: string;
+        workspaceEmail?: string;
+      }>("users");
+      const actorEmail =
+        context.actor.workspaceEmail ??
+        users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+      const { completeOnboardingDocumentTaskFn } =
+        await import("../server-functions/core-hr-lifecycle.server.ts");
+      await completeOnboardingDocumentTaskFn({
+        data: {
+          actor: {
+            actorId: context.actor.userId,
+            ...(actorEmail ? { actorEmail } : {}),
+            activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+          },
+          caseId,
+          taskId,
+          employeeId,
+          type: metadata.type,
+          fileName: file.name,
+          mimeType: file.type as "application/pdf" | "image/jpeg" | "image/png",
+          bytes: Array.from(new Uint8Array(await file.arrayBuffer())),
+          ...(metadata.documentNumber ? { documentNumber: metadata.documentNumber } : {}),
+          ...(metadata.issueDate ? { issueDate: metadata.issueDate } : {}),
+          ...(metadata.expiryDate ? { expiryDate: metadata.expiryDate } : {}),
+          ...(metadata.issuingAuthority ? { issuingAuthority: metadata.issuingAuthority } : {}),
+          ...(metadata.notes ? { notes: metadata.notes } : {}),
+        },
+      });
+      await Promise.all([
+        this.onboarding.hydrateCompatibilityCache(context),
+        this.documents.hydrateCompatibilityCache(context),
+      ]);
+      const updated = this.onboarding.getCaseById(caseId, context);
+      if (!updated) throw new Error("Onboarding was updated but could not be reloaded.");
+      return updated;
+    }
     let document: EmployeeDocument | undefined;
     try {
       document = await this.documents.uploadDocument(
@@ -161,6 +227,53 @@ export class LifecycleTaskService {
       throw new Error("Attach the required evidence before completing this task.");
     }
     if (evidence) this.validateEvidence(evidence);
+
+    if (evidence && typeof window !== "undefined") {
+      const users = getApplicationDataServices().storage.readCollection<{
+        id: string;
+        workspaceEmail?: string;
+      }>("users");
+      const actorEmail =
+        context.actor.workspaceEmail ??
+        users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+      const actor = {
+        actorId: context.actor.userId,
+        ...(actorEmail ? { actorEmail } : {}),
+        activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+      } as const;
+      const bytes = Array.from(new Uint8Array(await evidence.arrayBuffer()));
+      const functions = await import("../server-functions/core-hr-lifecycle.server.ts");
+      if (workflow === "onboarding") {
+        await functions.completeOnboardingTaskWithEvidenceFn({
+          data: {
+            actor,
+            caseId,
+            taskId,
+            fileName: evidence.name,
+            mimeType: evidence.type as "application/pdf" | "image/jpeg" | "image/png",
+            bytes,
+          },
+        });
+        await this.onboarding.hydrateCompatibilityCache(context);
+        const updated = this.onboarding.getCaseById(caseId, context);
+        if (!updated) throw new Error("Onboarding was updated but could not be reloaded.");
+        return updated;
+      }
+      await functions.completeOffboardingTaskWithEvidenceFn({
+        data: {
+          actor,
+          caseId,
+          taskId,
+          fileName: evidence.name,
+          mimeType: evidence.type as "application/pdf" | "image/jpeg" | "image/png",
+          bytes,
+        },
+      });
+      await this.offboarding.hydrateCompatibilityCache(context);
+      const updated = this.offboarding.getCaseById(caseId, context);
+      if (!updated) throw new Error("Offboarding was updated but could not be reloaded.");
+      return updated;
+    }
 
     let savedFileId: string | undefined;
     try {

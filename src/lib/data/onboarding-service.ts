@@ -45,6 +45,316 @@ export class OnboardingService {
     this.seedDefaultTemplate();
   }
 
+  /**
+   * PostgreSQL is authoritative in production. The browser collections are retained only as a
+   * compatibility projection while the existing screens are moved to async queries.
+   */
+  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+    if (typeof window === "undefined") return;
+    const { storage } = getApplicationDataServices();
+    const users = storage.readCollection<User & { databaseId?: string }>("users");
+    const employees = storage.readCollection<Employee & { databaseId?: string }>("employees");
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    const { getCoreHrLifecycleSnapshotFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    const snapshot = await getCoreHrLifecycleSnapshotFn({
+      data: {
+        actor: {
+          actorId: context.actor.userId,
+          ...(actorEmail ? { actorEmail } : {}),
+          activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+        },
+      },
+    });
+    const employeeIdMap = new Map(
+      employees.filter((item) => item.databaseId).map((item) => [item.databaseId!, item.id]),
+    );
+    const userIdMap = new Map(
+      users.filter((item) => item.databaseId).map((item) => [item.databaseId!, item.id]),
+    );
+    const masterValues = [
+      ...storage.readCollection<{ id: string; databaseId?: string; name: string }>("departments"),
+      ...storage.readCollection<{ id: string; databaseId?: string; name: string }>(
+        "employmentTypes",
+      ),
+    ];
+    const masterNameByDatabaseId = new Map(
+      masterValues.filter((item) => item.databaseId).map((item) => [item.databaseId!, item.name]),
+    );
+    storage.writeCollection(
+      "onboardingTemplates",
+      snapshot.onboardingTemplates.map((template) => ({
+        ...template,
+        departments: template.departments.map(
+          (value) => masterNameByDatabaseId.get(value) ?? value,
+        ),
+        employmentTypes: template.employmentTypes.map(
+          (value) => masterNameByDatabaseId.get(value) ?? value,
+        ),
+      })),
+    );
+    storage.writeCollection(
+      "onboardingCases",
+      snapshot.onboardingCases.map((item) => ({
+        ...item,
+        employeeId: employeeIdMap.get(item.employeeId) ?? item.employeeId,
+        ...(item.assignedHRId
+          ? { assignedHRId: employeeIdMap.get(item.assignedHRId) ?? item.assignedHRId }
+          : {}),
+        tasks: item.tasks.map((task) => ({
+          ...task,
+          ...(task.assignedUserId
+            ? { assignedUserId: userIdMap.get(task.assignedUserId) ?? task.assignedUserId }
+            : {}),
+        })),
+      })),
+    );
+    storage.writeCollection(
+      "offboardingTemplates",
+      snapshot.offboardingTemplates.map((template) => ({
+        ...template,
+        departments: template.departments.map(
+          (value) => masterNameByDatabaseId.get(value) ?? value,
+        ),
+        employmentTypes: template.employmentTypes.map(
+          (value) => masterNameByDatabaseId.get(value) ?? value,
+        ),
+      })),
+    );
+    storage.writeCollection(
+      "offboardingCases",
+      snapshot.offboardingCases.map((item) => ({
+        ...item,
+        employeeId: employeeIdMap.get(item.employeeId) ?? item.employeeId,
+        ...(item.assignedHRId
+          ? { assignedHRId: employeeIdMap.get(item.assignedHRId) ?? item.assignedHRId }
+          : {}),
+        tasks: item.tasks.map((task) => ({
+          ...task,
+          ...(task.assignedUserId
+            ? { assignedUserId: userIdMap.get(task.assignedUserId) ?? task.assignedUserId }
+            : {}),
+        })),
+      })),
+    );
+  }
+
+  async createCaseForEmployeeAsync(
+    employeeId: string,
+    context: ActorContext,
+    options: { templateId?: string; assignedHRId?: string } = {},
+  ): Promise<OnboardingCase> {
+    if (typeof window === "undefined")
+      return this.createCaseForEmployee(employeeId, context, options);
+    const { storage } = getApplicationDataServices();
+    const employee = storage
+      .readCollection<Employee & { databaseId?: string }>("employees")
+      .find((item) => item.id === employeeId);
+    const hrEmployee = options.assignedHRId
+      ? storage
+          .readCollection<Employee & { databaseId?: string }>("employees")
+          .find((item) => item.id === options.assignedHRId)
+      : undefined;
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      storage.readCollection<User>("users").find((user) => user.id === context.actor.userId)
+        ?.workspaceEmail;
+    const { startOnboardingCaseFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    const templateId =
+      options.templateId ?? this.templatesRepo.list().find((template) => template.isActive)?.id;
+    if (!templateId) throw new Error("Select an active onboarding checklist before starting.");
+    const caseId = await startOnboardingCaseFn({
+      data: {
+        actor: {
+          actorId: context.actor.userId,
+          ...(actorEmail ? { actorEmail } : {}),
+          activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+        },
+        employeeId: employee?.databaseId ?? employeeId,
+        templateId,
+        ...(options.assignedHRId
+          ? { assignedHRId: hrEmployee?.databaseId ?? options.assignedHRId }
+          : {}),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const created = this.casesRepo.getById(caseId);
+    if (!created) throw new Error("Onboarding was saved but could not be reloaded.");
+    return created;
+  }
+
+  async submitSelfServiceAsync(
+    caseId: string,
+    taskId: string,
+    submission:
+      | {
+          kind: "personal_details";
+          details: {
+            dateOfBirth: string;
+            gender: "Male" | "Female";
+            nationality: string;
+            maritalStatus: "Single" | "Married" | "Divorced" | "Widowed";
+            phone: string;
+            personalEmail?: string;
+            address: string;
+            emergencyContacts: Array<{ name: string; relationship: string; phone: string }>;
+            dependants?: Array<{ name: string; relationship: string; dateOfBirth: string }>;
+          };
+        }
+      | {
+          kind: "bank_details";
+          details: {
+            bankName: string;
+            accountNumber: string;
+            iban: string;
+            swiftCode?: string;
+            branch?: string;
+          };
+        },
+    context: ActorContext,
+  ): Promise<OnboardingCase> {
+    const users = getApplicationDataServices().storage.readCollection<User>("users");
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    const { saveOnboardingSelfServiceFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    await saveOnboardingSelfServiceFn({
+      data: {
+        actor: {
+          actorId: context.actor.userId,
+          ...(actorEmail ? { actorEmail } : {}),
+          activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+        },
+        caseId,
+        taskId,
+        ...submission,
+      },
+    });
+    await Promise.all([
+      this.hydrateCompatibilityCache(context),
+      this.empService.hydrateCompatibilityCache(context),
+    ]);
+    const updated = this.casesRepo.getById(caseId);
+    if (!updated) throw new Error("Onboarding was saved but could not be reloaded.");
+    return updated;
+  }
+
+  async saveTemplateAsync(
+    template: OnboardingTemplate,
+    context: ActorContext,
+  ): Promise<OnboardingTemplate> {
+    const { storage } = getApplicationDataServices();
+    const users = storage.readCollection<User & { databaseId?: string }>("users");
+    const master = [
+      ...storage.readCollection<{ id: string; databaseId?: string; name: string }>("departments"),
+      ...storage.readCollection<{ id: string; databaseId?: string; name: string }>(
+        "employmentTypes",
+      ),
+    ];
+    const masterId = (value: string) =>
+      master.find((item) => item.id === value || item.name === value || item.databaseId === value)
+        ?.databaseId ?? value;
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    const { saveOnboardingTemplateFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    const id = await saveOnboardingTemplateFn({
+      data: {
+        actor: {
+          actorId: context.actor.userId,
+          ...(actorEmail ? { actorEmail } : {}),
+          activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+        },
+        template: {
+          id: template.id,
+          recordVersion: template.recordVersion,
+          name: template.name,
+          description: template.description,
+          isActive: template.isActive,
+          countries: template.countries,
+          legalEntities: template.legalEntities,
+          departments: template.departments.map(masterId),
+          roles: template.roles,
+          employmentTypes: template.employmentTypes.map(masterId),
+          tasks: template.tasks.map((task) => ({
+            ...task,
+            ...(task.assignedUserId
+              ? {
+                  assignedUserId:
+                    users.find((user) => user.id === task.assignedUserId)?.databaseId ??
+                    task.assignedUserId,
+                }
+              : {}),
+          })),
+        },
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const saved = this.templatesRepo.getById(id);
+    if (!saved) throw new Error("The checklist was saved but could not be reloaded.");
+    return saved;
+  }
+
+  async archiveTemplateAsync(id: string, reason: string, context: ActorContext): Promise<void> {
+    const users = getApplicationDataServices().storage.readCollection<User>("users");
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    const { archiveLifecycleTemplateFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    await archiveLifecycleTemplateFn({
+      data: {
+        actor: {
+          actorId: context.actor.userId,
+          ...(actorEmail ? { actorEmail } : {}),
+          activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+        },
+        workflow: "onboarding",
+        templateId: id,
+        reason,
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+  }
+
+  async applyCaseActionAsync(
+    caseId: string,
+    action: "reschedule" | "cancel",
+    context: ActorContext,
+    reason?: string,
+  ): Promise<OnboardingCase> {
+    const users = getApplicationDataServices().storage.readCollection<User>("users");
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    const { applyOnboardingCaseActionFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    await applyOnboardingCaseActionFn({
+      data: {
+        actor: {
+          actorId: context.actor.userId,
+          ...(actorEmail ? { actorEmail } : {}),
+          activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+        },
+        caseId,
+        action,
+        ...(reason ? { reason } : {}),
+      },
+    });
+    await Promise.all([
+      this.hydrateCompatibilityCache(context),
+      this.empService.hydrateCompatibilityCache(context),
+    ]);
+    const updated = this.casesRepo.getById(caseId);
+    if (!updated) throw new Error("Onboarding was updated but could not be reloaded.");
+    return updated;
+  }
+
   private activeRole(context: ActorContext): Role | undefined {
     return (
       context.actor.activeRole ??
@@ -1161,6 +1471,33 @@ export class OnboardingService {
     evidenceFileId?: string,
     waiverReason?: string,
   ) {
+    if (typeof window !== "undefined") {
+      const { storage } = getApplicationDataServices();
+      const actorEmail =
+        context.actor.workspaceEmail ??
+        storage.readCollection<User>("users").find((user) => user.id === context.actor.userId)
+          ?.workspaceEmail;
+      const { updateOnboardingTaskFn } =
+        await import("../server-functions/core-hr-lifecycle.server.ts");
+      await updateOnboardingTaskFn({
+        data: {
+          actor: {
+            actorId: context.actor.userId,
+            ...(actorEmail ? { actorEmail } : {}),
+            activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+          },
+          caseId,
+          taskId,
+          status,
+          ...(evidenceFileId ? { evidenceFileId } : {}),
+          ...(waiverReason ? { waiverReason } : {}),
+        },
+      });
+      await this.hydrateCompatibilityCache(context);
+      const updated = this.casesRepo.getById(caseId);
+      if (!updated) throw new Error("Onboarding was updated but could not be reloaded.");
+      return updated;
+    }
     const c = this.casesRepo.getById(caseId);
     if (!c) throw new Error("Case not found");
     if (c.status !== "In Progress") {

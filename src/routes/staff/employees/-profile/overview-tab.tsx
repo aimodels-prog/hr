@@ -20,7 +20,9 @@ export function OverviewTab({
   const currentUser = useCurrentUser();
   const employeeService = new EmployeeService();
   const manager = employee.lineManagerId
-    ? employeeService.getById(employee.lineManagerId, currentUser.getActorContext())
+    ? (employeeService
+        .getEmployeesWithReportingLine(currentUser.getActorContext())
+        .find((item) => item.id === employee.lineManagerId) ?? null)
     : null;
   const projects = getProjectRepository().list();
   const project = employee.projectId ? projects.find((p) => p.id === employee.projectId) : null;

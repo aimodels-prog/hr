@@ -59,6 +59,48 @@ export class DocumentService {
     });
   }
 
+  private async serverActor(context: ActorContext) {
+    const users = getApplicationDataServices().storage.readCollection<{
+      id: string;
+      workspaceEmail?: string;
+    }>("users");
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    return {
+      actorId: context.actor.userId,
+      ...(actorEmail ? { actorEmail } : {}),
+      activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+    } as const;
+  }
+
+  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+    if (typeof window === "undefined") return;
+    const { getEmployeeDocumentsFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    const documents = await getEmployeeDocumentsFn({
+      data: { actor: await this.serverActor(context) },
+    });
+    const { storage } = getApplicationDataServices();
+    const employees = storage.readCollection<Employee & { databaseId?: string }>("employees");
+    const employeeIdMap = new Map(
+      employees.filter((item) => item.databaseId).map((item) => [item.databaseId!, item.id]),
+    );
+    storage.writeCollection(
+      "employee_documents",
+      documents.map((document) => ({
+        ...document,
+        employeeId: employeeIdMap.get(document.employeeId) ?? document.employeeId,
+        ...(document.assignedOwnerId
+          ? {
+              assignedOwnerId:
+                employeeIdMap.get(document.assignedOwnerId) ?? document.assignedOwnerId,
+            }
+          : {}),
+      })),
+    );
+  }
+
   private deny(action: string, employeeId: string, context: ActorContext, reason: string): never {
     getApplicationDataServices().audit.record({
       context,
@@ -257,7 +299,6 @@ export class DocumentService {
     >,
     actorContext: ActorContext,
   ): Promise<EmployeeDocument> {
-    const { files } = getApplicationDataServices();
     this.assertCanManage(employeeId, actorContext);
     if (fileBlob.size === 0) throw new Error("The selected document is empty.");
     if (fileBlob.size > MAX_DOCUMENT_SIZE) throw new Error("Documents cannot exceed 10 MB.");
@@ -265,6 +306,38 @@ export class DocumentService {
       throw new Error("Documents must be PDF, JPG or PNG files.");
     }
     assertValidDocumentMetadata(metadata);
+
+    if (typeof window !== "undefined") {
+      const { storage } = getApplicationDataServices();
+      const employee = storage
+        .readCollection<Employee & { databaseId?: string }>("employees")
+        .find((item) => item.id === employeeId);
+      const { uploadEmployeeDocumentFn } =
+        await import("../server-functions/core-hr-lifecycle.server.ts");
+      const documentId = await uploadEmployeeDocumentFn({
+        data: {
+          actor: await this.serverActor(actorContext),
+          employeeId: employee?.databaseId ?? employeeId,
+          type: metadata.type,
+          fileName: filename,
+          mimeType: fileBlob.type as "application/pdf" | "image/jpeg" | "image/png",
+          bytes: Array.from(new Uint8Array(await fileBlob.arrayBuffer())),
+          ...(metadata.documentNumber ? { documentNumber: metadata.documentNumber } : {}),
+          ...(metadata.issueDate ? { issueDate: metadata.issueDate } : {}),
+          ...(metadata.expiryDate ? { expiryDate: metadata.expiryDate } : {}),
+          ...(metadata.issuingAuthority ? { issuingAuthority: metadata.issuingAuthority } : {}),
+          ...(metadata.issuingCountry ? { issuingCountry: metadata.issuingCountry } : {}),
+          ...(metadata.notes ? { notes: metadata.notes } : {}),
+          visibility: metadata.visibility,
+        },
+      });
+      await this.hydrateCompatibilityCache(actorContext);
+      const created = this.documentRepo.getById(documentId);
+      if (!created) throw new Error("The document was saved but could not be reloaded.");
+      return created;
+    }
+
+    const { files } = getApplicationDataServices();
 
     // 1. Save file blob to IndexedDB
     const fileRecord = await files.save(
@@ -324,6 +397,37 @@ export class DocumentService {
     const oldDoc = this.documentRepo.getById(oldDocumentId);
     if (!oldDoc) throw new Error("Document to replace not found.");
     this.assertCanManage(oldDoc.employeeId, actorContext);
+
+    if (typeof window !== "undefined") {
+      if (fileBlob.size === 0 || fileBlob.size > MAX_DOCUMENT_SIZE)
+        throw new Error("Replacement documents must be between 1 byte and 10 MB.");
+      if (!ALLOWED_DOCUMENT_TYPES.has(fileBlob.type))
+        throw new Error("Documents must be PDF, JPG or PNG files.");
+      assertValidDocumentMetadata(metadata);
+      const { replaceEmployeeDocumentFn } =
+        await import("../server-functions/core-hr-lifecycle.server.ts");
+      const replacementId = await replaceEmployeeDocumentFn({
+        data: {
+          actor: await this.serverActor(actorContext),
+          documentId: oldDocumentId,
+          fileName: filename,
+          mimeType: fileBlob.type as "application/pdf" | "image/jpeg" | "image/png",
+          bytes: Array.from(new Uint8Array(await fileBlob.arrayBuffer())),
+          reason: actorContext.reason || "Replaced employee document",
+          ...(metadata.documentNumber ? { documentNumber: metadata.documentNumber } : {}),
+          ...(metadata.issueDate ? { issueDate: metadata.issueDate } : {}),
+          ...(metadata.expiryDate ? { expiryDate: metadata.expiryDate } : {}),
+          ...(metadata.issuingAuthority ? { issuingAuthority: metadata.issuingAuthority } : {}),
+          ...(metadata.issuingCountry ? { issuingCountry: metadata.issuingCountry } : {}),
+          ...(metadata.notes ? { notes: metadata.notes } : {}),
+          visibility: metadata.visibility,
+        },
+      });
+      await this.hydrateCompatibilityCache(actorContext);
+      const replacement = this.documentRepo.getById(replacementId);
+      if (!replacement) throw new Error("The replacement was saved but could not be reloaded.");
+      return replacement;
+    }
 
     // Uploading the new document and marking the old one Replaced are two separate writes - if
     // the second fails, the old document must not be left looking Valid/current alongside the
@@ -388,6 +492,19 @@ export class DocumentService {
     this.documentRepo.update(documentId, { status: "Valid" }, actorContext);
   }
 
+  async verifyDocumentAsync(documentId: string, actorContext: ActorContext): Promise<void> {
+    const { decideEmployeeDocumentFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    await decideEmployeeDocumentFn({
+      data: {
+        actor: await this.serverActor(actorContext),
+        documentId,
+        decision: "verify",
+      },
+    });
+    await this.hydrateCompatibilityCache(actorContext);
+  }
+
   rejectDocument(documentId: string, reason: string, actorContext: ActorContext) {
     const doc = this.documentRepo.getById(documentId);
     if (!doc || doc.status !== "Pending Verification")
@@ -420,10 +537,43 @@ export class DocumentService {
     );
   }
 
+  async rejectDocumentAsync(
+    documentId: string,
+    reason: string,
+    actorContext: ActorContext,
+  ): Promise<void> {
+    const { decideEmployeeDocumentFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    await decideEmployeeDocumentFn({
+      data: {
+        actor: await this.serverActor(actorContext),
+        documentId,
+        decision: "reject",
+        reason,
+      },
+    });
+    await this.hydrateCompatibilityCache(actorContext);
+  }
+
   async downloadFile(
     fileId: string,
     actorContext: ActorContext,
   ): Promise<{ blob: Blob; metadata: FileMetadata }> {
+    if (typeof window !== "undefined") {
+      const { readEmployeeDocumentFn } =
+        await import("../server-functions/core-hr-lifecycle.server.ts");
+      const result = await readEmployeeDocumentFn({
+        data: {
+          actor: await this.serverActor(actorContext),
+          fileId,
+          reason: actorContext.reason || "Opened employee document",
+        },
+      });
+      return {
+        blob: new Blob([Uint8Array.from(result.bytes)], { type: result.metadata.mimeType }),
+        metadata: result.metadata,
+      };
+    }
     const { files } = getApplicationDataServices();
     const document = this.documentRepo.list().find((item) => item.fileId === fileId);
     if (!document) throw new Error("Document record not found");

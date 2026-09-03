@@ -243,7 +243,7 @@ function CandidateIntakePage() {
     }
   };
 
-  const saveCandidate = () => {
+  const saveCandidate = async () => {
     if (!intake) return;
     if (duplicateMatches.length > 0 && candidateResolution === "new") {
       toast.error("Review the possible existing candidate before creating a separate profile.");
@@ -251,7 +251,7 @@ function CandidateIntakePage() {
     }
     setIsSaving(true);
     try {
-      const result = poolService.finaliseCvIntake(
+      const result = await poolService.finaliseCvIntake(
         {
           cvRecordId: intake.id,
           ...(candidateResolution.startsWith("existing:")
@@ -444,7 +444,7 @@ function CandidateIntakePage() {
               <Input
                 id="candidate-cv"
                 type="file"
-                accept=".pdf,.doc,.docx,.txt"
+                accept=".pdf,.doc,.docx"
                 disabled={Boolean(intake)}
                 onChange={(event) => setFile(event.target.files?.[0] || null)}
               />

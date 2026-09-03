@@ -15,9 +15,24 @@ import { toast } from "sonner";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { getApplicationDataServices } from "@/lib/data/application-data";
 import { AttendanceService } from "@/lib/data/attendance-service";
-import type { AttendanceRecord, GeoReading, SiteVisitOrigin } from "@/lib/data/attendance-types";
+import type {
+  AttendanceRecord,
+  GeoReading,
+  SiteVisitOrigin,
+  SiteVisitRequest,
+} from "@/lib/data/attendance-types";
 import { getProjectRepository } from "@/lib/data/master-data";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -114,20 +129,35 @@ function MyAttendanceRoute() {
   const [visitDestination, setVisitDestination] = useState("");
   const [visitPurpose, setVisitPurpose] = useState("");
   const [visitProjectId, setVisitProjectId] = useState("");
+  const [cancellingVisit, setCancellingVisit] = useState<SiteVisitRequest | null>(null);
+  const [cancellationReason, setCancellationReason] = useState("");
+  const [cancelling, setCancelling] = useState(false);
 
-  const actorContext = currentUser.getActorContext();
+  const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
   const employeeId = currentUser.employeeId;
 
   useEffect(() => {
-    attendanceService.reconcileSiteVisits();
-    attendanceService.reconcileSignOutReminders();
+    let active = true;
+    const refresh = async () => {
+      try {
+        await attendanceService.hydrateFromDatabase(actorContext);
+        if (active) setRevision((value) => value + 1);
+      } catch (error) {
+        if (active)
+          toast.error(
+            error instanceof Error ? error.message : "Attendance could not be refreshed.",
+          );
+      }
+    };
+    void refresh();
     const timer = window.setInterval(() => {
-      const visits = attendanceService.reconcileSiteVisits();
-      const reminders = attendanceService.reconcileSignOutReminders();
-      if (visits.created || visits.completed || reminders) setRevision((value) => value + 1);
+      void refresh();
     }, 60_000);
-    return () => window.clearInterval(timer);
-  }, [attendanceService]);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [actorContext, attendanceService]);
 
   if (!employeeId) return <div className="p-6">Employee profile required.</div>;
 
@@ -176,10 +206,7 @@ function MyAttendanceRoute() {
     setLocating(true);
     try {
       const reading = await getBrowserLocation();
-      const record =
-        action === "in"
-          ? attendanceService.clockIn(employeeId, reading, actorContext)
-          : attendanceService.clockOut(employeeId, reading, actorContext);
+      const record = await attendanceService.clockAsync(employeeId, action, reading, actorContext);
       setRevision((value) => value + 1);
       toast.success(
         action === "in" ? `Clocked in at ${record.clockIn}.` : `Clocked out at ${record.clockOut}.`,
@@ -233,7 +260,7 @@ function MyAttendanceRoute() {
         evidenceFileId = metadata.id;
         uploadedFileId = metadata.id;
       }
-      await attendanceService.requestCorrection(
+      await attendanceService.requestCorrectionAsync(
         persistedRecord.id,
         proposedIn,
         proposedOut,
@@ -258,9 +285,9 @@ function MyAttendanceRoute() {
     }
   };
 
-  const submitSiteVisit = () => {
+  const submitSiteVisit = async () => {
     try {
-      attendanceService.requestSiteVisit(
+      await attendanceService.requestSiteVisitAsync(
         {
           employeeId,
           date: visitDate,
@@ -280,6 +307,26 @@ function MyAttendanceRoute() {
       toast.success("Site visit sent to HR for approval.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Site visit could not be submitted.");
+    }
+  };
+
+  const cancelVisit = async () => {
+    if (!cancellingVisit) return;
+    setCancelling(true);
+    try {
+      await attendanceService.cancelSiteVisitAsync(
+        cancellingVisit.id,
+        cancellationReason,
+        actorContext,
+      );
+      setCancellingVisit(null);
+      setCancellationReason("");
+      setRevision((value) => value + 1);
+      toast.success("Site visit cancelled.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Site visit could not be cancelled.");
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -506,12 +553,13 @@ function MyAttendanceRoute() {
                       <TableHead>Origin</TableHead>
                       <TableHead>Purpose</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {siteVisits.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={5} className="h-28 text-center text-muted-foreground">
+                        <TableCell colSpan={6} className="h-28 text-center text-muted-foreground">
                           No site visits requested.
                         </TableCell>
                       </TableRow>
@@ -531,6 +579,20 @@ function MyAttendanceRoute() {
                           </TableCell>
                           <TableCell>
                             <Badge variant={statusVariant(visit.status)}>{visit.status}</Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {(visit.status === "Pending HR" || visit.status === "Approved") &&
+                            visit.date >= format(new Date(), "yyyy-MM-dd") ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setCancellingVisit(visit)}
+                              >
+                                Cancel visit
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">No action</span>
+                            )}
                           </TableCell>
                         </TableRow>
                       ))
@@ -604,8 +666,8 @@ function MyAttendanceRoute() {
                   onChange={(event) => setEvidence(event.target.files?.[0] ?? null)}
                 />
                 <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <Upload className="h-3 w-3" /> Images and PDF evidence are stored in the secure
-                  file repository.
+                  <Upload className="h-3 w-3" /> Images and PDF evidence are stored securely with
+                  this request.
                 </p>
               </div>
             </div>
@@ -627,6 +689,43 @@ function MyAttendanceRoute() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <AlertDialog
+          open={Boolean(cancellingVisit)}
+          onOpenChange={(open) => {
+            if (!open && !cancelling) {
+              setCancellingVisit(null);
+              setCancellationReason("");
+            }
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Cancel this site visit?</AlertDialogTitle>
+              <AlertDialogDescription>
+                HR will see that the request was cancelled. Enter a short reason for the record.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <Textarea
+              aria-label="Cancellation reason"
+              value={cancellationReason}
+              onChange={(event) => setCancellationReason(event.target.value)}
+              placeholder="Why is this visit no longer required?"
+            />
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={cancelling}>Keep visit</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={cancelling || cancellationReason.trim().length < 5}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void cancelVisit();
+                }}
+              >
+                {cancelling ? "Cancelling..." : "Cancel visit"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <Dialog open={siteVisitOpen} onOpenChange={setSiteVisitOpen}>
           <DialogContent className="sm:max-w-xl">

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -67,7 +67,7 @@ const assignSchema = z.object({
     "Vehicle",
     "Other",
   ]),
-  assetTag: z.string().optional(),
+  assetTag: z.string().min(2, "Asset tag or serial number is required"),
   description: z.string().min(1, "Description is required"),
   assignedDate: z.string().min(1),
   conditionAtAssignment: z.enum(["New", "Good", "Fair", "Damaged"]),
@@ -84,6 +84,29 @@ export function EquipmentTab({ employeeId }: { employeeId: string }) {
   const [, setRefresh] = useState(0);
   const [isAssignOpen, setIsAssignOpen] = useState(false);
   const [returningId, setReturningId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError("");
+    void assetService
+      .hydrateCompatibilityCache(getActorContext())
+      .then(() => {
+        if (active) setRefresh((value) => value + 1);
+      })
+      .catch((error) => {
+        if (active)
+          setLoadError(error instanceof Error ? error.message : "Equipment could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [activeRole, assetService, employeeId, getActorContext]);
 
   const assets = assetService.getAssignmentsForEmployee(employeeId);
   const active = assets.filter((a) => a.status === "Assigned");
@@ -106,13 +129,13 @@ export function EquipmentTab({ employeeId }: { employeeId: string }) {
     defaultValues: { returnCondition: "Good", notes: "" },
   });
 
-  const onAssign = (values: z.infer<typeof assignSchema>) => {
+  const onAssign = async (values: z.infer<typeof assignSchema>) => {
     try {
-      assetService.assignAsset(
+      await assetService.assignAssetAsync(
         {
           employeeId,
           assetType: values.assetType,
-          ...(values.assetTag ? { assetTag: values.assetTag } : {}),
+          assetTag: values.assetTag,
           description: values.description,
           assignedDate: values.assignedDate,
           conditionAtAssignment: values.conditionAtAssignment,
@@ -128,11 +151,12 @@ export function EquipmentTab({ employeeId }: { employeeId: string }) {
     }
   };
 
-  const onReturn = (values: z.infer<typeof returnSchema>) => {
+  const onReturn = async (values: z.infer<typeof returnSchema>) => {
     if (!returningId) return;
     try {
-      assetService.returnAsset(
+      await assetService.closeAssignmentAsync(
         returningId,
+        "Returned",
         values.returnCondition,
         values.notes || undefined,
         getActorContext(),
@@ -148,6 +172,8 @@ export function EquipmentTab({ employeeId }: { employeeId: string }) {
 
   return (
     <div className="space-y-6">
+      {loading && <p className="text-sm text-muted-foreground">Loading assigned equipment...</p>}
+      {loadError && <p className="text-sm text-destructive">{loadError}</p>}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle className="flex items-center gap-2">

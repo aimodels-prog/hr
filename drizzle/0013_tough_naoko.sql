@@ -1,0 +1,2 @@
+DROP INDEX "performance_reviews_employee_cycle_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "performance_reviews_employee_cycle_unique" ON "performance_reviews" USING btree ("employee_id","cycle_id") WHERE "performance_reviews"."archived_at" IS NULL;

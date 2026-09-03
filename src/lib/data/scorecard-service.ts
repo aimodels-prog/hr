@@ -11,31 +11,33 @@ import type {
   ScorecardRecommendation,
 } from "./types.ts";
 
-const defaultTemplates: Omit<InterviewTemplate, keyof BaseRecord>[] = [
+// The in-memory service remains available to isolated unit tests. Browser production flows do
+// not seed these records: PostgreSQL is authoritative and HR creates its templates in Settings.
+const LOCAL_TEST_DEFAULT_TEMPLATES: Omit<InterviewTemplate, keyof BaseRecord>[] = [
   {
     name: "HR Screening",
     blindScoring: false,
     criteria: [
       {
-        id: "hr-1",
+        id: "hr-communication",
         name: "Communication Skills",
-        description: "Clarity of expression, active listening",
+        description: "Clarity of expression and active listening",
         requiresEvidence: false,
         weight: 35,
       },
       {
-        id: "hr-2",
-        name: "Culture Fit",
-        description: "Alignment with core company values",
+        id: "hr-values",
+        name: "Values Alignment",
+        description: "Alignment with VIA's working standards",
         requiresEvidence: true,
         weight: 35,
         minimumScore: 3,
         isCritical: true,
       },
       {
-        id: "hr-3",
+        id: "hr-motivation",
         name: "Motivation",
-        description: "Interest in the role and company",
+        description: "Interest in the role and VIA",
         requiresEvidence: false,
         weight: 30,
       },
@@ -48,16 +50,16 @@ const defaultTemplates: Omit<InterviewTemplate, keyof BaseRecord>[] = [
     blindScoring: true,
     criteria: [
       {
-        id: "tech-1",
+        id: "technical-knowledge",
         name: "Technical Knowledge",
-        description: "Depth of expertise in required stack",
+        description: "Depth of expertise required by the role",
         requiresEvidence: true,
         weight: 40,
         minimumScore: 3,
         isCritical: true,
       },
       {
-        id: "tech-2",
+        id: "problem-solving",
         name: "Problem Solving",
         description: "Ability to break down and solve complex issues",
         requiresEvidence: true,
@@ -66,9 +68,9 @@ const defaultTemplates: Omit<InterviewTemplate, keyof BaseRecord>[] = [
         isCritical: true,
       },
       {
-        id: "tech-3",
+        id: "quality",
         name: "Quality of Work",
-        description: "Structure, accuracy, and maintainability",
+        description: "Structure, accuracy and maintainability",
         requiresEvidence: true,
         weight: 25,
       },
@@ -96,15 +98,114 @@ export class ScorecardService {
       audit,
       { module: "recruitment", entityType: "template" },
     );
-
-    // Seed default templates if empty
-    if (this.templateRepo.list().length === 0) {
-      for (const t of defaultTemplates) {
-        this.templateRepo.create(t, {
+    if (typeof window === "undefined" && this.templateRepo.list().length === 0) {
+      for (const template of LOCAL_TEST_DEFAULT_TEMPLATES) {
+        this.templateRepo.create(template, {
           actor: { userId: "SYSTEM", displayName: "System", roles: ["Super Admin"] },
         });
       }
     }
+  }
+
+  private serverActor(context: ActorContext) {
+    const user = getApplicationDataServices()
+      .storage.readCollection<{ id: string; workspaceEmail?: string }>("users")
+      .find((item) => item.id === context.actor.userId);
+    return {
+      actorId: context.actor.userId,
+      ...(context.actor.workspaceEmail || user?.workspaceEmail
+        ? { actorEmail: context.actor.workspaceEmail ?? user?.workspaceEmail }
+        : {}),
+      activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+    };
+  }
+
+  private databaseVacancyId(id?: string): string | undefined {
+    if (!id) return undefined;
+    const vacancy = getApplicationDataServices()
+      .storage.readCollection<{ id: string; databaseId?: string }>("vacancies")
+      .find((item) => item.id === id || item.databaseId === id);
+    return vacancy?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
+  }
+
+  private async refresh(context: ActorContext): Promise<void> {
+    const { CandidateService } = await import("./candidate-service.ts");
+    await new CandidateService().hydrateCompatibilityCache(context);
+  }
+
+  async saveTemplateAsync(
+    payload: Omit<InterviewTemplate, keyof import("./types").BaseRecord>,
+    context: ActorContext,
+    existing?: InterviewTemplate,
+  ): Promise<InterviewTemplate> {
+    const { saveInterviewTemplateFn } = await import("../server-functions/interview.server.ts");
+    const vacancyId = this.databaseVacancyId(payload.vacancyId);
+    const id = await saveInterviewTemplateFn({
+      data: {
+        actor: this.serverActor(context),
+        ...(existing ? { id: existing.id, expectedRecordVersion: existing.recordVersion } : {}),
+        name: payload.name,
+        criteria: payload.criteria,
+        blindScoring: payload.blindScoring,
+        ...(vacancyId ? { vacancyId } : {}),
+        ...(payload.stageName ? { stageName: payload.stageName } : {}),
+        aiDecisionWeight: payload.aiDecisionWeight,
+        interviewDecisionWeight: payload.interviewDecisionWeight,
+      },
+    });
+    await this.refresh(context);
+    return this.getTemplateById(id)!;
+  }
+
+  async deleteTemplateAsync(id: string, context: ActorContext): Promise<void> {
+    const { archiveInterviewTemplateFn } = await import("../server-functions/interview.server.ts");
+    await archiveInterviewTemplateFn({
+      data: {
+        actor: this.serverActor(context),
+        templateId: id,
+        reason: context.reason || "Archived interview template",
+      },
+    });
+    await this.refresh(context);
+  }
+
+  async saveScorecardAsync(
+    scorecardId: string,
+    scores: CriterionScore[],
+    overallRecommendation: ScorecardRecommendation | null,
+    submit: boolean,
+    context: ActorContext,
+  ): Promise<InterviewScorecard> {
+    const scorecard = this.scorecardRepo.getById(scorecardId);
+    if (!scorecard) throw new Error("Scorecard not found.");
+    const { saveInterviewScorecardFn } = await import("../server-functions/interview.server.ts");
+    const id = await saveInterviewScorecardFn({
+      data: {
+        actor: this.serverActor(context),
+        interviewId: scorecard.interviewId,
+        scores,
+        recommendation: overallRecommendation,
+        submit,
+        ...(scorecard.createdBy !== "SYSTEM"
+          ? { expectedRecordVersion: scorecard.recordVersion }
+          : {}),
+      },
+    });
+    await this.refresh(context);
+    return this.scorecardRepo.getById(id)!;
+  }
+
+  async reopenScorecardAsync(
+    scorecardId: string,
+    reason: string,
+    context: ActorContext,
+  ): Promise<InterviewScorecard> {
+    const { reopenInterviewScorecardFn } = await import("../server-functions/interview.server.ts");
+    await reopenInterviewScorecardFn({
+      data: { actor: this.serverActor(context), scorecardId, reason },
+    });
+    await this.refresh(context);
+    return this.scorecardRepo.getById(scorecardId)!;
   }
 
   getTemplates() {

@@ -13,7 +13,6 @@ import { toast } from "sonner";
 
 import { useCurrentUser } from "@/lib/auth";
 import { TrainingService } from "@/lib/data/training-service";
-import { DocumentService } from "@/lib/data/document-service";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -44,7 +43,6 @@ const CERTIFICATE_TYPES = new Set(["application/pdf", "image/jpeg", "image/png"]
 export function TrainingTab({ employeeId }: { employeeId: string }) {
   const currentUser = useCurrentUser();
   const trainingService = useMemo(() => new TrainingService(), []);
-  const documentService = useMemo(() => new DocumentService(), []);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
@@ -126,13 +124,19 @@ export function TrainingTab({ employeeId }: { employeeId: string }) {
     }
   };
 
-  const verifyRecord = (recordId: string) => {
+  const verifyRecord = async (recordId: string) => {
     try {
-      trainingService.verifyRecord(recordId, actorContext("Training evidence verified"));
-      setRecords((current) =>
-        current.map((record) =>
-          record.id === recordId ? { ...record, hrVerified: true } : record,
-        ),
+      const context = actorContext("Training evidence verified");
+      await trainingService.decideRecordAsync(
+        recordId,
+        "Verify",
+        "Certificate checked against the uploaded evidence",
+        context,
+      );
+      setRecords(
+        trainingService
+          .getRecordsForUser(employeeId, currentUser.getActorContext())
+          .sort((a, b) => b.completionDate.localeCompare(a.completionDate)),
       );
       toast.success("Training record verified");
     } catch (error) {
@@ -140,10 +144,10 @@ export function TrainingTab({ employeeId }: { employeeId: string }) {
     }
   };
 
-  const previewCertificate = async (fileId: string) => {
+  const previewCertificate = async (recordId: string) => {
     try {
-      const { blob } = await documentService.downloadFile(
-        fileId,
+      const { blob } = await trainingService.getCertificateFile(
+        recordId,
         actorContext("Training certificate viewed"),
       );
       const url = URL.createObjectURL(blob);
@@ -396,7 +400,7 @@ export function TrainingTab({ employeeId }: { employeeId: string }) {
                               type="button"
                               variant="ghost"
                               size="sm"
-                              onClick={() => previewCertificate(record.certificateFileId!)}
+                              onClick={() => previewCertificate(record.id)}
                             >
                               <Eye /> Certificate
                             </Button>

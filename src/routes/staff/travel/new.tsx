@@ -23,7 +23,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
 import { TravelService } from "@/lib/data/travel-service";
 import { getMasterDataRepository, getProjectRepository } from "@/lib/data/master-data";
-import { getApplicationDataServices } from "@/lib/data/application-data";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { Info, Paperclip } from "lucide-react";
 
@@ -63,25 +62,8 @@ function NewTravelRequestRoute() {
 
   const handleSubmit = async () => {
     setIsSubmitting(true);
-    let uploadedFileId: string | undefined;
     const actorContext = currentUser.getActorContext();
     try {
-      let evidenceFileId: string | undefined;
-      if (evidenceFile) {
-        const { files } = getApplicationDataServices();
-        const saved = await files.save(
-          {
-            blob: evidenceFile,
-            name: evidenceFile.name,
-            mimeType: evidenceFile.type,
-            owner: { entityType: "travel-request", entityId: currentUser!.employeeId! },
-          },
-          actorContext,
-        );
-        evidenceFileId = saved.id;
-        uploadedFileId = saved.id;
-      }
-
       await travelService.submitRequest(
         {
           employeeId: currentUser!.employeeId!,
@@ -97,21 +79,13 @@ function NewTravelRequestRoute() {
           estPerDiem,
           estOther,
           notes,
-          ...(evidenceFileId ? { evidenceFileId } : {}),
         },
         actorContext,
+        evidenceFile ?? undefined,
       );
-
-      uploadedFileId = undefined;
       toast.success("Travel request sent for approval");
       navigate({ to: "/staff/travel" });
     } catch (error: unknown) {
-      if (uploadedFileId) {
-        await getApplicationDataServices().files.delete(uploadedFileId, {
-          ...actorContext,
-          reason: "Travel request failed before the evidence was attached",
-        });
-      }
       toast.error(error instanceof Error ? error.message : "Travel request could not be sent.");
     } finally {
       setIsSubmitting(false);

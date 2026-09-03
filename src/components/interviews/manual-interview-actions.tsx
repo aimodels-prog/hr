@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -12,7 +12,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -25,6 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useCurrentUser } from "@/lib/auth";
 import { InterviewService } from "@/lib/data/interview-service";
 import { OfferService } from "@/lib/data/offer-service";
+import { MasterDataService, type MasterDataCollection } from "@/lib/data/master-data";
 import type { Candidate, InterviewEvent, ManualInterviewOutcome } from "@/lib/data/types";
 
 interface ManualInterviewActionsProps {
@@ -67,11 +67,65 @@ export function ManualInterviewActions({
     "Selected following documented manual interview and completed panel scoring.",
   );
   const [saving, setSaving] = useState(false);
+  const [masterOptions, setMasterOptions] = useState<Record<string, string[]>>({});
+  const [loadingOptions, setLoadingOptions] = useState(false);
 
-  const saveOutcome = () => {
+  useEffect(() => {
+    if (!hireOpen) return;
+    let cancelled = false;
+    const collections: MasterDataCollection[] = [
+      "positions",
+      "departments",
+      "locations",
+      "grades",
+      "employmentTypes",
+    ];
+    setLoadingOptions(true);
+    const service = new MasterDataService();
+    void Promise.all(collections.map((collection) => service.listAsync(collection, false)))
+      .then((results) => {
+        if (cancelled) return;
+        const options = Object.fromEntries(
+          collections.map((collection, index) => [
+            collection,
+            (results[index] ?? []).filter((item) => item.isActive).map((item) => item.name),
+          ]),
+        ) as Record<string, string[]>;
+        setMasterOptions(options);
+        setPosition((value) =>
+          options["positions"]?.includes(value) ? value : (options["positions"]?.[0] ?? ""),
+        );
+        setDepartment((value) =>
+          options["departments"]?.includes(value) ? value : (options["departments"]?.[0] ?? ""),
+        );
+        setLocation((value) =>
+          options["locations"]?.includes(value) ? value : (options["locations"]?.[0] ?? ""),
+        );
+        setGrade((value) =>
+          options["grades"]?.includes(value) ? value : (options["grades"]?.[0] ?? ""),
+        );
+        setEmploymentType((value) =>
+          options["employmentTypes"]?.includes(value)
+            ? value
+            : (options["employmentTypes"]?.[0] ?? ""),
+        );
+      })
+      .catch((error: unknown) => {
+        if (!cancelled)
+          toast.error(error instanceof Error ? error.message : "Could not load hiring options");
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingOptions(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hireOpen]);
+
+  const saveOutcome = async () => {
     setSaving(true);
     try {
-      interviewService.recordManualOutcome(interview.id, outcome, outcomeReason, {
+      await interviewService.recordManualOutcomeAsync(interview.id, outcome, outcomeReason, {
         ...currentUser.getActorContext(),
         reason: outcomeReason,
       });
@@ -85,10 +139,10 @@ export function ManualInterviewActions({
     }
   };
 
-  const prepareHire = () => {
+  const prepareHire = async () => {
     setSaving(true);
     try {
-      const result = offerService.prepareManualInterviewHire(
+      const result = await offerService.prepareManualInterviewHireAsync(
         interview.id,
         { position, department, location, employmentType, grade },
         hireReason,
@@ -173,7 +227,10 @@ export function ManualInterviewActions({
             <Button variant="outline" onClick={() => setOutcomeOpen(false)}>
               Cancel
             </Button>
-            <Button disabled={saving || outcomeReason.trim().length < 5} onClick={saveOutcome}>
+            <Button
+              disabled={saving || outcomeReason.trim().length < 5}
+              onClick={() => void saveOutcome()}
+            >
               Save outcome
             </Button>
           </DialogFooter>
@@ -191,49 +248,81 @@ export function ManualInterviewActions({
           </DialogHeader>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="direct-position">Position</Label>
-              <Input
-                id="direct-position"
-                value={position}
-                onChange={(event) => setPosition(event.target.value)}
-              />
+              <Label>Position</Label>
+              <Select value={position} onValueChange={setPosition} disabled={loadingOptions}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select position" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(masterOptions["positions"] ?? []).map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="direct-department">Department</Label>
-              <Input
-                id="direct-department"
-                value={department}
-                onChange={(event) => setDepartment(event.target.value)}
-              />
+              <Label>Department</Label>
+              <Select value={department} onValueChange={setDepartment} disabled={loadingOptions}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select department" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(masterOptions["departments"] ?? []).map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="direct-location">Location</Label>
-              <Input
-                id="direct-location"
-                value={location}
-                onChange={(event) => setLocation(event.target.value)}
-              />
+              <Label>Location</Label>
+              <Select value={location} onValueChange={setLocation} disabled={loadingOptions}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select location" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(masterOptions["locations"] ?? []).map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="direct-grade">Grade</Label>
-              <Input
-                id="direct-grade"
-                value={grade}
-                onChange={(event) => setGrade(event.target.value)}
-                placeholder="e.g. G7"
-              />
+              <Label>Grade</Label>
+              <Select value={grade} onValueChange={setGrade} disabled={loadingOptions}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select grade" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(masterOptions["grades"] ?? []).map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2 sm:col-span-2">
               <Label>Employment type</Label>
-              <Select value={employmentType} onValueChange={setEmploymentType}>
+              <Select
+                value={employmentType}
+                onValueChange={setEmploymentType}
+                disabled={loadingOptions}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Full-time">Full-time</SelectItem>
-                  <SelectItem value="Part-time">Part-time</SelectItem>
-                  <SelectItem value="Fixed-term">Fixed-term</SelectItem>
-                  <SelectItem value="Contract">Contract</SelectItem>
+                  {(masterOptions["employmentTypes"] ?? []).map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -260,7 +349,7 @@ export function ManualInterviewActions({
                 !grade.trim() ||
                 hireReason.trim().length < 5
               }
-              onClick={prepareHire}
+              onClick={() => void prepareHire()}
             >
               <CheckCircle2 className="mr-1.5 h-4 w-4" /> Confirm and continue
             </Button>

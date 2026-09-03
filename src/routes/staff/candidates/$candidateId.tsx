@@ -1,5 +1,5 @@
-import { createFileRoute, Link, notFound, useNavigate, useRouter } from "@tanstack/react-router";
-import { useState, useMemo } from "react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useEffect, useState, useMemo } from "react";
 import {
   ArrowLeft,
   Mail,
@@ -75,8 +75,13 @@ import { toast } from "sonner";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { VISA_STATUS_OPTIONS, MARITAL_STATUS_OPTIONS } from "@/lib/data/types";
-import { RequirePermission, getRouteActorContext, useCurrentUser } from "@/lib/auth";
+import {
+  VISA_STATUS_OPTIONS,
+  MARITAL_STATUS_OPTIONS,
+  type ActorContext,
+  type Role,
+} from "@/lib/data/types";
+import { RequirePermission, useCurrentUser } from "@/lib/auth";
 
 const contactFormSchema = z.object({
   channel: z.enum(["Email", "Phone", "LinkedIn", "In-Person", "Other"]),
@@ -168,30 +173,109 @@ function ProfileList({ label, values }: { label: string; values?: string[] | und
 }
 
 export const Route = createFileRoute("/staff/candidates/$candidateId")({
-  loader: ({ params }) => {
-    const candidateService = new CandidateService();
-    const candidates = candidateService.getDetailedCandidates(getRouteActorContext());
-    const candidate = candidates.find((c) => c.id === params.candidateId);
-    if (!candidate) throw notFound();
-    return candidate;
-  },
+  loader: ({ params }) => ({ candidateId: params.candidateId }),
   component: CandidateProfileWrapper,
 });
 
+type DetailedCandidate = ReturnType<CandidateService["getDetailedCandidates"]>[number];
+
 function CandidateProfileWrapper() {
+  const { candidateId } = Route.useLoaderData();
+  const currentUser = useCurrentUser();
+  const [candidateService] = useState(() => new CandidateService());
+  const [candidate, setCandidate] = useState<DetailedCandidate | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+
+  const { userId, employeeId, displayName, workspaceEmail, activeRole, assignedRoles } =
+    currentUser;
+  const assignedRolesKey = assignedRoles.join("|");
+  const actorContext = useMemo<ActorContext>(
+    () => ({
+      actor: {
+        userId,
+        employeeId,
+        displayName,
+        workspaceEmail,
+        activeRole,
+        roles: assignedRolesKey.split("|") as Role[],
+      },
+    }),
+    [userId, employeeId, displayName, workspaceEmail, activeRole, assignedRolesKey],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCandidate() {
+      setLoading(true);
+      setLoadError(null);
+      try {
+        await candidateService.hydrateCompatibilityCache(actorContext);
+        if (cancelled) return;
+        const match = candidateService
+          .getDetailedCandidates(actorContext)
+          .find((item) => item.id === candidateId);
+        setCandidate(match ?? null);
+      } catch (error) {
+        if (!cancelled) {
+          setCandidate(null);
+          setLoadError(errorMessage(error, "The candidate profile could not be loaded."));
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void loadCandidate();
+    return () => {
+      cancelled = true;
+    };
+  }, [actorContext, candidateId, candidateService, reloadToken]);
+
   return (
     <RequirePermission permission="recruitment:view_candidates" resourceName="Candidate Profile">
-      <CandidateProfile />
+      {loading ? (
+        <div className="mx-auto max-w-7xl px-4 py-10 text-sm text-muted-foreground">
+          Loading candidate profile...
+        </div>
+      ) : candidate ? (
+        <CandidateProfile
+          candidate={candidate}
+          onRefresh={() => setReloadToken((value) => value + 1)}
+        />
+      ) : (
+        <div className="mx-auto max-w-3xl px-4 py-10">
+          <Card>
+            <CardHeader>
+              <CardTitle>Candidate profile unavailable</CardTitle>
+              <CardDescription>
+                {loadError ?? "This candidate does not exist or you do not have access to it."}
+              </CardDescription>
+            </CardHeader>
+            <CardFooter>
+              <Button asChild variant="outline">
+                <Link to="/staff/candidates">Back to Candidate Pool</Link>
+              </Button>
+            </CardFooter>
+          </Card>
+        </div>
+      )}
     </RequirePermission>
   );
 }
 
-function CandidateProfile() {
+function CandidateProfile({
+  candidate,
+  onRefresh,
+}: {
+  candidate: DetailedCandidate;
+  onRefresh: () => void;
+}) {
   const currentUser = useCurrentUser();
   const navigate = useNavigate();
-  const router = useRouter();
-  const refresh = () => router.invalidate();
-  const candidate = Route.useLoaderData();
+  const refresh = onRefresh;
   const [vacancyService] = useState(() => new VacancyService());
   const [candidateService] = useState(() => new CandidateService());
   const [candidatePoolService] = useState(() => new CandidatePoolService());
@@ -308,7 +392,7 @@ function CandidateProfile() {
       empService
         .getUsers(currentUser.getActorContext())
         .filter((u) => u.roles.includes("HR") || u.roles.includes("Super Admin")),
-    [empService],
+    [empService, currentUser],
   );
   const allOtherCandidates = useMemo(
     () =>
@@ -321,10 +405,14 @@ function CandidateProfile() {
 
   const [isReassignOpen, setIsReassignOpen] = useState(false);
   const [reassignTarget, setReassignTarget] = useState("");
-  const submitReassign = () => {
+  const submitReassign = async () => {
     if (!reassignTarget) return;
     try {
-      candidateService.reassignOwner(candidate.id, reassignTarget, currentUser.getActorContext());
+      await candidateService.reassignOwnerAsync(
+        candidate.id,
+        reassignTarget,
+        currentUser.getActorContext(),
+      );
       toast.success("Ownership reassigned");
       setIsReassignOpen(false);
       refresh();
@@ -343,10 +431,14 @@ function CandidateProfile() {
       .filter((c) => `${c.firstName} ${c.lastName} ${c.email} ${c.phone}`.toLowerCase().includes(q))
       .slice(0, 8);
   }, [allOtherCandidates, mergeSearch]);
-  const submitMerge = () => {
+  const submitMerge = async () => {
     if (!mergeTargetId) return;
     try {
-      candidateService.mergeCandidates(candidate.id, mergeTargetId, currentUser.getActorContext());
+      await candidateService.mergeCandidatesAsync(
+        candidate.id,
+        mergeTargetId,
+        currentUser.getActorContext(),
+      );
       toast.success("Candidates merged");
       setIsMergeOpen(false);
       setMergeSearch("");
@@ -428,7 +520,7 @@ function CandidateProfile() {
     },
   });
 
-  const onSubmitContact = (values: z.infer<typeof contactFormSchema>) => {
+  const onSubmitContact = async (values: z.infer<typeof contactFormSchema>) => {
     try {
       const payload: Parameters<CandidateService["logContact"]>[0] = {
         candidateId: candidate.id,
@@ -440,7 +532,7 @@ function CandidateProfile() {
       if (values.vacancyId) payload.vacancyId = values.vacancyId;
       if (values.nextFollowUpDate) payload.nextFollowUpDate = values.nextFollowUpDate;
 
-      candidateService.logContact(payload, currentUser.getActorContext());
+      await candidateService.logContactAsync(payload, currentUser.getActorContext());
 
       toast.success("Contact saved");
       setIsContactDialogOpen(false);
@@ -451,9 +543,9 @@ function CandidateProfile() {
     }
   };
 
-  const onSubmitRecruitmentDetails = (values: z.infer<typeof recruitmentDetailsSchema>) => {
+  const onSubmitRecruitmentDetails = async (values: z.infer<typeof recruitmentDetailsSchema>) => {
     try {
-      candidateService.getCandidateRepository().update(
+      await candidateService.updateCandidateDetailsAsync(
         candidate.id,
         {
           email: values.email,
@@ -488,9 +580,9 @@ function CandidateProfile() {
     }
   };
 
-  const onSubmitRecommendation = (values: z.infer<typeof recommendationFormSchema>) => {
+  const onSubmitRecommendation = async (values: z.infer<typeof recommendationFormSchema>) => {
     try {
-      candidateService.addRecommendation(
+      await candidateService.addRecommendationAsync(
         {
           candidateId: candidate.id,
           vacancyId: values.vacancyId || undefined,

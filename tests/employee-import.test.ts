@@ -130,7 +130,7 @@ test("resolveBatch blocks collisions with existing records and duplicates within
       _sourceRowIndex: 2,
     }),
     row({
-      workEmail: "rana.nair@via.example", // collides with seeded user email
+      workEmail: "rana.nair@via-int.com", // collides with seeded user email
       employeeNumber: "VIA-3001",
       managerEmployeeNumber: "VIA-0001",
       _sourceRowIndex: 3,

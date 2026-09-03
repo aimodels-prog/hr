@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Download, FileCheck2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
@@ -42,7 +42,19 @@ function AttendanceCorrectionsRoute() {
   const [selected, setSelected] = useState<AttendanceCorrection | null>(null);
   const [reviewMode, setReviewMode] = useState<"manager" | "hr">("manager");
   const [notes, setNotes] = useState("");
-  const actorContext = currentUser.getActorContext();
+  const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
+  useEffect(() => {
+    let active = true;
+    void attendanceService
+      .hydrateFromDatabase(actorContext)
+      .then(() => active && setRevision((value) => value + 1))
+      .catch((error: unknown) =>
+        toast.error(error instanceof Error ? error.message : "Corrections could not be refreshed."),
+      );
+    return () => {
+      active = false;
+    };
+  }, [actorContext, attendanceService]);
   const employees = employeeService.getEmployees(actorContext);
   const records = attendanceService.getRecordsForContext(actorContext);
   const canManagerReview = ["Line Manager", "HR", "Super Admin"].includes(currentUser.activeRole);
@@ -69,15 +81,10 @@ function AttendanceCorrectionsRoute() {
     setNotes("");
   };
 
-  const decide = (approve: boolean) => {
+  const decide = async (approve: boolean) => {
     if (!selected) return;
     try {
-      if (reviewMode === "manager") {
-        if (approve) attendanceService.managerApproveCorrection(selected.id, actorContext, notes);
-        else attendanceService.managerRejectCorrection(selected.id, notes, actorContext);
-      } else {
-        attendanceService.hrFinaliseCorrection(selected.id, approve, notes, actorContext);
-      }
+      await attendanceService.decideCorrectionAsync(selected.id, approve, notes, actorContext);
       setSelected(null);
       setRevision((value) => value + 1);
       toast.success(approve ? "Correction approved." : "Correction rejected.");

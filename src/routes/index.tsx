@@ -81,12 +81,25 @@ function CareerPortal() {
   // the hydration pass itself.
   const [openVacancies, setOpenVacancies] = useState<Vacancy[]>([]);
   useEffect(() => {
-    setOpenVacancies(
-      vacancyService
-        .getVacancyRepository()
-        .list()
-        .filter((vacancy) => vacancy.status === "Open"),
-    );
+    let cancelled = false;
+    vacancyService
+      .hydrateCompatibilityCache()
+      .then(() => {
+        if (!cancelled) {
+          setOpenVacancies(
+            vacancyService
+              .getVacancyRepository()
+              .list()
+              .filter((vacancy) => vacancy.status === "Open"),
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setOpenVacancies([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [vacancyService]);
   const [query, setQuery] = useState("");
   const [department, setDepartment] = useState("all");

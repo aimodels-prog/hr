@@ -134,6 +134,111 @@ export class CandidatePreparationService {
     );
   }
 
+  private serverActor(context: ActorContext) {
+    const user = getApplicationDataServices()
+      .storage.readCollection<{ id: string; workspaceEmail?: string }>("users")
+      .find((item) => item.id === context.actor.userId);
+    return {
+      actorId: context.actor.userId,
+      ...(context.actor.workspaceEmail || user?.workspaceEmail
+        ? { actorEmail: context.actor.workspaceEmail ?? user?.workspaceEmail }
+        : {}),
+      activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+    };
+  }
+
+  private databaseVacancyId(vacancyId: string): string {
+    const vacancy = this.vacancyRepo.getById(vacancyId, { includeArchived: true });
+    const databaseId =
+      vacancy?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(vacancyId) ? vacancyId : undefined);
+    if (!databaseId) throw new Error("This vacancy is not linked to PostgreSQL.");
+    return databaseId;
+  }
+
+  private async refreshFromDatabase(context: ActorContext): Promise<void> {
+    const { CandidateService } = await import("./candidate-service.ts");
+    await new CandidateService().hydrateCompatibilityCache(context);
+  }
+
+  async refreshPreparedCandidatesAsync(
+    vacancyId: string,
+    context: ActorContext,
+  ): Promise<CandidatePreparationRun[]> {
+    await this.refreshFromDatabase(context);
+    return this.getRunsForVacancy(vacancyId, context);
+  }
+
+  async includeCandidateAsync(
+    input: Parameters<CandidatePreparationService["includeCandidate"]>[0],
+    context: ActorContext,
+  ): Promise<void> {
+    const { includeCandidateInAssessmentFn } =
+      await import("../server-functions/candidate.server.ts");
+    await includeCandidateInAssessmentFn({
+      data: {
+        actor: this.serverActor(context),
+        vacancyId: this.databaseVacancyId(input.vacancyId),
+        candidateId: input.candidateId,
+        cvRecordId: input.cvRecordId,
+        source: input.source,
+        reason: input.reason,
+      },
+    });
+    await this.refreshFromDatabase(context);
+  }
+
+  async createAssessmentBatchAsync(
+    vacancyId: string,
+    targetSize: number,
+    context: ActorContext,
+  ): Promise<CandidateAssessmentBatch> {
+    const { createAssessmentBatchFn } = await import("../server-functions/candidate.server.ts");
+    const id = await createAssessmentBatchFn({
+      data: {
+        actor: this.serverActor(context),
+        vacancyId: this.databaseVacancyId(vacancyId),
+        targetSize,
+      },
+    });
+    await this.refreshFromDatabase(context);
+    const batch = this.batchRepo.getById(id);
+    if (!batch) throw new Error("The assessment group could not be refreshed.");
+    return batch;
+  }
+
+  async updateAssessmentSelectionAsync(
+    batchId: string,
+    selectedCandidateIds: string[],
+    reason: string,
+    context: ActorContext,
+  ): Promise<CandidateAssessmentBatch> {
+    const { updateAssessmentSelectionFn } = await import("../server-functions/candidate.server.ts");
+    await updateAssessmentSelectionFn({
+      data: {
+        actor: this.serverActor(context),
+        batchId,
+        candidateIds: selectedCandidateIds,
+        reason,
+      },
+    });
+    await this.refreshFromDatabase(context);
+    const batch = this.batchRepo.getById(batchId);
+    if (!batch) throw new Error("The assessment group could not be refreshed.");
+    return batch;
+  }
+
+  async runDetailedAssessmentAsync(
+    batchId: string,
+    context: ActorContext,
+  ): Promise<CandidateAssessmentBatch> {
+    const { runDetailedAssessmentFn } = await import("../server-functions/candidate.server.ts");
+    await runDetailedAssessmentFn({ data: { actor: this.serverActor(context), batchId } });
+    await this.refreshFromDatabase(context);
+    const batch = this.batchRepo.getById(batchId);
+    if (!batch) throw new Error("The assessment result could not be refreshed.");
+    return batch;
+  }
+
   queueApplication(
     applicationId: string,
     cvRecordId: string,

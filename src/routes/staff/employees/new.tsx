@@ -69,6 +69,9 @@ const formSchema = z.object({
   socialInsuranceNumber: z.string().optional(),
 });
 
+type EmployeeFormInput = z.input<typeof formSchema>;
+type EmployeeFormValues = z.output<typeof formSchema>;
+
 function NewEmployeeRoute() {
   const navigate = useNavigate();
   const currentUser = useCurrentUser();
@@ -97,7 +100,7 @@ function NewEmployeeRoute() {
     [currentUser, employeeService],
   );
 
-  const form = useForm<z.infer<typeof formSchema>>({
+  const form = useForm<EmployeeFormInput, unknown, EmployeeFormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       legalName: "",
@@ -113,7 +116,7 @@ function NewEmployeeRoute() {
       projectId: "",
       costCentreId: "",
       employmentType: "",
-      startDate: new Date().toISOString().split("T")[0],
+      startDate: new Date().toISOString().split("T")[0] ?? "",
       probationEndDate: "",
       lineManagerId: "",
       status: "Onboarding",
@@ -126,10 +129,10 @@ function NewEmployeeRoute() {
       payFrequency: "Monthly",
       weeklyHours: "40",
       socialInsuranceNumber: "",
-    } as any,
+    },
   });
 
-  const onSubmit = async (values: z.infer<typeof formSchema>) => {
+  const onSubmit = async (values: EmployeeFormValues) => {
     try {
       if (!currentUser) throw new Error("No active user context");
       const {
@@ -199,7 +202,7 @@ function NewEmployeeRoute() {
       // gate) will never have anything to show. Skip it only when HR is entering someone who is
       // already past onboarding, e.g. a rehire or a lateral data-entry case set straight to Active.
       if (values.status === "Onboarding") {
-        onboardingService.createCaseForEmployee(createdEmployee.id, actorContext);
+        await onboardingService.createCaseForEmployeeAsync(createdEmployee.id, actorContext);
       }
 
       toast.success(
@@ -209,8 +212,17 @@ function NewEmployeeRoute() {
       );
       navigate({
         to: "/staff/employees",
-        search: { page: 1, q: "", status: "", department: "", location: "" },
-      } as any);
+        search: {
+          page: 1,
+          q: "",
+          status: "",
+          department: "",
+          location: "",
+          project: "",
+          manager: "",
+          employmentType: "",
+        },
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to create employee");
     }
@@ -224,7 +236,7 @@ function NewEmployeeRoute() {
           description="For direct hires - walk-ins, referrals, anyone hired without going through Recruitment. Candidates converted from an accepted offer already get their employee record and onboarding checklist automatically and do not need this form. Setting the initial status to Onboarding starts a real onboarding checklist for this person."
           breadcrumbs={[
             { label: "Core HR" },
-            { label: "Directory", href: "/staff/employees" as any },
+            { label: "Directory", href: "/staff/employees" },
             { label: "Add Employee" },
           ]}
           actions={
@@ -233,8 +245,17 @@ function NewEmployeeRoute() {
               onClick={() =>
                 navigate({
                   to: "/staff/employees",
-                  search: { page: 1, q: "", status: "", department: "", location: "" },
-                } as any)
+                  search: {
+                    page: 1,
+                    q: "",
+                    status: "",
+                    department: "",
+                    location: "",
+                    project: "",
+                    manager: "",
+                    employmentType: "",
+                  },
+                })
               }
             >
               <ArrowLeft className="mr-2 h-4 w-4" /> Back to Directory
@@ -250,7 +271,7 @@ function NewEmployeeRoute() {
               </CardHeader>
               <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="employeeNumber"
                   render={({ field }) => (
                     <FormItem>
@@ -263,20 +284,20 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="workEmail"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Workspace Email * (Future Login ID)</FormLabel>
+                      <FormLabel>VIA email address *</FormLabel>
                       <FormControl>
-                        <Input placeholder="name@via-hr.com" type="email" {...field} />
+                        <Input placeholder="name@via-int.com" type="email" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="legalName"
                   render={({ field }) => (
                     <FormItem>
@@ -289,7 +310,7 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="preferredName"
                   render={({ field }) => (
                     <FormItem>
@@ -302,7 +323,7 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="phone"
                   render={({ field }) => (
                     <FormItem>
@@ -315,7 +336,7 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="personalEmail"
                   render={({ field }) => (
                     <FormItem>
@@ -336,7 +357,7 @@ function NewEmployeeRoute() {
               </CardHeader>
               <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="dateOfBirth"
                   render={({ field }) => (
                     <FormItem>
@@ -349,7 +370,7 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="gender"
                   render={({ field }) => (
                     <FormItem>
@@ -370,7 +391,7 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="nationality"
                   render={({ field }) => (
                     <FormItem>
@@ -383,7 +404,7 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="maritalStatus"
                   render={({ field }) => (
                     <FormItem>
@@ -414,7 +435,7 @@ function NewEmployeeRoute() {
               </CardHeader>
               <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="department"
                   render={({ field }) => (
                     <FormItem>
@@ -438,7 +459,7 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="location"
                   render={({ field }) => (
                     <FormItem>
@@ -462,7 +483,7 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="position"
                   render={({ field }) => (
                     <FormItem>
@@ -486,7 +507,7 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="grade"
                   render={({ field }) => (
                     <FormItem>
@@ -510,7 +531,7 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="employmentType"
                   render={({ field }) => (
                     <FormItem>
@@ -534,7 +555,7 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="projectId"
                   render={({ field }) => (
                     <FormItem>
@@ -558,7 +579,7 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="startDate"
                   render={({ field }) => (
                     <FormItem>
@@ -571,7 +592,7 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="probationEndDate"
                   render={({ field }) => (
                     <FormItem>
@@ -584,7 +605,7 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="lineManagerId"
                   render={({ field }) => (
                     <FormItem>
@@ -608,7 +629,7 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="status"
                   render={({ field }) => (
                     <FormItem>
@@ -630,7 +651,7 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="costCentreId"
                   render={({ field }) => (
                     <FormItem>
@@ -654,7 +675,7 @@ function NewEmployeeRoute() {
                   )}
                 />
                 <FormField
-                  control={form.control as any}
+                  control={form.control}
                   name="weeklyHours"
                   render={({ field }) => (
                     <FormItem>
@@ -676,7 +697,7 @@ function NewEmployeeRoute() {
                 </CardHeader>
                 <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <FormField
-                    control={form.control as any}
+                    control={form.control}
                     name="baseMonthly"
                     render={({ field }) => (
                       <FormItem>
@@ -689,7 +710,7 @@ function NewEmployeeRoute() {
                     )}
                   />
                   <FormField
-                    control={form.control as any}
+                    control={form.control}
                     name="currency"
                     render={({ field }) => (
                       <FormItem>
@@ -702,7 +723,7 @@ function NewEmployeeRoute() {
                     )}
                   />
                   <FormField
-                    control={form.control as any}
+                    control={form.control}
                     name="housingAllowance"
                     render={({ field }) => (
                       <FormItem>
@@ -715,7 +736,7 @@ function NewEmployeeRoute() {
                     )}
                   />
                   <FormField
-                    control={form.control as any}
+                    control={form.control}
                     name="transportAllowance"
                     render={({ field }) => (
                       <FormItem>
@@ -728,7 +749,7 @@ function NewEmployeeRoute() {
                     )}
                   />
                   <FormField
-                    control={form.control as any}
+                    control={form.control}
                     name="payFrequency"
                     render={({ field }) => (
                       <FormItem>
@@ -750,7 +771,7 @@ function NewEmployeeRoute() {
                     )}
                   />
                   <FormField
-                    control={form.control as any}
+                    control={form.control}
                     name="socialInsuranceNumber"
                     render={({ field }) => (
                       <FormItem>
@@ -776,8 +797,17 @@ function NewEmployeeRoute() {
                 onClick={() =>
                   navigate({
                     to: "/staff/employees",
-                    search: { page: 1, q: "", status: "", department: "", location: "" },
-                  } as any)
+                    search: {
+                      page: 1,
+                      q: "",
+                      status: "",
+                      department: "",
+                      location: "",
+                      project: "",
+                      manager: "",
+                      employmentType: "",
+                    },
+                  })
                 }
               >
                 Cancel

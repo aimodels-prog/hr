@@ -51,6 +51,7 @@ export function DevRoleSwitcher() {
     allUsers,
     allEmployees,
     refreshRecords,
+    isDevelopmentPreview,
   } = useCurrentUser();
 
   const [open, setOpen] = useState(false);
@@ -112,7 +113,7 @@ export function DevRoleSwitcher() {
           <Button
             variant="outline"
             size="sm"
-            aria-label={`Previewing as ${displayName}, ${activeRole}`}
+            aria-label={`${displayName}, ${activeRole}`}
             className="h-10 gap-2 rounded-full border-border/80 bg-background px-2 pr-3 shadow-sm hover:border-primary/25 hover:bg-primary/5"
           >
             <Avatar className="h-7 w-7 border-2 border-card shadow-sm">
@@ -125,7 +126,7 @@ export function DevRoleSwitcher() {
                 {displayName}
               </span>
               <span className="mt-1 block text-[10px] font-medium leading-none text-muted-foreground">
-                Preview · {activeRole}
+                {isDevelopmentPreview ? "Preview" : "Signed in"} · {activeRole}
               </span>
             </div>
             <ChevronDown className="h-3.5 w-3.5 text-muted-foreground ml-0.5" />
@@ -168,73 +169,84 @@ export function DevRoleSwitcher() {
             </div>
           )}
 
+          {isDevelopmentPreview && (
+            <>
+              <DropdownMenuSeparator className="my-1.5" />
+
+              <DropdownMenuLabel className="text-xs font-semibold text-muted-foreground px-2 pt-0.5 pb-1">
+                Switch Identity
+              </DropdownMenuLabel>
+              <div className="px-2 pb-1.5">
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    placeholder="Find anyone, including new hires..."
+                    className="h-7 pl-7 text-xs"
+                  />
+                </div>
+              </div>
+              <DropdownMenuGroup className="max-h-64 overflow-y-auto space-y-0.5">
+                {otherUsers.length === 0 ? (
+                  <p className="px-2 py-3 text-[11px] text-muted-foreground text-center">
+                    No matching user.
+                  </p>
+                ) : (
+                  otherUsers.map((u) => {
+                    const employee = u.employeeId ? employeeById.get(u.employeeId) : undefined;
+                    // Employee is the base role everyone holds, so it is a poor badge to lead with -
+                    // show whatever more specific role they also carry, same preference order the
+                    // active-identity logic itself uses.
+                    const primaryRole =
+                      (u.roles?.find((r) => r !== "Employee") as Role | undefined) ?? "Employee";
+                    return (
+                      <DropdownMenuItem
+                        key={u.id}
+                        onClick={() => handleSwitchIdentity(u.id)}
+                        className="flex items-center gap-2.5 p-2 rounded-md cursor-pointer"
+                      >
+                        <Avatar className="h-7 w-7 shrink-0">
+                          <AvatarFallback className="bg-muted text-[10px] font-semibold">
+                            {initialsFor(u.displayName)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium truncate">{u.displayName}</p>
+                          {employee && (
+                            <p className="text-[11px] text-muted-foreground truncate">
+                              {employee.position}
+                            </p>
+                          )}
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] px-1 py-0 border shrink-0 ${ROLE_BADGE_CLASS[primaryRole]}`}
+                        >
+                          {primaryRole}
+                        </Badge>
+                      </DropdownMenuItem>
+                    );
+                  })
+                )}
+              </DropdownMenuGroup>
+            </>
+          )}
+
           <DropdownMenuSeparator className="my-1.5" />
 
-          <DropdownMenuLabel className="text-xs font-semibold text-muted-foreground px-2 pt-0.5 pb-1">
-            Switch Identity
-          </DropdownMenuLabel>
-          <div className="px-2 pb-1.5">
-            <div className="relative">
-              <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                onKeyDown={(e) => e.stopPropagation()}
-                placeholder="Find anyone, including new hires..."
-                className="h-7 pl-7 text-xs"
-              />
-            </div>
-          </div>
-          <DropdownMenuGroup className="max-h-64 overflow-y-auto space-y-0.5">
-            {otherUsers.length === 0 ? (
-              <p className="px-2 py-3 text-[11px] text-muted-foreground text-center">
-                No matching user.
-              </p>
-            ) : (
-              otherUsers.map((u) => {
-                const employee = u.employeeId ? employeeById.get(u.employeeId) : undefined;
-                // Employee is the base role everyone holds, so it is a poor badge to lead with -
-                // show whatever more specific role they also carry, same preference order the
-                // active-identity logic itself uses.
-                const primaryRole =
-                  (u.roles?.find((r) => r !== "Employee") as Role | undefined) ?? "Employee";
-                return (
-                  <DropdownMenuItem
-                    key={u.id}
-                    onClick={() => handleSwitchIdentity(u.id)}
-                    className="flex items-center gap-2.5 p-2 rounded-md cursor-pointer"
-                  >
-                    <Avatar className="h-7 w-7 shrink-0">
-                      <AvatarFallback className="bg-muted text-[10px] font-semibold">
-                        {initialsFor(u.displayName)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium truncate">{u.displayName}</p>
-                      {employee && (
-                        <p className="text-[11px] text-muted-foreground truncate">
-                          {employee.position}
-                        </p>
-                      )}
-                    </div>
-                    <Badge
-                      variant="outline"
-                      className={`text-[10px] px-1 py-0 border shrink-0 ${ROLE_BADGE_CLASS[primaryRole]}`}
-                    >
-                      {primaryRole}
-                    </Badge>
-                  </DropdownMenuItem>
-                );
-              })
-            )}
-          </DropdownMenuGroup>
-
-          <DropdownMenuSeparator className="my-1.5" />
-
-          <p className="px-2 py-1 text-[10.5px] text-muted-foreground">
-            Role preview is active. Google Workspace sign-in can be connected when the portal is
-            ready.
-          </p>
+          {isDevelopmentPreview ? (
+            <p className="px-2 py-1 text-[10.5px] text-muted-foreground">
+              Development role preview is active.
+            </p>
+          ) : (
+            <form action="/auth/logout" method="post" className="px-1 py-1">
+              <Button type="submit" variant="ghost" size="sm" className="w-full justify-start">
+                Sign out of VIA HR
+              </Button>
+            </form>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

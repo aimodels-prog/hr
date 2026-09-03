@@ -42,25 +42,43 @@ function AnniversariesRoute() {
   const currentUser = useCurrentUser();
   const anniversaryService = useMemo(() => new AnniversaryService(), []);
   const employeeService = useMemo(() => new EmployeeService(), []);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const managerNameById = useMemo(() => {
+    void refreshKey;
     const employees = employeeService.getEmployees(currentUser.getActorContext(), {
       includeArchived: true,
     });
     return new Map(employees.map((e) => [e.id, e.preferredName]));
-  }, [employeeService]);
+  }, [currentUser, employeeService, refreshKey]);
 
-  // Runs on every visit - each notification is deduplicated per employee/milestone/threshold,
-  // so this is safe to re-run without spamming anyone.
+  // Notifications are created by the durable background worker; this page is read-only.
   useEffect(() => {
-    if (currentUser) {
-      anniversaryService.runReminderEngine(currentUser.getActorContext()).catch(console.error);
-    }
-  }, [currentUser, anniversaryService]);
+    let active = true;
+    setLoading(true);
+    setLoadError("");
+    void employeeService
+      .hydrateCompatibilityCache(currentUser.getActorContext())
+      .then(() => {
+        if (active) setRefreshKey((value) => value + 1);
+      })
+      .catch((error) => {
+        if (active)
+          setLoadError(
+            error instanceof Error ? error.message : "Anniversaries could not be loaded.",
+          );
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentUser, employeeService]);
 
-  const entries = useMemo(
-    () => anniversaryService.getUpcomingAnniversaries(90, 14),
-    [anniversaryService],
-  );
+  void refreshKey;
+  const entries = anniversaryService.getUpcomingAnniversaries(90, 14);
 
   const buckets = useMemo(() => {
     const grouped: Record<"past" | "week" | "month" | "quarter", UpcomingAnniversary[]> = {
@@ -86,6 +104,8 @@ function AnniversariesRoute() {
           description="Upcoming tenure milestones across VIA, so recognition never gets missed."
           breadcrumbs={[{ label: "Core HR" }, { label: "Work Anniversaries" }]}
         />
+        {loading && <p className="text-sm text-muted-foreground">Loading anniversaries...</p>}
+        {loadError && <p className="text-sm text-destructive">{loadError}</p>}
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card className="bg-primary/5 border-primary/20">

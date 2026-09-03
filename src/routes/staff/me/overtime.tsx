@@ -40,7 +40,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
 import { OvertimeService } from "@/lib/data/overtime-service";
 import { getMasterDataRepository, getProjectRepository } from "@/lib/data/master-data";
-import { getApplicationDataServices } from "@/lib/data/application-data";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { AlertTriangle, Clock, FileEdit, Paperclip } from "lucide-react";
 import type { OvertimeClaim, OvertimeCompensationType } from "@/lib/data/overtime-types";
@@ -112,32 +111,16 @@ function MyOvertimeRoute() {
 
   const handleSubmit = async () => {
     setIsUploading(true);
-    let uploadedFileId: string | undefined;
     const actorContext = currentUser.getActorContext();
     try {
-      let evidenceFileId: string | undefined;
-      if (evidenceFile) {
-        const { files } = getApplicationDataServices();
-        const saved = await files.save(
-          {
-            blob: evidenceFile,
-            name: evidenceFile.name,
-            mimeType: evidenceFile.type,
-            owner: { entityType: "overtime-claim", entityId: currentUser!.employeeId! },
-          },
-          actorContext,
-        );
-        evidenceFileId = saved.id;
-        uploadedFileId = saved.id;
-      }
-
       if (originalClaimId) {
         await otService.createCorrection(
           originalClaimId,
           parseFloat(hoursStr),
           reason,
           actorContext,
-          evidenceFileId,
+          undefined,
+          evidenceFile ?? undefined,
         );
         toast.success("Correction request sent. The original record was kept.");
       } else {
@@ -152,22 +135,15 @@ function MyOvertimeRoute() {
             locationCodeId,
             reason,
             compensationType,
-            ...(evidenceFileId ? { evidenceFileId } : {}),
           },
           actorContext,
+          evidenceFile ?? undefined,
         );
         toast.success("Overtime claim sent to your manager.");
       }
-      uploadedFileId = undefined;
       setClaims(otService.getClaimsForEmployee(currentUser.employeeId!, actorContext));
       setDialogOpen(false);
     } catch (error: unknown) {
-      if (uploadedFileId) {
-        await getApplicationDataServices().files.delete(uploadedFileId, {
-          ...actorContext,
-          reason: "Overtime submission failed before the evidence was attached",
-        });
-      }
       toast.error(error instanceof Error ? error.message : "Overtime claim could not be sent.");
     } finally {
       setIsUploading(false);

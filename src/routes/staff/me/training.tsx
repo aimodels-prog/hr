@@ -72,9 +72,9 @@ function MyTrainingPage() {
   const courseName = (id: string) =>
     courses.find((course) => course.id === id)?.title || "Training course";
   const refresh = () => setVersion((value) => value + 1);
-  const run = (action: () => unknown, success: string) => {
+  const run = async (action: () => unknown | Promise<unknown>, success: string) => {
     try {
-      action();
+      await action();
       refresh();
       toast.success(success);
       return true;
@@ -466,10 +466,10 @@ function MyTrainingPage() {
               Cancel
             </Button>
             <Button
-              onClick={() => {
+              onClick={async () => {
                 if (!requestCourse) return;
-                const ok = run(
-                  () => service.submitRequest(requestCourse.id, requestReason, context),
+                const ok = await run(
+                  () => service.submitRequestAsync(requestCourse.id, requestReason, context),
                   requestCourse.cost === 0
                     ? "Training added to your plan"
                     : "Training request submitted",
@@ -503,10 +503,10 @@ function MyTrainingPage() {
               Cancel
             </Button>
             <Button
-              onClick={() => {
+              onClick={async () => {
                 if (!withdrawRequest) return;
-                const ok = run(
-                  () => service.withdrawRequest(withdrawRequest.id, withdrawReason, context),
+                const ok = await run(
+                  () => service.withdrawRequestAsync(withdrawRequest.id, withdrawReason, context),
                   "Training request withdrawn",
                 );
                 if (ok) setWithdrawRequest(null);

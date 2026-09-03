@@ -12,17 +12,16 @@ import type {
 } from "./types.ts";
 import type { AttendancePolicy } from "./attendance-types.ts";
 
-// Relative to real "today" rather than the fixed SEED_TIMESTAMP, so the document-expiry
-// demo data stays meaningful (one within the 30-day critical window, one in the 31-90 day
-// warning window) no matter when this seed actually runs.
+export const SEED_TIMESTAMP = "2026-08-16T08:00:00.000Z";
+export const SEED_SYSTEM_USER_ID = "user-super-admin";
+
+// Keep reset/import output deterministic. Moving dates make an unchanged seed conflict with
+// PostgreSQL the next day and prevent reliable backup verification.
 const daysFromNow = (days: number) => {
-  const d = new Date();
+  const d = new Date("2026-08-16T12:00:00.000Z");
   d.setDate(d.getDate() + days);
   return d.toISOString().slice(0, 10);
 };
-
-export const SEED_TIMESTAMP = "2026-08-16T08:00:00.000Z";
-export const SEED_SYSTEM_USER_ID = "user-super-admin";
 
 const base = (id: string, actor = "system") => ({
   id,
@@ -40,7 +39,7 @@ const employees: Employee[] = [
     legalName: "Rana Nair",
     preferredName: "Rana",
     gender: "Female",
-    workEmail: "rana.nair@via.example",
+    workEmail: "rana.nair@via-int.com",
     phone: "+968 9900 1001",
     department: "People Operations",
     position: "HR Manager",
@@ -72,7 +71,7 @@ const employees: Employee[] = [
     legalName: "Layla Al Harthy",
     preferredName: "Layla",
     gender: "Female",
-    workEmail: "layla.harthy@via.example",
+    workEmail: "layla.harthy@via-int.com",
     phone: "+968 9900 1002",
     department: "Operations",
     position: "Operations Director",
@@ -104,7 +103,7 @@ const employees: Employee[] = [
     legalName: "Omar Rahman",
     preferredName: "Omar",
     gender: "Male",
-    workEmail: "omar.rahman@via.example",
+    workEmail: "omar.rahman@via-int.com",
     phone: "+968 9900 1003",
     department: "Operations",
     position: "Project Engineer",
@@ -136,7 +135,7 @@ const employees: Employee[] = [
     legalName: "Tariq Al Zadjali",
     preferredName: "Tariq",
     gender: "Male",
-    workEmail: "tariq.zadjali@via.example",
+    workEmail: "tariq.zadjali@via-int.com",
     phone: "+968 9900 1006",
     department: "Operations",
     position: "Logistics Coordinator",
@@ -168,7 +167,7 @@ const employees: Employee[] = [
     legalName: "Aisha Al Habsi",
     preferredName: "Aisha",
     gender: "Female",
-    workEmail: "aisha.habsi@via.example",
+    workEmail: "aisha.habsi@via-int.com",
     phone: "+968 9900 1007",
     department: "People Operations",
     position: "HR Specialist",
@@ -200,7 +199,7 @@ const employees: Employee[] = [
     legalName: "Mariam Said",
     preferredName: "Mariam",
     gender: "Female",
-    workEmail: "mariam.said@via.example",
+    workEmail: "mariam.said@via-int.com",
     phone: "+968 9900 1004",
     department: "Accounts",
     position: "Senior Accountant",
@@ -232,7 +231,7 @@ const employees: Employee[] = [
     legalName: "Yusuf Al Balushi",
     preferredName: "Yusuf",
     gender: "Male",
-    workEmail: "yusuf.balushi@via.example",
+    workEmail: "yusuf.balushi@via-int.com",
     phone: "+968 9900 1005",
     department: "Executive",
     position: "Managing Director",
@@ -264,7 +263,7 @@ const users: User[] = [
     ...base("user-rana"),
     employeeId: "employee-rana",
     displayName: "Rana Nair",
-    workspaceEmail: "rana.nair@via.example",
+    workspaceEmail: "rana.nair@via-int.com",
     roles: ["Employee", "HR"],
     status: "Active",
   },
@@ -272,7 +271,7 @@ const users: User[] = [
     ...base("user-layla"),
     employeeId: "employee-layla",
     displayName: "Layla Al Harthy",
-    workspaceEmail: "layla.harthy@via.example",
+    workspaceEmail: "layla.harthy@via-int.com",
     roles: ["Employee", "Line Manager"],
     status: "Active",
   },
@@ -280,7 +279,7 @@ const users: User[] = [
     ...base("user-omar"),
     employeeId: "employee-omar",
     displayName: "Omar Rahman",
-    workspaceEmail: "omar.rahman@via.example",
+    workspaceEmail: "omar.rahman@via-int.com",
     roles: ["Employee"],
     status: "Active",
   },
@@ -288,7 +287,7 @@ const users: User[] = [
     ...base("user-tariq"),
     employeeId: "employee-tariq",
     displayName: "Tariq Al Zadjali",
-    workspaceEmail: "tariq.zadjali@via.example",
+    workspaceEmail: "tariq.zadjali@via-int.com",
     roles: ["Employee"],
     status: "Active",
   },
@@ -296,7 +295,7 @@ const users: User[] = [
     ...base("user-aisha"),
     employeeId: "employee-aisha",
     displayName: "Aisha Al Habsi",
-    workspaceEmail: "aisha.habsi@via.example",
+    workspaceEmail: "aisha.habsi@via-int.com",
     roles: ["Employee", "HR"],
     status: "Active",
   },
@@ -304,7 +303,7 @@ const users: User[] = [
     ...base("user-mariam"),
     employeeId: "employee-mariam",
     displayName: "Mariam Said",
-    workspaceEmail: "mariam.said@via.example",
+    workspaceEmail: "mariam.said@via-int.com",
     roles: ["Employee", "Accounts"],
     status: "Active",
   },
@@ -312,7 +311,7 @@ const users: User[] = [
     ...base(SEED_SYSTEM_USER_ID),
     employeeId: "employee-yusuf",
     displayName: "Yusuf Al Balushi",
-    workspaceEmail: "yusuf.balushi@via.example",
+    workspaceEmail: "yusuf.balushi@via-int.com",
     roles: ["Employee", "Super Admin"],
     status: "Active",
   },
@@ -369,11 +368,39 @@ const departments: MasterRecord[] = [
 ];
 
 const locations: MasterRecord[] = [
-  master("loc-muscat", "Muscat, Oman", "MCT", 1),
+  {
+    ...master("loc-muscat", "Muscat, Oman", "MCT", 1),
+    latitude: 23.588,
+    longitude: 58.3829,
+    radiusMeters: 200,
+    isClockInSite: true,
+  },
   master("loc-salalah", "Salalah, Oman", "SLL", 2),
   master("loc-dubai", "Dubai, UAE", "DXB", 3),
   master("loc-jebel-ali", "Jebel Ali, UAE", "JAFZA", 4),
   master("loc-abu-dhabi", "Abu Dhabi, UAE", "AUH", 5),
+];
+
+const workingTimes: MasterRecord[] = [
+  {
+    ...master("working-time-standard", "Standard Office Hours", "STD", 1),
+    startTime: "09:00:00",
+    endTime: "18:00:00",
+    breakMinutes: 60,
+    workingDays: [0, 1, 2, 3, 4],
+  },
+];
+
+const publicHolidays: MasterRecord[] = [];
+
+const currencies: MasterRecord[] = [
+  {
+    ...master("currency-omr", "Omani Rial", "OMR", 1),
+    symbol: "ر.ع.",
+    decimalPlaces: 3,
+  },
+  { ...master("currency-aed", "UAE Dirham", "AED", 2), symbol: "د.إ", decimalPlaces: 2 },
+  { ...master("currency-usd", "US Dollar", "USD", 3), symbol: "$", decimalPlaces: 2 },
 ];
 
 const projects: Project[] = [
@@ -633,7 +660,7 @@ export const trainingCourses = [
     currency: "OMR",
     validityMonths: 24,
     requiredRoles: [],
-    requiredLocations: ["loc_2", "loc_3"],
+    requiredLocations: ["loc-salalah", "loc-dubai"],
     requiredProjects: [],
     isMandatory: true,
     isActive: true,
@@ -642,7 +669,7 @@ export const trainingCourses = [
     createdBy: "system",
     updatedBy: "system",
     recordVersion: 1,
-  }
+  },
 ];
 
 const trainingRequests = [
@@ -650,14 +677,15 @@ const trainingRequests = [
     id: "training-request-omar-first-aid",
     employeeId: "employee-omar",
     courseId: "course-first-aid",
-    justification: "Required for new site assignment.",
+    origin: "Employee Request",
+    reason: "Required for a new site assignment.",
     status: "Pending Supervisor",
     createdAt: "2026-09-15T08:00:00.000Z",
     updatedAt: "2026-09-15T08:00:00.000Z",
     createdBy: "employee-omar",
     updatedBy: "employee-omar",
     recordVersion: 1,
-  }
+  },
 ];
 
 export function createSeedCollections(): CollectionState {
@@ -673,6 +701,9 @@ export function createSeedCollections(): CollectionState {
     auditEvents,
     departments,
     locations,
+    workingTimes,
+    publicHolidays,
+    currencies,
     projects,
     positions,
     grades,
@@ -688,5 +719,6 @@ export function createSeedCollections(): CollectionState {
     training_sessions: [],
     training_enrollments: [],
     training_records: [],
+    reportSavedViews: [],
   });
 }

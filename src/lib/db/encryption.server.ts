@@ -5,6 +5,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 const ALGORITHM = "aes-256-gcm";
 const ENVELOPE_VERSION = "via1";
 const IV_BYTES = 12;
+const FILE_MAGIC = Buffer.from("VIAF1", "ascii");
 
 export class FieldEncryptionConfigurationError extends Error {
   constructor(message: string) {
@@ -117,4 +118,54 @@ export function decryptSensitiveJson<T>(envelope: string): T {
 
 export function isEncryptedFieldEnvelope(value: string): boolean {
   return value.startsWith(`${ENVELOPE_VERSION}.`) && value.split(".").length === 5;
+}
+
+/** Encrypts arbitrary file bytes without expanding them into base64. */
+export function encryptSensitiveBytes(value: Uint8Array): Buffer {
+  const { activeKeyId, keys } = readKeyring();
+  const key = keys.get(activeKeyId);
+  if (!key) throw new FieldEncryptionConfigurationError("The active encryption key is missing.");
+  const keyId = Buffer.from(activeKeyId, "utf8");
+  if (keyId.length > 40) throw new FieldEncryptionConfigurationError("The key ID is too long.");
+  const iv = randomBytes(IV_BYTES);
+  const cipher = createCipheriv(ALGORITHM, key, iv);
+  const ciphertext = Buffer.concat([cipher.update(value), cipher.final()]);
+  return Buffer.concat([
+    FILE_MAGIC,
+    Buffer.from([keyId.length]),
+    keyId,
+    iv,
+    cipher.getAuthTag(),
+    ciphertext,
+  ]);
+}
+
+/** Authenticates and decrypts a VIA file envelope. */
+export function decryptSensitiveBytes(envelope: Uint8Array): Buffer {
+  const bytes = Buffer.from(envelope);
+  if (bytes.length < FILE_MAGIC.length + 1 + IV_BYTES + 16) {
+    throw new Error("The encrypted file has an invalid format.");
+  }
+  if (!bytes.subarray(0, FILE_MAGIC.length).equals(FILE_MAGIC)) {
+    throw new Error("The encrypted file has an unsupported format.");
+  }
+  const keyIdLength = bytes[FILE_MAGIC.length] ?? 0;
+  const keyIdStart = FILE_MAGIC.length + 1;
+  const ivStart = keyIdStart + keyIdLength;
+  const tagStart = ivStart + IV_BYTES;
+  const ciphertextStart = tagStart + 16;
+  if (keyIdLength < 1 || ciphertextStart > bytes.length) {
+    throw new Error("The encrypted file has an invalid format.");
+  }
+  const keyId = bytes.subarray(keyIdStart, ivStart).toString("utf8");
+  const { keys } = readKeyring();
+  const key = keys.get(keyId);
+  if (!key) throw new Error("The encrypted file uses an unavailable key version.");
+  try {
+    const decipher = createDecipheriv(ALGORITHM, key, bytes.subarray(ivStart, tagStart));
+    decipher.setAuthTag(bytes.subarray(tagStart, ciphertextStart));
+    return Buffer.concat([decipher.update(bytes.subarray(ciphertextStart)), decipher.final()]);
+  } catch {
+    throw new Error("The encrypted file could not be authenticated or decrypted.");
+  }
 }

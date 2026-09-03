@@ -5,6 +5,10 @@ const SETTINGS_COLLECTION = "appSettings";
 
 let memoryCachedSettings: AppSettings | null = null;
 
+function usesBrowserServerFunctions(): boolean {
+  return typeof window !== "undefined";
+}
+
 export class SettingsService {
   getAppSettingsSync(): AppSettings {
     if (memoryCachedSettings) {
@@ -47,17 +51,12 @@ export class SettingsService {
   }
 
   async getAppSettings(): Promise<AppSettings> {
-    try {
-      const { getAppSettingsFn } = await import("../server-functions/settings.server.ts");
-      const settings = (await getAppSettingsFn({ data: {} })) as unknown as AppSettings;
-      if (settings) {
-        memoryCachedSettings = settings;
-        return settings;
-      }
-    } catch {
-      // If server function not reachable in clientless test environment
-    }
-    return this.getAppSettingsSync();
+    if (!usesBrowserServerFunctions()) return this.getAppSettingsSync();
+
+    const { getAppSettingsFn } = await import("../server-functions/settings.server.ts");
+    const settings = (await getAppSettingsFn({ data: {} })) as unknown as AppSettings;
+    memoryCachedSettings = settings;
+    return settings;
   }
 
   async saveAppSettings(settings: AppSettings, context: ActorContext): Promise<AppSettings> {
@@ -104,28 +103,8 @@ export class SettingsService {
       throw new Error("Only a Super Admin can change organisation-wide settings.");
     }
 
-    try {
-      const { saveAppSettingsFn } = await import("../server-functions/settings.server.ts");
-      const result = (await saveAppSettingsFn({
-        data: {
-          settings,
-          actorId: context.actor.userId,
-        },
-      })) as unknown as AppSettings;
-      if (result) {
-        memoryCachedSettings = result;
-        return result;
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!message.includes("No Start context") && !message.includes("is not a function")) {
-        throw err;
-      }
-    }
-
-    // In-memory fallback
-    memoryCachedSettings = settings;
-    try {
+    if (!usesBrowserServerFunctions()) {
+      memoryCachedSettings = settings;
       const { storage, audit } = getApplicationDataServices();
       storage.writeCollection(SETTINGS_COLLECTION, [settings]);
       audit.record({
@@ -137,10 +116,19 @@ export class SettingsService {
         after: settings,
         riskLevel: "Medium",
       });
-    } catch {
-      // Ignore
+      return settings;
     }
-    return settings;
+
+    const { saveAppSettingsFn } = await import("../server-functions/settings.server.ts");
+    const result = (await saveAppSettingsFn({
+      data: {
+        settings,
+        actorId: context.actor.userId,
+        ...(context.actor.workspaceEmail ? { actorEmail: context.actor.workspaceEmail } : {}),
+      },
+    })) as unknown as AppSettings;
+    memoryCachedSettings = result;
+    return result;
   }
 
   private validate(settings: AppSettings): void {

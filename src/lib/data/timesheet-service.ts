@@ -57,6 +57,334 @@ export class TimesheetService {
     });
   }
 
+  private async serverActor(context: ActorContext) {
+    const users = getApplicationDataServices().storage.readCollection<User>("users");
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    return {
+      actorId: context.actor.userId,
+      ...(actorEmail ? { actorEmail } : {}),
+      activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+    } as const;
+  }
+
+  private databaseId(collection: string, id: string): string {
+    const record = getApplicationDataServices()
+      .storage.readCollection<{ id: string; databaseId?: string }>(collection)
+      .find((item) => item.id === id || item.databaseId === id);
+    const databaseId = record?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
+    if (!databaseId) throw new Error("This record is not connected to PostgreSQL yet.");
+    return databaseId;
+  }
+
+  /** PostgreSQL is authoritative; browser collections are a temporary read projection. */
+  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+    if (typeof window === "undefined") return;
+    const { storage } = getApplicationDataServices();
+    const employeeMap = new Map(
+      storage
+        .readCollection<{ id: string; databaseId?: string }>("employees")
+        .filter((item) => item.databaseId)
+        .map((item) => [item.databaseId!, item.id]),
+    );
+    const userMap = new Map(
+      storage
+        .readCollection<{ id: string; databaseId?: string }>("users")
+        .filter((item) => item.databaseId)
+        .map((item) => [item.databaseId!, item.id]),
+    );
+    const relationMap = new Map<string, string>();
+    for (const collection of ["projects", "costCentres", "activityCodes", "locations"]) {
+      for (const item of storage.readCollection<{ id: string; databaseId?: string }>(collection)) {
+        if (item.databaseId) relationMap.set(item.databaseId, item.id);
+      }
+    }
+    const { getTimesheetSnapshotFn } = await import("../server-functions/timesheet.server.ts");
+    const snapshot = await getTimesheetSnapshotFn({
+      data: { actor: await this.serverActor(context) },
+    });
+    storage.writeCollection(SETTINGS_COLLECTION, [snapshot.settings]);
+    storage.writeCollection("timesheetPeriods", snapshot.periods);
+    storage.writeCollection(
+      "timesheets",
+      snapshot.timesheets.map((sheet) => ({
+        ...sheet,
+        employeeId: employeeMap.get(sheet.employeeId) ?? sheet.employeeId,
+        ...(sheet.approvedBy
+          ? { approvedBy: userMap.get(sheet.approvedBy) ?? sheet.approvedBy }
+          : {}),
+        ...(sheet.supervisorReviewedBy
+          ? {
+              supervisorReviewedBy:
+                userMap.get(sheet.supervisorReviewedBy) ?? sheet.supervisorReviewedBy,
+            }
+          : {}),
+        entries: sheet.entries.map((entry) => ({
+          ...entry,
+          projectId: relationMap.get(entry.projectId) ?? entry.projectId,
+          costCentreId: relationMap.get(entry.costCentreId) ?? entry.costCentreId,
+          activityCodeId: relationMap.get(entry.activityCodeId) ?? entry.activityCodeId,
+          locationCodeId: relationMap.get(entry.locationCodeId) ?? entry.locationCodeId,
+        })),
+      })),
+    );
+  }
+
+  async saveSettingsAsync(settings: TimesheetSettings, context: ActorContext): Promise<void> {
+    if (typeof window === "undefined") return this.saveSettings(settings, context);
+    const { updateTimesheetSettingsFn } = await import("../server-functions/timesheet.server.ts");
+    await updateTimesheetSettingsFn({ data: { actor: await this.serverActor(context), settings } });
+    await this.hydrateCompatibilityCache(context);
+  }
+
+  async generatePeriodsAsync(
+    startDate: string,
+    endDate: string,
+    context: ActorContext,
+  ): Promise<number> {
+    if (typeof window === "undefined") return this.generatePeriods(startDate, endDate, context);
+    const { generateTimesheetPeriodsFn } = await import("../server-functions/timesheet.server.ts");
+    const count = await generateTimesheetPeriodsFn({
+      data: { actor: await this.serverActor(context), startDate, endDate },
+    });
+    await this.hydrateCompatibilityCache(context);
+    return count;
+  }
+
+  async getOrCreateTimesheetAsync(
+    employeeId: string,
+    periodId: string,
+    context: ActorContext,
+  ): Promise<TimesheetWithEntries> {
+    if (typeof window === "undefined")
+      return this.getOrCreateTimesheet(employeeId, periodId, context);
+    const { getOrCreateTimesheetFn } = await import("../server-functions/timesheet.server.ts");
+    const databaseId = await getOrCreateTimesheetFn({
+      data: {
+        actor: await this.serverActor(context),
+        employeeId: this.databaseId("employees", employeeId),
+        periodId: this.databaseId("timesheetPeriods", periodId),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const result = this.timesheetRepo
+      .list()
+      .find((item) => item.databaseId === databaseId || item.id === databaseId);
+    if (!result) throw new Error("The timesheet could not be loaded after it was created.");
+    return result;
+  }
+
+  async saveTimesheetDraftAsync(
+    timesheet: TimesheetWithEntries,
+    context: ActorContext,
+  ): Promise<TimesheetWithEntries> {
+    if (typeof window === "undefined") return this.saveTimesheetDraft(timesheet, context);
+    const { saveTimesheetDraftFn } = await import("../server-functions/timesheet.server.ts");
+    const entries = timesheet.entries
+      .filter((entry) => !entry.isLeave && !entry.isHoliday)
+      .map((entry) => ({
+        id: entry.id,
+        ...(entry.projectId ? { projectId: this.databaseId("projects", entry.projectId) } : {}),
+        ...(entry.costCentreId
+          ? { costCentreId: this.databaseId("costCentres", entry.costCentreId) }
+          : {}),
+        ...(entry.activityCodeId
+          ? { activityCodeId: this.databaseId("activityCodes", entry.activityCodeId) }
+          : {}),
+        ...(entry.locationCodeId
+          ? { locationId: this.databaseId("locations", entry.locationCodeId) }
+          : {}),
+        hours: Object.fromEntries(
+          Object.entries(entry.hours).map(([date, hours]) => [date, Number(hours)]),
+        ),
+        ...(entry.notes?.trim() ? { notes: entry.notes.trim() } : {}),
+      }));
+    await saveTimesheetDraftFn({
+      data: {
+        actor: await this.serverActor(context),
+        timesheetId: this.databaseId("timesheets", timesheet.id),
+        entries,
+        explanations: timesheet.attendanceDiscrepancyExplanations ?? {},
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const updated = this.timesheetRepo
+      .list()
+      .find((item) => item.databaseId === timesheet.databaseId || item.id === timesheet.id);
+    if (!updated) throw new Error("The saved timesheet could not be reloaded.");
+    return updated;
+  }
+
+  async submitTimesheetAsync(
+    timesheetId: string,
+    context: ActorContext,
+  ): Promise<TimesheetWithEntries> {
+    if (typeof window === "undefined") return this.submitTimesheet(timesheetId, context);
+    const { submitTimesheetFn } = await import("../server-functions/timesheet.server.ts");
+    await submitTimesheetFn({
+      data: {
+        actor: await this.serverActor(context),
+        timesheetId: this.databaseId("timesheets", timesheetId),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const result = this.timesheetRepo
+      .list()
+      .find((item) => item.id === timesheetId || item.databaseId === timesheetId);
+    if (!result) throw new Error("The submitted timesheet could not be reloaded.");
+    return result;
+  }
+
+  async decideTimesheetAsync(
+    timesheetId: string,
+    decision: "approve" | "return",
+    notes: string | undefined,
+    context: ActorContext,
+  ): Promise<TimesheetWithEntries> {
+    if (typeof window === "undefined")
+      return decision === "approve"
+        ? this.approveTimesheet(timesheetId, context)
+        : this.returnTimesheet(timesheetId, notes ?? "Returned", context);
+    const { decideTimesheetFn } = await import("../server-functions/timesheet.server.ts");
+    await decideTimesheetFn({
+      data: {
+        actor: await this.serverActor(context),
+        timesheetId: this.databaseId("timesheets", timesheetId),
+        decision,
+        ...(notes?.trim() ? { notes: notes.trim() } : {}),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const result = this.timesheetRepo
+      .list()
+      .find((item) => item.id === timesheetId || item.databaseId === timesheetId);
+    if (!result) throw new Error("The reviewed timesheet could not be reloaded.");
+    return result;
+  }
+
+  async copyPreviousWeekAsync(
+    employeeId: string,
+    currentPeriodId: string,
+    context: ActorContext,
+  ): Promise<TimesheetWithEntries> {
+    if (typeof window === "undefined")
+      return this.copyPreviousWeek(employeeId, currentPeriodId, context);
+    const settings = this.getSettings();
+    if (!settings.allowCopyPreviousWeek) throw new Error("Copying the previous week is disabled.");
+    const current = this.timesheetRepo
+      .list()
+      .find((item) => item.employeeId === employeeId && item.periodId === currentPeriodId);
+    const period = this.periodRepo.getById(currentPeriodId);
+    if (!current || !period) throw new Error("The current timesheet could not be found.");
+    if (current.status !== "Draft")
+      throw new Error("Only a draft timesheet can receive copied rows.");
+    const previousEnd = format(addDays(parseISO(period.startDate), -1), "yyyy-MM-dd");
+    const previousPeriod = this.getPeriods().find((item) => item.endDate === previousEnd);
+    const previous = previousPeriod
+      ? this.timesheetRepo
+          .list()
+          .find((item) => item.employeeId === employeeId && item.periodId === previousPeriod.id)
+      : undefined;
+    if (!previous?.entries.length) throw new Error("No entries were found in the previous week.");
+    const keys = new Set(
+      current.entries.map(
+        (entry) =>
+          `${entry.projectId}|${entry.costCentreId}|${entry.activityCodeId}|${entry.locationCodeId}`,
+      ),
+    );
+    const dayOffset = differenceInCalendarDays(
+      parseISO(period.startDate),
+      parseISO(previousPeriod!.startDate),
+    );
+    const additions = previous.entries
+      .filter((entry) => !entry.isLeave && !entry.isHoliday)
+      .filter(
+        (entry) =>
+          !keys.has(
+            `${entry.projectId}|${entry.costCentreId}|${entry.activityCodeId}|${entry.locationCodeId}`,
+          ),
+      )
+      .map((entry) => {
+        const hours = Object.fromEntries(
+          Object.entries(entry.hours).map(([date, value]) => [
+            format(addDays(parseISO(date), dayOffset), "yyyy-MM-dd"),
+            value,
+          ]),
+        );
+        return {
+          ...entry,
+          id: crypto.randomUUID(),
+          hours,
+          total: Object.values(hours).reduce((sum, value) => sum + value, 0),
+        };
+      });
+    return this.saveTimesheetDraftAsync(
+      { ...current, entries: [...current.entries, ...additions] },
+      context,
+    );
+  }
+
+  async setPeriodStatusAsync(
+    periodId: string,
+    status: "Open" | "Closed",
+    reason: string | undefined,
+    context: ActorContext,
+  ): Promise<void> {
+    if (typeof window === "undefined") {
+      if (status === "Closed") this.closePeriod(periodId, context);
+      else this.reopenPeriod(periodId, reason ?? "Period reopened", context);
+      return;
+    }
+    const { setTimesheetPeriodStatusFn } = await import("../server-functions/timesheet.server.ts");
+    await setTimesheetPeriodStatusFn({
+      data: {
+        actor: await this.serverActor(context),
+        periodId: this.databaseId("timesheetPeriods", periodId),
+        status,
+        ...(reason?.trim() ? { reason: reason.trim() } : {}),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+  }
+
+  async lockPayrollAsync(timesheetId: string, context: ActorContext): Promise<void> {
+    if (typeof window === "undefined") {
+      this.lockPayroll(timesheetId, context);
+      return;
+    }
+    const { lockTimesheetForPayrollFn } = await import("../server-functions/timesheet.server.ts");
+    await lockTimesheetForPayrollFn({
+      data: {
+        actor: await this.serverActor(context),
+        timesheetId: this.databaseId("timesheets", timesheetId),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+  }
+
+  async reopenTimesheetAsync(
+    timesheetId: string,
+    reason: string,
+    context: ActorContext,
+  ): Promise<TimesheetWithEntries> {
+    if (typeof window === "undefined") return this.reopenTimesheet(timesheetId, reason, context);
+    const { reopenTimesheetFn } = await import("../server-functions/timesheet.server.ts");
+    const databaseId = await reopenTimesheetFn({
+      data: {
+        actor: await this.serverActor(context),
+        timesheetId: this.databaseId("timesheets", timesheetId),
+        reason,
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const result = this.timesheetRepo
+      .list()
+      .find((item) => item.databaseId === databaseId || item.id === databaseId);
+    if (!result) throw new Error("The reopened timesheet could not be reloaded.");
+    return result;
+  }
+
   getSettings(): TimesheetSettings {
     const { storage } = getApplicationDataServices();
     const [stored] = storage.readCollection<TimesheetSettings>(SETTINGS_COLLECTION);

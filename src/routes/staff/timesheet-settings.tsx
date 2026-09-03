@@ -60,9 +60,14 @@ function TimesheetSettingsRoute() {
   const [reopenReason, setReopenReason] = useState("");
   const periods = tsService.getPeriods();
 
-  const handleClosePeriod = (periodId: string) => {
+  const handleClosePeriod = async (periodId: string) => {
     try {
-      tsService.closePeriod(periodId, currentUser.getActorContext());
+      await tsService.setPeriodStatusAsync(
+        periodId,
+        "Closed",
+        undefined,
+        currentUser.getActorContext(),
+      );
       toast.success("Period closed. No further timesheet changes are possible for it.");
       setRefreshKey((k) => k + 1);
     } catch (error) {
@@ -70,19 +75,24 @@ function TimesheetSettingsRoute() {
     }
   };
 
-  const handleSaveSettings = () => {
+  const handleSaveSettings = async () => {
     try {
-      tsService.saveSettings(settings, currentUser.getActorContext());
+      await tsService.saveSettingsAsync(settings, currentUser.getActorContext());
       toast.success("Timesheet settings saved.");
     } catch (error: unknown) {
       toast.error(error instanceof Error ? error.message : "Failed to save settings");
     }
   };
 
-  const handleReopenPeriod = () => {
+  const handleReopenPeriod = async () => {
     if (!reopenPeriodId) return;
     try {
-      tsService.reopenPeriod(reopenPeriodId, reopenReason, currentUser.getActorContext());
+      await tsService.setPeriodStatusAsync(
+        reopenPeriodId,
+        "Open",
+        reopenReason,
+        currentUser.getActorContext(),
+      );
       toast.success("Period reopened. Returned timesheets can now be corrected.");
       setReopenPeriodId(null);
       setReopenReason("");
@@ -92,13 +102,17 @@ function TimesheetSettingsRoute() {
     }
   };
 
-  const handleGeneratePeriods = () => {
+  const handleGeneratePeriods = async () => {
     if (!genStart || !genEnd) {
       toast.error("Please select start and end dates.");
       return;
     }
     try {
-      const count = tsService.generatePeriods(genStart, genEnd, currentUser.getActorContext());
+      const count = await tsService.generatePeriodsAsync(
+        genStart,
+        genEnd,
+        currentUser.getActorContext(),
+      );
       toast.success(`Generated ${count} new periods.`);
       setGenStart("");
       setGenEnd("");

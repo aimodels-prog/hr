@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -45,6 +45,18 @@ function PayrollPeriodsContent() {
   const actorContext = currentUser.getActorContext();
 
   const [periods, setPeriods] = useState(() => payrollService.getAllPeriods(actorContext));
+  useEffect(() => {
+    void payrollService
+      .getAllPeriodsAsync(actorContext)
+      .then(setPeriods)
+      .catch((error) =>
+        toast.error(
+          error instanceof Error ? error.message : "Payroll periods could not be loaded.",
+        ),
+      );
+    // The preview identity remounts this route when its actor changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payrollService]);
   const [showCreate, setShowCreate] = useState(false);
   const [newPeriod, setNewPeriod] = useState({
     name: format(new Date(), "MMMM yyyy"),
@@ -55,10 +67,9 @@ function PayrollPeriodsContent() {
     notes: "",
   });
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     try {
-      payrollService.createPeriod(newPeriod, actorContext);
-      setPeriods(payrollService.getAllPeriods(actorContext));
+      setPeriods(await payrollService.createPeriodAsync(newPeriod, actorContext));
       setShowCreate(false);
       toast.success("Payroll period created.");
     } catch (error: unknown) {
@@ -186,7 +197,7 @@ function PayrollPeriodsContent() {
             <Button variant="outline" onClick={() => setShowCreate(false)}>
               Cancel
             </Button>
-            <Button onClick={handleCreate}>Create Period</Button>
+            <Button onClick={() => void handleCreate()}>Create Period</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

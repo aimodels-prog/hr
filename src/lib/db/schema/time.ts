@@ -130,6 +130,7 @@ export const timesheets = pgTable(
       onDelete: "restrict",
     }),
     managerNotes: text("manager_notes"),
+    draftPayload: jsonb("draft_payload"),
     attendanceDiscrepancyExplanations: jsonb("attendance_discrepancy_explanations"),
     attendanceReconciliationSnapshot: jsonb("attendance_reconciliation_snapshot"),
     payrollPeriodId: uuid("payroll_period_id").references(() => payrollPeriods.id, {
@@ -141,7 +142,9 @@ export const timesheets = pgTable(
     ),
   },
   (table) => [
-    uniqueIndex("timesheets_employee_period_unique").on(table.employeeId, table.periodId),
+    uniqueIndex("timesheets_employee_period_unique")
+      .on(table.employeeId, table.periodId)
+      .where(sql`${table.archivedAt} IS NULL`),
     index("timesheets_org_status_idx").on(table.organisationId, table.status),
     index("timesheets_org_employee_idx").on(table.organisationId, table.employeeId),
     check("timesheets_expected_non_negative", sql`${table.expectedHours} >= 0`),
@@ -208,6 +211,8 @@ export const attendancePolicies = pgTable(
     lateGraceMinutes: integer("late_grace_minutes").notNull(),
     maximumLocationAccuracyMeters: integer("maximum_location_accuracy_meters").notNull(),
     signOutReminderOffsetsMinutes: integer("sign_out_reminder_offsets_minutes").array().notNull(),
+    antiSpoofingMode: text("anti_spoofing_mode").notNull().default("Approved Network"),
+    approvedNetworkCidrs: text("approved_network_cidrs").array().notNull().default([]),
   },
   (table) => [
     uniqueIndex("attendance_policies_org_unique").on(table.organisationId),
@@ -222,6 +227,7 @@ export const attendancePolicies = pgTable(
       "attendance_policies_three_reminders",
       sql`cardinality(${table.signOutReminderOffsetsMinutes}) = 3`,
     ),
+    check("attendance_policies_anti_spoofing", sql`${table.antiSpoofingMode} = 'Approved Network'`),
   ],
 );
 
@@ -304,6 +310,45 @@ export const attendanceRecords = pgTable(
       "attendance_records_longitude_range",
       sql`${table.capturedLongitude} IS NULL OR ${table.capturedLongitude} BETWEEN -180 AND 180`,
     ),
+  ],
+);
+
+/** Immutable punch evidence; attendance_records is the calculated daily projection. */
+export const attendancePunchEvents = pgTable(
+  "attendance_punch_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "restrict" }),
+    attendanceRecordId: uuid("attendance_record_id")
+      .notNull()
+      .references(() => attendanceRecords.id, { onDelete: "restrict" }),
+    employeeId: uuid("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "restrict" }),
+    direction: text("direction").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true, mode: "string" }).notNull(),
+    locationId: uuid("location_id")
+      .notNull()
+      .references(() => locations.id, { onDelete: "restrict" }),
+    latitude: doublePrecision("latitude").notNull(),
+    longitude: doublePrecision("longitude").notNull(),
+    accuracyMeters: doublePrecision("accuracy_meters").notNull(),
+    clientIp: text("client_ip").notNull(),
+    networkVerified: boolean("network_verified").notNull(),
+    createdBy: uuid("created_by").notNull(),
+  },
+  (table) => [
+    index("attendance_punch_events_record_idx").on(table.attendanceRecordId, table.occurredAt),
+    index("attendance_punch_events_employee_idx").on(
+      table.organisationId,
+      table.employeeId,
+      table.occurredAt,
+    ),
+    check("attendance_punch_events_direction", sql`${table.direction} IN ('in', 'out')`),
+    check("attendance_punch_events_accuracy", sql`${table.accuracyMeters} >= 0`),
+    check("attendance_punch_events_network", sql`${table.networkVerified}`),
   ],
 );
 
@@ -497,6 +542,9 @@ export const overtimeClaims = pgTable(
       table.status,
     ),
     index("overtime_claims_org_date_idx").on(table.organisationId, table.date),
+    uniqueIndex("overtime_claims_employee_date_active_unique")
+      .on(table.employeeId, table.date)
+      .where(sql`${table.archivedAt} IS NULL AND ${table.status} NOT IN ('Rejected', 'Corrected')`),
     check("overtime_claims_hours_range", sql`${table.hours} > 0 AND ${table.hours} <= 24`),
     check("overtime_claims_reason_not_blank", sql`btrim(${table.reason}) <> ''`),
     check("overtime_claims_compensation", sql`${table.compensationType} IN ('Payment', 'TOIL')`),

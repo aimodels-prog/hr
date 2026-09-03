@@ -29,6 +29,118 @@
       "when": 1788094226941,
       "tag": "0003_wakeful_bucky",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788151260771,
+      "tag": "0004_new_gravity",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788153123293,
+      "tag": "0005_fat_piledriver",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788169551518,
+      "tag": "0006_amazing_texas_twister",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788170400000,
+      "tag": "0007_recruitment_candidate_stage_values",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788229606566,
+      "tag": "0008_wandering_iron_patriot",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788248652113,
+      "tag": "0009_swift_the_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788248922702,
+      "tag": "0010_happy_the_phantom",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788249902510,
+      "tag": "0011_glossy_monster_badoon",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1788267787482,
+      "tag": "0012_chemical_alex_wilder",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1788268832742,
+      "tag": "0013_tough_naoko",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1788285363112,
+      "tag": "0014_giant_umar",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1788287848738,
+      "tag": "0015_talented_lenny_balinger",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1788311995374,
+      "tag": "0016_great_nekra",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1788323618040,
+      "tag": "0017_enforce_record_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1788323660019,
+      "tag": "0018_guard_tenant_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1788323959013,
+      "tag": "0019_refine_record_version_guard",
+      "breakpoints": true
     }
   ]
 }

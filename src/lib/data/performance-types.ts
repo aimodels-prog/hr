@@ -28,6 +28,7 @@ export interface ReviewSectionTemplate {
 }
 
 export interface ReviewTemplate extends BaseRecord {
+  databaseId?: string;
   name: string;
   description: string;
   isActive: boolean;
@@ -37,6 +38,7 @@ export interface ReviewTemplate extends BaseRecord {
 }
 
 export interface ReviewCycle extends BaseRecord {
+  databaseId?: string;
   name: string;
   templateId: RecordId;
   status: "Draft" | "Active" | "Completed";
@@ -84,6 +86,7 @@ export interface ReviewSectionInstance {
 }
 
 export interface PerformanceReview extends BaseRecord {
+  databaseId?: string;
   employeeId: RecordId;
   cycleId: RecordId;
   templateId: RecordId;

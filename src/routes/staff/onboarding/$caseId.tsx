@@ -61,8 +61,32 @@ function OnboardingCaseRoute() {
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
-  const actorContext = currentUser.getActorContext();
+  const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError("");
+    void Promise.all([
+      employeeService.hydrateCompatibilityCache(actorContext),
+      onboardingService.hydrateCompatibilityCache(actorContext),
+    ])
+      .then(() => {
+        if (active) setOnboardingCase(onboardingService.getCaseForViewer(caseId, actorContext));
+      })
+      .catch((error) => {
+        if (active)
+          setLoadError(error instanceof Error ? error.message : "Onboarding could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [actorContext, caseId, employeeService, onboardingService]);
   const hasAccess = onboardingCase
     ? onboardingService.canAccessCase(onboardingCase, actorContext)
     : true;
@@ -88,6 +112,12 @@ function OnboardingCaseRoute() {
     [actorContext, hasAccess, onboardingCase, onboardingService],
   );
 
+  if (loading) {
+    return <SafeMessage title="Loading onboarding" message="Retrieving the latest checklist..." />;
+  }
+  if (loadError) {
+    return <SafeMessage title="Onboarding could not be loaded" message={loadError} />;
+  }
   if (!onboardingCase) {
     return (
       <SafeMessage
@@ -178,12 +208,13 @@ function OnboardingCaseRoute() {
     }
   };
 
-  const handleReschedule = () => {
+  const handleReschedule = async () => {
     try {
-      const updated = onboardingService.rescheduleCase(onboardingCase.id, {
-        ...currentUser.getActorContext(),
-        reason: "Aligned onboarding dates after a start-date change",
-      });
+      const updated = await onboardingService.applyCaseActionAsync(
+        onboardingCase.id,
+        "reschedule",
+        currentUser.getActorContext(),
+      );
       setOnboardingCase(updated);
       toast.success("Open task dates updated");
     } catch (error) {
@@ -191,12 +222,14 @@ function OnboardingCaseRoute() {
     }
   };
 
-  const handleCancel = () => {
+  const handleCancel = async () => {
     try {
-      const updated = onboardingService.cancelCase(onboardingCase.id, cancelReason, {
-        ...currentUser.getActorContext(),
-        reason: cancelReason,
-      });
+      const updated = await onboardingService.applyCaseActionAsync(
+        onboardingCase.id,
+        "cancel",
+        currentUser.getActorContext(),
+        cancelReason,
+      );
       setOnboardingCase(updated);
       setCancelOpen(false);
       setCancelReason("");

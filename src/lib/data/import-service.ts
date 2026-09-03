@@ -1,4 +1,3 @@
-import * as XLSX from "xlsx";
 import type { CandidateService } from "./candidate-service.ts";
 import type { NewRecord } from "./repository.ts";
 import {
@@ -37,7 +36,7 @@ function normalizeMaritalStatus(raw: string): MaritalStatus | undefined {
 export interface SheetPreview {
   name: string;
   headers: string[];
-  rows: Record<string, unknown>[];
+  rows: Record<string, string>[];
   headerRowNumber: number;
 }
 
@@ -113,63 +112,109 @@ export interface DuplicateConflict {
 }
 
 export class ImportService {
-  async parseWorkbook(file: File): Promise<SheetPreview[]> {
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
-
-    const previews: SheetPreview[] = [];
-    workbook.SheetNames.forEach((sheetName) => {
-      const worksheet = workbook.Sheets[sheetName];
-      if (!worksheet) return;
-      const matrix = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
-        header: 1,
-        defval: "",
-        raw: false,
-      });
-      const headerTerms = [
-        "name",
-        "email",
-        "contact",
-        "phone",
-        "position",
-        "company",
-        "experience",
-        "nationality",
-        "project",
-        "status",
-      ];
-      const headerIndex =
-        matrix
-          .slice(0, 12)
-          .map((row, index) => ({
-            index,
-            score: row.filter((cell) => {
-              const normalized = String(cell)
-                .toLowerCase()
-                .replace(/[^a-z0-9]/g, "");
-              return headerTerms.some((term) => normalized.includes(term));
-            }).length,
-          }))
-          .sort((a, b) => b.score - a.score)[0]?.index ?? 0;
-      const headers = (matrix[headerIndex] || []).map((cell, index) => {
-        const value = String(cell).trim();
-        return value || `Unlabelled Column ${index + 1}`;
-      });
-      const json = matrix
-        .slice(headerIndex + 1)
-        .filter((row) => row.some((cell) => String(cell).trim()))
-        .map((row) =>
-          Object.fromEntries(headers.map((header, index) => [header, row[index] ?? ""])),
-        );
-
-      previews.push({
-        name: sheetName,
-        headers,
-        rows: json,
-        headerRowNumber: headerIndex + 1,
-      });
+  private async fileBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("The spreadsheet could not be read."));
+      reader.onload = () => {
+        const result = String(reader.result ?? "");
+        resolve(result.slice(result.indexOf(",") + 1));
+      };
+      reader.readAsDataURL(file);
     });
-    return previews;
+  }
+
+  async commitImportBatchAsync(
+    newCandidates: NormalizedCandidateRow[],
+    resolvedConflicts: DuplicateConflict[],
+    context: ActorContext,
+  ): Promise<{ inserted: number; updated: number; skipped: number }> {
+    const { importCandidatesFn } = await import("../server-functions/candidate.server.ts");
+    const { CandidateService } = await import("./candidate-service.ts");
+    const storage = getApplicationDataServices().storage;
+    const user = storage
+      .readCollection<{ id: string; workspaceEmail?: string }>("users")
+      .find((item) => item.id === context.actor.userId);
+    const toRow = (
+      row: NormalizedCandidateRow,
+      resolution: "create" | "merge" | "skip" | "create_separate",
+      existingCandidateId?: string,
+    ) => ({
+      sourceSheet: row._sourceSheet,
+      sourceRowIndex: row._sourceRowIndex,
+      firstName: row.firstName ?? "Unknown",
+      lastName: row.lastName ?? "Candidate",
+      email: row.email ?? "",
+      phone: row.phone ?? "",
+      location: row.location ?? "Unknown",
+      yearsOfExperience: row.yearsOfExperience ?? 0,
+      stage: row.stage ?? "Sourced",
+      resolution,
+      ...(existingCandidateId ? { existingCandidateId } : {}),
+      ...(row.nationality ? { nationality: row.nationality } : {}),
+      ...(row.currentCompany ? { currentCompany: row.currentCompany } : {}),
+      ...(row.currentTitle ? { currentTitle: row.currentTitle } : {}),
+      ...(row.shortlistStatus ? { shortlistStatus: row.shortlistStatus } : {}),
+      ...(row.trackerStatus ? { trackerStatus: row.trackerStatus } : {}),
+      ...(row.projectName ? { projectName: row.projectName } : {}),
+      ...(row.projectType ? { projectType: row.projectType } : {}),
+      ...(row.visaStatus ? { visaStatus: row.visaStatus } : {}),
+      ...(row.maritalStatus ? { maritalStatus: row.maritalStatus } : {}),
+      ...(row.noticePeriod ? { noticePeriod: row.noticePeriod } : {}),
+      ...(row.lastContactAt ? { lastContactAt: row.lastContactAt } : {}),
+      ...(row.interviewDate ? { interviewDate: row.interviewDate } : {}),
+      ...(row.currentSalary ? { currentSalary: row.currentSalary } : {}),
+      ...(row.expectedSalary ? { expectedSalary: row.expectedSalary } : {}),
+      ...(row.acceptedSalary ? { acceptedSalary: row.acceptedSalary } : {}),
+      ...(row.remarks ? { remarks: row.remarks } : {}),
+      ...(row.source ? { source: row.source } : {}),
+      ...(row.originalImportValues ? { originalImportValues: row.originalImportValues } : {}),
+    });
+    const result = await importCandidatesFn({
+      data: {
+        actor: {
+          actorId: context.actor.userId,
+          ...(context.actor.workspaceEmail || user?.workspaceEmail
+            ? { actorEmail: context.actor.workspaceEmail ?? user?.workspaceEmail }
+            : {}),
+          activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+        },
+        rows: [
+          ...newCandidates.map((row) => toRow(row, "create")),
+          ...resolvedConflicts.map((conflict) =>
+            toRow(
+              conflict.importedCandidate,
+              conflict.resolution ?? "skip",
+              conflict.existingCandidate.id,
+            ),
+          ),
+        ],
+        reason: context.reason || "Committed reviewed candidate spreadsheet import",
+      },
+    });
+    await new CandidateService().hydrateCompatibilityCache(context);
+    return { inserted: result.inserted, updated: result.updated, skipped: result.skipped };
+  }
+
+  async parseWorkbook(file: File, context: ActorContext): Promise<SheetPreview[]> {
+    const { parseCandidateSpreadsheetFn } = await import("../server-functions/candidate.server.ts");
+    const user = getApplicationDataServices()
+      .storage.readCollection<{ id: string; workspaceEmail?: string }>("users")
+      .find((item) => item.id === context.actor.userId);
+    return (await parseCandidateSpreadsheetFn({
+      data: {
+        actor: {
+          actorId: context.actor.userId,
+          ...(context.actor.workspaceEmail || user?.workspaceEmail
+            ? { actorEmail: context.actor.workspaceEmail ?? user?.workspaceEmail }
+            : {}),
+          activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+        },
+        fileName: file.name,
+        mimeType: file.type,
+        fileBase64: await this.fileBase64(file),
+      },
+    })) as SheetPreview[];
   }
 
   autoMapHeaders(headers: string[]): ImportMapping {

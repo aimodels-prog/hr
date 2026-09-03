@@ -9,6 +9,12 @@ import type {
   TrainingRequest,
   TrainingSession,
 } from "./training-types.ts";
+import {
+  hydrateTrainingCache,
+  trainingDatabaseId,
+  trainingMasterDataId,
+  trainingServerActor,
+} from "./training-cache.ts";
 import { SYSTEM_CONTEXT, type ActorContext, type Employee, type User } from "./types.ts";
 
 export class TrainingService {
@@ -45,6 +51,328 @@ export class TrainingService {
       storage,
       audit,
       { module: "training", entityType: "training-enrollment" },
+    );
+  }
+
+  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+    await hydrateTrainingCache(context);
+  }
+
+  private async refreshAfter<T>(operation: Promise<T>, context: ActorContext): Promise<T> {
+    const result = await operation;
+    await this.hydrateCompatibilityCache(context);
+    return result;
+  }
+
+  async saveCourseAsync(
+    input: Parameters<TrainingService["saveCourse"]>[0],
+    context: ActorContext,
+  ): Promise<TrainingCourse> {
+    const { saveTrainingCourseFn } = await import("../server-functions/training.server.ts");
+    const id = await this.refreshAfter(
+      saveTrainingCourseFn({
+        data: {
+          actor: await trainingServerActor(context),
+          course: {
+            ...(input.id
+              ? {
+                  courseId: trainingDatabaseId("training_courses", input.id),
+                  expectedVersion: this.courseRepo.getById(input.id)?.recordVersion,
+                }
+              : {}),
+            code: input.code.trim().toUpperCase(),
+            title: input.title,
+            description: input.description,
+            provider: input.provider,
+            category: input.category,
+            deliveryType: input.deliveryType,
+            durationHours: input.durationHours,
+            cost: input.cost,
+            currency: input.currency.trim().toUpperCase(),
+            ...(input.validityMonths ? { validityMonths: input.validityMonths } : {}),
+            ...(input.renewalIntervalMonths
+              ? { renewalIntervalMonths: input.renewalIntervalMonths }
+              : {}),
+            requiredRoles: input.requiredRoles,
+            requiredLocations: input.requiredLocations.map((value) =>
+              trainingMasterDataId("locations", value),
+            ),
+            requiredProjects: input.requiredProjects.map((value) =>
+              trainingMasterDataId("projects", value),
+            ),
+            isMandatory: input.isMandatory,
+            isActive: input.isActive,
+          },
+        },
+      }),
+      context,
+    );
+    return this.courseRepo.getById(id)!;
+  }
+
+  async archiveCourseAsync(courseId: string, reason: string, context: ActorContext): Promise<void> {
+    const { archiveTrainingCourseFn } = await import("../server-functions/training.server.ts");
+    await this.refreshAfter(
+      archiveTrainingCourseFn({
+        data: {
+          actor: await trainingServerActor(context),
+          courseId: trainingDatabaseId("training_courses", courseId),
+          archive: true,
+          reason,
+        },
+      }),
+      context,
+    );
+  }
+
+  async restoreCourseAsync(courseId: string, context: ActorContext): Promise<void> {
+    const { archiveTrainingCourseFn } = await import("../server-functions/training.server.ts");
+    await this.refreshAfter(
+      archiveTrainingCourseFn({
+        data: {
+          actor: await trainingServerActor(context),
+          courseId: trainingDatabaseId("training_courses", courseId),
+          archive: false,
+          reason: "Restored training course",
+        },
+      }),
+      context,
+    );
+  }
+
+  private async createRequestAsync(
+    employeeId: string,
+    courseId: string,
+    reason: string,
+    origin: TrainingRequest["origin"],
+    context: ActorContext,
+  ): Promise<void> {
+    const { createTrainingRequestFn } = await import("../server-functions/training.server.ts");
+    await this.refreshAfter(
+      createTrainingRequestFn({
+        data: {
+          actor: await trainingServerActor(context),
+          employeeId: trainingDatabaseId("employees", employeeId),
+          courseId: trainingDatabaseId("training_courses", courseId),
+          reason,
+          origin,
+        },
+      }),
+      context,
+    );
+  }
+
+  async submitRequestAsync(courseId: string, reason: string, context: ActorContext): Promise<void> {
+    if (!context.actor.employeeId) throw new Error("A linked employee profile is required.");
+    return this.createRequestAsync(
+      context.actor.employeeId,
+      courseId,
+      reason,
+      "Employee Request",
+      context,
+    );
+  }
+
+  async assignCourseAsync(
+    employeeId: string,
+    courseId: string,
+    reason: string,
+    context: ActorContext,
+  ): Promise<void> {
+    return this.createRequestAsync(
+      employeeId,
+      courseId,
+      reason,
+      context.actor.activeRole === "Line Manager" ? "Supervisor Assignment" : "HR Assignment",
+      context,
+    );
+  }
+
+  async decideRequestAsync(
+    requestId: string,
+    decision: "Approve" | "Reject",
+    comment: string,
+    context: ActorContext,
+  ): Promise<void> {
+    const { decideTrainingRequestFn } = await import("../server-functions/training.server.ts");
+    await this.refreshAfter(
+      decideTrainingRequestFn({
+        data: {
+          actor: await trainingServerActor(context),
+          requestId: trainingDatabaseId("training_requests", requestId),
+          stage:
+            context.actor.activeRole === "HR" || context.actor.activeRole === "Super Admin"
+              ? "HR"
+              : "Supervisor",
+          decision,
+          comment,
+        },
+      }),
+      context,
+    );
+  }
+
+  async withdrawRequestAsync(
+    requestId: string,
+    reason: string,
+    context: ActorContext,
+  ): Promise<void> {
+    const { withdrawTrainingRequestFn } = await import("../server-functions/training.server.ts");
+    await this.refreshAfter(
+      withdrawTrainingRequestFn({
+        data: {
+          actor: await trainingServerActor(context),
+          requestId: trainingDatabaseId("training_requests", requestId),
+          reason,
+        },
+      }),
+      context,
+    );
+  }
+
+  async saveSessionAsync(
+    input: Parameters<TrainingService["saveSession"]>[0],
+    context: ActorContext,
+  ): Promise<void> {
+    const { saveTrainingSessionFn } = await import("../server-functions/training.server.ts");
+    await this.refreshAfter(
+      saveTrainingSessionFn({
+        data: {
+          actor: await trainingServerActor(context),
+          session: {
+            ...(input.id
+              ? {
+                  sessionId: trainingDatabaseId("training_sessions", input.id),
+                  expectedVersion: this.sessionRepo.getById(input.id)?.recordVersion,
+                }
+              : {}),
+            courseId: trainingDatabaseId("training_courses", input.courseId),
+            title: input.title,
+            startAt: new Date(input.startAt).toISOString(),
+            endAt: new Date(input.endAt).toISOString(),
+            location: input.location,
+            facilitator: input.facilitator,
+            capacity: input.capacity,
+          },
+        },
+      }),
+      context,
+    );
+  }
+
+  async cancelSessionAsync(
+    sessionId: string,
+    reason: string,
+    context: ActorContext,
+  ): Promise<void> {
+    const { cancelTrainingSessionFn } = await import("../server-functions/training.server.ts");
+    await this.refreshAfter(
+      cancelTrainingSessionFn({
+        data: {
+          actor: await trainingServerActor(context),
+          sessionId: trainingDatabaseId("training_sessions", sessionId),
+          reason,
+        },
+      }),
+      context,
+    );
+  }
+
+  async scheduleEnrollmentAsync(
+    enrollmentId: string,
+    sessionId: string,
+    context: ActorContext,
+  ): Promise<void> {
+    const { scheduleTrainingAssignmentFn } = await import("../server-functions/training.server.ts");
+    await this.refreshAfter(
+      scheduleTrainingAssignmentFn({
+        data: {
+          actor: await trainingServerActor(context),
+          assignmentId: trainingDatabaseId("training_enrollments", enrollmentId),
+          sessionId: trainingDatabaseId("training_sessions", sessionId),
+        },
+      }),
+      context,
+    );
+  }
+
+  async recordAttendanceAsync(
+    enrollmentId: string,
+    attended: boolean,
+    reason: string,
+    context: ActorContext,
+  ): Promise<void> {
+    const { recordTrainingAttendanceFn } = await import("../server-functions/training.server.ts");
+    await this.refreshAfter(
+      recordTrainingAttendanceFn({
+        data: {
+          actor: await trainingServerActor(context),
+          assignmentId: trainingDatabaseId("training_enrollments", enrollmentId),
+          attended,
+          reason,
+        },
+      }),
+      context,
+    );
+  }
+
+  async cancelEnrollmentAsync(
+    enrollmentId: string,
+    reason: string,
+    context: ActorContext,
+  ): Promise<void> {
+    const { cancelTrainingAssignmentFn } = await import("../server-functions/training.server.ts");
+    await this.refreshAfter(
+      cancelTrainingAssignmentFn({
+        data: {
+          actor: await trainingServerActor(context),
+          assignmentId: trainingDatabaseId("training_enrollments", enrollmentId),
+          reason,
+        },
+      }),
+      context,
+    );
+  }
+
+  async completeEnrollmentAsync(
+    enrollmentId: string,
+    result: string,
+    completionDate: string,
+    actualCost: number,
+    context: ActorContext,
+  ): Promise<void> {
+    const { completeTrainingAssignmentFn } = await import("../server-functions/training.server.ts");
+    await this.refreshAfter(
+      completeTrainingAssignmentFn({
+        data: {
+          actor: await trainingServerActor(context),
+          assignmentId: trainingDatabaseId("training_enrollments", enrollmentId),
+          result,
+          completionDate,
+          actualCost,
+        },
+      }),
+      context,
+    );
+  }
+
+  async decideRecordAsync(
+    recordId: string,
+    decision: "Verify" | "Reject",
+    reason: string,
+    context: ActorContext,
+  ): Promise<void> {
+    const { decideTrainingRecordFn } = await import("../server-functions/training.server.ts");
+    await this.refreshAfter(
+      decideTrainingRecordFn({
+        data: {
+          actor: await trainingServerActor(context),
+          recordId: trainingDatabaseId("training_records", recordId),
+          decision,
+          reason,
+        },
+      }),
+      context,
     );
   }
 
@@ -700,6 +1028,40 @@ export class TrainingService {
     file: { blob: Blob; name: string },
     context: ActorContext,
   ): Promise<TrainingRecord> {
+    if (typeof window !== "undefined") {
+      const { addTrainingRecordFn } = await import("../server-functions/training.server.ts");
+      const extension = file.name.split(".").pop()?.toLowerCase();
+      const mimeType =
+        file.blob.type ||
+        (extension === "pdf"
+          ? "application/pdf"
+          : extension === "jpg" || extension === "jpeg"
+            ? "image/jpeg"
+            : extension === "png"
+              ? "image/png"
+              : "");
+      if (!(["application/pdf", "image/jpeg", "image/png"] as string[]).includes(mimeType))
+        throw new Error("Certificates must be PDF, JPG or PNG files.");
+      const id = await this.refreshAfter(
+        addTrainingRecordFn({
+          data: {
+            actor: await trainingServerActor(context),
+            employeeId: trainingDatabaseId("employees", data.employeeId),
+            title: data.title,
+            provider: data.provider,
+            completionDate: data.completionDate,
+            ...(data.expiryDate ? { expiryDate: data.expiryDate } : {}),
+            certificate: {
+              fileName: file.name,
+              mimeType: mimeType as "application/pdf" | "image/jpeg" | "image/png",
+              bytes: Array.from(new Uint8Array(await file.blob.arrayBuffer())),
+            },
+          },
+        }),
+        context,
+      );
+      return this.recordRepo.getById(id)!;
+    }
     this.assertCanAdd(data.employeeId, context);
     this.validateRecord(data);
     if (!file.name.trim() || file.blob.size === 0)
@@ -810,6 +1172,20 @@ export class TrainingService {
     recordId: string,
     context: ActorContext,
   ): Promise<{ blob: Blob; name: string; mimeType: string }> {
+    if (typeof window !== "undefined") {
+      const { readTrainingCertificateFn } = await import("../server-functions/training.server.ts");
+      const result = await readTrainingCertificateFn({
+        data: {
+          actor: await trainingServerActor(context),
+          recordId: trainingDatabaseId("training_records", recordId),
+        },
+      });
+      return {
+        blob: new Blob([Uint8Array.from(result.bytes)], { type: result.metadata.mimeType }),
+        name: result.metadata.name,
+        mimeType: result.metadata.mimeType,
+      };
+    }
     const record = this.recordRepo.getById(recordId);
     if (!record) throw new Error("Training record not found.");
     this.requireRead(record.employeeId, context, "view this certificate", record.id);

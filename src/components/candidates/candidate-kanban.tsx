@@ -3,15 +3,17 @@ import { useNavigate } from "@tanstack/react-router";
 import { Badge } from "@/components/ui/badge";
 import { ShieldAlert, Archive } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { Candidate } from "@/lib/data/types";
+import type { Candidate, CandidateApplication, Vacancy } from "@/lib/data/types";
+
+type KanbanCandidate = Candidate & { applications: CandidateApplication[] };
 
 interface CandidateKanbanProps {
-  candidates: any[];
+  candidates: KanbanCandidate[];
   projectNameById: Map<string, string>;
-  vacancies: any[];
+  vacancies: Vacancy[];
   userById: Map<string, string>;
   onStageChange: (candidateId: string, newStage: Candidate["stage"]) => void;
-  onArchive: (candidate: any) => void;
+  onArchive: (candidate: KanbanCandidate) => void;
 }
 
 const KANBAN_STAGES = [
@@ -82,7 +84,7 @@ export function CandidateKanban({
             </div>
             <div className="flex-1 p-2 space-y-2 overflow-y-auto">
               {stageCandidates.map((candidate) => {
-                const recentApp = candidate.applications.sort((a: any, b: any) =>
+                const recentApp = [...candidate.applications].sort((a, b) =>
                   b.createdAt.localeCompare(a.createdAt),
                 )[0];
                 const vacancy = recentApp

@@ -7,6 +7,7 @@ export type TrainingEnrollmentStatus =
   "Assigned" | "Scheduled" | "Attended" | "Completed" | "No Show" | "Cancelled";
 
 export interface TrainingCourse extends BaseRecord {
+  databaseId?: string;
   code: string;
   title: string;
   description: string;
@@ -26,6 +27,7 @@ export interface TrainingCourse extends BaseRecord {
 }
 
 export interface TrainingRequest extends BaseRecord {
+  databaseId?: string;
   employeeId: RecordId;
   courseId: RecordId;
   origin: "Employee Request" | "Supervisor Assignment" | "HR Assignment";
@@ -41,6 +43,7 @@ export interface TrainingRequest extends BaseRecord {
 }
 
 export interface TrainingSession extends BaseRecord {
+  databaseId?: string;
   courseId: RecordId;
   title: string;
   startAt: string;
@@ -52,6 +55,7 @@ export interface TrainingSession extends BaseRecord {
 }
 
 export interface TrainingEnrollment extends BaseRecord {
+  databaseId?: string;
   employeeId: RecordId;
   courseId: RecordId;
   requestId?: RecordId;
@@ -69,6 +73,7 @@ export interface TrainingEnrollment extends BaseRecord {
 }
 
 export interface TrainingRecord extends BaseRecord {
+  databaseId?: string;
   employeeId: RecordId;
   courseId?: RecordId;
   enrollmentId?: RecordId;

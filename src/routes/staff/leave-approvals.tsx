@@ -59,8 +59,6 @@ function LeaveApprovalsContent() {
     { open: false, request: null },
   );
   const [rejectReason, setRejectReason] = useState("");
-  const [recoveryRequest, setRecoveryRequest] = useState<LeaveRequest | null>(null);
-  const [recoveryReason, setRecoveryReason] = useState("");
 
   const loadData = useCallback(() => {
     if (currentUser.employeeId) {
@@ -79,17 +77,14 @@ function LeaveApprovalsContent() {
     loadData();
   }, [loadData]);
 
-  const handleApprove = (req: LeaveRequest) => {
-    if (
-      canCompleteHrReview &&
-      (req.status === "Pending Line Manager" || req.status === "Amendment Pending Line Manager")
-    ) {
-      setRecoveryRequest(req);
-      setRecoveryReason("");
-      return;
-    }
+  const handleApprove = async (req: LeaveRequest) => {
     try {
-      leaveService.approveRequest(req.id, currentUser.getActorContext());
+      await leaveService.decideRequestAsync(
+        req.id,
+        "approve",
+        undefined,
+        currentUser.getActorContext(),
+      );
       toast.success("Leave request approved.");
       loadData();
     } catch (error: unknown) {
@@ -97,34 +92,21 @@ function LeaveApprovalsContent() {
     }
   };
 
-  const handleReject = () => {
+  const handleReject = async () => {
     if (!rejectDialog.request) return;
     try {
-      leaveService.rejectRequest(rejectDialog.request.id, rejectReason, {
-        ...currentUser.getActorContext(),
-        reason: rejectReason.trim(),
-      });
+      await leaveService.decideRequestAsync(
+        rejectDialog.request.id,
+        "decline",
+        rejectReason,
+        currentUser.getActorContext(),
+      );
       toast.success("Leave request declined.");
       setRejectDialog({ open: false, request: null });
       setRejectReason("");
       loadData();
     } catch (error: unknown) {
       toast.error(error instanceof Error ? error.message : "Failed to reject request");
-    }
-  };
-
-  const confirmRecoveryApproval = () => {
-    if (!recoveryRequest) return;
-    try {
-      leaveService.approveRequest(recoveryRequest.id, {
-        ...currentUser.getActorContext(),
-        reason: recoveryReason.trim(),
-      });
-      toast.success("Supervisor review completed and sent to HR confirmation.");
-      setRecoveryRequest(null);
-      loadData();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "The recovery approval failed.");
     }
   };
 
@@ -277,16 +259,6 @@ function LeaveApprovalsContent() {
                           </div>
                         </div>
                       )}
-                    {isFinal &&
-                      (req.status === "Pending Line Manager" ||
-                        req.status === "Amendment Pending Line Manager") && (
-                        <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
-                          <AlertTriangle className="h-4 w-4 shrink-0" />
-                          This request is waiting for its assigned supervisor. HR may complete that
-                          step only as a documented recovery action.
-                        </div>
-                      )}
-
                     <div className="flex gap-2 justify-end pt-2">
                       <Button
                         variant="outline"
@@ -385,33 +357,6 @@ function LeaveApprovalsContent() {
               disabled={rejectReason.trim().length < 3}
             >
               Confirm Rejection
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Dialog
-        open={Boolean(recoveryRequest)}
-        onOpenChange={(open) => !open && setRecoveryRequest(null)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Complete unavailable supervisor review</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="leave-recovery-reason">Reason for HR recovery</Label>
-            <Textarea
-              id="leave-recovery-reason"
-              value={recoveryReason}
-              onChange={(event) => setRecoveryReason(event.target.value)}
-              placeholder="For example: assigned supervisor is inactive and the request cannot wait."
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRecoveryRequest(null)}>
-              Cancel
-            </Button>
-            <Button disabled={recoveryReason.trim().length < 5} onClick={confirmRecoveryApproval}>
-              Complete Supervisor Step
             </Button>
           </DialogFooter>
         </DialogContent>

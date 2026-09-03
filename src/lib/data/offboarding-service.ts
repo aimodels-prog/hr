@@ -10,6 +10,7 @@ import type {
 } from "./offboarding-types.ts";
 import type { ActorContext, Employee, Role, User } from "./types.ts";
 import { EmployeeService } from "./employee-service.ts";
+import { OnboardingService } from "./onboarding-service.ts";
 
 import { getApplicationDataServices } from "./application-data.ts";
 
@@ -35,6 +36,190 @@ export class OffboardingService {
       { module: "hr", entityType: "offboarding-template" },
     );
     this.seedDefaultTemplate();
+  }
+
+  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+    await new OnboardingService().hydrateCompatibilityCache(context);
+  }
+
+  private async serverActor(context: ActorContext) {
+    const { storage } = getApplicationDataServices();
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      storage.readCollection<User>("users").find((user) => user.id === context.actor.userId)
+        ?.workspaceEmail;
+    return {
+      actorId: context.actor.userId,
+      ...(actorEmail ? { actorEmail } : {}),
+      activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+    } as const;
+  }
+
+  async startCaseAsync(
+    employeeId: string,
+    reasonCategory: OffboardingReasonCategory,
+    noticeDate: string,
+    lastWorkingDate: string,
+    rehireEligible: boolean,
+    confidentialNotes: string | undefined,
+    context: ActorContext,
+    options: {
+      templateId: string;
+      assignedHRId: string;
+      confidentialityLevel: OffboardingConfidentialityLevel;
+    },
+  ): Promise<OffboardingCase> {
+    const { storage } = getApplicationDataServices();
+    const employees = storage.readCollection<Employee & { databaseId?: string }>("employees");
+    const users = storage.readCollection<User>("users");
+    const employee = employees.find((item) => item.id === employeeId);
+    const hrOwnerUser = users.find((item) => item.id === options.assignedHRId);
+    const hrOwner = employees.find((item) => item.id === hrOwnerUser?.employeeId);
+    const { startOffboardingCaseFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    const caseId = await startOffboardingCaseFn({
+      data: {
+        actor: await this.serverActor(context),
+        employeeId: employee?.databaseId ?? employeeId,
+        templateId: options.templateId,
+        assignedHRId: hrOwner?.databaseId ?? options.assignedHRId,
+        reasonCategory,
+        noticeDate,
+        lastWorkingDate,
+        confidentialityLevel: options.confidentialityLevel,
+        ...(confidentialNotes?.trim() ? { confidentialNotes: confidentialNotes.trim() } : {}),
+        rehireEligible,
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const created = this.casesRepo.getById(caseId);
+    if (!created) throw new Error("Offboarding was saved but could not be reloaded.");
+    return created;
+  }
+
+  async assignTaskOwnerAsync(
+    caseId: string,
+    taskId: string,
+    assignedUserId: string | undefined,
+    context: ActorContext,
+  ): Promise<OffboardingCase> {
+    const users = getApplicationDataServices().storage.readCollection<
+      User & { databaseId?: string }
+    >("users");
+    const assigned = assignedUserId ? users.find((user) => user.id === assignedUserId) : undefined;
+    const { assignOffboardingTaskFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    await assignOffboardingTaskFn({
+      data: {
+        actor: await this.serverActor(context),
+        caseId,
+        taskId,
+        ...(assignedUserId ? { assignedUserId: assigned?.databaseId ?? assignedUserId } : {}),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const updated = this.casesRepo.getById(caseId);
+    if (!updated) throw new Error("Offboarding was updated but could not be reloaded.");
+    return updated;
+  }
+
+  async applyActionAsync(
+    caseId: string,
+    action: "financial-clearance" | "legal-clearance" | "finalise",
+    context: ActorContext,
+  ): Promise<OffboardingCase> {
+    const { applyOffboardingActionFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    await applyOffboardingActionFn({
+      data: { actor: await this.serverActor(context), caseId, action },
+    });
+    await Promise.all([
+      this.hydrateCompatibilityCache(context),
+      this.empService.hydrateCompatibilityCache(context),
+    ]);
+    const updated = this.casesRepo.getById(caseId);
+    if (!updated) throw new Error("Offboarding was updated but could not be reloaded.");
+    return updated;
+  }
+
+  async cancelCaseAsync(
+    caseId: string,
+    reason: string,
+    context: ActorContext,
+  ): Promise<OffboardingCase> {
+    const { cancelOffboardingCaseFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    await cancelOffboardingCaseFn({
+      data: { actor: await this.serverActor(context), caseId, reason },
+    });
+    await Promise.all([
+      this.hydrateCompatibilityCache(context),
+      this.empService.hydrateCompatibilityCache(context),
+    ]);
+    const updated = this.casesRepo.getById(caseId);
+    if (!updated) throw new Error("Offboarding was updated but could not be reloaded.");
+    return updated;
+  }
+
+  async saveTemplateAsync(
+    template: OffboardingTemplate,
+    context: ActorContext,
+  ): Promise<OffboardingTemplate> {
+    const { storage } = getApplicationDataServices();
+    const users = storage.readCollection<User & { databaseId?: string }>("users");
+    const master = [
+      ...storage.readCollection<{ id: string; databaseId?: string; name: string }>("departments"),
+      ...storage.readCollection<{ id: string; databaseId?: string; name: string }>(
+        "employmentTypes",
+      ),
+    ];
+    const masterId = (value: string) =>
+      master.find((item) => item.id === value || item.name === value || item.databaseId === value)
+        ?.databaseId ?? value;
+    const { saveOffboardingTemplateFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    const id = await saveOffboardingTemplateFn({
+      data: {
+        actor: await this.serverActor(context),
+        template: {
+          id: template.id,
+          recordVersion: template.recordVersion,
+          name: template.name,
+          description: template.description,
+          isActive: template.isActive,
+          departments: template.departments.map(masterId),
+          employmentTypes: template.employmentTypes.map(masterId),
+          tasks: template.tasks.map((task) => ({
+            ...task,
+            ...(task.assignedUserId
+              ? {
+                  assignedUserId:
+                    users.find((user) => user.id === task.assignedUserId)?.databaseId ??
+                    task.assignedUserId,
+                }
+              : {}),
+          })),
+        },
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const saved = this.templatesRepo.getById(id);
+    if (!saved) throw new Error("The checklist was saved but could not be reloaded.");
+    return saved;
+  }
+
+  async archiveTemplateAsync(id: string, reason: string, context: ActorContext): Promise<void> {
+    const { archiveLifecycleTemplateFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    await archiveLifecycleTemplateFn({
+      data: {
+        actor: await this.serverActor(context),
+        workflow: "offboarding",
+        templateId: id,
+        reason,
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
   }
 
   private activeRole(context: ActorContext): Role | undefined {
@@ -728,6 +913,24 @@ export class OffboardingService {
     evidenceFileId?: string,
     waiverReason?: string,
   ) {
+    if (typeof window !== "undefined") {
+      const { updateOffboardingTaskFn } =
+        await import("../server-functions/core-hr-lifecycle.server.ts");
+      await updateOffboardingTaskFn({
+        data: {
+          actor: await this.serverActor(context),
+          caseId,
+          taskId,
+          status,
+          ...(evidenceFileId ? { evidenceFileId } : {}),
+          ...(waiverReason ? { waiverReason } : {}),
+        },
+      });
+      await this.hydrateCompatibilityCache(context);
+      const updated = this.casesRepo.getById(caseId);
+      if (!updated) throw new Error("Offboarding was updated but could not be reloaded.");
+      return updated;
+    }
     const c = this.casesRepo.getById(caseId);
     if (!c) throw new Error("Case not found");
     if (c.status === "Completed" || c.status === "Cancelled") {

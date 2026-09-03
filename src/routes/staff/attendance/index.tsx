@@ -133,15 +133,33 @@ function AttendanceAdminContent() {
   const [defaultBreak, setDefaultBreak] = useState(String(policy.defaultBreakMinutes));
   const [lateGrace, setLateGrace] = useState(String(policy.lateGraceMinutes));
   const [maxAccuracy, setMaxAccuracy] = useState(String(policy.maximumLocationAccuracyMeters));
+  const [approvedNetworks, setApprovedNetworks] = useState(
+    policy.approvedNetworkCidrs?.join(", ") ?? "",
+  );
+  const [policyReason, setPolicyReason] = useState("");
+  const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
 
   useEffect(() => {
-    const result = attendanceService.reconcileSiteVisits();
-    if (result.created || result.completed || result.exceptions) {
-      setRevision((value) => value + 1);
-    }
-  }, [attendanceService]);
+    let active = true;
+    const refresh = async () => {
+      try {
+        await attendanceService.hydrateFromDatabase(actorContext);
+        if (active) setRevision((value) => value + 1);
+      } catch (error) {
+        if (active)
+          toast.error(
+            error instanceof Error ? error.message : "Attendance could not be refreshed.",
+          );
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 60_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [actorContext, attendanceService]);
 
-  const actorContext = currentUser.getActorContext();
   const employees = employeeService
     .getEmployees(actorContext)
     .filter((employee) => !["Archived", "Inactive"].includes(employee.status));
@@ -178,7 +196,7 @@ function AttendanceAdminContent() {
       return row.status === statusFilter;
     });
 
-  const saveManualRecord = () => {
+  const saveManualRecord = async () => {
     try {
       const recordData: Parameters<AttendanceService["saveRecord"]>[0] = {
         employeeId: manualEmployeeId,
@@ -197,17 +215,16 @@ function AttendanceAdminContent() {
         isLate: false,
         isEarlyDeparture: false,
       };
-      if (editingRecordId) {
-        attendanceService.updateRecord(editingRecordId, recordData, {
+      await attendanceService.saveRecordAsync(
+        recordData,
+        {
           ...actorContext,
-          reason: "HR corrected an attendance record",
-        });
-      } else {
-        attendanceService.saveRecord(recordData, {
-          ...actorContext,
-          reason: "HR manual attendance entry",
-        });
-      }
+          reason: editingRecordId
+            ? "HR corrected an attendance record"
+            : "HR manual attendance entry",
+        },
+        editingRecordId ?? undefined,
+      );
       setManualOpen(false);
       setEditingRecordId(null);
       setRevision((value) => value + 1);
@@ -226,13 +243,16 @@ function AttendanceAdminContent() {
     }
   };
 
-  const commitCsv = () => {
+  const commitCsv = async () => {
     if (!csvPreview || csvPreview.errors.length > 0) return;
     try {
-      const imported = attendanceService.importRows(csvPreview.validRows, actorContext);
+      const imported = await attendanceService.importRowsAsync(csvPreview.validRows, {
+        ...actorContext,
+        reason: "Validated attendance CSV import",
+      });
       setCsvPreview(null);
       setRevision((value) => value + 1);
-      toast.success(`${imported.length} attendance records imported.`);
+      toast.success(`${imported} attendance records imported.`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Import failed.");
     }
@@ -253,7 +273,7 @@ function AttendanceAdminContent() {
     }
   };
 
-  const captureOffice = () => {
+  const captureOffice = async () => {
     if (!officeLocationId) {
       toast.error("Select the office location first.");
       return;
@@ -263,7 +283,7 @@ function AttendanceAdminContent() {
       return;
     }
     try {
-      const location = attendanceService.configureOfficeLocation(
+      const location = await attendanceService.configureOfficeLocation(
         officeLocationId,
         officePreview,
         Number(officeRadius),
@@ -278,9 +298,9 @@ function AttendanceAdminContent() {
     }
   };
 
-  const savePolicy = () => {
+  const savePolicy = async () => {
     try {
-      attendanceService.savePolicy(
+      await attendanceService.savePolicyAsync(
         {
           standardDailyHours: Number(standardHours),
           expectedClockIn: expectedIn,
@@ -290,8 +310,14 @@ function AttendanceAdminContent() {
           maximumLocationAccuracyMeters: Number(maxAccuracy),
           signOutReminderOffsetsMinutes: [0, 15, 30],
         },
+        approvedNetworks
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
+        policyReason,
         actorContext,
       );
+      setPolicyReason("");
       setRevision((value) => value + 1);
       toast.success("Attendance policy updated.");
     } catch (error) {
@@ -299,10 +325,15 @@ function AttendanceAdminContent() {
     }
   };
 
-  const decideVisit = (approve: boolean) => {
+  const decideVisit = async (approve: boolean) => {
     if (!reviewVisit) return;
     try {
-      attendanceService.reviewSiteVisit(reviewVisit.id, approve, decisionNotes, actorContext);
+      await attendanceService.reviewSiteVisitAsync(
+        reviewVisit.id,
+        approve,
+        decisionNotes,
+        actorContext,
+      );
       setReviewVisit(null);
       setDecisionNotes("");
       setRevision((value) => value + 1);
@@ -312,9 +343,13 @@ function AttendanceAdminContent() {
     }
   };
 
-  const assignCaseToMe = (item: AttendanceExceptionCase) => {
+  const assignCaseToMe = async (item: AttendanceExceptionCase) => {
     try {
-      attendanceService.assignExceptionCase(item.id, currentUser.userId, actorContext);
+      await attendanceService.investigateExceptionCaseAsync(
+        item.id,
+        { assignToMe: true },
+        actorContext,
+      );
       setRevision((value) => value + 1);
       toast.success("Case assigned to you.");
     } catch (error) {
@@ -322,10 +357,14 @@ function AttendanceAdminContent() {
     }
   };
 
-  const saveCaseNotes = () => {
+  const saveCaseNotes = async () => {
     if (!caseDialog) return;
     try {
-      attendanceService.updateExceptionCaseNotes(caseDialog.id, caseNotes, actorContext);
+      await attendanceService.investigateExceptionCaseAsync(
+        caseDialog.id,
+        { notes: caseNotes },
+        actorContext,
+      );
       setCaseDialog(null);
       setCaseNotes("");
       setRevision((value) => value + 1);
@@ -335,10 +374,10 @@ function AttendanceAdminContent() {
     }
   };
 
-  const resolveCase = () => {
+  const resolveCase = async () => {
     if (!caseDialog) return;
     try {
-      attendanceService.resolveExceptionCase(caseDialog.id, caseNotes, actorContext);
+      await attendanceService.resolveExceptionCaseAsync(caseDialog.id, caseNotes, actorContext);
       setCaseDialog(null);
       setCaseNotes("");
       setRevision((value) => value + 1);
@@ -426,11 +465,11 @@ function AttendanceAdminContent() {
             </div>
             <Button
               variant="outline"
-              onClick={() => {
+              onClick={async () => {
                 try {
                   downloadText(
                     `via-attendance-${date}.csv`,
-                    attendanceService.exportCsv(date, actorContext),
+                    await attendanceService.exportCsvAsync(date, actorContext),
                     "text/csv",
                   );
                 } catch (error) {
@@ -889,6 +928,26 @@ function AttendanceAdminContent() {
                   min="10"
                   value={maxAccuracy}
                   onChange={(event) => setMaxAccuracy(event.target.value)}
+                />
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <label className="text-sm font-medium">Approved office networks</label>
+                <Input
+                  value={approvedNetworks}
+                  onChange={(event) => setApprovedNetworks(event.target.value)}
+                  placeholder="Example: 203.0.113.24/32"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Enter the public IP address or network used by each VIA office, separated by
+                  commas. Attendance requires both this network and the office location.
+                </p>
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <label className="text-sm font-medium">Reason for change</label>
+                <Input
+                  value={policyReason}
+                  onChange={(event) => setPolicyReason(event.target.value)}
+                  placeholder="Why is the attendance policy changing?"
                 />
               </div>
               <Alert className="sm:col-span-2">

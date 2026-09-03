@@ -1,6 +1,6 @@
 import "@tanstack/react-start/server-only";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import { getDatabaseClient } from "../client.ts";
 import { appSettings, organisations } from "../schema/organisation.ts";
@@ -8,19 +8,10 @@ import { auditEvents } from "../schema/system.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 import type { AppSettings } from "../../data/types.ts";
 
-export async function getAppSettings(orgId: string): Promise<AppSettings> {
-  const db = getDatabaseClient();
-  const [settingsRow] = await db
-    .select()
-    .from(appSettings)
-    .where(eq(appSettings.organisationId, orgId));
-
-  const [orgRow] = await db.select().from(organisations).where(eq(organisations.id, orgId));
-
-  if (!settingsRow || !orgRow) {
-    throw new Error("Application settings have not been initialised.");
-  }
-
+function mapAppSettings(
+  settingsRow: typeof appSettings.$inferSelect,
+  orgRow: typeof organisations.$inferSelect,
+): AppSettings {
   return {
     id: settingsRow.id,
     createdAt: settingsRow.createdAt?.toISOString() ?? new Date().toISOString(),
@@ -46,16 +37,41 @@ export async function getAppSettings(orgId: string): Promise<AppSettings> {
   };
 }
 
+export async function getAppSettings(orgId: string): Promise<AppSettings> {
+  const db = getDatabaseClient();
+  const [settingsRow] = await db
+    .select()
+    .from(appSettings)
+    .where(eq(appSettings.organisationId, orgId));
+
+  const [orgRow] = await db.select().from(organisations).where(eq(organisations.id, orgId));
+
+  if (!settingsRow || !orgRow) {
+    throw new Error("Application settings have not been initialised.");
+  }
+
+  return mapAppSettings(settingsRow, orgRow);
+}
+
 export async function saveAppSettings(
   orgId: string,
   settings: AppSettings,
   actor: AuditActorContext,
 ): Promise<AppSettings> {
   const db = getDatabaseClient();
-  const previous = await getAppSettings(orgId);
 
   return db.transaction(async (tx) => {
     const now = new Date();
+
+    const [existing] = await tx
+      .select()
+      .from(appSettings)
+      .where(eq(appSettings.organisationId, orgId));
+    const [existingOrg] = await tx.select().from(organisations).where(eq(organisations.id, orgId));
+    if (!existing || !existingOrg) {
+      throw new Error("Application settings have not been initialised.");
+    }
+    const previous = mapAppSettings(existing, existingOrg);
 
     // Update organisation name
     await tx
@@ -68,34 +84,9 @@ export async function saveAppSettings(
       .where(eq(organisations.id, orgId));
 
     // Update or insert app settings
-    const [existing] = await tx
-      .select()
-      .from(appSettings)
-      .where(eq(appSettings.organisationId, orgId));
-
-    if (existing) {
-      await tx
-        .update(appSettings)
-        .set({
-          timezone: settings.timezone,
-          baseCurrency: settings.baseCurrency,
-          workingDays: settings.workingDays,
-          standardDailyHours: String(settings.standardDailyHours),
-          standardWeeklyHours: String(settings.standardWeeklyHours),
-          leaveYearStart: settings.leaveYearStart,
-          leaveYearEnd: settings.leaveYearEnd,
-          documentReminderDays: settings.documentReminderDays,
-          employeeNumberFormat: settings.employeeNumberFormat,
-          candidateReferenceFormat: settings.candidateReferenceFormat,
-          requireOnboardingCompletionBeforeDashboard:
-            settings.requireOnboardingCompletionBeforeDashboard,
-          updatedAt: now,
-          updatedBy: actor.userId ?? orgId,
-        })
-        .where(eq(appSettings.organisationId, orgId));
-    } else {
-      await tx.insert(appSettings).values({
-        organisationId: orgId,
+    await tx
+      .update(appSettings)
+      .set({
         timezone: settings.timezone,
         baseCurrency: settings.baseCurrency,
         workingDays: settings.workingDays,
@@ -108,10 +99,11 @@ export async function saveAppSettings(
         candidateReferenceFormat: settings.candidateReferenceFormat,
         requireOnboardingCompletionBeforeDashboard:
           settings.requireOnboardingCompletionBeforeDashboard,
-        createdBy: actor.userId ?? orgId,
+        updatedAt: now,
         updatedBy: actor.userId ?? orgId,
-      });
-    }
+        recordVersion: sql`${appSettings.recordVersion} + 1`,
+      })
+      .where(eq(appSettings.organisationId, orgId));
 
     const [updatedSettingsRow] = await tx
       .select()
@@ -127,29 +119,7 @@ export async function saveAppSettings(
       throw new Error("Failed to retrieve updated organisation settings.");
     }
 
-    const dto: AppSettings = {
-      id: updatedSettingsRow.id,
-      createdAt: updatedSettingsRow.createdAt?.toISOString() ?? new Date().toISOString(),
-      createdBy: updatedSettingsRow.createdBy,
-      updatedAt: updatedSettingsRow.updatedAt?.toISOString() ?? new Date().toISOString(),
-      updatedBy: updatedSettingsRow.updatedBy,
-      archivedAt: updatedSettingsRow.archivedAt?.toISOString() ?? undefined,
-      recordVersion: updatedSettingsRow.recordVersion ?? 1,
-      organisationName: updatedOrgRow.name,
-      timezone: updatedSettingsRow.timezone,
-      baseCurrency: updatedSettingsRow.baseCurrency,
-      workingDays: updatedSettingsRow.workingDays ?? [],
-      standardDailyHours: Number(updatedSettingsRow.standardDailyHours),
-      standardWeeklyHours: Number(updatedSettingsRow.standardWeeklyHours),
-      leaveYearStart: updatedSettingsRow.leaveYearStart,
-      leaveYearEnd: updatedSettingsRow.leaveYearEnd,
-      documentReminderDays: updatedSettingsRow.documentReminderDays ?? [],
-      employeeNumberFormat: updatedSettingsRow.employeeNumberFormat,
-      candidateReferenceFormat: updatedSettingsRow.candidateReferenceFormat,
-      schemaVersion: updatedSettingsRow.schemaVersion ?? 1,
-      requireOnboardingCompletionBeforeDashboard:
-        updatedSettingsRow.requireOnboardingCompletionBeforeDashboard ?? true,
-    };
+    const dto = mapAppSettings(updatedSettingsRow, updatedOrgRow);
 
     await tx.insert(auditEvents).values({
       organisationId: orgId,

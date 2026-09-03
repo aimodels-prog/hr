@@ -66,6 +66,7 @@ export function OfferDialog({
   const [withdrawReason, setWithdrawReason] = useState("");
   const [isWithdrawing, setIsWithdrawing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const canViewComp = currentUser.activeRole === "Super Admin" || currentUser.activeRole === "HR";
 
@@ -99,9 +100,9 @@ export function OfferDialog({
         setCurrency(vacancy?.salaryRange?.currency || "OMR");
       }
     }
-  }, [open, candidateId, vacancyId, offerService]);
+  }, [open, candidateId, vacancyId, currentUser, offerService]);
 
-  const handleSaveDraft = () => {
+  const handleSaveDraft = async () => {
     try {
       const payload = {
         candidateId,
@@ -120,68 +121,52 @@ export function OfferDialog({
         responseDeadline,
       };
 
-      if (offer) {
-        const updated = offerService.updateOffer(offer.id, payload, {
+      const saved = await offerService.saveOfferAsync(
+        payload,
+        {
           ...currentUser.getActorContext(),
-          reason: "Updated draft offer details",
-        });
-        setOffer(updated);
-        toast.success("Draft offer updated");
-      } else {
-        const newOffer = offerService.createOffer(payload, currentUser.getActorContext());
-        setOffer(newOffer);
-        toast.success("Draft offer created");
-      }
+          reason: offer ? "Updated draft offer details" : "Created draft offer",
+        },
+        offer ?? undefined,
+      );
+      setOffer(saved);
+      toast.success(offer ? "Draft offer updated" : "Draft offer created");
       onSuccess?.();
     } catch (error: unknown) {
       toast.error(error instanceof Error ? error.message : "Could not save the offer");
     }
   };
 
-  const handleGeneratePDF = () => {
+  const handleGenerateDocument = async () => {
     if (!offer) return;
-    const content = `
-      OFFICIAL JOB OFFER
-      ------------------
-      Date: ${new Date().toLocaleDateString()}
-      Position: ${offer.position}
-      Grade: ${offer.grade}
-      Location: ${offer.location}
-      
-      Start Date: ${offer.startDate}
-      Probation: ${offer.probation}
-      
-      COMPENSATION
-      ------------
-      Base Salary: ${offer.salary.toLocaleString()} ${offer.currency || "OMR"}
-      Allowances: ${offer.allowances}
-      Benefits: ${offer.benefits}
-      
-      CONDITIONS
-      ----------
-      ${offer.conditions}
-      
-      Please respond by: ${offer.responseDeadline}
-    `
-      .trim()
-      .replace(/^\s+/gm, "");
-
-    const blob = new Blob([content], { type: "text/plain;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.setAttribute("download", `Job_Offer_${offer.position.replace(/\s+/g, "_")}.txt`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    toast.success("Offer document generated");
+    setIsGenerating(true);
+    try {
+      const documentFile = await offerService.generateOfferDocumentAsync(
+        offer.id,
+        currentUser.getActorContext(),
+      );
+      const blob = new Blob([documentFile.content], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = documentFile.fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Offer document generated and recorded in Audit History");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not generate the offer document");
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const handleStatusChange = async (newStatus: JobOfferStatus, reason?: string) => {
     if (!offer) return;
     setIsSaving(true);
     try {
-      const updated = await offerService.transitionOffer(offer.id, newStatus, reason, {
+      const updated = await offerService.transitionOfferAsync(offer.id, newStatus, reason, {
         ...currentUser.getActorContext(),
         reason: reason || `Offer moved to ${newStatus}`,
       });
@@ -459,8 +444,8 @@ export function OfferDialog({
             {offer && ["Approved", "Ready to Send", "Sent", "Accepted"].includes(offer.status) && (
               <Button
                 variant="outline"
-                disabled={isSaving}
-                onClick={handleGeneratePDF}
+                disabled={isSaving || isGenerating}
+                onClick={() => void handleGenerateDocument()}
                 className="gap-2"
               >
                 <FileText className="h-4 w-4" /> Download Document

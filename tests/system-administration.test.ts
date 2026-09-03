@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  configureApplicationDataServices,
-  exportApplicationBackup,
-} from "../src/lib/data/application-data.ts";
+import { configureApplicationDataServices } from "../src/lib/data/application-data.ts";
 import { AuditService } from "../src/lib/data/audit-service.ts";
 import { EmployeeService } from "../src/lib/data/employee-service.ts";
 import { MasterDataService } from "../src/lib/data/master-data.ts";
@@ -42,16 +39,13 @@ function harness() {
   return { audit, storage };
 }
 
-test("organisation settings and backups require Super Admin", async () => {
+test("organisation settings require Super Admin", async () => {
   const { audit } = harness();
   const service = new SettingsService();
   const settings = service.getAppSettingsSync();
 
   await assert.rejects(service.saveAppSettings(settings, hr), /Only a Super Admin/);
-  assert.throws(() => exportApplicationBackup(hr), /Only a Super Admin/);
-  assert.match(exportApplicationBackup(superAdmin), /via-hr-structured-backup/);
   assert.ok(audit.list().some((event) => event.action === "access-denied"));
-  assert.ok(audit.list().some((event) => event.action === "export"));
 });
 
 test("master data writes are permission controlled, unique and dependency safe", async () => {

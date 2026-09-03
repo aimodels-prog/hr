@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -103,8 +103,31 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
   const [isReplacing, setIsReplacing] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [, setRefresh] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [rejectingDocumentId, setRejectingDocumentId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError("");
+    void documentService
+      .hydrateCompatibilityCache(currentUser.getActorContext())
+      .then(() => {
+        if (active) setRefresh((value) => value + 1);
+      })
+      .catch((error) => {
+        if (active)
+          setLoadError(error instanceof Error ? error.message : "Documents could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentUser, documentService, employeeId]);
 
   const allDocs = documentService
     .getDocuments(currentUser.getActorContext())
@@ -165,13 +188,7 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
   });
 
   const getActorContext = (reason: string) => ({
-    actor: {
-      userId: currentUser!.userId,
-      employeeId: currentUser!.employeeId,
-      displayName: currentUser!.displayName,
-      roles: currentUser!.assignedRoles,
-      activeRole: currentUser!.activeRole,
-    },
+    ...currentUser.getActorContext(),
     reason,
   });
 
@@ -249,10 +266,10 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
     }
   };
 
-  const handleVerify = (id: string, approve: boolean) => {
+  const handleVerify = async (id: string, approve: boolean) => {
     try {
       if (approve) {
-        documentService.verifyDocument(id, getActorContext("HR Verification"));
+        await documentService.verifyDocumentAsync(id, getActorContext("HR verification"));
         toast.success("Document verified");
       } else {
         setRejectingDocumentId(id);
@@ -264,10 +281,10 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
     }
   };
 
-  const rejectDocument = () => {
+  const rejectDocument = async () => {
     if (!rejectingDocumentId) return;
     try {
-      documentService.rejectDocument(
+      await documentService.rejectDocumentAsync(
         rejectingDocumentId,
         rejectionReason,
         getActorContext(rejectionReason),
@@ -300,6 +317,8 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
 
   return (
     <div className="space-y-6">
+      {loading && <p className="text-sm text-muted-foreground">Loading employee documents...</p>}
+      {loadError && <p className="text-sm text-destructive">{loadError}</p>}
       <div className="flex justify-between items-center">
         <h3 className="text-lg font-medium">Digital Employee File</h3>
         {(isSelf || isHrOrAdmin) && (

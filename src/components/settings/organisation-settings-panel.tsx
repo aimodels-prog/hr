@@ -17,6 +17,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { SettingsService } from "@/lib/data/settings-service";
+import type { AppSettings } from "@/lib/data/types";
 import { useCurrentUser } from "@/lib/auth";
 
 const orgSchema = z.object({
@@ -37,7 +38,7 @@ const numberingSchema = z.object({
 export function OrganisationSettingsPanel() {
   const { getActorContext } = useCurrentUser();
   const [settingsService] = useState(() => new SettingsService());
-  const [settings, setSettings] = useState<any>(null);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
   const [workingDays, setWorkingDays] = useState<number[]>([]);
   const [reminderDays, setReminderDays] = useState("");
 
@@ -55,17 +56,21 @@ export function OrganisationSettingsPanel() {
   });
 
   useEffect(() => {
-    settingsService.getAppSettings().then((data) => {
-      setSettings(data);
-      form.reset(data);
-      setWorkingDays(data.workingDays);
-      setReminderDays(data.documentReminderDays.join(", "));
-    }).catch(err => {
-      toast.error(err instanceof Error ? err.message : "Failed to load settings");
-    });
+    settingsService
+      .getAppSettings()
+      .then((data) => {
+        setSettings(data);
+        form.reset(data);
+        setWorkingDays(data.workingDays);
+        setReminderDays(data.documentReminderDays.join(", "));
+      })
+      .catch((err) => {
+        toast.error(err instanceof Error ? err.message : "Failed to load settings");
+      });
   }, [settingsService, form]);
 
   const onSubmit = async (values: z.infer<typeof orgSchema>) => {
+    if (!settings) return;
     try {
       const parsedReminderDays = reminderDays
         .split(",")
@@ -308,7 +313,7 @@ export function OrganisationSettingsPanel() {
 export function NumberingSettingsPanel() {
   const { getActorContext } = useCurrentUser();
   const [settingsService] = useState(() => new SettingsService());
-  const [settings, setSettings] = useState<any>(null);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
 
   const form = useForm<z.infer<typeof numberingSchema>>({
     resolver: zodResolver(numberingSchema),
@@ -319,18 +324,22 @@ export function NumberingSettingsPanel() {
   });
 
   useEffect(() => {
-    settingsService.getAppSettings().then((data) => {
-      setSettings(data);
-      form.reset({
-        employeeNumberFormat: data.employeeNumberFormat,
-        candidateReferenceFormat: data.candidateReferenceFormat,
+    settingsService
+      .getAppSettings()
+      .then((data) => {
+        setSettings(data);
+        form.reset({
+          employeeNumberFormat: data.employeeNumberFormat,
+          candidateReferenceFormat: data.candidateReferenceFormat,
+        });
+      })
+      .catch((err) => {
+        toast.error(err instanceof Error ? err.message : "Failed to load settings");
       });
-    }).catch(err => {
-      toast.error(err instanceof Error ? err.message : "Failed to load settings");
-    });
   }, [settingsService, form]);
 
   const onSubmit = async (values: z.infer<typeof numberingSchema>) => {
+    if (!settings) return;
     try {
       const updated = await settingsService.saveAppSettings(
         { ...settings, ...values },

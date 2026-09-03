@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -81,6 +81,32 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
   const [obService] = useState(() => new OnboardingService());
   const [taskActions] = useState(() => new LifecycleTaskService());
   const [, setRefreshKey] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    const context = getActorContext();
+    setLoading(true);
+    setLoadError("");
+    void Promise.all([
+      empService.hydrateCompatibilityCache(context),
+      obService.hydrateCompatibilityCache(context),
+    ])
+      .then(() => {
+        if (active) setRefreshKey((value) => value + 1);
+      })
+      .catch((error) => {
+        if (active)
+          setLoadError(error instanceof Error ? error.message : "Onboarding could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [employeeId, empService, getActorContext, obService]);
 
   const employee = empService.getById(employeeId, getActorContext());
   const obCase = obService.getCaseByEmployeeId(employeeId, getActorContext());
@@ -96,26 +122,23 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
 
   const refresh = () => setRefreshKey((k) => k + 1);
 
-  const completeTask = async (taskId: string, evidenceFileId?: string) => {
-    if (!obCase) return;
-    const updated = await obService.updateTaskStatus(
-      obCase.id,
-      taskId,
-      "Completed",
-      getActorContext(),
-      evidenceFileId,
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="py-10 text-center text-muted-foreground">
+          Loading your onboarding checklist...
+        </CardContent>
+      </Card>
     );
-    if (onAllComplete) {
-      const stillOutstanding = updated.tasks.some(
-        (t) =>
-          t.ownerRole === "Employee" &&
-          t.isMandatory &&
-          t.status !== "Completed" &&
-          t.status !== "Waived",
-      );
-      if (!stillOutstanding) onAllComplete();
-    }
-  };
+  }
+
+  if (loadError) {
+    return (
+      <Card className="border-destructive/40">
+        <CardContent className="py-10 text-center text-destructive">{loadError}</CardContent>
+      </Card>
+    );
+  }
 
   if (!employee) {
     return (
@@ -227,10 +250,27 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
           employee={employee}
           task={personalTask}
           done={isTaskDone(personalTask)}
-          onSubmit={(changes) => {
+          onSubmit={async (changes) => {
             try {
-              empService.submitSelfServiceOnboardingDetails(employeeId, changes, getActorContext());
-              if (!isTaskDone(personalTask)) completeTask(personalTask.id);
+              await obService.submitSelfServiceAsync(
+                obCase.id,
+                personalTask.id,
+                {
+                  kind: "personal_details",
+                  details: {
+                    dateOfBirth: changes.dateOfBirth,
+                    gender: changes.gender,
+                    nationality: changes.nationality,
+                    maritalStatus: changes.maritalStatus,
+                    phone: changes.phone,
+                    ...(changes.personalEmail ? { personalEmail: changes.personalEmail } : {}),
+                    address: changes.address,
+                    emergencyContacts: changes.emergencyContacts,
+                    ...(changes.dependants ? { dependants: changes.dependants } : {}),
+                  },
+                },
+                getActorContext(),
+              );
               toast.success("Personal details saved");
               refresh();
             } catch (error: unknown) {
@@ -247,14 +287,23 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
           employee={employee}
           task={bankTask}
           done={isTaskDone(bankTask)}
-          onSubmit={(bankDetails) => {
+          onSubmit={async (bankDetails) => {
             try {
-              empService.submitSelfServiceOnboardingDetails(
-                employeeId,
-                { bankDetails },
+              await obService.submitSelfServiceAsync(
+                obCase.id,
+                bankTask.id,
+                {
+                  kind: "bank_details",
+                  details: {
+                    bankName: bankDetails.bankName,
+                    accountNumber: bankDetails.accountNumber,
+                    iban: bankDetails.iban,
+                    ...(bankDetails.swiftCode ? { swiftCode: bankDetails.swiftCode } : {}),
+                    ...(bankDetails.branch ? { branch: bankDetails.branch } : {}),
+                  },
+                },
                 getActorContext(),
               );
-              if (!isTaskDone(bankTask)) completeTask(bankTask.id);
               toast.success("Bank details saved");
               refresh();
             } catch (error: unknown) {

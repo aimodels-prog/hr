@@ -100,11 +100,11 @@ export function UserManagementPanel() {
       checked ? Array.from(new Set([...current, role])) : current.filter((item) => item !== role),
     );
 
-  const save = () => {
+  const save = async () => {
     if (!selected) return;
     setSaving(true);
     try {
-      service.updateUserAccess(selected.id, roles, status, reason, getActorContext());
+      await service.updateUserAccessAsync(selected.id, roles, status, reason, getActorContext());
       toast.success(`${selected.displayName}'s access has been updated`);
       setSelected(null);
       setUsers(service.getUsers(getActorContext(), { includeArchived: true }));

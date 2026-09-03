@@ -7,6 +7,11 @@ import { EmployeeService } from "./employee-service.ts";
 import type { PerformanceReview } from "./performance-types.ts";
 import { LocalRepository } from "./repository.ts";
 import { SYSTEM_CONTEXT, type ActorContext, type BaseRecord, type User } from "./types.ts";
+import {
+  hydratePerformanceCache,
+  performanceDatabaseId,
+  performanceServerActor,
+} from "./performance-cache.ts";
 
 export type GoalStatus =
   | "Draft"
@@ -27,6 +32,7 @@ export interface GoalCheckIn {
 }
 
 export interface EmployeeGoal extends BaseRecord {
+  databaseId?: string;
   employeeId: string;
   cycleId: string;
   title: string;
@@ -83,6 +89,153 @@ export class GoalService {
         entityType: "performance-review",
       },
     );
+  }
+
+  async hydrateCompatibilityCache(context: ActorContext) {
+    await hydratePerformanceCache(context);
+  }
+
+  async getGoalsForEmployeeAsync(employeeId: string, context: ActorContext, cycleId?: string) {
+    await this.hydrateCompatibilityCache(context);
+    return this.getGoalsForEmployee(employeeId, context, cycleId);
+  }
+
+  async createGoalAsync(input: GoalDraftInput, context: ActorContext) {
+    const { saveGoalFn } = await import("../server-functions/performance.server.ts");
+    await saveGoalFn({
+      data: {
+        actor: await performanceServerActor(context),
+        goal: {
+          ...input,
+          employeeId: performanceDatabaseId("employees", input.employeeId),
+          cycleId: performanceDatabaseId("performanceCycles", input.cycleId),
+        },
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    return this.getGoalsForEmployee(input.employeeId, context, input.cycleId);
+  }
+
+  async updateGoalAsync(
+    goalId: string,
+    updates: Partial<Omit<GoalDraftInput, "employeeId" | "cycleId">>,
+    context: ActorContext,
+  ) {
+    await this.hydrateCompatibilityCache(context);
+    const goal = this.requireGoal(goalId);
+    const { saveGoalFn } = await import("../server-functions/performance.server.ts");
+    await saveGoalFn({
+      data: {
+        actor: await performanceServerActor(context),
+        goalId: performanceDatabaseId("employeeGoals", goal.id),
+        expectedVersion: goal.recordVersion,
+        goal: {
+          employeeId: performanceDatabaseId("employees", goal.employeeId),
+          cycleId: performanceDatabaseId("performanceCycles", goal.cycleId),
+          title: updates.title ?? goal.title,
+          description: updates.description ?? goal.description,
+          successMeasure: updates.successMeasure ?? goal.successMeasure,
+          targetValue: updates.targetValue ?? goal.targetValue,
+          startDate: updates.startDate ?? goal.startDate,
+          dueDate: updates.dueDate ?? goal.dueDate,
+          weight: updates.weight ?? goal.weight,
+        },
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    return this.requireGoal(goalId);
+  }
+
+  async submitCycleGoalsForApprovalAsync(
+    employeeId: string,
+    cycleId: string,
+    context: ActorContext,
+  ) {
+    const { submitGoalsFn } = await import("../server-functions/performance.server.ts");
+    await submitGoalsFn({
+      data: {
+        actor: await performanceServerActor(context),
+        employeeId: performanceDatabaseId("employees", employeeId),
+        cycleId: performanceDatabaseId("performanceCycles", cycleId),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    return this.getGoalsForEmployee(employeeId, context, cycleId);
+  }
+
+  async decideGoalAsync(
+    goalId: string,
+    decision: "approve" | "return" | "complete",
+    feedback: string | undefined,
+    context: ActorContext,
+  ) {
+    const { decideGoalFn } = await import("../server-functions/performance.server.ts");
+    await decideGoalFn({
+      data: {
+        actor: await performanceServerActor(context),
+        goalId: performanceDatabaseId("employeeGoals", goalId),
+        decision,
+        ...(feedback ? { feedback } : {}),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    return this.requireGoal(goalId);
+  }
+
+  async recordProgressAsync(
+    goalId: string,
+    progressPercent: number,
+    progressComment: string,
+    evidence: File | null,
+    context: ActorContext,
+  ) {
+    const { recordGoalProgressFn } = await import("../server-functions/performance.server.ts");
+    let upload:
+      | {
+          fileName: string;
+          mimeType: "application/pdf" | "image/jpeg" | "image/png";
+          bytes: number[];
+        }
+      | undefined;
+    if (evidence) {
+      const name = evidence.name.toLowerCase();
+      const mimeType =
+        evidence.type === "application/pdf" || name.endsWith(".pdf")
+          ? "application/pdf"
+          : evidence.type === "image/jpeg" || name.endsWith(".jpg") || name.endsWith(".jpeg")
+            ? "image/jpeg"
+            : evidence.type === "image/png" || name.endsWith(".png")
+              ? "image/png"
+              : null;
+      if (!mimeType) throw new Error("Upload a PDF, JPG or PNG file.");
+      upload = {
+        fileName: evidence.name,
+        mimeType,
+        bytes: Array.from(new Uint8Array(await evidence.arrayBuffer())),
+      };
+    }
+    await recordGoalProgressFn({
+      data: {
+        actor: await performanceServerActor(context),
+        goalId: performanceDatabaseId("employeeGoals", goalId),
+        progressPercent,
+        comment: progressComment,
+        ...(upload ? { evidence: upload } : {}),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    return this.requireGoal(goalId);
+  }
+
+  async archiveGoalAsync(goalId: string, context: ActorContext) {
+    const { archiveGoalFn } = await import("../server-functions/performance.server.ts");
+    await archiveGoalFn({
+      data: {
+        actor: await performanceServerActor(context),
+        goalId: performanceDatabaseId("employeeGoals", goalId),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
   }
 
   getGoalsForEmployee(employeeId: string, context: ActorContext, cycleId?: string): EmployeeGoal[] {
@@ -169,6 +322,21 @@ export class GoalService {
     checkInId: string,
     context: ActorContext,
   ): Promise<{ blob: Blob; name: string; mimeType: string }> {
+    if (typeof window !== "undefined") {
+      const { readGoalEvidenceFn } = await import("../server-functions/performance.server.ts");
+      const result = await readGoalEvidenceFn({
+        data: {
+          actor: await performanceServerActor(context),
+          goalId: performanceDatabaseId("employeeGoals", goalId),
+          checkInId,
+        },
+      });
+      return {
+        blob: new Blob([Uint8Array.from(result.bytes)], { type: result.metadata.mimeType }),
+        name: result.metadata.name,
+        mimeType: result.metadata.mimeType,
+      };
+    }
     const goal = this.requireGoal(goalId);
     this.requireEmployeeRead(goal.employeeId, context, "view this objective evidence", goal.id);
     const checkIn = goal.checkIns.find((item) => item.id === checkInId);

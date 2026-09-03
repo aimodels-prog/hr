@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Copy, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -64,13 +64,33 @@ export function OffboardingTemplatesPanel({ onChanged }: { onChanged?: () => voi
   const [editing, setEditing] = useState<OffboardingTemplate | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<OffboardingTemplate | null>(null);
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
   const users = employeeService
     .getUsers(currentUser.getActorContext())
     .filter((user) => user.status === "Active");
-  const refresh = () => {
+  const refresh = useCallback(() => {
     setTemplates(service.getTemplates(currentUser.getActorContext()));
     onChanged?.();
-  };
+  }, [currentUser, onChanged, service]);
+  useEffect(() => {
+    let active = true;
+    void Promise.all([
+      employeeService.hydrateCompatibilityCache(currentUser.getActorContext()),
+      service.hydrateCompatibilityCache(currentUser.getActorContext()),
+    ])
+      .then(() => {
+        if (active) refresh();
+      })
+      .catch((error) =>
+        toast.error(error instanceof Error ? error.message : "Checklists could not be loaded."),
+      )
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentUser, employeeService, refresh, service]);
   const blankTemplate = (): OffboardingTemplate => {
     const now = new Date().toISOString();
     return {
@@ -110,11 +130,11 @@ export function OffboardingTemplatesPanel({ onChanged }: { onChanged?: () => voi
         : current,
     );
 
-  const save = () => {
+  const save = async () => {
     if (!editing) return;
     setSaving(true);
     try {
-      service.saveTemplate(editing, {
+      await service.saveTemplateAsync(editing, {
         ...currentUser.getActorContext(),
         reason: "Saved offboarding clearance template",
       });
@@ -127,13 +147,14 @@ export function OffboardingTemplatesPanel({ onChanged }: { onChanged?: () => voi
       setSaving(false);
     }
   };
-  const archive = () => {
+  const archive = async () => {
     if (!archiveTarget) return;
     try {
-      service.deleteTemplate(archiveTarget.id, {
-        ...currentUser.getActorContext(),
-        reason: "Archived offboarding clearance template",
-      });
+      await service.archiveTemplateAsync(
+        archiveTarget.id,
+        "Archived offboarding clearance template",
+        currentUser.getActorContext(),
+      );
       toast.success("Clearance template archived");
       setArchiveTarget(null);
       refresh();
@@ -144,6 +165,7 @@ export function OffboardingTemplatesPanel({ onChanged }: { onChanged?: () => voi
 
   return (
     <div className="space-y-6">
+      {loading && <p className="text-sm text-muted-foreground">Loading clearance templates...</p>}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold">Offboarding clearance templates</h2>

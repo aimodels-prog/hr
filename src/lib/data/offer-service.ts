@@ -91,6 +91,141 @@ export class OfferService {
     });
   }
 
+  private serverActor(context: ActorContext) {
+    const user = getApplicationDataServices()
+      .storage.readCollection<{ id: string; workspaceEmail?: string }>("users")
+      .find((item) => item.id === context.actor.userId);
+    return {
+      actorId: context.actor.userId,
+      ...(context.actor.workspaceEmail || user?.workspaceEmail
+        ? { actorEmail: context.actor.workspaceEmail ?? user?.workspaceEmail }
+        : {}),
+      activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+    };
+  }
+
+  private databaseVacancyId(id: string): string {
+    const vacancy = getApplicationDataServices()
+      .storage.readCollection<{ id: string; databaseId?: string }>("vacancies")
+      .find((item) => item.id === id || item.databaseId === id);
+    const databaseId = vacancy?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
+    if (!databaseId) throw new Error("The vacancy is not connected to PostgreSQL.");
+    return databaseId;
+  }
+
+  private async refresh(context: ActorContext): Promise<void> {
+    await Promise.all([
+      new CandidateService().hydrateCompatibilityCache(context),
+      new EmployeeService().hydrateCompatibilityCache(context),
+      new VacancyService().hydrateCompatibilityCache(context),
+    ]);
+  }
+
+  async finalizeDecisionAsync(
+    vacancyId: string,
+    selectedCandidateId: string,
+    overrideReason: string | undefined,
+    waiverReason: string | undefined,
+    context: ActorContext,
+  ): Promise<HiringDecisionSnapshot> {
+    const { finaliseHiringDecisionFn } = await import("../server-functions/offer.server.ts");
+    const id = await finaliseHiringDecisionFn({
+      data: {
+        actor: this.serverActor(context),
+        vacancyId: this.databaseVacancyId(vacancyId),
+        selectedCandidateId,
+        ...(overrideReason ? { overrideReason } : {}),
+        ...(waiverReason ? { waiverReason } : {}),
+      },
+    });
+    await this.refresh(context);
+    return this.decisionRepo.getById(id)!;
+  }
+
+  async saveOfferAsync(
+    payload: Omit<
+      JobOffer,
+      | keyof import("./types").BaseRecord
+      | "status"
+      | "history"
+      | "convertedToEmployeeId"
+      | "sentDate"
+      | "deliveryReference"
+      | "declineReason"
+    >,
+    context: ActorContext,
+    existing?: JobOffer,
+  ): Promise<JobOffer> {
+    const { saveJobOfferFn } = await import("../server-functions/offer.server.ts");
+    const id = await saveJobOfferFn({
+      data: {
+        actor: this.serverActor(context),
+        ...(existing ? { id: existing.id, expectedRecordVersion: existing.recordVersion } : {}),
+        ...payload,
+        vacancyId: this.databaseVacancyId(payload.vacancyId),
+      },
+    });
+    await this.refresh(context);
+    return this.getOfferById(id, context)!;
+  }
+
+  async transitionOfferAsync(
+    id: string,
+    status: JobOfferStatus,
+    transitionReason: string | undefined,
+    context: ActorContext,
+  ): Promise<JobOffer> {
+    const { transitionJobOfferFn } = await import("../server-functions/offer.server.ts");
+    await transitionJobOfferFn({
+      data: {
+        actor: this.serverActor(context),
+        offerId: id,
+        status,
+        ...(transitionReason ? { reason: transitionReason } : {}),
+      },
+    });
+    await this.refresh(context);
+    return this.getOfferById(id, context)!;
+  }
+
+  async generateOfferDocumentAsync(
+    id: string,
+    context: ActorContext,
+  ): Promise<{ fileName: string; content: string }> {
+    const { generateJobOfferDocumentFn } = await import("../server-functions/offer.server.ts");
+    return generateJobOfferDocumentFn({
+      data: { actor: this.serverActor(context), offerId: id },
+    });
+  }
+
+  async prepareManualInterviewHireAsync(
+    interviewId: string,
+    details: {
+      position: string;
+      department: string;
+      location: string;
+      employmentType: string;
+      grade: string;
+    },
+    reason: string,
+    context: ActorContext,
+  ): Promise<{ vacancy: Vacancy; decision: HiringDecisionSnapshot }> {
+    const { prepareManualInterviewHireFn } = await import("../server-functions/offer.server.ts");
+    const result = await prepareManualInterviewHireFn({
+      data: {
+        actor: this.serverActor(context),
+        interviewId,
+        details,
+        reason,
+      },
+    });
+    await this.refresh(context);
+    const vacancy = new VacancyService().getVacancyRepository().getById(result.vacancyId);
+    const decision = this.decisionRepo.getById(result.decisionId);
+    if (!vacancy || !decision) throw new Error("The direct-hire record could not be refreshed.");
+    return { vacancy, decision };
+  }
+
   private requireOfferView(context: ActorContext, entityId: string): void {
     if (context.actor.activeRole === "HR" || context.actor.activeRole === "Super Admin") return;
     recordAccessDenied(getApplicationDataServices().audit, {

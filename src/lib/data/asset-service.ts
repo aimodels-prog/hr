@@ -1,6 +1,7 @@
 import { LocalRepository, type NewRecord } from "./repository.ts";
 import type { AssetAssignment, AssetCondition } from "./asset-types.ts";
 import type { ActorContext } from "./types.ts";
+import type { Employee, User } from "./types.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 
 export class AssetService {
@@ -12,6 +13,89 @@ export class AssetService {
       module: "hr",
       entityType: "asset-assignment",
     });
+  }
+
+  private async serverActor(context: ActorContext) {
+    const users = getApplicationDataServices().storage.readCollection<User>("users");
+    const actorEmail =
+      context.actor.workspaceEmail ??
+      users.find((user) => user.id === context.actor.userId)?.workspaceEmail;
+    return {
+      actorId: context.actor.userId,
+      ...(actorEmail ? { actorEmail } : {}),
+      activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+    } as const;
+  }
+
+  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+    if (typeof window === "undefined") return;
+    const { getCompanyAssetAssignmentsFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    const assignments = await getCompanyAssetAssignmentsFn({
+      data: { actor: await this.serverActor(context) },
+    });
+    const { storage } = getApplicationDataServices();
+    const employees = storage.readCollection<Employee & { databaseId?: string }>("employees");
+    const employeeIdMap = new Map(
+      employees.filter((item) => item.databaseId).map((item) => [item.databaseId!, item.id]),
+    );
+    storage.writeCollection(
+      "assetAssignments",
+      assignments.map((assignment) => ({
+        ...assignment,
+        employeeId: employeeIdMap.get(assignment.employeeId) ?? assignment.employeeId,
+      })),
+    );
+  }
+
+  async assignAssetAsync(
+    data: Omit<NewRecord<AssetAssignment>, "status">,
+    context: ActorContext,
+  ): Promise<AssetAssignment> {
+    const { storage } = getApplicationDataServices();
+    const employee = storage
+      .readCollection<Employee & { databaseId?: string }>("employees")
+      .find((item) => item.id === data.employeeId);
+    if (!data.assetTag?.trim()) throw new Error("An asset tag or serial number is required.");
+    const { assignCompanyAssetFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    const id = await assignCompanyAssetFn({
+      data: {
+        actor: await this.serverActor(context),
+        employeeId: employee?.databaseId ?? data.employeeId,
+        assetType: data.assetType,
+        assetTag: data.assetTag,
+        description: data.description,
+        assignedDate: data.assignedDate,
+        conditionAtAssignment: data.conditionAtAssignment,
+        ...(data.notes ? { notes: data.notes } : {}),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const created = this.repo.getById(id);
+    if (!created) throw new Error("Equipment was assigned but could not be reloaded.");
+    return created;
+  }
+
+  async closeAssignmentAsync(
+    id: string,
+    outcome: "Returned" | "Lost" | "Damaged",
+    returnCondition: AssetCondition | undefined,
+    notes: string | undefined,
+    context: ActorContext,
+  ): Promise<void> {
+    const { closeCompanyAssetAssignmentFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    await closeCompanyAssetAssignmentFn({
+      data: {
+        actor: await this.serverActor(context),
+        assignmentId: id,
+        outcome,
+        ...(returnCondition ? { condition: returnCondition } : {}),
+        ...(notes ? { notes } : {}),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
   }
 
   getAllAssignments(): AssetAssignment[] {

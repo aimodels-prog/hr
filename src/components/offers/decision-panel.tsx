@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Card,
   CardContent,
@@ -48,7 +48,7 @@ export function DecisionPanel({ vacancyId }: DecisionPanelProps) {
   const [isOfferDialogOpen, setIsOfferDialogOpen] = useState(false);
   const [offerCandidateId, setOfferCandidateId] = useState("");
 
-  const refreshData = () => {
+  const refreshData = useCallback(() => {
     try {
       const context = currentUser.getActorContext();
       const rec = offerService.calculateDecisionRecommendation(vacancyId, context);
@@ -67,15 +67,15 @@ export function DecisionPanel({ vacancyId }: DecisionPanelProps) {
     } catch (e) {
       console.error(e);
     }
-  };
+  }, [candidateService, currentUser, offerService, vacancyId]);
 
   useEffect(() => {
     refreshData();
-  }, [vacancyId]);
+  }, [refreshData]);
 
   if (!recommendation) return null;
 
-  const handleFinalize = () => {
+  const handleFinalize = async () => {
     if (recommendation.hasMissingInterviews && waiverReason.trim().length < 5) {
       toast.error("Waiver reason is required because interview data is incomplete.");
       return;
@@ -90,7 +90,7 @@ export function DecisionPanel({ vacancyId }: DecisionPanelProps) {
     }
 
     try {
-      offerService.finalizeDecision(
+      await offerService.finalizeDecisionAsync(
         vacancyId,
         selectedCandidateId,
         overrideReason,
@@ -99,8 +99,8 @@ export function DecisionPanel({ vacancyId }: DecisionPanelProps) {
       );
       toast.success("Hiring decision confirmed");
       refreshData();
-    } catch (e: any) {
-      toast.error(e.message || "Failed to finalize decision");
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Failed to finalize decision");
     }
   };
 

@@ -1,0 +1,2 @@
+DROP INDEX "recruitment_documents_org_checksum_unique";--> statement-breakpoint
+CREATE INDEX "recruitment_documents_org_checksum_idx" ON "recruitment_documents" USING btree ("organisation_id","checksum");

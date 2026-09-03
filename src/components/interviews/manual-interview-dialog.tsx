@@ -97,7 +97,7 @@ export function ManualInterviewDialog({
         employee: user.employeeId ? employeeById.get(user.employeeId) : undefined,
       }))
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
-  }, [employeeService, currentUser.userId]);
+  }, [employeeService, currentUser]);
 
   const togglePanelUser = (userId: string, checked: boolean) => {
     setOtherPanelUserIds((current) =>
@@ -105,7 +105,7 @@ export function ManualInterviewDialog({
     );
   };
 
-  const save = () => {
+  const save = async () => {
     if (!positionTitle.trim()) {
       toast.error("Enter the position discussed in the interview");
       return;
@@ -121,7 +121,7 @@ export function ManualInterviewDialog({
 
     setIsSaving(true);
     try {
-      interviewService.createManualInterview(
+      await interviewService.createManualInterviewAsync(
         {
           candidateId,
           ...(vacancyId !== "none" ? { vacancyId } : {}),

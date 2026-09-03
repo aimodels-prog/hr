@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "training_assignments_employee_course_open_unique" ON "training_assignments" USING btree ("employee_id","course_id") WHERE "training_assignments"."archived_at" IS NULL AND "training_assignments"."status" IN ('Assigned','Scheduled','Attended');

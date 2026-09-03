@@ -49,30 +49,25 @@ function MyTasksRoute() {
   const [query, setQuery] = useState("");
   const [moduleFilter, setModuleFilter] = useState("All");
   const [view, setView] = useState<TaskView>("All");
+  const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
 
-  const loadTasks = useCallback(() => {
+  const loadTasks = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      setTasks(
-        taskService.getMyTasks({
-          userId: currentUser.userId,
-          employeeId: currentUser.employeeId,
-          activeRole: currentUser.activeRole,
-        }),
-      );
+      setTasks(await taskService.getMyTasksAsync(actorContext));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Tasks could not be loaded.");
     } finally {
       setIsLoading(false);
     }
-  }, [currentUser.activeRole, currentUser.employeeId, currentUser.userId, taskService]);
+  }, [actorContext, taskService]);
 
   useEffect(() => {
-    loadTasks();
-    const refreshOnFocus = () => loadTasks();
+    void loadTasks();
+    const refreshOnFocus = () => void loadTasks();
     const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") loadTasks();
+      if (document.visibilityState === "visible") void loadTasks();
     };
     window.addEventListener("focus", refreshOnFocus);
     document.addEventListener("visibilitychange", refreshWhenVisible);
@@ -117,7 +112,7 @@ function MyTasksRoute() {
             : `Approvals and actions assigned to you while working as ${currentUser.activeRole === "Line Manager" ? "Supervisor" : currentUser.activeRole}.`
         }
         actions={
-          <Button variant="outline" onClick={loadTasks} disabled={isLoading}>
+          <Button variant="outline" onClick={() => void loadTasks()} disabled={isLoading}>
             <RefreshCcw className={isLoading ? "animate-spin" : ""} /> Refresh
           </Button>
         }
@@ -203,7 +198,7 @@ function MyTasksRoute() {
               <h2 className="font-semibold">Tasks could not be loaded</h2>
               <p className="mt-1 text-sm text-muted-foreground">{error}</p>
             </div>
-            <Button onClick={loadTasks}>Try again</Button>
+            <Button onClick={() => void loadTasks()}>Try again</Button>
           </CardContent>
         </Card>
       ) : filteredTasks.length === 0 ? (

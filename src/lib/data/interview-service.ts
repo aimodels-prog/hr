@@ -74,6 +74,191 @@ export class InterviewService {
     this.gateway = new IntegrationGateway();
   }
 
+  private serverActor(context: ActorContext) {
+    const user = getApplicationDataServices()
+      .storage.readCollection<{ id: string; workspaceEmail?: string }>("users")
+      .find((item) => item.id === context.actor.userId);
+    return {
+      actorId: context.actor.userId,
+      ...(context.actor.workspaceEmail || user?.workspaceEmail
+        ? { actorEmail: context.actor.workspaceEmail ?? user?.workspaceEmail }
+        : {}),
+      activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+    };
+  }
+
+  private databaseVacancyId(id?: string): string | undefined {
+    if (!id) return undefined;
+    const vacancy = getApplicationDataServices()
+      .storage.readCollection<{ id: string; databaseId?: string }>("vacancies")
+      .find((item) => item.id === id || item.databaseId === id);
+    return vacancy?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
+  }
+
+  private databaseUserIds(ids: string[]): string[] {
+    const users = getApplicationDataServices().storage.readCollection<{
+      id: string;
+      databaseId?: string;
+    }>("users");
+    return ids.map((id) => {
+      const user = users.find((item) => item.id === id || item.databaseId === id);
+      const databaseId = user?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
+      if (!databaseId) throw new Error("A selected panel member is not connected to PostgreSQL.");
+      return databaseId;
+    });
+  }
+
+  private async refresh(context: ActorContext): Promise<void> {
+    const { CandidateService } = await import("./candidate-service.ts");
+    await new CandidateService().hydrateCompatibilityCache(context);
+  }
+
+  async createInterviewAsync(
+    payload: Partial<InterviewEvent>,
+    context: ActorContext,
+  ): Promise<InterviewEvent> {
+    if (!payload.candidateId || !payload.vacancyId || !payload.templateId)
+      throw new Error("Vacancy, candidate and scorecard template are required.");
+    const vacancyId = this.databaseVacancyId(payload.vacancyId);
+    if (!vacancyId) throw new Error("The vacancy is not connected to PostgreSQL.");
+    const { createInterviewFn } = await import("../server-functions/interview.server.ts");
+    const id = await createInterviewFn({
+      data: {
+        actor: this.serverActor(context),
+        candidateId: payload.candidateId,
+        vacancyId,
+        templateId: payload.templateId,
+        source: "Scheduled Recruitment",
+        stageName: payload.stageName ?? "Interview",
+        durationMinutes: payload.durationMinutes ?? 30,
+        panelUserIds: this.databaseUserIds(payload.panelUserIds ?? []),
+        location: payload.location ?? "To be confirmed",
+        videoMethod: payload.videoMethod ?? "To be confirmed",
+        notes: payload.notes ?? "",
+        proposedSlots: payload.proposedSlots ?? [],
+      },
+    });
+    await this.refresh(context);
+    return this.getInterviewById(id, context)!;
+  }
+
+  async createManualInterviewAsync(
+    payload: {
+      candidateId: string;
+      vacancyId?: string | undefined;
+      templateId: string;
+      stageName: string;
+      occurredAt: string;
+      durationMinutes: number;
+      timezone: string;
+      panelUserIds: string[];
+      positionTitle: string;
+      projectName?: string | undefined;
+      location: string;
+      videoMethod: string;
+      notes: string;
+    },
+    context: ActorContext,
+  ): Promise<InterviewEvent> {
+    const { createInterviewFn } = await import("../server-functions/interview.server.ts");
+    const vacancyId = this.databaseVacancyId(payload.vacancyId);
+    const id = await createInterviewFn({
+      data: {
+        actor: this.serverActor(context),
+        candidateId: payload.candidateId,
+        ...(vacancyId ? { vacancyId } : {}),
+        templateId: payload.templateId,
+        source: "Manual / Offline",
+        stageName: payload.stageName,
+        durationMinutes: payload.durationMinutes,
+        panelUserIds: this.databaseUserIds(payload.panelUserIds),
+        location: payload.location,
+        videoMethod: payload.videoMethod,
+        notes: payload.notes,
+        occurredAt: payload.occurredAt,
+        timezone: payload.timezone,
+        positionTitle: payload.positionTitle,
+        ...(payload.projectName ? { projectName: payload.projectName } : {}),
+      },
+    });
+    await this.refresh(context);
+    return this.getInterviewById(id, context)!;
+  }
+
+  async updateWorkflowAsync(
+    interviewId: string,
+    input: {
+      action:
+        "send-slots" | "candidate-accepted" | "candidate-declined" | "reschedule" | "change-status";
+      slot?: InterviewSlot;
+      status?: InterviewStatus;
+      reason: string;
+      waiver?: boolean;
+    },
+    context: ActorContext,
+  ): Promise<InterviewEvent> {
+    const interview = this.getInterviewById(interviewId, context);
+    if (!interview) throw new Error("Interview not found.");
+    const { updateInterviewWorkflowFn } = await import("../server-functions/interview.server.ts");
+    await updateInterviewWorkflowFn({
+      data: {
+        actor: this.serverActor(context),
+        interviewId,
+        ...input,
+        expectedRecordVersion: interview.recordVersion,
+      },
+    });
+    await this.refresh(context);
+    return this.getInterviewById(interviewId, context)!;
+  }
+
+  async recordDispositionAsync(
+    interviewId: string,
+    input: {
+      outcome: InterviewDispositionOutcome;
+      reason: string;
+      futureVacancyIds?: string[];
+      suggestedRoleTitles?: string[];
+    },
+    context: ActorContext,
+  ): Promise<InterviewDisposition> {
+    const { recordInterviewDispositionFn } =
+      await import("../server-functions/interview.server.ts");
+    const id = await recordInterviewDispositionFn({
+      data: {
+        actor: this.serverActor(context),
+        interviewId,
+        outcome: input.outcome,
+        reason: input.reason,
+        ...(input.futureVacancyIds
+          ? {
+              futureVacancyIds: input.futureVacancyIds.map((value) =>
+                this.databaseVacancyId(value)!,
+              ),
+            }
+          : {}),
+        ...(input.suggestedRoleTitles ? { suggestedRoleTitles: input.suggestedRoleTitles } : {}),
+      },
+    });
+    await this.refresh(context);
+    return this.dispositionRepo.getById(id)!;
+  }
+
+  async recordManualOutcomeAsync(
+    id: string,
+    outcome: Exclude<ManualInterviewOutcome, "Pending">,
+    reason: string,
+    context: ActorContext,
+  ): Promise<InterviewEvent> {
+    const { recordManualInterviewOutcomeFn } =
+      await import("../server-functions/interview.server.ts");
+    await recordManualInterviewOutcomeFn({
+      data: { actor: this.serverActor(context), interviewId: id, outcome, reason },
+    });
+    await this.refresh(context);
+    return this.getInterviewById(id, context)!;
+  }
+
   private canViewInterview(interview: InterviewEvent, context: ActorContext): boolean {
     return (
       context.actor.activeRole === "HR" ||

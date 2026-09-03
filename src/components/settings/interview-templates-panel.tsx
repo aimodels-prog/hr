@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,11 +14,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Plus, Trash2, Pencil, Eye, EyeOff } from "lucide-react";
 import { ScorecardService } from "@/lib/data/scorecard-service";
 import type { InterviewTemplate, ScorecardCriterion } from "@/lib/data/types";
 import { toast } from "sonner";
 import { useCurrentUser } from "@/lib/auth";
+import { CandidateService } from "@/lib/data/candidate-service";
 
 type DraftCriterion = ScorecardCriterion;
 
@@ -46,8 +57,33 @@ export function InterviewTemplatesPanel() {
   const [stageName, setStageName] = useState("");
   const [aiDecisionWeight, setAiDecisionWeight] = useState(40);
   const [interviewDecisionWeight, setInterviewDecisionWeight] = useState(60);
+  const [deleteTarget, setDeleteTarget] = useState<InterviewTemplate | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   const refresh = () => setTemplates(scorecardService.getTemplates());
+
+  useEffect(() => {
+    let cancelled = false;
+    void new CandidateService()
+      .hydrateCompatibilityCache(getActorContext())
+      .then(() => {
+        if (!cancelled) refresh();
+      })
+      .catch((error: unknown) => {
+        if (!cancelled)
+          toast.error(
+            error instanceof Error ? error.message : "Could not load scorecard templates",
+          );
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // The panel is only mounted inside an authenticated HR settings session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scorecardService]);
 
   const openCreate = () => {
     setEditingTemplate(null);
@@ -80,42 +116,26 @@ export function InterviewTemplatesPanel() {
   const addCriterion = () => setCriteria((prev) => [...prev, newCriterion()]);
   const removeCriterion = (id: string) => setCriteria((prev) => prev.filter((c) => c.id !== id));
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const cleanCriteria = criteria
       .map((c) => ({ ...c, name: c.name.trim(), description: c.description.trim() }))
       .filter((c) => c.name.length > 0);
 
     try {
-      if (editingTemplate) {
-        scorecardService.updateTemplate(
-          editingTemplate.id,
-          {
-            name: name.trim(),
-            blindScoring,
-            criteria: cleanCriteria,
-            vacancyId: vacancyId || undefined,
-            stageName: stageName || undefined,
-            aiDecisionWeight,
-            interviewDecisionWeight,
-          },
-          getActorContext(),
-        );
-        toast.success("Template updated");
-      } else {
-        scorecardService.createTemplate(
-          {
-            name: name.trim(),
-            blindScoring,
-            criteria: cleanCriteria,
-            vacancyId: vacancyId || undefined,
-            stageName: stageName || undefined,
-            aiDecisionWeight,
-            interviewDecisionWeight,
-          },
-          getActorContext(),
-        );
-        toast.success("Template created");
-      }
+      await scorecardService.saveTemplateAsync(
+        {
+          name: name.trim(),
+          blindScoring,
+          criteria: cleanCriteria,
+          vacancyId: vacancyId || undefined,
+          stageName: stageName || undefined,
+          aiDecisionWeight,
+          interviewDecisionWeight,
+        },
+        getActorContext(),
+        editingTemplate ?? undefined,
+      );
+      toast.success(editingTemplate ? "Template updated" : "Template created");
       setIsFormOpen(false);
       refresh();
     } catch (err) {
@@ -123,11 +143,14 @@ export function InterviewTemplatesPanel() {
     }
   };
 
-  const handleDelete = (tmpl: InterviewTemplate) => {
-    if (!confirm(`Delete the "${tmpl.name}" template? This cannot be undone.`)) return;
+  const handleDelete = async (tmpl: InterviewTemplate) => {
     try {
-      scorecardService.deleteTemplate(tmpl.id, getActorContext());
+      await scorecardService.deleteTemplateAsync(tmpl.id, {
+        ...getActorContext(),
+        reason: `Archived ${tmpl.name}`,
+      });
       toast.success("Template deleted");
+      setDeleteTarget(null);
       refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to delete template");
@@ -151,60 +174,66 @@ export function InterviewTemplatesPanel() {
       </div>
 
       <div className="grid grid-cols-1 gap-4">
-        {templates.map((tmpl) => (
-          <Card key={tmpl.id}>
-            <CardHeader className="pb-3 flex flex-row items-start justify-between bg-muted/20">
-              <div>
-                <CardTitle className="text-base flex items-center gap-2">
-                  {tmpl.name}
-                  <Badge variant="outline" className="gap-1 font-normal">
-                    {tmpl.blindScoring ? (
-                      <EyeOff className="h-3 w-3" />
-                    ) : (
-                      <Eye className="h-3 w-3" />
-                    )}
-                    {tmpl.blindScoring ? "Blind scoring" : "Open scoring"}
-                  </Badge>
-                </CardTitle>
-                <CardDescription className="mt-1">
-                  {tmpl.criteria.length} criteria · AI {tmpl.aiDecisionWeight ?? 40}% / interview{" "}
-                  {tmpl.interviewDecisionWeight ?? 60}%
-                </CardDescription>
-              </div>
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="icon" onClick={() => openEdit(tmpl)}>
-                  <Pencil className="w-4 h-4" />
-                </Button>
-                <Button variant="ghost" size="icon" onClick={() => handleDelete(tmpl)}>
-                  <Trash2 className="w-4 h-4 text-destructive" />
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="pt-4">
-              <div className="grid gap-2 sm:grid-cols-2">
-                {tmpl.criteria.map((c) => (
-                  <div key={c.id} className="border rounded-md p-3 text-sm">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium">{c.name}</span>
-                      <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                        {c.weight ?? 0}%
-                      </Badge>
-                      {c.requiresEvidence && (
-                        <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                          Evidence required
+        {isLoading && (
+          <div className="p-8 text-center border rounded-lg text-muted-foreground">
+            Loading scorecard templates…
+          </div>
+        )}
+        {!isLoading &&
+          templates.map((tmpl) => (
+            <Card key={tmpl.id}>
+              <CardHeader className="pb-3 flex flex-row items-start justify-between bg-muted/20">
+                <div>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    {tmpl.name}
+                    <Badge variant="outline" className="gap-1 font-normal">
+                      {tmpl.blindScoring ? (
+                        <EyeOff className="h-3 w-3" />
+                      ) : (
+                        <Eye className="h-3 w-3" />
+                      )}
+                      {tmpl.blindScoring ? "Blind scoring" : "Open scoring"}
+                    </Badge>
+                  </CardTitle>
+                  <CardDescription className="mt-1">
+                    {tmpl.criteria.length} criteria · AI {tmpl.aiDecisionWeight ?? 40}% / interview{" "}
+                    {tmpl.interviewDecisionWeight ?? 60}%
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="icon" onClick={() => openEdit(tmpl)}>
+                    <Pencil className="w-4 h-4" />
+                  </Button>
+                  <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(tmpl)}>
+                    <Trash2 className="w-4 h-4 text-destructive" />
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-4">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {tmpl.criteria.map((c) => (
+                    <div key={c.id} className="border rounded-md p-3 text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium">{c.name}</span>
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                          {c.weight ?? 0}%
                         </Badge>
+                        {c.requiresEvidence && (
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                            Evidence required
+                          </Badge>
+                        )}
+                      </div>
+                      {c.description && (
+                        <p className="text-xs text-muted-foreground mt-1">{c.description}</p>
                       )}
                     </div>
-                    {c.description && (
-                      <p className="text-xs text-muted-foreground mt-1">{c.description}</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-        {templates.length === 0 && (
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        {!isLoading && templates.length === 0 && (
           <div className="p-8 text-center border rounded-lg text-muted-foreground">
             No scorecard templates yet. Interviews cannot be scored until at least one exists.
           </div>
@@ -383,6 +412,31 @@ export function InterviewTemplatesPanel() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Archive this scorecard template?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget
+                ? `“${deleteTarget.name}” will no longer be available for new interviews. Existing interview records remain intact.`
+                : "This template will no longer be available for new interviews."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep template</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteTarget && void handleDelete(deleteTarget)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Archive template
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

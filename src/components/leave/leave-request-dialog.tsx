@@ -44,7 +44,6 @@ import {
   Check,
   ChevronsUpDown,
 } from "lucide-react";
-import { getApplicationDataServices } from "@/lib/data/application-data";
 import { cn } from "@/lib/utils";
 
 const MAX_EVIDENCE_SIZE = 10 * 1024 * 1024;
@@ -151,21 +150,8 @@ export function LeaveRequestDialog({
     }
 
     const actorContext = currentUser.getActorContext();
-    let uploadedFileId: string | undefined;
     try {
       setIsSubmitting(true);
-      if (attachment) {
-        const metadata = await getApplicationDataServices().files.save(
-          {
-            blob: attachment,
-            name: attachment.name,
-            mimeType: attachment.type,
-            owner: { entityType: "leave-request-evidence", entityId: employeeId },
-          },
-          actorContext,
-        );
-        uploadedFileId = metadata.id;
-      }
       const req = await leaveService.submitLeaveRequest(
         {
           employeeId,
@@ -175,9 +161,9 @@ export function LeaveRequestDialog({
           isHalfDay,
           reason,
           ...(handoverContactId ? { handoverContactId } : {}),
-          ...(uploadedFileId ? { attachmentFileId: uploadedFileId } : {}),
         },
         actorContext,
+        attachment ?? undefined,
       );
 
       if (req.status === "Automatically Refused") {
@@ -195,9 +181,6 @@ export function LeaveRequestDialog({
       setAttachment(null);
       onSuccess?.();
     } catch (err: unknown) {
-      if (uploadedFileId) {
-        await getApplicationDataServices().files.delete(uploadedFileId, actorContext);
-      }
       toast.error(err instanceof Error ? err.message : "Failed to submit request.");
     } finally {
       setIsSubmitting(false);

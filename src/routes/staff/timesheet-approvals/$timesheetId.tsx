@@ -68,8 +68,6 @@ function TimesheetApprovalDetailRoute() {
 
   const [returnDialogOpen, setReturnDialogOpen] = useState(false);
   const [reopenDialogOpen, setReopenDialogOpen] = useState(false);
-  const [recoveryDialogOpen, setRecoveryDialogOpen] = useState(false);
-  const [recoveryAction, setRecoveryAction] = useState<"approve" | "return">("approve");
   const [reason, setReason] = useState("");
 
   if (!timesheet) return <div>Timesheet not found.</div>;
@@ -96,9 +94,14 @@ function TimesheetApprovalDetailRoute() {
     end: parseISO(period!.endDate),
   });
 
-  const handleApprove = () => {
+  const handleApprove = async () => {
     try {
-      const updated = tsService.approveTimesheet(timesheet.id, currentUser.getActorContext());
+      const updated = await tsService.decideTimesheetAsync(
+        timesheet.id,
+        "approve",
+        undefined,
+        currentUser.getActorContext(),
+      );
       setTimesheet(updated);
       toast.success(
         updated.status === "Pending HR"
@@ -110,10 +113,11 @@ function TimesheetApprovalDetailRoute() {
     }
   };
 
-  const handleReturn = () => {
+  const handleReturn = async () => {
     try {
-      const updated = tsService.returnTimesheet(
+      const updated = await tsService.decideTimesheetAsync(
         timesheet.id,
+        "return",
         reason,
         currentUser.getActorContext(),
       );
@@ -125,9 +129,9 @@ function TimesheetApprovalDetailRoute() {
     }
   };
 
-  const handleReopen = () => {
+  const handleReopen = async () => {
     try {
-      const updated = tsService.reopenTimesheet(
+      const updated = await tsService.reopenTimesheetAsync(
         timesheet.id,
         reason,
         currentUser.getActorContext(),
@@ -141,27 +145,6 @@ function TimesheetApprovalDetailRoute() {
       );
     } catch (error: unknown) {
       toast.error(error instanceof Error ? error.message : "Timesheet could not be reopened.");
-    }
-  };
-
-  const handleSupervisorRecovery = () => {
-    try {
-      const context = { ...currentUser.getActorContext(), reason: reason.trim() };
-      const updated =
-        recoveryAction === "approve"
-          ? tsService.approveTimesheet(timesheet.id, context)
-          : tsService.returnTimesheet(timesheet.id, reason, context);
-      setTimesheet(updated);
-      setRecoveryDialogOpen(false);
-      toast.success(
-        recoveryAction === "approve"
-          ? "Supervisor review completed and sent to HR."
-          : "Timesheet returned to the employee.",
-      );
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "The recovery action could not be completed.",
-      );
     }
   };
 
@@ -414,31 +397,6 @@ function TimesheetApprovalDetailRoute() {
             </>
           )}
 
-          {isHrReviewer && timesheet.status === "Pending Manager" && (
-            <>
-              <Button
-                variant="destructive"
-                onClick={() => {
-                  setReason("");
-                  setRecoveryAction("return");
-                  setRecoveryDialogOpen(true);
-                }}
-              >
-                <XCircle className="mr-2 h-4 w-4" /> Return as Recovery
-              </Button>
-              <Button
-                disabled={reconciliation.unresolvedCount > 0}
-                onClick={() => {
-                  setReason("");
-                  setRecoveryAction("approve");
-                  setRecoveryDialogOpen(true);
-                }}
-              >
-                <CheckCircle className="mr-2 h-4 w-4" /> Complete Supervisor Review
-              </Button>
-            </>
-          )}
-
           {((isHrReviewer && timesheet.status === "Approved") ||
             ((isHrReviewer || isFinanceViewer) && timesheet.status === "Payroll Locked")) && (
             <Button
@@ -510,35 +468,6 @@ function TimesheetApprovalDetailRoute() {
             </Button>
             <Button onClick={handleReopen} disabled={reason.trim().length < 3}>
               Confirm Reopen
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={recoveryDialogOpen} onOpenChange={setRecoveryDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Complete unavailable supervisor review</DialogTitle>
-            <DialogDescription>
-              Use this recovery action only when the assigned supervisor cannot complete the review.
-              Enter the reason for Audit History.
-            </DialogDescription>
-          </DialogHeader>
-          <Textarea
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            placeholder="Why HR is completing this supervisor step"
-            className="min-h-[100px]"
-          />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRecoveryDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant={recoveryAction === "return" ? "destructive" : "default"}
-              onClick={handleSupervisorRecovery}
-              disabled={reason.trim().length < 5}
-            >
-              {recoveryAction === "approve" ? "Send to HR Review" : "Return Timesheet"}
             </Button>
           </DialogFooter>
         </DialogContent>

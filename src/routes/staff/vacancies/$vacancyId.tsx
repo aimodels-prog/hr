@@ -1,6 +1,6 @@
 import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
-import { RequirePermission, getRouteActorContext, useCurrentUser } from "@/lib/auth";
+import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { VacancyService } from "@/lib/data/vacancy-service";
 import { CandidateService } from "@/lib/data/candidate-service";
 import { ShortlistService } from "@/lib/data/shortlist-service";
@@ -67,27 +67,6 @@ import { CandidatePreparationService } from "@/lib/data/candidate-preparation-se
 import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
 
 export const Route = createFileRoute("/staff/vacancies/$vacancyId")({
-  loader: ({ params }) => {
-    const vacancyService = new VacancyService();
-    const vacancy = vacancyService.getVacancyRepository().getById(params.vacancyId);
-    if (!vacancy) throw notFound();
-
-    const candidateService = new CandidateService();
-    const context = getRouteActorContext();
-    const scores = candidateService.getLatestScoresForVacancy(vacancy.id, context);
-    const candidates = candidateService.getDetailedCandidates(context);
-    const applications = candidateService
-      .getApplicationRepository()
-      .list()
-      .filter((application) => application.vacancyId === vacancy.id);
-    const interviews = new InterviewService().getInterviewsForVacancy(vacancy.id, context);
-    const shortlistService = new ShortlistService();
-    const shortlist =
-      shortlistService.getDraftForVacancy(vacancy.id) ||
-      shortlistService.getFinalizedForVacancy(vacancy.id);
-
-    return { vacancy, scores, candidates, applications, interviews, shortlist };
-  },
   component: VacancyDetailRoute,
 });
 
@@ -96,14 +75,7 @@ const transitionSchema = z.object({
 });
 
 function VacancyDetailRoute() {
-  const {
-    vacancy,
-    scores: initialScores,
-    candidates,
-    applications,
-    interviews,
-    shortlist: initialShortlist,
-  } = Route.useLoaderData();
+  const { vacancyId } = Route.useParams();
   const currentUser = useCurrentUser();
   const navigate = useNavigate();
   const vacancyService = useMemo(() => new VacancyService(), []);
@@ -111,6 +83,20 @@ function VacancyDetailRoute() {
   const shortlistService = useMemo(() => new ShortlistService(), []);
   const preparationService = useMemo(() => new CandidatePreparationService(), []);
   const poolService = useMemo(() => new CandidatePoolService(), []);
+  const interviewService = useMemo(() => new InterviewService(), []);
+  const vacancy = vacancyService.getVacancyRepository().getById(vacancyId);
+  if (!vacancy) throw notFound();
+  const context = currentUser.getActorContext();
+  const initialScores = candidateService.getLatestScoresForVacancy(vacancy.id, context);
+  const candidates = candidateService.getDetailedCandidates(context);
+  const applications = candidateService
+    .getApplicationRepository()
+    .list()
+    .filter((application) => application.vacancyId === vacancy.id);
+  const interviews = interviewService.getInterviewsForVacancy(vacancy.id, context);
+  const initialShortlist =
+    shortlistService.getDraftForVacancy(vacancy.id) ||
+    shortlistService.getFinalizedForVacancy(vacancy.id);
   const compulsoryCriteria = vacancy.mandatoryCriteria ?? [];
   const compulsoryCriteriaSet = new Set(
     compulsoryCriteria.map((criterion) => criterion.trim().toLowerCase()),
@@ -195,21 +181,25 @@ function VacancyDetailRoute() {
     reason,
   });
 
-  const onTransition = (values: z.infer<typeof transitionSchema>) => {
+  const onTransition = async (values: z.infer<typeof transitionSchema>) => {
     try {
       const act = transitionDialog.action;
-      if (act === "Pause")
-        vacancyService.pauseVacancy(vacancy.id, values.reason, getActorContext(values.reason));
-      else if (act === "Close")
-        vacancyService.closeVacancy(vacancy.id, values.reason, getActorContext(values.reason));
-      else if (act === "Archive")
-        vacancyService.archiveVacancy(vacancy.id, values.reason, getActorContext(values.reason));
-      else if (act === "Submit")
-        vacancyService.submitForApproval(vacancy.id, getActorContext(values.reason));
-      else if (act === "Publish")
-        vacancyService.publishVacancy(vacancy.id, getActorContext(values.reason));
-      else if (act === "Reopen")
-        vacancyService.reopenVacancy(vacancy.id, getActorContext(values.reason));
+      const status =
+        act === "Pause"
+          ? "Paused"
+          : act === "Close"
+            ? "Closed"
+            : act === "Archive"
+              ? "Archived"
+              : act === "Submit"
+                ? "Pending Approval"
+                : "Open";
+      await vacancyService.transitionStatusAsync(
+        vacancy.id,
+        status,
+        values.reason || `${act} vacancy`,
+        getActorContext(values.reason || `${act} vacancy`),
+      );
 
       toast.success(`Vacancy ${act.toLowerCase()}d`);
       setTransitionDialog({ open: false, action: "", status: null });
@@ -219,9 +209,9 @@ function VacancyDetailRoute() {
     }
   };
 
-  const onDuplicate = () => {
+  const onDuplicate = async () => {
     try {
-      const newVac = vacancyService.duplicateVacancy(
+      const newVac = await vacancyService.duplicateVacancyAsync(
         vacancy.id,
         getActorContext("Duplicated vacancy"),
       );
@@ -247,7 +237,7 @@ function VacancyDetailRoute() {
   const handlePrepareCandidates = async () => {
     setIsPreparing(true);
     try {
-      const prepared = await preparationService.prepareVacancyApplications(
+      const prepared = await preparationService.refreshPreparedCandidatesAsync(
         vacancy.id,
         getActorContext("Prepared vacancy applications for preliminary review"),
       );
@@ -260,9 +250,9 @@ function VacancyDetailRoute() {
     }
   };
 
-  const handleCreateAssessmentGroup = () => {
+  const handleCreateAssessmentGroup = async () => {
     try {
-      const batch = preparationService.createAssessmentBatch(
+      const batch = await preparationService.createAssessmentBatchAsync(
         vacancy.id,
         targetSize,
         getActorContext("Selected the group for detailed assessment"),
@@ -280,11 +270,11 @@ function VacancyDetailRoute() {
     }
   };
 
-  const handleRunDetailedAssessment = () => {
+  const handleRunDetailedAssessment = async () => {
     if (!assessmentBatch) return;
     setIsAssessing(true);
     try {
-      const completed = preparationService.runDetailedAssessment(
+      const completed = await preparationService.runDetailedAssessmentAsync(
         assessmentBatch.id,
         getActorContext("Completed detailed assessment for the HR-selected group"),
       );
@@ -298,10 +288,10 @@ function VacancyDetailRoute() {
     }
   };
 
-  const saveAssessmentGroupChanges = () => {
+  const saveAssessmentGroupChanges = async () => {
     if (!assessmentBatch) return;
     try {
-      const updated = preparationService.updateAssessmentSelection(
+      const updated = await preparationService.updateAssessmentSelectionAsync(
         assessmentBatch.id,
         Array.from(assessmentSelection),
         assessmentChangeReason,
@@ -326,7 +316,7 @@ function VacancyDetailRoute() {
   const handleAddFromPool = async () => {
     setAddingFromPool(true);
     try {
-      await preparationService.includeCandidate(
+      await preparationService.includeCandidateAsync(
         {
           vacancyId: vacancy.id,
           candidateId: poolCandidateId,
@@ -412,7 +402,7 @@ function VacancyDetailRoute() {
     }
   };
 
-  const saveShortlistDraft = () => {
+  const saveShortlistDraft = async () => {
     const payload = {
       vacancyId: vacancy.id,
       targetSize,
@@ -423,16 +413,23 @@ function VacancyDetailRoute() {
       overrides,
       status: "Draft" as const,
     };
-    const saved = shortlistService.saveDraft(payload, getActorContext("Saved Shortlist Draft"));
-    setShortlist(saved);
-    toast.success("Shortlist draft saved");
-    setIsShortlistMode(false);
+    try {
+      const saved = await shortlistService.saveDraftAsync(
+        payload,
+        getActorContext("Saved Shortlist Draft"),
+      );
+      setShortlist(saved);
+      toast.success("Shortlist draft saved");
+      setIsShortlistMode(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Shortlist draft could not be saved.");
+    }
   };
 
-  const confirmFinalizeShortlist = () => {
+  const confirmFinalizeShortlist = async () => {
     if (!shortlist) return; // Should have saved draft first
     try {
-      const saved = shortlistService.saveDraft(
+      const saved = await shortlistService.saveDraftAsync(
         {
           vacancyId: vacancy.id,
           targetSize,
@@ -446,7 +443,7 @@ function VacancyDetailRoute() {
         getActorContext("Saved final draft before finalization"),
       );
 
-      const final = shortlistService.finalizeShortlist(
+      const final = await shortlistService.finalizeShortlistAsync(
         saved.id,
         unselectedAction,
         getActorContext("Finalized shortlist"),

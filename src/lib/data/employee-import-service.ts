@@ -1,5 +1,6 @@
 import { SYSTEM_CONTEXT } from "./types.ts";
-import * as XLSX from "xlsx";
+import { parse as parseCsv } from "csv-parse/browser/esm/sync";
+import readXlsxFile from "read-excel-file/browser";
 import type { EmployeeService } from "./employee-service.ts";
 import { getMasterDataRepository } from "./master-data.ts";
 import type { OnboardingService } from "./onboarding-service.ts";
@@ -150,18 +151,30 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export class EmployeeImportService {
   async parseWorkbook(file: File): Promise<SheetPreview[]> {
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
-
+    if (file.size === 0) throw new Error("The selected spreadsheet is empty.");
+    if (file.size > 10 * 1024 * 1024) throw new Error("Employee spreadsheets cannot exceed 10 MB.");
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith(".xlsx") && !lowerName.endsWith(".csv")) {
+      throw new Error("Upload an XLSX or CSV employee spreadsheet.");
+    }
+    const sheets: Array<{ sheet: string; data: unknown[][] }> = lowerName.endsWith(".csv")
+      ? [
+          {
+            sheet: file.name.replace(/\.csv$/i, "") || "Employees",
+            data: parseCsv(await file.text(), {
+              bom: true,
+              relax_column_count: false,
+              skip_empty_lines: true,
+            }) as unknown[][],
+          },
+        ]
+      : (await readXlsxFile(file)).map((sheet) => ({
+          sheet: sheet.sheet,
+          data: sheet.data as unknown[][],
+        }));
     const previews: SheetPreview[] = [];
-    workbook.SheetNames.forEach((sheetName) => {
-      const worksheet = workbook.Sheets[sheetName];
-      if (!worksheet) return;
-      const matrix = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
-        header: 1,
-        defval: "",
-        raw: false,
-      });
+    sheets.forEach(({ sheet: sheetName, data }) => {
+      const matrix = data.map((row) => row.map((cell) => cell ?? ""));
       const headerTerms = [
         "employee",
         "name",
@@ -204,6 +217,7 @@ export class EmployeeImportService {
         headerRowNumber: headerIndex + 1,
       });
     });
+    if (!previews.length) throw new Error("The spreadsheet does not contain any worksheets.");
     return previews;
   }
 
@@ -591,7 +605,7 @@ export class EmployeeImportService {
           );
           createdIdByNumber.set(entry.row.employeeNumber.toLowerCase(), employee.id);
           if (entry.row.status === "Onboarding") {
-            onboardingService.createCaseForEmployee(employee.id, context);
+            await onboardingService.createCaseForEmployeeAsync(employee.id, context);
           }
           created += 1;
         } catch (error) {

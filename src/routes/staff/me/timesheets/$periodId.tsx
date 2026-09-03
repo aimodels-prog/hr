@@ -63,17 +63,13 @@ function TimesheetEntryRoute() {
 
   useEffect(() => {
     if (currentUser?.employeeId && periodId) {
-      try {
-        const ts = tsService.getOrCreateTimesheet(
-          currentUser.employeeId,
-          periodId,
-          currentUser.getActorContext(),
-        );
-        setTimesheet(JSON.parse(JSON.stringify(ts))); // Deep copy for local state editing
-      } catch {
-        toast.error("Failed to load timesheet");
-        router.history.back();
-      }
+      void tsService
+        .getOrCreateTimesheetAsync(currentUser.employeeId, periodId, currentUser.getActorContext())
+        .then((ts) => setTimesheet(JSON.parse(JSON.stringify(ts))))
+        .catch((error: unknown) => {
+          toast.error(error instanceof Error ? error.message : "Failed to load timesheet");
+          router.history.back();
+        });
     }
   }, [currentUser, periodId, router.history, tsService]);
 
@@ -140,9 +136,12 @@ function TimesheetEntryRoute() {
     });
   };
 
-  const handleSaveDraft = () => {
+  const handleSaveDraft = async () => {
     try {
-      const saved = tsService.saveTimesheetDraft(timesheet, currentUser.getActorContext());
+      const saved = await tsService.saveTimesheetDraftAsync(
+        timesheet,
+        currentUser.getActorContext(),
+      );
       setTimesheet(saved);
       toast.success("Draft saved");
     } catch (error: unknown) {
@@ -154,13 +153,16 @@ function TimesheetEntryRoute() {
     setIsCertifyOpen(true);
   };
 
-  const confirmSubmit = () => {
+  const confirmSubmit = async () => {
     setIsCertifyOpen(false);
     try {
       // First save draft
-      tsService.saveTimesheetDraft(timesheet, currentUser.getActorContext());
+      await tsService.saveTimesheetDraftAsync(timesheet, currentUser.getActorContext());
       // Then submit
-      const submitted = tsService.submitTimesheet(timesheet.id, currentUser.getActorContext());
+      const submitted = await tsService.submitTimesheetAsync(
+        timesheet.id,
+        currentUser.getActorContext(),
+      );
       setTimesheet(submitted);
       toast.success("Timesheet sent to your manager");
     } catch (error: unknown) {
@@ -168,9 +170,9 @@ function TimesheetEntryRoute() {
     }
   };
 
-  const performCopyPrev = () => {
+  const performCopyPrev = async () => {
     try {
-      const copied = tsService.copyPreviousWeek(
+      const copied = await tsService.copyPreviousWeekAsync(
         currentUser.employeeId!,
         periodId,
         currentUser.getActorContext(),

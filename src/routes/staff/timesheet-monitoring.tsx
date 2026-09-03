@@ -56,9 +56,9 @@ function TimesheetMonitoringContent() {
   const [, setRefreshKey] = useState(0);
   const canLockPayroll = currentUser.can("timesheet:admin_all");
 
-  const handleLockPayroll = (timesheetId: string) => {
+  const handleLockPayroll = async (timesheetId: string) => {
     try {
-      tsService.lockPayroll(timesheetId, currentUser.getActorContext());
+      await tsService.lockPayrollAsync(timesheetId, currentUser.getActorContext());
       toast.success("Timesheet locked for payroll");
       setRefreshKey((k) => k + 1);
     } catch (error) {
