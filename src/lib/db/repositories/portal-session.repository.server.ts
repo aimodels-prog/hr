@@ -11,7 +11,13 @@ import { MAX_HR_SESSION_SECONDS } from "../../auth/portal-sso-config.server.ts";
 import { getDatabaseClient } from "../client.ts";
 import { departments, employmentTypes, locations, positions } from "../schema/master-data.ts";
 import { employees, roles, userRoles, users } from "../schema/employee.ts";
-import { auditEvents, portalSessions, workspaceIdentityMappings } from "../schema/system.ts";
+import { onboardingCases, onboardingTasks } from "../schema/onboarding-offboarding.ts";
+import {
+  auditEvents,
+  notifications,
+  portalSessions,
+  workspaceIdentityMappings,
+} from "../schema/system.ts";
 import { resolveDefaultOrganisationId } from "../organisation.server.ts";
 
 export interface PortalSessionPrincipal {
@@ -42,6 +48,220 @@ function sessionHash(token: string): string {
 
 function iso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
+}
+
+type Database = ReturnType<typeof getDatabaseClient>;
+type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+function nameParts(displayName: string): { legalName: string; preferredName: string } {
+  const legalName = displayName.trim().replace(/\s+/g, " ");
+  return { legalName, preferredName: legalName.split(" ")[0] || legalName };
+}
+
+async function selfSetupMasterData(tx: Transaction, organisationId: string, actorId: string) {
+  let [department] = await tx
+    .select()
+    .from(departments)
+    .where(and(eq(departments.organisationId, organisationId), eq(departments.code, "SELF-SETUP")))
+    .limit(1);
+  if (!department) {
+    [department] = await tx
+      .insert(departments)
+      .values({
+        organisationId,
+        name: "To be confirmed",
+        code: "SELF-SETUP",
+        description: "Temporary assignment used while an employee completes first-time setup",
+        orderIndex: 999,
+        createdBy: actorId,
+        updatedBy: actorId,
+      })
+      .onConflictDoNothing()
+      .returning();
+    if (!department)
+      [department] = await tx
+        .select()
+        .from(departments)
+        .where(
+          and(eq(departments.organisationId, organisationId), eq(departments.code, "SELF-SETUP")),
+        )
+        .limit(1);
+  }
+  if (!department) throw new Error("Employee setup department could not be prepared.");
+
+  let [position] = await tx
+    .select()
+    .from(positions)
+    .where(and(eq(positions.organisationId, organisationId), eq(positions.code, "SELF-SETUP")))
+    .limit(1);
+  if (!position) {
+    [position] = await tx
+      .insert(positions)
+      .values({
+        organisationId,
+        name: "To be confirmed",
+        code: "SELF-SETUP",
+        description: "Temporary position used while an employee completes first-time setup",
+        departmentId: department.id,
+        orderIndex: 999,
+        createdBy: actorId,
+        updatedBy: actorId,
+      })
+      .onConflictDoNothing()
+      .returning();
+    if (!position)
+      [position] = await tx
+        .select()
+        .from(positions)
+        .where(and(eq(positions.organisationId, organisationId), eq(positions.code, "SELF-SETUP")))
+        .limit(1);
+  }
+
+  let [location] = await tx
+    .select()
+    .from(locations)
+    .where(and(eq(locations.organisationId, organisationId), eq(locations.code, "SELF-SETUP")))
+    .limit(1);
+  if (!location) {
+    [location] = await tx
+      .insert(locations)
+      .values({
+        organisationId,
+        name: "To be confirmed",
+        code: "SELF-SETUP",
+        description: "Temporary location used while an employee completes first-time setup",
+        orderIndex: 999,
+        createdBy: actorId,
+        updatedBy: actorId,
+      })
+      .onConflictDoNothing()
+      .returning();
+    if (!location)
+      [location] = await tx
+        .select()
+        .from(locations)
+        .where(and(eq(locations.organisationId, organisationId), eq(locations.code, "SELF-SETUP")))
+        .limit(1);
+  }
+
+  let [employmentType] = await tx
+    .select()
+    .from(employmentTypes)
+    .where(
+      and(
+        eq(employmentTypes.organisationId, organisationId),
+        eq(employmentTypes.code, "SELF-SETUP"),
+      ),
+    )
+    .limit(1);
+  if (!employmentType) {
+    [employmentType] = await tx
+      .insert(employmentTypes)
+      .values({
+        organisationId,
+        name: "To be confirmed",
+        code: "SELF-SETUP",
+        description: "Temporary employment type used during first-time setup",
+        orderIndex: 999,
+        createdBy: actorId,
+        updatedBy: actorId,
+      })
+      .onConflictDoNothing()
+      .returning();
+    if (!employmentType)
+      [employmentType] = await tx
+        .select()
+        .from(employmentTypes)
+        .where(
+          and(
+            eq(employmentTypes.organisationId, organisationId),
+            eq(employmentTypes.code, "SELF-SETUP"),
+          ),
+        )
+        .limit(1);
+  }
+  if (!position || !location || !employmentType)
+    throw new Error("Employee setup defaults could not be prepared.");
+  return { department, position, location, employmentType };
+}
+
+async function createFirstLoginChecklist(
+  tx: Transaction,
+  organisationId: string,
+  employeeId: string,
+  userId: string,
+  dueDate: string,
+) {
+  const caseId = randomUUID();
+  await tx.insert(onboardingCases).values({
+    id: caseId,
+    organisationId,
+    employeeId,
+    status: "In Progress",
+    createdBy: userId,
+    updatedBy: userId,
+  });
+  const items = [
+    [
+      "employment-details",
+      "Confirm your employment details",
+      "Employment Setup",
+      "employment_details",
+      null,
+    ],
+    [
+      "personal-details",
+      "Complete personal and emergency details",
+      "Personal & Legal Documents",
+      "personal_details",
+      null,
+    ],
+    [
+      "passport-copy",
+      "Upload passport copy",
+      "Personal & Legal Documents",
+      "document_upload",
+      "passport",
+    ],
+    [
+      "visa-copy",
+      "Upload visa or work permit",
+      "Visa, Work Permit & ID",
+      "document_upload",
+      "visa",
+    ],
+    [
+      "national-id",
+      "Upload national ID",
+      "Visa, Work Permit & ID",
+      "document_upload",
+      "national_id",
+    ],
+    ["bank-details", "Provide salary bank details", "Contract & Payroll", "bank_details", null],
+  ] as const;
+  await tx.insert(onboardingTasks).values(
+    items.map(([templateTaskId, title, taskGroup, selfServiceFormKey, documentType]) => ({
+      id: randomUUID(),
+      organisationId,
+      caseId,
+      templateTaskId,
+      title,
+      taskGroup,
+      checkpoint: "Pre-Arrival",
+      ownerRole: "Employee" as const,
+      assignedUserId: userId,
+      offsetDaysFromStart: 0,
+      dueDate,
+      isMandatory: true,
+      requiresEvidence: selfServiceFormKey === "document_upload",
+      selfServiceFormKey,
+      ...(documentType ? { documentType } : {}),
+      requiresBankDetails: selfServiceFormKey === "bank_details",
+      createdBy: userId,
+      updatedBy: userId,
+    })),
+  );
+  return caseId;
 }
 
 function mappedUser(row: typeof users.$inferSelect, assignedRoles: Role[]): User {
@@ -120,6 +340,14 @@ async function loadPrincipal(
     employmentType: row.employmentType,
     startDate: employeeRow.startDate,
     status: employeeRow.status,
+    ...(employeeRow.staffEntryType ? { staffEntryType: employeeRow.staffEntryType } : {}),
+    profileSetupStatus: employeeRow.profileSetupStatus,
+    ...(employeeRow.profileSetupCompletedAt
+      ? { profileSetupCompletedAt: iso(employeeRow.profileSetupCompletedAt) }
+      : {}),
+    ...(employeeRow.proposedLineManagerEmail
+      ? { proposedLineManagerEmail: employeeRow.proposedLineManagerEmail }
+      : {}),
     ...(employeeRow.workspaceEmail ? { workspaceEmail: employeeRow.workspaceEmail } : {}),
     ...(employeeRow.lineManagerId ? { lineManagerId: employeeRow.lineManagerId } : {}),
     ...(employeeRow.projectId ? { projectId: employeeRow.projectId } : {}),
@@ -176,10 +404,79 @@ async function findOrCreatePortalUser(
     }
 
     if (!employee) {
-      throw new PortalAccessError(
-        "Your portal identity is valid, but VIA HR access has not been configured. Contact HR or the System Administrator.",
-        "access_not_configured",
-      );
+      const employeeId = randomUUID();
+      const userId = randomUUID();
+      const today = new Date().toISOString().slice(0, 10);
+      const names = nameParts(identity.name);
+      const defaults = await selfSetupMasterData(tx, organisationId, employeeId);
+      [employee] = await tx
+        .insert(employees)
+        .values({
+          id: employeeId,
+          organisationId,
+          employeeNumber: identity.email,
+          ...names,
+          workEmail: identity.email,
+          workspaceEmail: identity.email,
+          departmentId: defaults.department.id,
+          positionId: defaults.position.id,
+          locationId: defaults.location.id,
+          employmentTypeId: defaults.employmentType.id,
+          startDate: today,
+          status: "Onboarding",
+          profileSetupStatus: "In Progress",
+          createdBy: employeeId,
+          updatedBy: employeeId,
+        })
+        .returning();
+      if (!employee) throw new Error("Your employee profile could not be created.");
+      [user] = await tx
+        .insert(users)
+        .values({
+          id: userId,
+          organisationId,
+          employeeId,
+          displayName: identity.name,
+          workspaceEmail: identity.email,
+          status: "Active",
+          createdBy: userId,
+          updatedBy: userId,
+        })
+        .returning();
+      if (!user) throw new Error("Your VIA HR account could not be created.");
+      const caseId = await createFirstLoginChecklist(tx, organisationId, employeeId, userId, today);
+      await tx.insert(notifications).values({
+        organisationId,
+        recipientUserId: userId,
+        type: "profile_setup_required",
+        title: "Complete your VIA HR profile",
+        message: "Confirm your employment details and provide the required personal records.",
+        priority: "High",
+        status: "Unread",
+        deduplicationKey: `profile-setup-${employeeId}`,
+        link: { entityType: "onboarding-case", entityId: caseId, path: "/staff/me/onboarding" },
+        createdBy: userId,
+        updatedBy: userId,
+      });
+      await tx.insert(auditEvents).values({
+        organisationId,
+        actorUserId: userId,
+        actorEmployeeId: employeeId,
+        actorDisplayName: identity.name,
+        activeRole: "Employee",
+        actorRoles: ["Employee"],
+        action: "self-register",
+        module: "core-hr",
+        entityType: "employee",
+        entityId: employeeId,
+        afterSummary: {
+          workspaceEmail: identity.email,
+          employeeReference: identity.email,
+          profileSetupStatus: "In Progress",
+        },
+        reason: "Created automatically after verified first sign-in through VIA Portal",
+        riskLevel: "High",
+      });
     }
     if (["Inactive", "Archived"].includes(employee.status) || employee.archivedAt) {
       throw new PortalAccessError("Your VIA HR access is not active.", "access_suspended");
@@ -240,7 +537,7 @@ async function findOrCreatePortalUser(
     const [employeeRole] = await tx
       .select({ id: roles.id })
       .from(roles)
-      .where(eq(roles.code, identity.mappedRole))
+      .where(eq(roles.code, "Employee"))
       .limit(1);
     if (!employeeRole) throw new Error("The Employee role is not configured.");
     await tx
@@ -308,6 +605,41 @@ async function findOrCreatePortalUser(
         afterSummary: { email: identity.email, source: "VIA Portal" },
         reason: "Verified VIA Portal identity linked to the existing employee record",
         riskLevel: "High",
+      });
+    }
+    const linkedReports = await tx
+      .update(employees)
+      .set({
+        lineManagerId: employee.id,
+        proposedLineManagerEmail: null,
+        updatedAt: new Date(),
+        updatedBy: activeUser.id,
+        recordVersion: sql`${employees.recordVersion} + 1`,
+      })
+      .where(
+        and(
+          eq(employees.organisationId, organisationId),
+          eq(employees.proposedLineManagerEmail, identity.email),
+          isNull(employees.lineManagerId),
+          sql`${employees.id} <> ${employee.id}`,
+        ),
+      )
+      .returning({ id: employees.id });
+    if (linkedReports.length) {
+      await tx.insert(auditEvents).values({
+        organisationId,
+        actorUserId: activeUser.id,
+        actorEmployeeId: employee.id,
+        actorDisplayName: identity.name,
+        activeRole: "Employee",
+        actorRoles: ["Employee"],
+        action: "manager-link-resolved",
+        module: "core-hr",
+        entityType: "employee",
+        entityId: employee.id,
+        afterSummary: { directReportIds: linkedReports.map((item) => item.id) },
+        reason: "Resolved pending supervisor links after verified VIA Portal sign-in",
+        riskLevel: "Medium",
       });
     }
     return { organisationId, userId: activeUser.id };

@@ -1,7 +1,7 @@
 import "@tanstack/react-start/server-only";
 
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 
 import type {
   OnboardingCase,
@@ -23,8 +23,10 @@ import type { Employee, Role } from "../../data/types.ts";
 import { getDatabaseClient } from "../client.ts";
 import { decryptSensitiveJson, encryptSensitiveJson } from "../encryption.server.ts";
 import { readObjectFile } from "../object-storage.server.ts";
-import { employeeBankDetails, employees, users } from "../schema/employee.ts";
+import { employeeBankDetails, employees, roles, userRoles, users } from "../schema/employee.ts";
 import { employeeDocuments, fileMetadata } from "../schema/documents.ts";
+import { leavePolicies } from "../schema/leave.ts";
+import { departments, employmentTypes, locations, positions } from "../schema/master-data.ts";
 import {
   offboardingCases,
   offboardingTasks,
@@ -55,6 +57,79 @@ function dateWithOffset(value: string, offset: number): string {
   const date = new Date(Date.UTC(year!, month! - 1, day!));
   date.setUTCDate(date.getUTCDate() + offset);
   return date.toISOString().slice(0, 10);
+}
+
+function employeeSelfServiceComplete(
+  tasks: Array<{
+    ownerRole: string;
+    isMandatory: boolean;
+    selfServiceFormKey: string | null;
+    status: string;
+  }>,
+): boolean {
+  const required = tasks.filter(
+    (task) => task.ownerRole === "Employee" && task.isMandatory && task.selfServiceFormKey,
+  );
+  return (
+    required.length > 0 &&
+    required.every((task) => task.status === "Completed" || task.status === "Waived")
+  );
+}
+
+async function recordProfileSetupCompletion(
+  tx: Transaction,
+  organisationId: string,
+  employee: typeof employees.$inferSelect,
+  actor: AuditActorContext,
+) {
+  const hrRecipients = await tx
+    .select({ userId: users.id })
+    .from(users)
+    .innerJoin(userRoles, eq(userRoles.userId, users.id))
+    .innerJoin(roles, eq(userRoles.roleId, roles.id))
+    .where(
+      and(
+        eq(users.organisationId, organisationId),
+        eq(users.status, "Active"),
+        inArray(roles.code, ["HR", "Super Admin"]),
+        isNull(users.archivedAt),
+      ),
+    );
+  for (const recipient of hrRecipients) {
+    await tx
+      .insert(notifications)
+      .values({
+        organisationId,
+        recipientUserId: recipient.userId,
+        type: "employee_profile_ready",
+        title: "Employee profile ready for review",
+        message: `${employee.preferredName}'s first-time profile and required employee documents are ready for review.`,
+        priority: "High",
+        status: "Unread",
+        deduplicationKey: `employee-profile-ready-${employee.id}`,
+        link: {
+          entityType: "employee",
+          entityId: employee.id,
+          path: `/staff/employees/${employee.id}`,
+        },
+        createdBy: actor.userId,
+        updatedBy: actor.userId,
+      } as typeof notifications.$inferInsert)
+      .onConflictDoNothing();
+  }
+  await tx
+    .insert(auditEvents)
+    .values(
+      auditValues(
+        organisationId,
+        actor,
+        "complete",
+        "employee-profile-setup",
+        employee.id,
+        "Completed required first-time employee setup",
+        { status: "Completed" },
+      ),
+    );
 }
 
 function recordFields(row: {
@@ -104,6 +179,17 @@ function auditValues(
 }
 
 const defaultOnboardingTasks: OnboardingTemplateTask[] = [
+  {
+    id: "employment-details",
+    title: "Confirm your employment details",
+    group: "Employment Setup",
+    checkpoint: "Pre-Arrival",
+    ownerRole: "Employee",
+    offsetDaysFromStart: 0,
+    isMandatory: true,
+    requiresEvidence: false,
+    selfServiceFormKey: "employment_details",
+  },
   {
     id: "personal-details",
     title: "Complete personal and emergency details",
@@ -686,7 +772,7 @@ function mapOnboardingTask(row: typeof onboardingTasks.$inferSelect): Onboarding
     ...(row.selfServiceFormKey
       ? {
           selfServiceFormKey: row.selfServiceFormKey as
-            "personal_details" | "bank_details" | "document_upload",
+            "employment_details" | "personal_details" | "bank_details" | "document_upload",
         }
       : {}),
     ...(row.documentType
@@ -1207,6 +1293,8 @@ export async function updateOnboardingTaskInDatabase(
         isMandatory: onboardingTasks.isMandatory,
         status: onboardingTasks.status,
         checkpoint: onboardingTasks.checkpoint,
+        ownerRole: onboardingTasks.ownerRole,
+        selfServiceFormKey: onboardingTasks.selfServiceFormKey,
       })
       .from(onboardingTasks)
       .where(and(eq(onboardingTasks.caseId, input.caseId), isNull(onboardingTasks.archivedAt)));
@@ -1221,20 +1309,37 @@ export async function updateOnboardingTaskInDatabase(
         recordVersion: sql`${onboardingCases.recordVersion} + 1`,
       })
       .where(eq(onboardingCases.id, input.caseId));
-    if (
-      progress.progressPercentage === 100 &&
-      row.employee.startDate <= new Date().toISOString().slice(0, 10) &&
-      row.employee.status === "Onboarding"
-    ) {
+    const selfServiceComplete = employeeSelfServiceComplete(taskRows);
+    if (selfServiceComplete && row.employee.profileSetupStatus !== "Completed") {
+      const [latestEmployee] = await tx
+        .select({
+          staffEntryType: employees.staffEntryType,
+          probationEndDate: employees.probationEndDate,
+        })
+        .from(employees)
+        .where(eq(employees.id, row.employee.id))
+        .limit(1);
+      const today = new Date().toISOString().slice(0, 10);
+      const nextStatus =
+        progress.progressPercentage === 100 && row.employee.status === "Onboarding"
+          ? latestEmployee?.staffEntryType === "New Employee" &&
+            latestEmployee.probationEndDate &&
+            latestEmployee.probationEndDate > today
+            ? "Probation"
+            : "Active"
+          : row.employee.status;
       await tx
         .update(employees)
         .set({
-          status: "Active",
+          status: nextStatus,
+          profileSetupStatus: "Completed",
+          profileSetupCompletedAt: new Date().toISOString(),
           updatedAt: new Date(),
           updatedBy: actor.userId,
           recordVersion: sql`${employees.recordVersion} + 1`,
         })
         .where(eq(employees.id, row.employee.id));
+      await recordProfileSetupCompletion(tx, organisationId, row.employee, actor);
     }
     await tx
       .insert(auditEvents)
@@ -1255,6 +1360,23 @@ export async function updateOnboardingTaskInDatabase(
 export async function saveOnboardingSelfServiceInDatabase(
   organisationId: string,
   input:
+    | {
+        caseId: string;
+        taskId: string;
+        kind: "employment_details";
+        details: {
+          staffEntryType: "New Employee" | "Existing Employee";
+          legalName: string;
+          preferredName: string;
+          startDate: string;
+          departmentId: string;
+          positionId: string;
+          locationId: string;
+          employmentTypeId: string;
+          lineManagerEmail: string;
+          visaRequired: boolean;
+        };
+      }
     | {
         caseId: string;
         taskId: string;
@@ -1310,7 +1432,185 @@ export async function saveOnboardingSelfServiceInDatabase(
     if (row.task.status === "Completed" || row.task.status === "Waived")
       throw new Error("This onboarding task has already been completed.");
 
-    if (input.kind === "personal_details") {
+    if (input.kind === "employment_details") {
+      const details = input.details;
+      const managerEmail = details.lineManagerEmail.trim().toLowerCase();
+      if (
+        details.legalName.trim().length < 2 ||
+        details.preferredName.trim().length < 1 ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(details.startDate) ||
+        !managerEmail.endsWith("@via-int.com")
+      )
+        throw new Error("Complete your employment details and enter your supervisor's VIA email.");
+      const [[department], [position], [location], [employmentType], [manager], [annualPolicy]] =
+        await Promise.all([
+          tx
+            .select()
+            .from(departments)
+            .where(
+              and(
+                eq(departments.organisationId, organisationId),
+                eq(departments.id, details.departmentId),
+                eq(departments.isActive, true),
+              ),
+            )
+            .limit(1),
+          tx
+            .select()
+            .from(positions)
+            .where(
+              and(
+                eq(positions.organisationId, organisationId),
+                eq(positions.id, details.positionId),
+                eq(positions.isActive, true),
+              ),
+            )
+            .limit(1),
+          tx
+            .select()
+            .from(locations)
+            .where(
+              and(
+                eq(locations.organisationId, organisationId),
+                eq(locations.id, details.locationId),
+                eq(locations.isActive, true),
+              ),
+            )
+            .limit(1),
+          tx
+            .select()
+            .from(employmentTypes)
+            .where(
+              and(
+                eq(employmentTypes.organisationId, organisationId),
+                eq(employmentTypes.id, details.employmentTypeId),
+                eq(employmentTypes.isActive, true),
+              ),
+            )
+            .limit(1),
+          tx
+            .select({ id: employees.id })
+            .from(employees)
+            .where(
+              and(
+                eq(employees.organisationId, organisationId),
+                or(
+                  eq(employees.workspaceEmail, managerEmail),
+                  eq(employees.workEmail, managerEmail),
+                ),
+                isNull(employees.archivedAt),
+                sql`${employees.status} NOT IN ('Inactive', 'Archived')`,
+              ),
+            )
+            .limit(1),
+          tx
+            .select({ eligibility: leavePolicies.eligibility })
+            .from(leavePolicies)
+            .where(
+              and(
+                eq(leavePolicies.organisationId, organisationId),
+                eq(leavePolicies.code, "A/L"),
+                eq(leavePolicies.isEnabled, true),
+              ),
+            )
+            .limit(1),
+        ]);
+      if (!department || !position || !location || !employmentType)
+        throw new Error("One of the selected employment options is no longer available.");
+      if (
+        [department.code, position.code, location.code, employmentType.code].some(
+          (code) => code === "SELF-SETUP",
+        )
+      )
+        throw new Error("Select your confirmed employment details before continuing.");
+      if (position.departmentId && position.departmentId !== department.id)
+        throw new Error("The selected position does not belong to the selected department.");
+      if (manager?.id === row.employee.id)
+        throw new Error("You cannot select yourself as your supervisor.");
+      const waitingMonths = Math.max(
+        0,
+        Number(
+          (annualPolicy?.eligibility as { minimumServiceMonths?: number } | null)
+            ?.minimumServiceMonths ?? 3,
+        ),
+      );
+      const probationDate = new Date(`${details.startDate}T00:00:00Z`);
+      probationDate.setUTCMonth(probationDate.getUTCMonth() + waitingMonths);
+      await tx
+        .update(employees)
+        .set({
+          legalName: details.legalName.trim(),
+          preferredName: details.preferredName.trim(),
+          staffEntryType: details.staffEntryType,
+          startDate: details.startDate,
+          probationEndDate:
+            details.staffEntryType === "New Employee"
+              ? probationDate.toISOString().slice(0, 10)
+              : null,
+          departmentId: department.id,
+          positionId: position.id,
+          locationId: location.id,
+          employmentTypeId: employmentType.id,
+          lineManagerId: manager?.id ?? null,
+          proposedLineManagerEmail: manager ? null : managerEmail,
+          profileSetupStatus: "In Progress",
+          updatedAt: new Date(),
+          updatedBy: actor.userId,
+          recordVersion: sql`${employees.recordVersion} + 1`,
+        })
+        .where(eq(employees.id, row.employee.id));
+      if (details.staffEntryType === "New Employee") {
+        const [contractTask] = await tx
+          .select({ id: onboardingTasks.id })
+          .from(onboardingTasks)
+          .where(
+            and(
+              eq(onboardingTasks.caseId, input.caseId),
+              eq(onboardingTasks.templateTaskId, "signed-contract"),
+              isNull(onboardingTasks.archivedAt),
+            ),
+          )
+          .limit(1);
+        if (!contractTask)
+          await tx.insert(onboardingTasks).values({
+            id: randomUUID(),
+            organisationId,
+            caseId: input.caseId,
+            templateTaskId: "signed-contract",
+            title: "Upload signed employment contract",
+            taskGroup: "Contract & Payroll",
+            checkpoint: "Pre-Arrival",
+            ownerRole: "Employee",
+            assignedUserId: actor.userId,
+            offsetDaysFromStart: 0,
+            dueDate: details.startDate,
+            isMandatory: true,
+            requiresEvidence: true,
+            selfServiceFormKey: "document_upload",
+            documentType: "contract",
+            createdBy: actor.userId,
+            updatedBy: actor.userId,
+          } as typeof onboardingTasks.$inferInsert);
+      }
+      if (!details.visaRequired) {
+        await tx
+          .update(onboardingTasks)
+          .set({
+            status: "Waived",
+            waiverReason: "Employee confirmed that a visa or work permit is not required",
+            updatedAt: new Date(),
+            updatedBy: actor.userId,
+            recordVersion: sql`${onboardingTasks.recordVersion} + 1`,
+          })
+          .where(
+            and(
+              eq(onboardingTasks.caseId, input.caseId),
+              eq(onboardingTasks.templateTaskId, "visa-copy"),
+              eq(onboardingTasks.status, "Pending"),
+            ),
+          );
+      }
+    } else if (input.kind === "personal_details") {
       const details = input.details;
       if (
         !details.dateOfBirth ||
@@ -1390,6 +1690,8 @@ export async function saveOnboardingSelfServiceInDatabase(
         isMandatory: onboardingTasks.isMandatory,
         status: onboardingTasks.status,
         checkpoint: onboardingTasks.checkpoint,
+        ownerRole: onboardingTasks.ownerRole,
+        selfServiceFormKey: onboardingTasks.selfServiceFormKey,
       })
       .from(onboardingTasks)
       .where(and(eq(onboardingTasks.caseId, input.caseId), isNull(onboardingTasks.archivedAt)));
@@ -1404,20 +1706,37 @@ export async function saveOnboardingSelfServiceInDatabase(
         recordVersion: sql`${onboardingCases.recordVersion} + 1`,
       })
       .where(eq(onboardingCases.id, input.caseId));
-    if (
-      progress.progressPercentage === 100 &&
-      row.employee.startDate <= new Date().toISOString().slice(0, 10) &&
-      row.employee.status === "Onboarding"
-    ) {
+    const selfServiceComplete = employeeSelfServiceComplete(taskRows);
+    if (selfServiceComplete && row.employee.profileSetupStatus !== "Completed") {
+      const [latestEmployee] = await tx
+        .select({
+          staffEntryType: employees.staffEntryType,
+          probationEndDate: employees.probationEndDate,
+        })
+        .from(employees)
+        .where(eq(employees.id, row.employee.id))
+        .limit(1);
+      const today = new Date().toISOString().slice(0, 10);
+      const nextStatus =
+        progress.progressPercentage === 100 && row.employee.status === "Onboarding"
+          ? latestEmployee?.staffEntryType === "New Employee" &&
+            latestEmployee.probationEndDate &&
+            latestEmployee.probationEndDate > today
+            ? "Probation"
+            : "Active"
+          : row.employee.status;
       await tx
         .update(employees)
         .set({
-          status: "Active",
+          status: nextStatus,
+          profileSetupStatus: "Completed",
+          profileSetupCompletedAt: new Date().toISOString(),
           updatedAt: new Date(),
           updatedBy: actor.userId,
           recordVersion: sql`${employees.recordVersion} + 1`,
         })
         .where(eq(employees.id, row.employee.id));
+      await recordProfileSetupCompletion(tx, organisationId, row.employee, actor);
     }
     await tx
       .insert(auditEvents)

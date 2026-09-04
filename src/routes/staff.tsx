@@ -152,11 +152,13 @@ function StaffLayout() {
 
   const isGated = useMemo(() => {
     if (gateCleared || !currentEmployee || !settings) return false;
-    if (!settings.requireOnboardingCompletionBeforeDashboard) return false;
+    const firstLoginSetupRequired = currentEmployee.profileSetupStatus === "In Progress";
+    if (!firstLoginSetupRequired && !settings.requireOnboardingCompletionBeforeDashboard)
+      return false;
     try {
       return obService.hasIncompleteSelfServiceTasks(currentEmployee.id, getActorContext());
     } catch {
-      return false;
+      return firstLoginSetupRequired;
     }
   }, [currentEmployee, gateCleared, getActorContext, obService, settings]);
 
@@ -213,7 +215,7 @@ function StaffLayout() {
               <div className="flex flex-col gap-6 max-w-3xl mx-auto pb-10">
                 <PageHeader
                   title="Welcome - let's finish setting up your record"
-                  description="HR and Finance need a few more details from you before you can access the rest of the system."
+                  description="Confirm your employment details, personal information and required documents. Once complete, your employee services will open automatically."
                 />
                 <SelfServiceOnboardingForm
                   employeeId={currentEmployee.id}

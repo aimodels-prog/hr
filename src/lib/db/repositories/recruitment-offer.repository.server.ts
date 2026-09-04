@@ -772,19 +772,19 @@ async function convertAcceptedOffer(
   const employeeId = randomUUID();
   const userId = randomUUID();
   const sequence = Number(count?.value ?? 0) + 1;
-  const employeeNumber = `VIA-${new Date().getUTCFullYear()}-${String(sequence).padStart(4, "0")}`;
   const emailStem =
     `${candidate.firstName}.${candidate.lastName}`
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, ".")
       .replace(/^\.|\.$/g, "") || `employee.${sequence}`;
-  let workspaceEmail = `${emailStem}@via-international.com`;
+  let workspaceEmail = `${emailStem}@via-int.com`;
   const [emailExists] = await tx
     .select({ id: users.id })
     .from(users)
     .where(and(eq(users.organisationId, organisationId), eq(users.workspaceEmail, workspaceEmail)))
     .limit(1);
-  if (emailExists) workspaceEmail = `${emailStem}.${sequence}@via-international.com`;
+  if (emailExists) workspaceEmail = `${emailStem}.${sequence}@via-int.com`;
+  const employeeNumber = workspaceEmail;
   await tx.insert(employees).values({
     id: employeeId,
     organisationId,
@@ -807,6 +807,8 @@ async function convertAcceptedOffer(
     candidateId: candidate.id,
     offerId: offer.id,
     status: "Onboarding",
+    staffEntryType: "New Employee",
+    profileSetupStatus: "In Progress",
     nationality: candidate.nationality,
     createdBy: actor.userId!,
     updatedBy: actor.userId!,
@@ -865,7 +867,25 @@ async function convertAcceptedOffer(
     createdBy: actor.userId!,
     updatedBy: actor.userId!,
   });
-  const templateTasks = template.templateTasks as OnboardingTemplateTask[];
+  const configuredTasks = template.templateTasks as OnboardingTemplateTask[];
+  const templateTasks = configuredTasks.some(
+    (task) => task.selfServiceFormKey === "employment_details",
+  )
+    ? configuredTasks
+    : [
+        {
+          id: "employment-details",
+          title: "Confirm your employment details",
+          group: "Employment Setup" as const,
+          checkpoint: "Pre-Arrival" as const,
+          ownerRole: "Employee" as const,
+          offsetDaysFromStart: 0,
+          isMandatory: true,
+          requiresEvidence: false,
+          selfServiceFormKey: "employment_details" as const,
+        },
+        ...configuredTasks,
+      ];
   if (templateTasks.length === 0) {
     throw new Error("The active onboarding checklist has no tasks.");
   }

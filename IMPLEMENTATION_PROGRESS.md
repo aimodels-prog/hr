@@ -1666,3 +1666,43 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
   - Kept one clearly identified external link to the VIA International corporate website.
   - Retained the VIA visual identity without distracting applicants with links to every corporate
     section, and kept staff access exclusively in the VIA Portal.
+
+### Step 49 - VIA email first-login employee setup
+
+- Status: Implementation complete in the repository on 2026-09-04; production migration and live
+  Portal acceptance are required before activation.
+- Decisions and behaviour:
+  - A verified `@via-int.com` identity now creates or links a PostgreSQL employee and user without
+    an HR import. The VIA email is the visible staff identifier; UUIDs remain internal relational
+    keys.
+  - New accounts receive only Employee access. Existing internal responsibilities remain
+    authoritative and unrecognized Portal role values cannot elevate access.
+  - First login creates an employee-owned checklist for employment details, personal/emergency
+    information, bank information and required identity documents. New employees also receive a
+    signed-contract requirement; unnecessary visa evidence can be waived from the employee's
+    answer.
+  - Employees select New Employee or Existing Employee, provide their true VIA start date and
+    identify their department, position, location, employment type and supervisor. A supervisor
+    email that has not signed in is retained and linked automatically on that supervisor's first
+    verified login.
+  - Incomplete self-setup is enforced in the shared staff shell and in the PostgreSQL leave service.
+    Completing employee-owned requirements opens normal self-service without waiting for unrelated
+    HR/IT onboarding tasks.
+  - Annual leave defaults to a three-completed-month waiting period. The value remains editable in
+    Leave Policies, applies from the employee's VIA start date, stays visible before eligibility and
+    is enforced against the requested leave start date on the server.
+  - Current-year leave balances are created idempotently as setup finishes; the durable rollover
+    worker remains the recovery path.
+  - HR/Super Admin can correct staff category and start date alongside the existing employment and
+    reporting-line fields, with effective date, reason and audit history.
+- Verification:
+  - The generated `0020_robust_rocket_racer.sql` migration applied successfully to the isolated
+    `via_hr_self_setup_test_20260904` PostgreSQL database.
+  - The focused live PostgreSQL tests passed for Portal identity provisioning, employee self-setup
+    and policy-controlled leave, and the existing leave concurrency and permission journey (3/3).
+  - The environment-independent automated suite passed: 304 tests, 280 passed, 24 optional live
+    integration tests skipped, 0 failed.
+  - Prettier check, ESLint, TypeScript typecheck, `git diff --check`, production build and dependency
+    audit all passed. The dependency audit reported 0 vulnerabilities.
+  - Production activation still requires applying migration 0020 and completing one real VIA Portal
+    login and responsive browser acceptance against the deployed environment.

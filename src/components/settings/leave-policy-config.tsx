@@ -380,7 +380,7 @@ export function LeavePolicyConfig() {
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label>Minimum Service (Months)</Label>
+                    <Label>Waiting Period Before Leave Can Be Taken (Months)</Label>
                     <Input
                       type="number"
                       min={0}
@@ -395,6 +395,10 @@ export function LeavePolicyConfig() {
                         })
                       }
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Set to 0 for immediate eligibility. This applies automatically from each
+                      employee's original VIA start date.
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center justify-between rounded-md bg-muted/30 p-3">

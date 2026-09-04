@@ -57,6 +57,9 @@ export interface Project extends MasterRecord {
 export type EmployeeStatus =
   "Onboarding" | "Active" | "Probation" | "Notice" | "Inactive" | "Archived";
 
+export type StaffEntryType = "New Employee" | "Existing Employee";
+export type ProfileSetupStatus = "Not Started" | "In Progress" | "Completed";
+
 export interface User extends BaseRecord {
   /** PostgreSQL UUID used while dependent modules still hold legacy browser IDs. */
   databaseId?: string;
@@ -110,6 +113,10 @@ export interface Employee extends BaseRecord {
   employmentType: string;
   startDate: string;
   probationEndDate?: string | undefined;
+  staffEntryType?: StaffEntryType | undefined;
+  profileSetupStatus?: ProfileSetupStatus | undefined;
+  profileSetupCompletedAt?: string | undefined;
+  proposedLineManagerEmail?: string | undefined;
   lineManagerId?: RecordId | undefined;
 
   // Future Integrations

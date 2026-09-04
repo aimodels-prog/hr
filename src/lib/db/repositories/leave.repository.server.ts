@@ -334,6 +334,7 @@ export async function createLeaveRequestInDatabase(
         nationality: employees.nationality,
         startDate: employees.startDate,
         status: employees.status,
+        profileSetupStatus: employees.profileSetupStatus,
       })
       .from(employees)
       .where(and(eq(employees.organisationId, organisationId), eq(employees.id, input.employeeId)))
@@ -351,6 +352,10 @@ export async function createLeaveRequestInDatabase(
       .limit(1);
     if (!employee || !policy || ["Inactive", "Archived"].includes(employee.status))
       throw new Error("The employee or leave policy is not available.");
+    if (employee.profileSetupStatus !== "Completed")
+      throw new Error(
+        "Complete your employee profile and required documents before requesting leave.",
+      );
     if (input.endDate < input.startDate)
       throw new Error("Leave end date cannot be before the start date.");
     if (input.reason.trim().length < 3)
@@ -435,12 +440,13 @@ export async function createLeaveRequestInDatabase(
     if (eligibility.omaniOnly && employee.nationality?.trim().toLowerCase() !== "omani")
       throw new Error(`${policy.name} is available only to Omani employees.`);
     if (eligibility.minimumServiceMonths !== undefined) {
-      const now = new Date();
-      const serviceMonths =
-        (now.getUTCFullYear() - Number(employee.startDate.slice(0, 4))) * 12 +
-        (now.getUTCMonth() + 1 - Number(employee.startDate.slice(5, 7)));
-      if (serviceMonths < eligibility.minimumServiceMonths)
-        throw new Error(`${policy.name} requires more completed service time.`);
+      const eligibleFrom = new Date(`${employee.startDate}T00:00:00Z`);
+      eligibleFrom.setUTCMonth(eligibleFrom.getUTCMonth() + eligibility.minimumServiceMonths);
+      const eligibleFromDate = eligibleFrom.toISOString().slice(0, 10);
+      if (input.startDate < eligibleFromDate)
+        throw new Error(
+          `${policy.name} can be taken from ${eligibleFromDate}, after ${eligibility.minimumServiceMonths} completed months of service.`,
+        );
     }
     const overlapping = await tx
       .select({ id: leaveRequests.id })
@@ -1513,8 +1519,11 @@ export async function rolloverLeaveBalancesInDatabase(
   organisationId: string,
   leaveYear: number,
   actor: AuditActorContext,
+  employeeScopeId?: string,
 ): Promise<number> {
-  if (actor.activeRole !== "HR" && actor.activeRole !== "Super Admin")
+  const isAdministrator = actor.activeRole === "HR" || actor.activeRole === "Super Admin";
+  const isOwnSetup = Boolean(employeeScopeId && actor.employeeId === employeeScopeId);
+  if (!isAdministrator && !isOwnSetup)
     throw new Error("Only HR or a Super Admin can run leave rollover.");
   const db = getDatabaseClient();
   let created = 0;
@@ -1549,6 +1558,7 @@ export async function rolloverLeaveBalancesInDatabase(
         and(
           eq(employees.organisationId, organisationId),
           sql`${employees.status} NOT IN ('Inactive', 'Archived')`,
+          ...(employeeScopeId ? [eq(employees.id, employeeScopeId)] : []),
         ),
       );
     for (const employee of staff)
@@ -1562,13 +1572,8 @@ export async function rolloverLeaveBalancesInDatabase(
           continue;
         if (eligibility.omaniOnly && employee.nationality?.trim().toLowerCase() !== "omani")
           continue;
-        if (eligibility.minimumServiceMonths !== undefined) {
-          const atYearStart = new Date(`${leaveYear}-01-01T00:00:00Z`);
-          const months =
-            (atYearStart.getUTCFullYear() - Number(employee.startDate.slice(0, 4))) * 12 +
-            (atYearStart.getUTCMonth() + 1 - Number(employee.startDate.slice(5, 7)));
-          if (months < eligibility.minimumServiceMonths) continue;
-        }
+        // Waiting periods control when leave can be taken, not whether the employee can see
+        // the entitlement that will become available later in the leave year.
         const [existing] = await tx
           .select({ id: leaveBalances.id })
           .from(leaveBalances)
@@ -1668,7 +1673,9 @@ export async function rolloverLeaveBalancesInDatabase(
         entityType: "leave-balance",
         entityId: organisationId,
         afterSummary: { leaveYear, balancesCreated: created },
-        reason: `Initialised leave entitlements for ${leaveYear}`,
+        reason: employeeScopeId
+          ? `Prepared leave allowances after employee profile setup for ${leaveYear}`
+          : `Initialised leave entitlements for ${leaveYear}`,
         riskLevel: "High",
       } as typeof auditEvents.$inferInsert);
   });
@@ -1690,6 +1697,22 @@ export async function processScheduledLeaveRollover(now = new Date()): Promise<{
   let balancesCreated = 0;
   let requestsMarkedTaken = 0;
   for (const row of rows) {
+    const [workerUser] = await db
+      .select({ userId: users.id, employeeId: users.employeeId, role: roles.code })
+      .from(users)
+      .innerJoin(userRoles, eq(userRoles.userId, users.id))
+      .innerJoin(roles, eq(userRoles.roleId, roles.id))
+      .where(
+        and(
+          eq(users.organisationId, row.organisation.id),
+          eq(users.status, "Active"),
+          isNull(users.archivedAt),
+          inArray(roles.code, ["Super Admin", "HR"]),
+        ),
+      )
+      .orderBy(sql`CASE WHEN ${roles.code} = 'Super Admin' THEN 0 ELSE 1 END`)
+      .limit(1);
+    if (!workerUser) continue;
     const localDate = new Intl.DateTimeFormat("en-CA", {
       timeZone: row.settings.timezone,
       year: "numeric",
@@ -1702,7 +1725,7 @@ export async function processScheduledLeaveRollover(now = new Date()): Promise<{
       .set({
         status: "Taken",
         updatedAt: new Date(),
-        updatedBy: row.organisation.createdBy,
+        updatedBy: workerUser.userId,
         recordVersion: sql`${leaveRequests.recordVersion} + 1`,
       })
       .where(
@@ -1717,10 +1740,11 @@ export async function processScheduledLeaveRollover(now = new Date()): Promise<{
     if (taken.length) {
       await db.insert(auditEvents).values({
         organisationId: row.organisation.id,
-        actorUserId: row.organisation.createdBy,
+        actorUserId: workerUser.userId,
+        actorEmployeeId: workerUser.employeeId,
         actorDisplayName: "VIA background worker",
-        activeRole: "Super Admin",
-        actorRoles: ["Super Admin"],
+        activeRole: workerUser.role,
+        actorRoles: [workerUser.role],
         action: "mark-taken",
         module: "leave",
         entityType: "leave-request",
@@ -1733,10 +1757,11 @@ export async function processScheduledLeaveRollover(now = new Date()): Promise<{
     const start = `${leaveYear}-${row.settings.leaveYearStart}`;
     if (localDate < start) continue;
     balancesCreated += await rolloverLeaveBalancesInDatabase(row.organisation.id, leaveYear, {
-      userId: row.organisation.createdBy,
+      userId: workerUser.userId,
+      employeeId: workerUser.employeeId,
       displayName: "VIA background worker",
-      roles: ["Super Admin"],
-      activeRole: "Super Admin",
+      roles: [workerUser.role],
+      activeRole: workerUser.role,
     });
   }
   return { organisations: rows.length, balancesCreated, requestsMarkedTaken };

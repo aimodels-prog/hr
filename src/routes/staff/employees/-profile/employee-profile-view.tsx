@@ -95,6 +95,8 @@ const editFormSchema = z.object({
   location: z.string().min(1),
   projectId: z.string().optional(),
   employmentType: z.string().min(1),
+  staffEntryType: z.enum(["New Employee", "Existing Employee"]),
+  startDate: z.string().min(1, "Start date is required"),
   lineManagerId: z.string().optional(),
   effectiveDate: z.string().min(1, "Effective date is required"),
   reason: z.string().min(5, "A reason must be provided (min 5 chars)"),
@@ -223,6 +225,8 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
       location: employee?.location || "",
       projectId: employee?.projectId || "",
       employmentType: employee?.employmentType || "",
+      staffEntryType: employee?.staffEntryType || "Existing Employee",
+      startDate: employee?.startDate || "",
       lineManagerId: employee?.lineManagerId || "",
       effectiveDate: new Date().toISOString().slice(0, 10),
       reason: "",
@@ -998,6 +1002,8 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                               location: employee.location,
                               projectId: employee.projectId || "",
                               employmentType: employee.employmentType,
+                              staffEntryType: employee.staffEntryType || "Existing Employee",
+                              startDate: employee.startDate,
                               lineManagerId: employee.lineManagerId || "",
                               effectiveDate: new Date().toISOString().slice(0, 10),
                               reason: "",
@@ -1156,6 +1162,42 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                 />
                                 <FormField
                                   control={form.control}
+                                  name="staffEntryType"
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <FormLabel>Staff Category</FormLabel>
+                                      <Select onValueChange={field.onChange} value={field.value}>
+                                        <FormControl>
+                                          <SelectTrigger>
+                                            <SelectValue />
+                                          </SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent>
+                                          <SelectItem value="New Employee">New employee</SelectItem>
+                                          <SelectItem value="Existing Employee">
+                                            Existing employee
+                                          </SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                                <FormField
+                                  control={form.control}
+                                  name="startDate"
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <FormLabel>VIA Start Date</FormLabel>
+                                      <FormControl>
+                                        <Input type="date" {...field} />
+                                      </FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                                <FormField
+                                  control={form.control}
                                   name="lineManagerId"
                                   render={({ field }) => (
                                     <FormItem>
@@ -1283,6 +1325,12 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                       <div>
                         <div className="text-muted-foreground">Start Date</div>
                         <div className="font-medium">{employee.startDate}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Staff Category</div>
+                        <div className="font-medium">
+                          {employee.staffEntryType || "Not recorded"}
+                        </div>
                       </div>
                       <div>
                         <div className="text-muted-foreground">Supervisor</div>

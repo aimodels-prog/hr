@@ -3,7 +3,15 @@ import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { toast } from "sonner";
-import { CheckCircle2, Circle, FileUp, Landmark, User, XCircle } from "lucide-react";
+import {
+  BriefcaseBusiness,
+  CheckCircle2,
+  Circle,
+  FileUp,
+  Landmark,
+  User,
+  XCircle,
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,10 +36,29 @@ import { useCurrentUser } from "@/lib/auth";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { OnboardingService } from "@/lib/data/onboarding-service";
 import { LifecycleTaskService } from "@/lib/data/lifecycle-task-service";
+import { MasterDataService } from "@/lib/data/master-data";
 import type { OnboardingTask } from "@/lib/data/onboarding-types";
-import type { DocumentType, Employee } from "@/lib/data/types";
+import type { DocumentType, Employee, MasterRecord } from "@/lib/data/types";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
+
+const employmentSchema = z.object({
+  staffEntryType: z.enum(["New Employee", "Existing Employee"]),
+  legalName: z.string().trim().min(2, "Your legal name is required"),
+  preferredName: z.string().trim().min(1, "Your preferred name is required"),
+  startDate: z.string().min(1, "Your VIA start date is required"),
+  departmentId: z.string().uuid("Select your department"),
+  positionId: z.string().uuid("Select your position"),
+  locationId: z.string().uuid("Select your work location"),
+  employmentTypeId: z.string().uuid("Select your employment type"),
+  lineManagerEmail: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email("Enter your supervisor's VIA email")
+    .refine((value) => value.endsWith("@via-int.com"), "Use a @via-int.com email"),
+  visaRequired: z.boolean(),
+});
 
 const personalSchema = z.object({
   dateOfBirth: z.string().min(1, "Date of birth is required"),
@@ -80,6 +107,7 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
   const [empService] = useState(() => new EmployeeService());
   const [obService] = useState(() => new OnboardingService());
   const [taskActions] = useState(() => new LifecycleTaskService());
+  const [masterData] = useState(() => new MasterDataService());
   const [, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -92,6 +120,7 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
     void Promise.all([
       empService.hydrateCompatibilityCache(context),
       obService.hydrateCompatibilityCache(context),
+      masterData.hydrateCompatibilityCache(),
     ])
       .then(() => {
         if (active) setRefreshKey((value) => value + 1);
@@ -106,7 +135,7 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
     return () => {
       active = false;
     };
-  }, [employeeId, empService, getActorContext, obService]);
+  }, [employeeId, empService, getActorContext, masterData, obService]);
 
   const employee = empService.getById(employeeId, getActorContext());
   const obCase = obService.getCaseByEmployeeId(employeeId, getActorContext());
@@ -116,11 +145,23 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
   const doneCount = tasks.filter(isTaskDone).length;
   const allDone = tasks.length > 0 && doneCount === tasks.length;
 
+  const employmentTask = tasks.find((t) => t.selfServiceFormKey === "employment_details");
   const personalTask = tasks.find((t) => t.selfServiceFormKey === "personal_details");
   const bankTask = tasks.find((t) => t.selfServiceFormKey === "bank_details");
   const documentTasks = tasks.filter((t) => t.selfServiceFormKey === "document_upload");
 
   const refresh = () => setRefreshKey((k) => k + 1);
+  const releaseIfEmployeeSetupComplete = (updatedTasks: OnboardingTask[]) => {
+    if (!onAllComplete) return;
+    const stillOutstanding = updatedTasks.some(
+      (item) =>
+        item.ownerRole === "Employee" &&
+        item.isMandatory &&
+        item.status !== "Completed" &&
+        item.status !== "Waived",
+    );
+    if (!stillOutstanding) onAllComplete();
+  };
 
   if (loading) {
     return (
@@ -158,7 +199,7 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
           <p className="font-medium">Nothing to complete here</p>
           <p className="max-w-sm text-sm text-muted-foreground">
             There is no onboarding checklist on your record. This page only applies to new hires
-            still completing their intake — once that is finished, or if you joined before this
+            still completing their intake. Once that is finished, or if you joined before this
             checklist existed, it stays empty like this.
           </p>
         </CardContent>
@@ -245,6 +286,35 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
         </CardContent>
       </Card>
 
+      {employmentTask && (
+        <EmploymentDetailsSection
+          employee={employee}
+          task={employmentTask}
+          done={isTaskDone(employmentTask)}
+          departments={masterData.list("departments", false)}
+          positions={masterData.list("positions", false)}
+          locations={masterData.list("locations", false)}
+          employmentTypes={masterData.list("employmentTypes", false)}
+          onSubmit={async (details) => {
+            try {
+              const updated = await obService.submitSelfServiceAsync(
+                obCase.id,
+                employmentTask.id,
+                { kind: "employment_details", details },
+                getActorContext(),
+              );
+              releaseIfEmployeeSetupComplete(updated.tasks);
+              toast.success("Employment details saved");
+              refresh();
+            } catch (error: unknown) {
+              toast.error(
+                error instanceof Error ? error.message : "Failed to save employment details",
+              );
+            }
+          }}
+        />
+      )}
+
       {personalTask && (
         <PersonalDetailsSection
           employee={employee}
@@ -252,7 +322,7 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
           done={isTaskDone(personalTask)}
           onSubmit={async (changes) => {
             try {
-              await obService.submitSelfServiceAsync(
+              const updated = await obService.submitSelfServiceAsync(
                 obCase.id,
                 personalTask.id,
                 {
@@ -271,6 +341,7 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
                 },
                 getActorContext(),
               );
+              releaseIfEmployeeSetupComplete(updated.tasks);
               toast.success("Personal details saved");
               refresh();
             } catch (error: unknown) {
@@ -289,7 +360,7 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
           done={isTaskDone(bankTask)}
           onSubmit={async (bankDetails) => {
             try {
-              await obService.submitSelfServiceAsync(
+              const updated = await obService.submitSelfServiceAsync(
                 obCase.id,
                 bankTask.id,
                 {
@@ -304,6 +375,7 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
                 },
                 getActorContext(),
               );
+              releaseIfEmployeeSetupComplete(updated.tasks);
               toast.success("Bank details saved");
               refresh();
             } catch (error: unknown) {
@@ -329,16 +401,7 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
                 { type: task.documentType || "other", ...metadata },
                 getActorContext(),
               );
-              if (onAllComplete) {
-                const stillOutstanding = updated.tasks.some(
-                  (item) =>
-                    item.ownerRole === "Employee" &&
-                    item.isMandatory &&
-                    item.status !== "Completed" &&
-                    item.status !== "Waived",
-                );
-                if (!stillOutstanding) onAllComplete();
-              }
+              releaseIfEmployeeSetupComplete(updated.tasks);
               toast.success("Document uploaded - pending HR verification");
               refresh();
             } catch (error: unknown) {
@@ -348,6 +411,220 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
         />
       ))}
     </div>
+  );
+}
+
+function databaseId(record: MasterRecord): string {
+  return record.databaseId ?? record.id;
+}
+
+function employeeSelectableRecords(records: MasterRecord[]): MasterRecord[] {
+  return records.filter((record) => record.code !== "SELF-SETUP");
+}
+
+function selectedMasterId(records: MasterRecord[], name: string): string {
+  const record = records.find((item) => item.name === name);
+  return record ? databaseId(record) : "";
+}
+
+function EmploymentDetailsSection({
+  employee,
+  task,
+  done,
+  departments,
+  positions,
+  locations,
+  employmentTypes,
+  onSubmit,
+}: {
+  employee: Employee;
+  task: OnboardingTask;
+  done: boolean;
+  departments: MasterRecord[];
+  positions: MasterRecord[];
+  locations: MasterRecord[];
+  employmentTypes: MasterRecord[];
+  onSubmit: (details: z.infer<typeof employmentSchema>) => void;
+}) {
+  const form = useForm<z.infer<typeof employmentSchema>>({
+    resolver: zodResolver(employmentSchema),
+    defaultValues: {
+      staffEntryType: employee.staffEntryType ?? "Existing Employee",
+      legalName: employee.legalName,
+      preferredName: employee.preferredName,
+      startDate: employee.startDate,
+      departmentId: selectedMasterId(departments, employee.department),
+      positionId: selectedMasterId(positions, employee.position),
+      locationId: selectedMasterId(locations, employee.location),
+      employmentTypeId: selectedMasterId(employmentTypes, employee.employmentType),
+      lineManagerEmail: employee.proposedLineManagerEmail ?? "",
+      visaRequired: true,
+    },
+  });
+  const entryType = form.watch("staffEntryType");
+
+  const selectField = (
+    name: "departmentId" | "positionId" | "locationId" | "employmentTypeId",
+    label: string,
+    records: MasterRecord[],
+  ) => (
+    <FormField
+      control={form.control}
+      name={name}
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>{label} *</FormLabel>
+          <Select value={field.value} onValueChange={field.onChange} disabled={done}>
+            <FormControl>
+              <SelectTrigger>
+                <SelectValue placeholder={`Select ${label.toLowerCase()}`} />
+              </SelectTrigger>
+            </FormControl>
+            <SelectContent>
+              {employeeSelectableRecords(records).map((record) => (
+                <SelectItem key={databaseId(record)} value={databaseId(record)}>
+                  {record.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  );
+
+  return (
+    <SectionShell
+      icon={<BriefcaseBusiness className="h-4 w-4" />}
+      title={task.title}
+      description="Tell us when you joined VIA and where you work. HR will review your selections and can correct them later."
+      done={done}
+    >
+      <Form {...form}>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
+          <FormField
+            control={form.control}
+            name="staffEntryType"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Are you joining VIA now or were you already employed? *</FormLabel>
+                <Select value={field.value} onValueChange={field.onChange} disabled={done}>
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    <SelectItem value="New Employee">I am a new employee</SelectItem>
+                    <SelectItem value="Existing Employee">I already worked for VIA</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-sm text-muted-foreground">
+                  {entryType === "New Employee"
+                    ? "New employees follow the waiting periods in VIA's leave policies. Annual leave is normally available after three completed months, unless HR changes the policy."
+                    : "Enter your original VIA joining date. Your service history will be used when checking leave eligibility."}
+                </p>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField
+              control={form.control}
+              name="legalName"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Full legal name *</FormLabel>
+                  <FormControl>
+                    <Input {...field} disabled={done} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="preferredName"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Preferred name *</FormLabel>
+                  <FormControl>
+                    <Input {...field} disabled={done} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="startDate"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>VIA start date *</FormLabel>
+                  <FormControl>
+                    <Input type="date" {...field} disabled={done} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="lineManagerEmail"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Supervisor's VIA email *</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="email"
+                      placeholder="manager@via-int.com"
+                      {...field}
+                      disabled={done}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            {selectField("departmentId", "Department", departments)}
+            {selectField("positionId", "Position", positions)}
+            {selectField("locationId", "Work location", locations)}
+            {selectField("employmentTypeId", "Employment type", employmentTypes)}
+            <FormField
+              control={form.control}
+              name="visaRequired"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Do you need a visa or work permit record? *</FormLabel>
+                  <Select
+                    value={field.value ? "yes" : "no"}
+                    onValueChange={(value) => field.onChange(value === "yes")}
+                    disabled={done}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="yes">Yes</SelectItem>
+                      <SelectItem value="no">No</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+          {!done && (
+            <div className="flex justify-end">
+              <Button type="submit">Save & Continue</Button>
+            </div>
+          )}
+        </form>
+      </Form>
+    </SectionShell>
   );
 }
 

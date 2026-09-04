@@ -110,6 +110,39 @@ test(
         WHERE organisation_id = ${organisationId} AND action = 'portal_sign_out'
       `;
       assert.equal(Number(logoutAudit?.count), 1);
+
+      const firstLoginEmail = `first-login-${organisationId}@via-int.com`;
+      const firstLogin = await createPortalSession(
+        {
+          email: firstLoginEmail,
+          name: "First Login Employee",
+          portalRole: "administrator",
+          mappedRole: "Employee",
+          expiresAt: Math.floor(Date.now() / 1000) + 120,
+        },
+        { lifetimeSeconds: 28_800 },
+      );
+      assert.equal(firstLogin.employee.employeeNumber, firstLoginEmail);
+      assert.equal(firstLogin.employee.profileSetupStatus, "In Progress");
+      assert.equal(firstLogin.employee.status, "Onboarding");
+      assert.deepEqual(firstLogin.user.roles, ["Employee"]);
+      const [checklist] = await sql`
+        SELECT
+          count(*)::int AS task_count,
+          count(*) FILTER (WHERE self_service_form_key = 'employment_details')::int AS employment_count
+        FROM onboarding_tasks
+        WHERE assigned_user_id = ${firstLogin.user.id}
+      `;
+      assert.equal(Number(checklist?.task_count), 6);
+      assert.equal(Number(checklist?.employment_count), 1);
+      const [selfRegistrationAudit] = await sql`
+        SELECT count(*)::int AS count FROM audit_events
+        WHERE organisation_id = ${organisationId}
+          AND entity_id = ${firstLogin.employee.id}
+          AND action = 'self-register'
+      `;
+      assert.equal(Number(selfRegistrationAudit?.count), 1);
+      await revokePortalSession(firstLogin.sessionToken);
     } finally {
       clearDefaultOrganisationCacheForTests();
       if (priorOrg === undefined) delete process.env["VIA_HR_ORGANISATION_ID"];

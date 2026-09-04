@@ -131,6 +131,14 @@ export async function listEmployeesForOrganisation(organisationId: string): Prom
       ...(row.legalEntity ? { legalEntity: row.legalEntity } : {}),
       startDate: row.startDate,
       ...(row.probationEndDate ? { probationEndDate: row.probationEndDate } : {}),
+      ...(row.staffEntryType ? { staffEntryType: row.staffEntryType } : {}),
+      profileSetupStatus: row.profileSetupStatus,
+      ...(row.profileSetupCompletedAt
+        ? { profileSetupCompletedAt: requiredIso(row.profileSetupCompletedAt) }
+        : {}),
+      ...(row.proposedLineManagerEmail
+        ? { proposedLineManagerEmail: row.proposedLineManagerEmail }
+        : {}),
       ...(row.workspaceEmail ? { workspaceEmail: row.workspaceEmail } : {}),
       ...(row.candidateId ? { candidateId: row.candidateId } : {}),
       ...(row.offerId ? { offerId: row.offerId } : {}),
@@ -872,6 +880,7 @@ export type EmploymentRecordChanges = Pick<
   | "grade"
   | "location"
   | "employmentType"
+  | "staffEntryType"
   | "lineManagerId"
   | "projectId"
   | "costCentreId"
@@ -1033,6 +1042,7 @@ export async function updateEmploymentRecordInDatabase(
     if (gradeId !== undefined) updateValues.gradeId = gradeId;
     if (locationId) updateValues.locationId = locationId;
     if (employmentTypeId) updateValues.employmentTypeId = employmentTypeId;
+    if (changes.staffEntryType !== undefined) updateValues.staffEntryType = changes.staffEntryType;
     if (changes.lineManagerId !== undefined) updateValues.lineManagerId = changes.lineManagerId;
     if (changes.projectId !== undefined) updateValues.projectId = changes.projectId || null;
     if (changes.costCentreId !== undefined)

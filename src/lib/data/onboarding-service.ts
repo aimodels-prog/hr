@@ -191,6 +191,21 @@ export class OnboardingService {
     taskId: string,
     submission:
       | {
+          kind: "employment_details";
+          details: {
+            staffEntryType: "New Employee" | "Existing Employee";
+            legalName: string;
+            preferredName: string;
+            startDate: string;
+            departmentId: string;
+            positionId: string;
+            locationId: string;
+            employmentTypeId: string;
+            lineManagerEmail: string;
+            visaRequired: boolean;
+          };
+        }
+      | {
           kind: "personal_details";
           details: {
             dateOfBirth: string;
@@ -531,6 +546,17 @@ export class OnboardingService {
           roles: [],
           employmentTypes: [],
           tasks: [
+            {
+              id: "employment-details",
+              title: "Confirm Your Employment Details",
+              group: "Employment Setup",
+              checkpoint: "Pre-Arrival",
+              ownerRole: "Employee",
+              offsetDaysFromStart: 0,
+              isMandatory: true,
+              requiresEvidence: false,
+              selfServiceFormKey: "employment_details",
+            },
             {
               id: "t0",
               title: "Complete Personal Details",

@@ -15,13 +15,7 @@ import type {
   SickPayTierBreakdown,
   EmployeeLeaveEntitlementOverride,
 } from "./leave-types.ts";
-import {
-  differenceInCalendarDays,
-  differenceInMonths,
-  parseISO,
-  eachDayOfInterval,
-  isValid,
-} from "date-fns";
+import { differenceInCalendarDays, parseISO, eachDayOfInterval, isValid } from "date-fns";
 import { NotificationService } from "./notification-service.ts";
 import { getMasterDataRepository } from "./master-data.ts";
 import { SettingsService } from "./settings-service.ts";
@@ -53,6 +47,7 @@ export const POLICY_DEFINITIONS = [
     requiresAttachment: false,
     requiresHandoverContact: true,
     countsTowardGratuity: true,
+    eligibility: { minimumServiceMonths: 3 },
     approvalChain: ["Line Manager", "HR"],
     noticeRules: {
       enabled: true,
@@ -763,10 +758,8 @@ export class LeaveService {
       if (nationality !== "omani") return false;
     }
 
-    if (eligibility.minimumServiceMonths !== undefined) {
-      const months = differenceInMonths(new Date(), parseISO(employee.startDate));
-      if (months < eligibility.minimumServiceMonths) return false;
-    }
+    // Minimum-service rules affect the first permissible leave date. Keep the policy visible so
+    // employees can understand their future entitlement and plan ahead.
 
     return true;
   }
@@ -1683,13 +1676,12 @@ export class LeaveService {
       }
 
       if (eligibility.minimumServiceMonths !== undefined) {
-        const monthsOfService = differenceInMonths(
-          new Date(),
-          parseISO(employeeForEligibility.startDate),
-        );
-        if (monthsOfService < eligibility.minimumServiceMonths) {
+        const eligibleFrom = new Date(`${employeeForEligibility.startDate}T00:00:00Z`);
+        eligibleFrom.setUTCMonth(eligibleFrom.getUTCMonth() + eligibility.minimumServiceMonths);
+        const eligibleFromDate = eligibleFrom.toISOString().slice(0, 10);
+        if (payload.startDate < eligibleFromDate) {
           throw new Error(
-            `${policy.name} requires at least ${eligibility.minimumServiceMonths} months of continuous service${basis}. This employee currently has ${monthsOfService} months of service.`,
+            `${policy.name} can be taken from ${eligibleFromDate}, after ${eligibility.minimumServiceMonths} completed months of service${basis}.`,
           );
         }
       }

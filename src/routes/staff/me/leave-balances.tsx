@@ -486,6 +486,12 @@ function LeaveBalancesRoute() {
                             Covering colleague required
                           </span>
                         )}
+                        {!!policy.eligibility?.minimumServiceMonths && (
+                          <span className="block font-medium text-foreground">
+                            Available after {policy.eligibility.minimumServiceMonths} completed
+                            months of service
+                          </span>
+                        )}
                       </TableCell>
                     </TableRow>
                   );

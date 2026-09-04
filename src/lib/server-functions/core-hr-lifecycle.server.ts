@@ -37,6 +37,7 @@ import {
   closeCompanyAssetAssignmentInDatabase,
   listCompanyAssetAssignmentsForActor,
 } from "../db/repositories/company-asset.repository.server.ts";
+import { rolloverLeaveBalancesInDatabase } from "../db/repositories/leave.repository.server.ts";
 
 const Actor = z
   .object({
@@ -67,6 +68,35 @@ async function verify(actorInput: z.infer<typeof Actor>) {
   };
 }
 
+async function lifecycleSnapshotAfterChange(
+  organisationId: string,
+  actor: Awaited<ReturnType<typeof verify>>["actor"],
+  caseId?: string,
+) {
+  const snapshot = await listCoreHrLifecycleForActor(organisationId, actor);
+  const completedOwnCase = caseId
+    ? snapshot.onboardingCases.find((item) => {
+        if (item.id !== caseId || item.employeeId !== actor.employeeId) return false;
+        const required = item.tasks.filter(
+          (task) => task.ownerRole === "Employee" && task.isMandatory && task.selfServiceFormKey,
+        );
+        return (
+          required.length > 0 &&
+          required.every((task) => task.status === "Completed" || task.status === "Waived")
+        );
+      })
+    : undefined;
+  if (completedOwnCase && actor.employeeId) {
+    await rolloverLeaveBalancesInDatabase(
+      organisationId,
+      new Date().getUTCFullYear(),
+      actor,
+      actor.employeeId,
+    );
+  }
+  return snapshot;
+}
+
 export const getCoreHrLifecycleSnapshotFn = createServerFn({ method: "POST" })
   .validator((input: { actor: z.infer<typeof Actor> }) =>
     z.object({ actor: Actor }).strict().parse(input),
@@ -93,7 +123,9 @@ const OnboardingTemplateTask = z
     requiresEvidence: z.boolean(),
     instructions: z.string().trim().max(2000).optional(),
     dependsOnTaskIds: z.array(z.string().min(1).max(100)).max(50).optional(),
-    selfServiceFormKey: z.enum(["personal_details", "bank_details", "document_upload"]).optional(),
+    selfServiceFormKey: z
+      .enum(["employment_details", "personal_details", "bank_details", "document_upload"])
+      .optional(),
     documentType: z.string().max(100).optional(),
     verificationDocumentType: z.string().max(100).optional(),
     requiresBankDetails: z.boolean().optional(),
@@ -243,7 +275,7 @@ export const updateOnboardingTaskFn = createServerFn({ method: "POST" })
       },
       verified.actor,
     );
-    return listCoreHrLifecycleForActor(verified.organisationId, verified.actor);
+    return lifecycleSnapshotAfterChange(verified.organisationId, verified.actor, data.caseId);
   });
 
 const OnboardingCaseAction = z
@@ -271,7 +303,7 @@ export const applyOnboardingCaseActionFn = createServerFn({ method: "POST" })
         data.reason ?? "Cancelled employee onboarding",
         verified.actor,
       );
-    return listCoreHrLifecycleForActor(verified.organisationId, verified.actor);
+    return lifecycleSnapshotAfterChange(verified.organisationId, verified.actor, data.caseId);
   });
 
 const CompleteOnboardingWithEvidence = z
@@ -317,7 +349,7 @@ export const completeOnboardingTaskWithEvidenceFn = createServerFn({ method: "PO
       ).catch(() => undefined);
       throw error;
     }
-    return listCoreHrLifecycleForActor(verified.organisationId, verified.actor);
+    return lifecycleSnapshotAfterChange(verified.organisationId, verified.actor, data.caseId);
   });
 
 const CompleteOnboardingDocumentTask = z
@@ -403,7 +435,7 @@ export const completeOnboardingDocumentTaskFn = createServerFn({ method: "POST" 
       }
       throw error;
     }
-    return listCoreHrLifecycleForActor(verified.organisationId, verified.actor);
+    return lifecycleSnapshotAfterChange(verified.organisationId, verified.actor, data.caseId);
   });
 
 const PersonalOnboardingDetails = z
@@ -450,7 +482,30 @@ const BankOnboardingDetails = z
     branch: z.string().trim().max(150).optional(),
   })
   .strict();
+const EmploymentOnboardingDetails = z
+  .object({
+    staffEntryType: z.enum(["New Employee", "Existing Employee"]),
+    legalName: z.string().trim().min(2).max(200),
+    preferredName: z.string().trim().min(1).max(100),
+    startDate: IsoDate,
+    departmentId: z.string().uuid(),
+    positionId: z.string().uuid(),
+    locationId: z.string().uuid(),
+    employmentTypeId: z.string().uuid(),
+    lineManagerEmail: z.string().trim().toLowerCase().email(),
+    visaRequired: z.boolean(),
+  })
+  .strict();
 const SaveOnboardingSelfService = z.discriminatedUnion("kind", [
+  z
+    .object({
+      actor: Actor,
+      caseId: z.string().uuid(),
+      taskId: z.string().uuid(),
+      kind: z.literal("employment_details"),
+      details: EmploymentOnboardingDetails,
+    })
+    .strict(),
   z
     .object({
       actor: Actor,
@@ -474,38 +529,12 @@ export const saveOnboardingSelfServiceFn = createServerFn({ method: "POST" })
   .validator((input) => SaveOnboardingSelfService.parse(input))
   .handler(async ({ data }) => {
     const verified = await verify(data.actor);
-    const submission =
-      data.kind === "personal_details"
-        ? {
-            caseId: data.caseId,
-            taskId: data.taskId,
-            kind: data.kind,
-            details: {
-              dateOfBirth: data.details.dateOfBirth,
-              gender: data.details.gender,
-              nationality: data.details.nationality,
-              maritalStatus: data.details.maritalStatus,
-              phone: data.details.phone,
-              ...(data.details.personalEmail ? { personalEmail: data.details.personalEmail } : {}),
-              address: data.details.address,
-              emergencyContacts: data.details.emergencyContacts,
-              ...(data.details.dependants ? { dependants: data.details.dependants } : {}),
-            },
-          }
-        : {
-            caseId: data.caseId,
-            taskId: data.taskId,
-            kind: data.kind,
-            details: {
-              bankName: data.details.bankName,
-              accountNumber: data.details.accountNumber,
-              iban: data.details.iban,
-              ...(data.details.swiftCode ? { swiftCode: data.details.swiftCode } : {}),
-              ...(data.details.branch ? { branch: data.details.branch } : {}),
-            },
-          };
-    await saveOnboardingSelfServiceInDatabase(verified.organisationId, submission, verified.actor);
-    return listCoreHrLifecycleForActor(verified.organisationId, verified.actor);
+    await saveOnboardingSelfServiceInDatabase(
+      verified.organisationId,
+      data as Parameters<typeof saveOnboardingSelfServiceInDatabase>[1],
+      verified.actor,
+    );
+    return lifecycleSnapshotAfterChange(verified.organisationId, verified.actor, data.caseId);
   });
 
 const StartOffboarding = z

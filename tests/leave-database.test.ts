@@ -194,6 +194,23 @@ test(
       const employeeActor = actor(employeeUserId, employeeId, "Employee");
       const managerActor = actor(managerUserId, managerEmployeeId, "Line Manager");
       const hrActor = actor(hrUserId, hrEmployeeId, "HR");
+      await sql`UPDATE employees SET profile_setup_status = 'In Progress' WHERE id = ${employeeId}`;
+      await assert.rejects(
+        createLeaveRequestInDatabase(
+          organisationId,
+          {
+            employeeId,
+            policyId: annualPolicyId,
+            startDate: isoDate(start),
+            endDate: isoDate(end),
+            reason: "Profile setup bypass check",
+            handoverContactId: colleagueEmployeeId,
+          },
+          employeeActor,
+        ),
+        /Complete your employee profile/,
+      );
+      await sql`UPDATE employees SET profile_setup_status = 'Completed' WHERE id = ${employeeId}`;
       await assert.rejects(
         createLeaveRequestInDatabase(
           organisationId,

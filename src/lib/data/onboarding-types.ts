@@ -3,9 +3,11 @@ import type { BaseRecord, DocumentType, RecordId, Role } from "./types.ts";
 // Ties an Employee-owned onboarding task to the actual self-service data-entry surface
 // that must be completed for it - a task can't be marked done by clicking a button alone,
 // it requires the underlying record (personal details, bank details, or a document) to exist.
-export type SelfServiceFormKey = "personal_details" | "bank_details" | "document_upload";
+export type SelfServiceFormKey =
+  "employment_details" | "personal_details" | "bank_details" | "document_upload";
 
 export type TaskGroup =
+  | "Employment Setup"
   | "Personal & Legal Documents"
   | "Contract & Payroll"
   | "Visa, Work Permit & ID"

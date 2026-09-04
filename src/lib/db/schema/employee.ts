@@ -40,6 +40,13 @@ export const employeeStatus = pgEnum("employee_status", [
 
 export const userStatus = pgEnum("user_status", ["Active", "Suspended", "Archived"]);
 
+export const staffEntryType = pgEnum("staff_entry_type", ["New Employee", "Existing Employee"]);
+export const profileSetupStatus = pgEnum("profile_setup_status", [
+  "Not Started",
+  "In Progress",
+  "Completed",
+]);
+
 export const systemRoleCode = pgEnum("system_role_code", [
   "Employee",
   "Line Manager",
@@ -98,6 +105,13 @@ export const employees = pgTable(
     legalEntity: text("legal_entity"),
     startDate: date("start_date", { mode: "string" }).notNull(),
     probationEndDate: date("probation_end_date", { mode: "string" }),
+    staffEntryType: staffEntryType("staff_entry_type"),
+    profileSetupStatus: profileSetupStatus("profile_setup_status").notNull().default("Completed"),
+    profileSetupCompletedAt: timestamp("profile_setup_completed_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    proposedLineManagerEmail: text("proposed_line_manager_email"),
     workspaceEmail: text("workspace_email"),
     candidateId: uuid("candidate_id"),
     offerId: uuid("offer_id"),
@@ -147,6 +161,10 @@ export const employees = pgTable(
     check(
       "employees_workspace_email_normalized",
       sql`${table.workspaceEmail} IS NULL OR ${table.workspaceEmail} = lower(btrim(${table.workspaceEmail}))`,
+    ),
+    check(
+      "employees_proposed_manager_email_normalized",
+      sql`${table.proposedLineManagerEmail} IS NULL OR ${table.proposedLineManagerEmail} = lower(btrim(${table.proposedLineManagerEmail}))`,
     ),
     check(
       "employees_manager_not_self",
