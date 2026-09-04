@@ -2,8 +2,9 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowRight, Building2, Clock3, MapPin, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import careersTeamImage from "@/assets/via-careers-team.webp";
+import fieldworkImage from "@/assets/via-fieldwork.jpeg";
 import bridgeImage from "@/assets/via-mughsayl-bridge.jpg";
-import workImage from "@/assets/via-work-with-us.jpg";
 import {
   PublicCareersFooter,
   PublicCareersHeader,
@@ -115,32 +116,38 @@ function CareerPortal() {
     <PublicCareersPage>
       <PublicCareersHeader />
       <main>
-        <section className="relative isolate min-h-[620px] overflow-hidden bg-[#174c70] text-white lg:min-h-[720px]">
-          <img
-            src={bridgeImage}
-            alt="Mughsayl Bridge, a VIA International infrastructure project in Oman"
-            className="absolute inset-0 -z-20 h-full w-full object-cover"
-          />
-          <div className="absolute inset-0 -z-10 bg-[linear-gradient(90deg,rgba(5,48,82,.84)_0%,rgba(8,69,111,.54)_48%,rgba(8,69,111,.12)_100%)]" />
-          <div className="mx-auto flex min-h-[620px] max-w-[1480px] items-center px-5 py-20 sm:px-8 lg:min-h-[720px] lg:px-10">
-            <div className="max-w-[830px]">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-white/85">
-                Careers at VIA International
-              </p>
-              <h1 className="mt-7 text-[3.6rem] font-normal leading-[0.96] tracking-[-0.045em] sm:text-7xl lg:text-[6.25rem]">
-                Engineer the places people depend on.
-              </h1>
-              <p className="mt-8 max-w-2xl text-lg leading-8 text-white/88 sm:text-xl">
-                Work with an international team designing roads, bridges, water systems and
-                buildings that serve communities for generations.
-              </p>
-              <a
-                href="#openings"
-                className="mt-10 inline-flex min-h-12 items-center gap-3 bg-white px-6 py-3 text-sm font-semibold uppercase tracking-[0.08em] text-[#07558e] transition-colors hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
-              >
-                View open positions <ArrowRight className="h-4 w-4" />
-              </a>
+        <section className="overflow-hidden bg-[#07558e] text-white">
+          <div className="mx-auto grid min-h-[650px] max-w-[1680px] lg:grid-cols-[0.96fr_1.04fr]">
+            <div className="flex items-center px-5 py-20 sm:px-8 lg:px-12 xl:px-20">
+              <div className="max-w-[700px]">
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-white/85">
+                  Careers at VIA International
+                </p>
+                <h1 className="mt-7 text-[3.5rem] font-normal leading-[0.96] tracking-[-0.045em] sm:text-7xl xl:text-[5.6rem]">
+                  Engineer the places people depend on.
+                </h1>
+                <p className="mt-8 max-w-2xl text-lg leading-8 text-white/88 sm:text-xl">
+                  Work with an international team designing roads, bridges, water systems and
+                  buildings that serve communities for generations.
+                </p>
+                <a
+                  href="#openings"
+                  className="mt-10 inline-flex min-h-12 items-center gap-3 bg-white px-6 py-3 text-sm font-semibold uppercase tracking-[0.08em] text-[#07558e] transition-colors hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
+                >
+                  View open positions <ArrowRight className="h-4 w-4" />
+                </a>
+              </div>
             </div>
+            <figure className="relative min-h-[440px] overflow-hidden bg-slate-100 lg:min-h-[650px]">
+              <img
+                src={careersTeamImage}
+                alt="Engineering colleagues reviewing infrastructure plans together"
+                className="absolute inset-0 h-full w-full object-cover object-center"
+              />
+              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/60 to-transparent px-6 pb-6 pt-20 text-sm text-white/90 sm:px-8">
+                People, ideas and engineering in practice
+              </div>
+            </figure>
           </div>
         </section>
 
@@ -170,13 +177,28 @@ function CareerPortal() {
                 Learn about VIA International <ArrowRight className="h-4 w-4" />
               </a>
             </div>
-            <figure className="relative min-h-[390px] overflow-hidden bg-slate-100 sm:min-h-[520px]">
-              <img
-                src={workImage}
-                alt="Road and infrastructure works delivered by VIA International"
-                className="absolute inset-0 h-full w-full object-cover"
-              />
-            </figure>
+            <div className="grid min-h-[430px] grid-cols-[1.45fr_.75fr] gap-3 sm:min-h-[560px]">
+              <figure className="relative overflow-hidden bg-stone-100">
+                <img
+                  src={fieldworkImage}
+                  alt="A VIA field specialist examining ground conditions on site"
+                  className="absolute inset-0 h-full w-full object-cover object-[52%_58%]"
+                />
+                <figcaption className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/70 to-transparent px-5 pb-5 pt-20 text-sm text-white">
+                  Engineering in the field
+                </figcaption>
+              </figure>
+              <figure className="relative overflow-hidden bg-slate-100">
+                <img
+                  src={bridgeImage}
+                  alt="Mughsayl Bridge, a VIA International infrastructure project in Oman"
+                  className="absolute inset-0 h-full w-full object-cover object-center"
+                />
+                <figcaption className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/70 to-transparent px-4 pb-5 pt-20 text-sm text-white">
+                  Ideas made real
+                </figcaption>
+              </figure>
+            </div>
           </div>
         </section>
 
