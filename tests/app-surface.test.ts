@@ -53,6 +53,11 @@ test("careers surface serves only public recruitment and sends staff browsers to
 
 test("staff surface refuses public APIs and sends public pages to careers", async () => {
   await withSurface("staff", () => {
+    const root = resolveAppSurfaceRequest(new Request("https://hr.via-int.com/"));
+    assert.equal(root?.status, 302);
+    assert.equal(root?.headers.get("location"), "https://hr.via-int.com/dashboard");
+    assert.equal(root?.headers.get("cache-control"), "no-store, max-age=0");
+
     const careers = resolveAppSurfaceRequest(
       new Request("https://hr.via-int.com/jobs/example?source=portal"),
     );

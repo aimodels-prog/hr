@@ -83,6 +83,17 @@ function redirectTo(origin: URL, requestUrl: URL): Response {
   });
 }
 
+function redirectStaffRootToDashboard(): Response {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      location: new URL("/dashboard", getStaffOrigin()).toString(),
+      "cache-control": "no-store, max-age=0",
+      "referrer-policy": "no-referrer",
+    },
+  });
+}
+
 function notFound(request: Request): Response {
   if (isApiRequest(request)) {
     return Response.json(
@@ -148,6 +159,7 @@ export function resolveAppSurfaceRequest(request: Request): Response | undefined
   if (isPublicRecruitmentApi(url.pathname) || isPublicServerFunction(url.pathname)) {
     return notFound(request);
   }
+  if (url.pathname === "/") return redirectStaffRootToDashboard();
   if (isPublicApplicationPath(url.pathname)) return redirectTo(getCareersOrigin(), url);
   return undefined;
 }
