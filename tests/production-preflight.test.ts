@@ -23,6 +23,7 @@ function validEnvironment(): Record<string, string> {
     VIA_HR_ORGANISATION_ID: "72c7c2fe-cfc4-4fae-af4d-b37c4d752c84",
     VIA_HR_DATABASE_POOL_SIZE: "10",
     VIA_HR_ATTENDANCE_NETWORK_ENFORCEMENT: "true",
+    VIA_HR_ZKTECO_INGEST_SECRET: "zkteco-device-secret-1234567890-abcdefgh",
     VIA_HR_TRUST_PROXY: "true",
     PORTAL_SSO_ENABLED: "true",
     PORTAL_URL: "https://portal.via-int.com",

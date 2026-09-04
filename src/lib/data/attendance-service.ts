@@ -8,6 +8,8 @@ import { SettingsService } from "./settings-service.ts";
 import type {
   AttendanceCorrection,
   AttendanceCorrectionType,
+  AttendanceDevice,
+  AttendanceDeviceMapping,
   AttendanceExceptionCase,
   AttendanceExceptionType,
   AttendanceExceptionStatus,
@@ -23,6 +25,7 @@ import type {
   SiteVisitRequest,
   SiteVisitOrigin,
   SiteVisitStatus,
+  UnmatchedAttendancePunch,
 } from "./attendance-types.ts";
 import type { ActorContext, Employee, Role, User } from "./types.ts";
 
@@ -164,7 +167,7 @@ export class AttendanceService {
     };
   }
 
-  private databaseId(collection: "employees" | "projects", id: string): string {
+  private databaseId(collection: "employees" | "projects" | "locations", id: string): string {
     const record = getApplicationDataServices()
       .storage.readCollection<{ id: string; databaseId?: string }>(collection)
       .find((item) => item.id === id || item.databaseId === id);
@@ -448,6 +451,7 @@ export class AttendanceService {
             number,
             number,
           ],
+          punchDeduplicationMinutes: snapshot.policy.punchDeduplicationMinutes,
           approvedNetworkCidrs: snapshot.policy.approvedNetworkCidrs,
           updatedAt: iso(snapshot.policy.updatedAt),
           updatedBy: userMap.get(snapshot.policy.updatedBy) ?? snapshot.policy.updatedBy,
@@ -706,6 +710,7 @@ export class AttendanceService {
         lateGraceMinutes: input.lateGraceMinutes,
         maximumLocationAccuracyMeters: input.maximumLocationAccuracyMeters,
         signOutReminderOffsetsMinutes: input.signOutReminderOffsetsMinutes,
+        punchDeduplicationMinutes: input.punchDeduplicationMinutes,
         approvedNetworkCidrs,
         reason,
       },
@@ -745,6 +750,116 @@ export class AttendanceService {
     const record = this.recordRepo.list().find((item) => item.databaseId === databaseId);
     if (!record) throw new Error("The attendance record could not be refreshed.");
     return record;
+  }
+
+  async listDeviceAdministrationAsync(context: ActorContext): Promise<{
+    devices: AttendanceDevice[];
+    mappings: AttendanceDeviceMapping[];
+    unmatched: UnmatchedAttendancePunch[];
+  }> {
+    const { listAttendanceDevicesFn } = await import("../server-functions/attendance.server.ts");
+    const snapshot = await listAttendanceDevicesFn({
+      data: { actor: this.serverActor(context) },
+    });
+    const { storage } = getApplicationDataServices();
+    const localEmployee = (databaseId: string) =>
+      storage
+        .readCollection<Employee>("employees")
+        .find((employee) => employee.databaseId === databaseId)?.id ?? databaseId;
+    const localLocation = (databaseId: string) =>
+      storage
+        .readCollection<{ id: string; databaseId?: string }>("locations")
+        .find((location) => location.databaseId === databaseId)?.id ?? databaseId;
+    return {
+      devices: snapshot.devices.map(({ device, locationName }) => ({
+        id: device.id,
+        recordVersion: device.recordVersion,
+        code: device.code,
+        name: device.name,
+        locationId: localLocation(device.locationId),
+        locationName,
+        ...(device.serialNumber ? { serialNumber: device.serialNumber } : {}),
+        ...(device.model ? { model: device.model } : {}),
+        isActive: device.isActive,
+        ...(device.lastSeenAt ? { lastSeenAt: new Date(device.lastSeenAt).toISOString() } : {}),
+        ...(device.lastSuccessfulSyncAt
+          ? { lastSuccessfulSyncAt: new Date(device.lastSuccessfulSyncAt).toISOString() }
+          : {}),
+        ...(device.lastError ? { lastError: device.lastError } : {}),
+      })),
+      mappings: snapshot.mappings.map(({ mapping, employeeName }) => ({
+        id: mapping.id,
+        deviceId: mapping.deviceId,
+        deviceUserId: mapping.deviceUserId,
+        employeeId: localEmployee(mapping.employeeId),
+        employeeName,
+      })),
+      unmatched: snapshot.unmatched.map(({ punch, deviceName }) => ({
+        id: punch.id,
+        deviceId: punch.deviceId,
+        deviceName,
+        deviceUserId: punch.deviceUserId,
+        ...(punch.deviceUserName ? { deviceUserName: punch.deviceUserName } : {}),
+        occurredAt: new Date(punch.occurredAt).toISOString(),
+        ...(punch.deviceStatus !== null ? { status: punch.deviceStatus } : {}),
+        ...(punch.punchMethod !== null ? { punchMethod: punch.punchMethod } : {}),
+        ...(punch.failureReason ? { failureReason: punch.failureReason } : {}),
+      })),
+    };
+  }
+
+  async saveDeviceAsync(
+    input: {
+      id?: string;
+      recordVersion?: number;
+      code: string;
+      name: string;
+      locationId: string;
+      serialNumber?: string;
+      model?: string;
+      isActive: boolean;
+      reason: string;
+    },
+    context: ActorContext,
+  ): Promise<string> {
+    const { saveAttendanceDeviceFn } = await import("../server-functions/attendance.server.ts");
+    return saveAttendanceDeviceFn({
+      data: {
+        actor: this.serverActor(context),
+        ...(input.id ? { id: input.id } : {}),
+        ...(input.recordVersion ? { recordVersion: input.recordVersion } : {}),
+        code: input.code,
+        name: input.name,
+        locationId: this.databaseId("locations", input.locationId),
+        ...(input.serialNumber ? { serialNumber: input.serialNumber } : {}),
+        ...(input.model ? { model: input.model } : {}),
+        isActive: input.isActive,
+        reason: input.reason,
+      },
+    });
+  }
+
+  async mapDeviceUserAsync(
+    input: {
+      deviceId: string;
+      deviceUserId: string;
+      employeeId: string;
+      reason: string;
+    },
+    context: ActorContext,
+  ): Promise<number> {
+    const { mapAttendanceDeviceUserFn } = await import("../server-functions/attendance.server.ts");
+    const result = await mapAttendanceDeviceUserFn({
+      data: {
+        actor: this.serverActor(context),
+        deviceId: input.deviceId,
+        deviceUserId: input.deviceUserId,
+        employeeId: this.databaseId("employees", input.employeeId),
+        reason: input.reason,
+      },
+    });
+    await this.hydrateFromDatabase(context);
+    return result.appliedPunches;
   }
 
   async importRowsAsync(rows: AttendanceImportRow[], context: ActorContext): Promise<number> {
@@ -963,6 +1078,7 @@ export class AttendanceService {
       lateGraceMinutes: 5,
       maximumLocationAccuracyMeters: 100,
       signOutReminderOffsetsMinutes: [0, 15, 30],
+      punchDeduplicationMinutes: 2,
     };
   }
 
@@ -976,6 +1092,7 @@ export class AttendanceService {
       | "lateGraceMinutes"
       | "maximumLocationAccuracyMeters"
       | "signOutReminderOffsetsMinutes"
+      | "punchDeduplicationMinutes"
       | "approvedNetworkCidrs"
     >,
     context: ActorContext,

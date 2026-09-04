@@ -611,6 +611,9 @@ export async function captureAttendancePunchInDatabase(
         site.radiusMeters + input.accuracyMeters
     )
       throw new Error("Attendance can only be recorded inside a configured office location.");
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${organisationId}:${input.employeeId}:${date}`}, 0))`,
+    );
     const [existing] = await tx
       .select()
       .from(attendanceRecords)
@@ -621,6 +624,7 @@ export async function captureAttendancePunchInDatabase(
           eq(attendanceRecords.date, date),
         ),
       )
+      .for("update")
       .limit(1);
     const id = existing?.id ?? randomUUID();
     if (input.direction === "in") {
@@ -634,6 +638,7 @@ export async function captureAttendancePunchInDatabase(
             capturedLatitude: input.latitude,
             capturedLongitude: input.longitude,
             capturedAccuracyMeters: input.accuracyMeters,
+            source: existing.source === "Hardware Terminal" ? "Multiple Sources" : existing.source,
             status: "Present",
             updatedAt: new Date(),
             updatedBy: actor.userId,
@@ -671,6 +676,7 @@ export async function captureAttendancePunchInDatabase(
           clockOutCapturedLatitude: input.latitude,
           clockOutCapturedLongitude: input.longitude,
           clockOutCapturedAccuracyMeters: input.accuracyMeters,
+          source: existing.source === "Hardware Terminal" ? "Multiple Sources" : existing.source,
           calculatedHours: String(Math.min(24, hours)),
           updatedAt: new Date(),
           updatedBy: actor.userId,
@@ -1388,6 +1394,7 @@ export async function saveAttendancePolicyInDatabase(
     lateGraceMinutes: number;
     maximumLocationAccuracyMeters: number;
     signOutReminderOffsetsMinutes: number[];
+    punchDeduplicationMinutes: number;
     approvedNetworkCidrs: string[];
   },
   reason: string,
@@ -1402,7 +1409,10 @@ export async function saveAttendancePolicyInDatabase(
     input.defaultBreakMinutes < 0 ||
     input.defaultBreakMinutes > 1439 ||
     input.lateGraceMinutes < 0 ||
-    input.maximumLocationAccuracyMeters < 1
+    input.maximumLocationAccuracyMeters < 1 ||
+    !Number.isInteger(input.punchDeduplicationMinutes) ||
+    input.punchDeduplicationMinutes < 0 ||
+    input.punchDeduplicationMinutes > 15
   )
     throw new Error("Attendance policy values are outside the permitted range.");
   const reminders = [...new Set(input.signOutReminderOffsetsMinutes)].sort((a, b) => a - b);
@@ -1429,6 +1439,7 @@ export async function saveAttendancePolicyInDatabase(
       lateGraceMinutes: input.lateGraceMinutes,
       maximumLocationAccuracyMeters: input.maximumLocationAccuracyMeters,
       signOutReminderOffsetsMinutes: reminders,
+      punchDeduplicationMinutes: input.punchDeduplicationMinutes,
       antiSpoofingMode: "Approved Network",
       approvedNetworkCidrs: cidrs,
       updatedAt: new Date(),

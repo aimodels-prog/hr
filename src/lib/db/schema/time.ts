@@ -227,6 +227,7 @@ export const attendancePolicies = pgTable(
     lateGraceMinutes: integer("late_grace_minutes").notNull(),
     maximumLocationAccuracyMeters: integer("maximum_location_accuracy_meters").notNull(),
     signOutReminderOffsetsMinutes: integer("sign_out_reminder_offsets_minutes").array().notNull(),
+    punchDeduplicationMinutes: integer("punch_deduplication_minutes").notNull().default(2),
     antiSpoofingMode: text("anti_spoofing_mode").notNull().default("Approved Network"),
     approvedNetworkCidrs: text("approved_network_cidrs").array().notNull().default([]),
   },
@@ -242,6 +243,10 @@ export const attendancePolicies = pgTable(
     check(
       "attendance_policies_three_reminders",
       sql`cardinality(${table.signOutReminderOffsetsMinutes}) = 3`,
+    ),
+    check(
+      "attendance_policies_punch_deduplication_range",
+      sql`${table.punchDeduplicationMinutes} BETWEEN 0 AND 15`,
     ),
     check("attendance_policies_anti_spoofing", sql`${table.antiSpoofingMode} = 'Approved Network'`),
   ],
@@ -264,7 +269,67 @@ export const attendanceSource = pgEnum("attendance_source", [
   "Web",
   "Import",
   "Site Visit Auto",
+  "Multiple Sources",
 ]);
+
+/**
+ * Door terminals remain on the office network. This registry contains only the
+ * public identity and operational state needed by VIA HR; the terminal COMKey
+ * and biometric templates must never be copied into the cloud application.
+ */
+export const attendanceDevices = pgTable(
+  "attendance_devices",
+  {
+    ...mutableRecordColumns,
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "restrict" }),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    locationId: uuid("location_id")
+      .notNull()
+      .references(() => locations.id, { onDelete: "restrict" }),
+    serialNumber: text("serial_number"),
+    model: text("model"),
+    isActive: boolean("is_active").notNull().default(true),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true, mode: "string" }),
+    lastSuccessfulSyncAt: timestamp("last_successful_sync_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    lastError: text("last_error"),
+  },
+  (table) => [
+    uniqueIndex("attendance_devices_org_code_unique").on(table.organisationId, table.code),
+    index("attendance_devices_org_active_idx").on(table.organisationId, table.isActive),
+    check("attendance_devices_code_not_blank", sql`btrim(${table.code}) <> ''`),
+    check("attendance_devices_name_not_blank", sql`btrim(${table.name}) <> ''`),
+  ],
+);
+
+/** One explicit terminal identity per employee and device. */
+export const attendanceDeviceEmployeeMappings = pgTable(
+  "attendance_device_employee_mappings",
+  {
+    ...mutableRecordColumns,
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "restrict" }),
+    deviceId: uuid("device_id")
+      .notNull()
+      .references(() => attendanceDevices.id, { onDelete: "restrict" }),
+    deviceUserId: text("device_user_id").notNull(),
+    employeeId: uuid("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "restrict" }),
+  },
+  (table) => [
+    uniqueIndex("attendance_device_user_unique").on(table.deviceId, table.deviceUserId),
+    uniqueIndex("attendance_device_employee_unique").on(table.deviceId, table.employeeId),
+    index("attendance_device_mapping_org_employee_idx").on(table.organisationId, table.employeeId),
+    check("attendance_device_mapping_user_not_blank", sql`btrim(${table.deviceUserId}) <> ''`),
+  ],
+);
 
 export const attendanceRecords = pgTable(
   "attendance_records",
@@ -345,15 +410,21 @@ export const attendancePunchEvents = pgTable(
       .references(() => employees.id, { onDelete: "restrict" }),
     direction: text("direction").notNull(),
     occurredAt: timestamp("occurred_at", { withTimezone: true, mode: "string" }).notNull(),
-    locationId: uuid("location_id")
-      .notNull()
-      .references(() => locations.id, { onDelete: "restrict" }),
-    latitude: doublePrecision("latitude").notNull(),
-    longitude: doublePrecision("longitude").notNull(),
-    accuracyMeters: doublePrecision("accuracy_meters").notNull(),
-    clientIp: text("client_ip").notNull(),
+    source: text("source").notNull().default("Web"),
+    deviceId: uuid("device_id").references(() => attendanceDevices.id, {
+      onDelete: "restrict",
+    }),
+    externalEventId: text("external_event_id"),
+    deviceUserId: text("device_user_id"),
+    deviceStatus: integer("device_status"),
+    punchMethod: integer("punch_method"),
+    locationId: uuid("location_id").references(() => locations.id, { onDelete: "restrict" }),
+    latitude: doublePrecision("latitude"),
+    longitude: doublePrecision("longitude"),
+    accuracyMeters: doublePrecision("accuracy_meters"),
+    clientIp: text("client_ip"),
     networkVerified: boolean("network_verified").notNull(),
-    createdBy: uuid("created_by").notNull(),
+    createdBy: uuid("created_by"),
   },
   (table) => [
     index("attendance_punch_events_record_idx").on(table.attendanceRecordId, table.occurredAt),
@@ -362,9 +433,75 @@ export const attendancePunchEvents = pgTable(
       table.employeeId,
       table.occurredAt,
     ),
+    uniqueIndex("attendance_punch_events_device_external_unique")
+      .on(table.deviceId, table.externalEventId)
+      .where(sql`${table.deviceId} IS NOT NULL AND ${table.externalEventId} IS NOT NULL`),
     check("attendance_punch_events_direction", sql`${table.direction} IN ('in', 'out')`),
-    check("attendance_punch_events_accuracy", sql`${table.accuracyMeters} >= 0`),
-    check("attendance_punch_events_network", sql`${table.networkVerified}`),
+    check(
+      "attendance_punch_events_source",
+      sql`${table.source} IN ('Web', 'Hardware Terminal', 'Site Visit Auto')`,
+    ),
+    check(
+      "attendance_punch_events_accuracy",
+      sql`${table.accuracyMeters} IS NULL OR ${table.accuracyMeters} >= 0`,
+    ),
+    check(
+      "attendance_punch_events_evidence",
+      sql`(${table.source} = 'Hardware Terminal' AND ${table.deviceId} IS NOT NULL AND ${table.externalEventId} IS NOT NULL AND ${table.deviceUserId} IS NOT NULL)
+          OR (${table.source} <> 'Hardware Terminal' AND ${table.locationId} IS NOT NULL AND ${table.latitude} IS NOT NULL AND ${table.longitude} IS NOT NULL AND ${table.clientIp} IS NOT NULL AND ${table.networkVerified})`,
+    ),
+  ],
+);
+
+export const attendanceDevicePunchStatus = pgEnum("attendance_device_punch_status", [
+  "Applied",
+  "Unmatched Employee",
+  "Rejected",
+]);
+
+/** Immutable raw evidence received from the office collector. */
+export const attendanceDevicePunches = pgTable(
+  "attendance_device_punches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "restrict" }),
+    deviceId: uuid("device_id")
+      .notNull()
+      .references(() => attendanceDevices.id, { onDelete: "restrict" }),
+    externalEventId: text("external_event_id").notNull(),
+    deviceUserId: text("device_user_id").notNull(),
+    deviceUserName: text("device_user_name"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true, mode: "string" }).notNull(),
+    deviceStatus: integer("device_status"),
+    punchMethod: integer("punch_method"),
+    employeeId: uuid("employee_id").references(() => employees.id, { onDelete: "restrict" }),
+    attendanceRecordId: uuid("attendance_record_id").references(() => attendanceRecords.id, {
+      onDelete: "restrict",
+    }),
+    punchEventId: uuid("punch_event_id").references(() => attendancePunchEvents.id, {
+      onDelete: "restrict",
+    }),
+    status: attendanceDevicePunchStatus("status").notNull(),
+    failureReason: text("failure_reason"),
+    receivedAt: timestamp("received_at", { withTimezone: true, mode: "string" })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("attendance_device_punch_external_unique").on(
+      table.deviceId,
+      table.externalEventId,
+    ),
+    index("attendance_device_punch_org_status_idx").on(
+      table.organisationId,
+      table.status,
+      table.receivedAt,
+    ),
+    index("attendance_device_punch_user_idx").on(table.deviceId, table.deviceUserId),
+    check("attendance_device_punch_external_not_blank", sql`btrim(${table.externalEventId}) <> ''`),
+    check("attendance_device_punch_user_not_blank", sql`btrim(${table.deviceUserId}) <> ''`),
   ],
 );
 

@@ -100,6 +100,7 @@ export function validateProductionEnvironment(values: Record<string, string>): P
     "VIA_HR_POSTGRES_PASSWORD",
     "VIA_HR_DATABASE_URL",
     "VIA_HR_ORGANISATION_ID",
+    "VIA_HR_ZKTECO_INGEST_SECRET",
     "VIA_HR_CAREERS_ORIGIN",
     "PORTAL_URL",
     "PORTAL_SSO_ISSUER",
@@ -157,6 +158,8 @@ export function validateProductionEnvironment(values: Record<string, string>): P
     errors.push("Trusted-proxy processing must be enabled behind the reviewed reverse proxy.");
   if (!UUID.test(values["VIA_HR_ORGANISATION_ID"] ?? ""))
     errors.push("VIA_HR_ORGANISATION_ID must be a UUID.");
+  if (Buffer.byteLength(values["VIA_HR_ZKTECO_INGEST_SECRET"] ?? "", "utf8") < 32)
+    errors.push("VIA_HR_ZKTECO_INGEST_SECRET must contain at least 32 bytes.");
   if (!errors.some((error) => /app_bind|app_port|attendance|proxy|organisation/i.test(error)))
     checks.push("network binding and organisation scope are safe");
 
@@ -282,6 +285,7 @@ export function validateProductionEnvironment(values: Record<string, string>): P
   const objectSecret = values["VIA_HR_OBJECT_STORAGE_SECRET_ACCESS_KEY"];
   const backupSecret = values["VIA_HR_BACKUP_S3_SECRET_ACCESS_KEY"];
   const portalSecret = values["PORTAL_SSO_SECRET"];
+  const attendanceDeviceSecret = values["VIA_HR_ZKTECO_INGEST_SECRET"];
   if ((values["VIA_HR_OBJECT_STORAGE_ACCESS_KEY_ID"]?.length ?? 0) < 12)
     errors.push("The object-storage access key must contain at least 12 characters.");
   if ((objectSecret?.length ?? 0) < 32)
@@ -289,11 +293,17 @@ export function validateProductionEnvironment(values: Record<string, string>): P
   if ((backupSecret?.length ?? 0) < 24)
     errors.push("The backup-storage secret must contain at least 24 characters.");
   if (
-    [databaseSecret, objectSecret, backupSecret, portalSecret].filter(Boolean).length !==
-    new Set([databaseSecret, objectSecret, backupSecret, portalSecret].filter(Boolean)).size
+    [databaseSecret, objectSecret, backupSecret, portalSecret, attendanceDeviceSecret].filter(
+      Boolean,
+    ).length !==
+    new Set(
+      [databaseSecret, objectSecret, backupSecret, portalSecret, attendanceDeviceSecret].filter(
+        Boolean,
+      ),
+    ).size
   )
     errors.push(
-      "Database, object-storage, backup-storage and Portal SSO secrets must be different.",
+      "Database, object-storage, backup-storage, Portal SSO and attendance-device secrets must be different.",
     );
 
   let backupEndpoint: URL | undefined;

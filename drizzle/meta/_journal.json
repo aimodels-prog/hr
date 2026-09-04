@@ -162,6 +162,20 @@
       "when": 1788501659861,
       "tag": "0022_wide_blob",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1788512020706,
+      "tag": "0023_concerned_bishop",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1788515795239,
+      "tag": "0024_salty_boom_boom",
+      "breakpoints": true
     }
   ]
 }

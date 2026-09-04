@@ -12,7 +12,7 @@ export type AttendanceStatus =
   | "Corrected";
 
 export type AttendanceSource =
-  "Hardware Terminal" | "Manual Entry" | "Web" | "Import" | "Site Visit Auto";
+  "Hardware Terminal" | "Manual Entry" | "Web" | "Import" | "Site Visit Auto" | "Multiple Sources";
 
 export type AttendanceWorkMode = "Office" | "Approved Site Visit";
 
@@ -43,7 +43,43 @@ export interface AttendancePolicy extends BaseRecord {
   lateGraceMinutes: number;
   maximumLocationAccuracyMeters: number;
   signOutReminderOffsetsMinutes: [number, number, number];
+  punchDeduplicationMinutes: number;
   approvedNetworkCidrs?: string[] | undefined;
+}
+
+export interface AttendanceDevice {
+  id: string;
+  recordVersion: number;
+  code: string;
+  name: string;
+  locationId: string;
+  locationName: string;
+  serialNumber?: string | undefined;
+  model?: string | undefined;
+  isActive: boolean;
+  lastSeenAt?: string | undefined;
+  lastSuccessfulSyncAt?: string | undefined;
+  lastError?: string | undefined;
+}
+
+export interface AttendanceDeviceMapping {
+  id: string;
+  deviceId: string;
+  deviceUserId: string;
+  employeeId: string;
+  employeeName: string;
+}
+
+export interface UnmatchedAttendancePunch {
+  id: string;
+  deviceId: string;
+  deviceName: string;
+  deviceUserId: string;
+  deviceUserName?: string | undefined;
+  occurredAt: string;
+  status?: number | undefined;
+  punchMethod?: number | undefined;
+  failureReason?: string | undefined;
 }
 
 export interface AttendanceRecord extends BaseRecord {

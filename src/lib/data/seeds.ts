@@ -347,6 +347,7 @@ const attendancePolicies: AttendancePolicy[] = [
     lateGraceMinutes: 5,
     maximumLocationAccuracyMeters: 100,
     signOutReminderOffsetsMinutes: [0, 15, 30],
+    punchDeduplicationMinutes: 2,
   },
 ];
 

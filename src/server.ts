@@ -8,6 +8,7 @@ import { addSecurityHeaders, enforceRequestSecurity } from "./lib/http-security.
 import { resolvePortalAuthenticationRequest } from "./lib/auth/portal-auth-http.server";
 import { resolvePublicRecruitmentRequest } from "./lib/recruitment/public-recruitment-http.server";
 import { resolveAppSurfaceRequest } from "./lib/app-surface.server";
+import { resolveZktecoIntegrationRequest } from "./lib/integrations/zkteco-http.server";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -77,6 +78,8 @@ export default {
       if (healthResponse) return addSecurityHeaders(request, healthResponse);
       const surfaceResponse = resolveAppSurfaceRequest(request);
       if (surfaceResponse) return addSecurityHeaders(request, surfaceResponse);
+      const zktecoResponse = await resolveZktecoIntegrationRequest(request);
+      if (zktecoResponse) return addSecurityHeaders(request, zktecoResponse);
       const publicRecruitmentResponse = await resolvePublicRecruitmentRequest(request);
       if (publicRecruitmentResponse) return addSecurityHeaders(request, publicRecruitmentResponse);
       const authenticationResponse = await resolvePortalAuthenticationRequest(request);

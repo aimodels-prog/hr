@@ -1752,3 +1752,65 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
     left the dialog open because it attempted an unauthorised organisation-wide refresh.
   - TypeScript, ESLint, production build, Git whitespace validation and dependency audit passed. The
     dependency audit reported 0 vulnerabilities.
+
+### Step 51 - ZKTeco door-terminal attendance integration
+
+- Status: Application and office-collector implementation complete in the repository and the local
+  `ZKTeco-BioTime` folder on 2026-09-04. Applying migration 0023, registering the real terminal and
+  installing the dedicated shared secret on Contabo/NAS remain deployment actions.
+- Decisions and behaviour:
+  - VIA HR PostgreSQL remains the attendance source of truth. The ZKTeco application is an
+    office-network collector only; its employee, leave, shift and reporting copies were not brought
+    into VIA HR.
+  - The collector polls each enabled terminal every five minutes, keeps a durable SQLite delivery
+    queue and sends signed outbound HTTPS batches. It never sends the terminal COMKey or fingerprint
+    templates to Contabo.
+  - Every terminal event has a deterministic identifier. PostgreSQL uniqueness and immutable raw
+    evidence prevent duplicate attendance when a collector retries or rereads the terminal log.
+  - VIA email and employee number are exact-match identities. Unfamiliar terminal IDs remain in an
+    HR/Super Admin review queue and are never fuzzily matched or used to create employees.
+  - Door and portal punches share the same daily attendance projection. Repeat taps are collapsed by
+    an HR-editable interval, mixed-source days are identified, and employee/date locks prevent
+    simultaneous portal and terminal punches from racing.
+  - Door attendance flows into the existing server-side attendance/timesheet reconciliation. It does
+    not invent project or activity allocations on an employee's behalf.
+  - HR can register, edit and deactivate terminals and resolve unmatched identities from Attendance
+    Administration. Changes are audited and stale concurrent edits are refused.
+  - The ingestion route uses a dedicated HMAC secret, timestamp replay protection, strict payload
+    validation, controlled errors and existing request rate/body limits. Production preflight refuses
+    missing, short or reused device secrets.
+- Verification:
+  - Migration 0023 applied successfully from zero to isolated PostgreSQL databases.
+  - Focused PostgreSQL tests passed for normal attendance and the complete terminal lifecycle: exact
+    mapping, repeat-tap handling, eight-hour projection, duplicate delivery, unmatched review,
+    recovery, permission denial, stale-edit protection and raw-evidence immutability (2/2).
+  - Signed HTTP tests passed for valid, invalid-signature, expired and malformed batches (4/4).
+  - The Python collector image built successfully; its existing attendance suite passed (26/26),
+    bridge delivery/retry tests passed (2/2), and Python compilation passed.
+  - A fresh migrated and seeded PostgreSQL browser journey passed terminal registration, signed punch
+    ingestion and HR employee matching, alongside the existing site-visit journey (2/2).
+  - Environment-independent suite passed: 309 tests, 284 passed, 25 expected infrastructure skips
+    and zero failures. TypeScript, ESLint, production build, Git whitespace validation and dependency
+    audit passed; the dependency audit reported zero vulnerabilities.
+
+### Step 52 - ZKTeco enrolled-name matching
+
+- Status: Complete in the application and office collector on 2026-09-04. Real-device acceptance
+  remains part of the Step 51 deployment actions.
+- Decisions and behaviour:
+  - The collector reads the enrolled user name directly from the terminal directory and caches only
+    the terminal ID and name; passwords, access cards and biometric templates are not exported.
+  - Every newly delivered physical punch can include the name recorded on the machine. VIA HR keeps
+    it with the immutable raw punch evidence and shows it in the unmatched-user table and matching
+    dialog.
+  - A terminal name is a matching aid only. VIA HR does not automatically identify an employee by
+    name; HR must select and confirm the correct employee, after which all waiting punches for that
+    terminal ID are applied.
+- Verification:
+  - Migration 0024 applied successfully to the isolated ZKTeco PostgreSQL database.
+  - Signed HTTP coverage passed (4/4), and the PostgreSQL terminal lifecycle passed with enrolled-name
+    persistence, HR matching and raw-name immutability (1/1).
+  - Collector attendance tests passed (26/26), bridge delivery tests passed for populated and blank
+    terminal names plus offline retry (3/3), and Python compilation passed.
+  - The PostgreSQL browser journey passed with the machine name visible in both the unmatched table
+    and the manual matching dialog (1/1).

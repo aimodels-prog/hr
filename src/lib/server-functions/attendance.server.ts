@@ -19,6 +19,11 @@ import {
   saveAttendanceRecordInDatabase,
   updateAttendanceExceptionInvestigationInDatabase,
 } from "../db/repositories/attendance.repository.server.ts";
+import {
+  listAttendanceDeviceAdministration,
+  mapAttendanceDeviceUserInDatabase,
+  saveAttendanceDeviceInDatabase,
+} from "../db/repositories/zkteco.repository.server.ts";
 import { saveObjectFile } from "../db/object-storage.server.ts";
 import { resolveOrganisationIdForActor, verifyServerActorRole } from "../db/utils.server.ts";
 import { ROLE_VALUES } from "../data/types.ts";
@@ -72,6 +77,75 @@ export const captureAttendancePunchFn = createServerFn({ method: "POST" })
       },
       v.actor,
     );
+  });
+
+export const listAttendanceDevicesFn = createServerFn({ method: "POST" })
+  .validator((input) => z.object({ actor: Actor }).strict().parse(input))
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    return listAttendanceDeviceAdministration(v.organisationId, v.actor);
+  });
+
+const AttendanceDevice = z
+  .object({
+    actor: Actor,
+    id: z.string().uuid().optional(),
+    recordVersion: z.number().int().positive().optional(),
+    code: z.string().trim().min(2).max(64),
+    name: z.string().trim().min(2).max(200),
+    locationId: z.string().uuid(),
+    serialNumber: z.string().trim().max(128).optional(),
+    model: z.string().trim().max(128).optional(),
+    isActive: z.boolean(),
+    reason: z.string().trim().min(5).max(1000),
+  })
+  .strict();
+export const saveAttendanceDeviceFn = createServerFn({ method: "POST" })
+  .validator((input) => AttendanceDevice.parse(input))
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    return saveAttendanceDeviceInDatabase(
+      v.organisationId,
+      {
+        ...(data.id ? { id: data.id } : {}),
+        ...(data.recordVersion ? { recordVersion: data.recordVersion } : {}),
+        code: data.code,
+        name: data.name,
+        locationId: data.locationId,
+        ...(data.serialNumber ? { serialNumber: data.serialNumber } : {}),
+        ...(data.model ? { model: data.model } : {}),
+        isActive: data.isActive,
+      },
+      data.reason,
+      v.actor,
+    );
+  });
+
+const AttendanceDeviceMapping = z
+  .object({
+    actor: Actor,
+    deviceId: z.string().uuid(),
+    deviceUserId: z.string().trim().min(1).max(128),
+    employeeId: z.string().uuid(),
+    reason: z.string().trim().min(5).max(1000),
+  })
+  .strict();
+export const mapAttendanceDeviceUserFn = createServerFn({ method: "POST" })
+  .validator((input) => AttendanceDeviceMapping.parse(input))
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    return {
+      appliedPunches: await mapAttendanceDeviceUserInDatabase(
+        v.organisationId,
+        {
+          deviceId: data.deviceId,
+          deviceUserId: data.deviceUserId,
+          employeeId: data.employeeId,
+        },
+        data.reason,
+        v.actor,
+      ),
+    };
   });
 
 const ConfigureOffice = z
@@ -354,6 +428,7 @@ const Policy = z
     lateGraceMinutes: z.number().int().nonnegative(),
     maximumLocationAccuracyMeters: z.number().int().positive(),
     signOutReminderOffsetsMinutes: z.array(z.number().int().nonnegative()).length(3),
+    punchDeduplicationMinutes: z.number().int().min(0).max(15),
     approvedNetworkCidrs: z.array(z.string().trim().min(1)).min(1),
     reason: z.string().trim().min(5).max(1000),
   })
@@ -372,6 +447,7 @@ export const saveAttendancePolicyFn = createServerFn({ method: "POST" })
         lateGraceMinutes: data.lateGraceMinutes,
         maximumLocationAccuracyMeters: data.maximumLocationAccuracyMeters,
         signOutReminderOffsetsMinutes: data.signOutReminderOffsetsMinutes,
+        punchDeduplicationMinutes: data.punchDeduplicationMinutes,
         approvedNetworkCidrs: data.approvedNetworkCidrs,
       },
       data.reason,

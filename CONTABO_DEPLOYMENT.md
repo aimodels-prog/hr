@@ -178,6 +178,28 @@ configuration sets `X-Real-IP` from the direct remote address. Caddy manages the
 forwarding headers itself. If another trusted load balancer sits in front of Caddy, define its
 trusted proxy addresses explicitly before changing this configuration.
 
+## ZKTeco door-terminal bridge
+
+The ZKTeco terminal is never exposed to Contabo or the public internet. The office NAS runs the
+Python collector from `integrations/zkteco-bridge`, reads the terminal on LAN port 4370, and sends
+signed batches outbound to:
+
+```text
+POST https://hr.via-int.com/api/integrations/zkteco/punches
+```
+
+Generate a dedicated secret of at least 32 random bytes. Store it as
+`VIA_HR_ZKTECO_INGEST_SECRET` in the owner-readable Contabo `.env.production` file and as
+`VIA_HR_DEVICE_SECRET` in the NAS container environment. It must not equal the Portal SSO,
+database, object-storage, field-encryption or backup secret. Do not put the terminal COMKey or
+fingerprint templates on Contabo.
+
+In VIA HR, HR or Super Admin registers the terminal under **Attendance Administration → Door
+Terminals**. The registered code must exactly match the device `id` in the collector's
+`config.yaml`. Exact VIA email and employee-number matches are automatic; all other terminal IDs
+remain in the review queue until HR explicitly matches them. Repeated pulls are safe because both
+the collector and PostgreSQL use a deterministic event identifier.
+
 This is the selected first production anti-spoofing control. Managed-device or
 trusted-mobile attestation can be added later without replacing the network and
 geofence evidence already stored with each immutable punch event.

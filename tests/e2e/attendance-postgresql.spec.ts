@@ -1,3 +1,5 @@
+import { createHash, createHmac } from "node:crypto";
+
 import { expect, test, type Page } from "@playwright/test";
 
 type PreviewRole = "Employee" | "HR";
@@ -70,4 +72,80 @@ test("employee site visit persists to PostgreSQL and HR approval survives a role
   await cancelDialog.getByRole("button", { name: "Cancel visit" }).click();
   await expect(cancelDialog).toBeHidden();
   await expect(employeeRow).toContainText("Cancelled");
+});
+
+test("HR registers a door terminal and recovers a signed unmatched punch", async ({
+  page,
+  request,
+}) => {
+  const secret = process.env["VIA_HR_ZKTECO_INGEST_SECRET"];
+  test.skip(!secret, "A dedicated ZKTeco test secret is required.");
+  const suffix = Date.now().toString();
+  const deviceCode = `e2e-door-${suffix.slice(-10)}`;
+  const deviceName = `E2E Door ${suffix.slice(-6)}`;
+  const deviceUserId = `unmatched-${suffix}`;
+  const deviceUserName = `Terminal User ${suffix.slice(-4)}`;
+  const serialNumber = `E2E-${suffix}`;
+
+  await page.goto("/staff");
+  await previewAs(page, "user-rana", "HR", "/staff/attendance");
+  await page.getByRole("tab", { name: /Door Terminals/ }).click();
+  await page.getByRole("button", { name: "Register Terminal" }).click();
+  const terminalDialog = page.getByRole("dialog", { name: "Register Door Terminal" });
+  await terminalDialog.getByLabel("Terminal code").fill(deviceCode);
+  await terminalDialog.getByLabel("Terminal name").fill(deviceName);
+  await terminalDialog.getByLabel("Office").click();
+  await page.getByRole("option").first().click();
+  await terminalDialog.getByLabel("Serial number").fill(serialNumber);
+  await terminalDialog
+    .getByLabel("Reason")
+    .fill("Browser acceptance for the office door terminal.");
+  await terminalDialog.getByRole("button", { name: "Save Terminal" }).click();
+  await expect(terminalDialog).toBeHidden();
+  await expect(page.getByRole("row").filter({ hasText: deviceName })).toBeVisible();
+
+  const body = JSON.stringify({
+    serialNumber,
+    punches: [
+      {
+        externalEventId: createHash("sha256").update(`${deviceCode}:${suffix}`).digest("hex"),
+        deviceUserId,
+        deviceUserName,
+        occurredAt: new Date(Date.now() - 60_000).toISOString(),
+        status: 0,
+        punchMethod: 1,
+      },
+    ],
+  });
+  const timestamp = String(Date.now());
+  const signature = createHmac("sha256", secret!)
+    .update(`${timestamp}.${body}`, "utf8")
+    .digest("hex");
+  const response = await request.post("/api/integrations/zkteco/punches", {
+    data: body,
+    headers: {
+      "content-type": "application/json",
+      "x-via-device-id": deviceCode,
+      "x-via-timestamp": timestamp,
+      "x-via-signature": `sha256=${signature}`,
+    },
+  });
+  expect(response.status()).toBe(200);
+  expect(await response.json()).toMatchObject({ unmatched: 1, rejected: 0 });
+
+  await page.getByRole("button", { name: "Refresh" }).click();
+  const unmatchedRow = page.getByRole("row").filter({ hasText: deviceUserId });
+  await expect(unmatchedRow).toBeVisible();
+  await expect(unmatchedRow).toContainText(deviceUserName);
+  await unmatchedRow.getByRole("button", { name: "Match Employee" }).click();
+  const mappingDialog = page.getByRole("dialog", { name: "Match Terminal User" });
+  await expect(mappingDialog).toContainText(deviceUserName);
+  await mappingDialog.getByLabel("Employee").click();
+  await page.getByRole("option").first().click();
+  await mappingDialog
+    .getByLabel("Reason")
+    .fill("HR verified the terminal identity against the employee register.");
+  await mappingDialog.getByRole("button", { name: "Confirm Match" }).click();
+  await expect(mappingDialog).toBeHidden();
+  await expect(page.getByText("Every received terminal user is matched.")).toBeVisible();
 });

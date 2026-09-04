@@ -3,11 +3,13 @@ import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import {
   CheckCircle2,
+  DoorOpen,
   Download,
   FileUp,
   LocateFixed,
   MapPin,
   PencilLine,
+  RefreshCw,
   Settings2,
   XCircle,
 } from "lucide-react";
@@ -18,11 +20,14 @@ import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { AttendanceService } from "@/lib/data/attendance-service";
 import type {
   AttendanceExceptionCase,
+  AttendanceDevice,
+  AttendanceDeviceMapping,
   AttendanceImportPreview,
   AttendanceLocation,
   AttendanceSource,
   GeoReading,
   SiteVisitRequest,
+  UnmatchedAttendancePunch,
 } from "@/lib/data/attendance-types";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -137,20 +142,68 @@ function AttendanceAdminContent() {
     policy.approvedNetworkCidrs?.join(", ") ?? "",
   );
   const [policyReason, setPolicyReason] = useState("");
+  const [deduplicationMinutes, setDeduplicationMinutes] = useState(
+    String(policy.punchDeduplicationMinutes),
+  );
+  const [deviceData, setDeviceData] = useState<{
+    devices: AttendanceDevice[];
+    mappings: AttendanceDeviceMapping[];
+    unmatched: UnmatchedAttendancePunch[];
+  }>({ devices: [], mappings: [], unmatched: [] });
+  const [deviceLoading, setDeviceLoading] = useState(true);
+  const [deviceError, setDeviceError] = useState("");
+  const [savingDevice, setSavingDevice] = useState(false);
+  const [savingMapping, setSavingMapping] = useState(false);
+  const [deviceDialogOpen, setDeviceDialogOpen] = useState(false);
+  const [editingDevice, setEditingDevice] = useState<AttendanceDevice | null>(null);
+  const [deviceCode, setDeviceCode] = useState("");
+  const [deviceName, setDeviceName] = useState("");
+  const [deviceLocationId, setDeviceLocationId] = useState("");
+  const [deviceSerial, setDeviceSerial] = useState("");
+  const [deviceModel, setDeviceModel] = useState("ZKTeco F18/ID");
+  const [deviceActive, setDeviceActive] = useState(true);
+  const [deviceReason, setDeviceReason] = useState("");
+  const [mappingPunch, setMappingPunch] = useState<UnmatchedAttendancePunch | null>(null);
+  const [mappingEmployeeId, setMappingEmployeeId] = useState("");
+  const [mappingReason, setMappingReason] = useState("");
   const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
+
+  const loadDeviceAdministration = async () => {
+    setDeviceLoading(true);
+    setDeviceError("");
+    try {
+      setDeviceData(await attendanceService.listDeviceAdministrationAsync(actorContext));
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Door terminals could not be refreshed.";
+      setDeviceError(message);
+    } finally {
+      setDeviceLoading(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
     const refresh = async () => {
       try {
         await attendanceService.hydrateFromDatabase(actorContext);
+        const devices = await attendanceService.listDeviceAdministrationAsync(actorContext);
+        if (active) {
+          setDeviceData(devices);
+          setDeviceError("");
+        }
         if (active) setRevision((value) => value + 1);
       } catch (error) {
-        if (active)
+        if (active) {
+          setDeviceError(
+            error instanceof Error ? error.message : "Door terminals could not be refreshed.",
+          );
           toast.error(
             error instanceof Error ? error.message : "Attendance could not be refreshed.",
           );
+        }
       }
+      if (active) setDeviceLoading(false);
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 60_000);
@@ -163,6 +216,22 @@ function AttendanceAdminContent() {
   const employees = employeeService
     .getEmployees(actorContext)
     .filter((employee) => !["Archived", "Inactive"].includes(employee.status));
+  const unmatchedDeviceUsers = [
+    ...deviceData.unmatched
+      .reduce((groups, punch) => {
+        const key = `${punch.deviceId}:${punch.deviceUserId}`;
+        const existing = groups.get(key);
+        if (!existing) {
+          groups.set(key, { punch, firstPunchAt: punch.occurredAt, waitingCount: 1 });
+        } else {
+          existing.waitingCount += 1;
+          if (punch.occurredAt < existing.firstPunchAt) existing.firstPunchAt = punch.occurredAt;
+          if (!existing.punch.deviceUserName && punch.deviceUserName) existing.punch = punch;
+        }
+        return groups;
+      }, new Map<string, { punch: UnmatchedAttendancePunch; firstPunchAt: string; waitingCount: number }>())
+      .values(),
+  ];
   const allRecords = attendanceService.getAllRecords(actorContext);
   const locations = attendanceService.getLocations();
   const clockInLocations = attendanceService.getClockInLocations();
@@ -309,6 +378,7 @@ function AttendanceAdminContent() {
           lateGraceMinutes: Number(lateGrace),
           maximumLocationAccuracyMeters: Number(maxAccuracy),
           signOutReminderOffsetsMinutes: [0, 15, 30],
+          punchDeduplicationMinutes: Number(deduplicationMinutes),
         },
         approvedNetworks
           .split(",")
@@ -322,6 +392,88 @@ function AttendanceAdminContent() {
       toast.success("Attendance policy updated.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Policy could not be saved.");
+    }
+  };
+
+  const openNewDevice = () => {
+    setEditingDevice(null);
+    setDeviceCode("");
+    setDeviceName("");
+    setDeviceLocationId("");
+    setDeviceSerial("");
+    setDeviceModel("ZKTeco F18/ID");
+    setDeviceActive(true);
+    setDeviceReason("");
+    setDeviceDialogOpen(true);
+  };
+
+  const openDeviceEdit = (device: AttendanceDevice) => {
+    setEditingDevice(device);
+    setDeviceCode(device.code);
+    setDeviceName(device.name);
+    setDeviceLocationId(device.locationId);
+    setDeviceSerial(device.serialNumber ?? "");
+    setDeviceModel(device.model ?? "");
+    setDeviceActive(device.isActive);
+    setDeviceReason("");
+    setDeviceDialogOpen(true);
+  };
+
+  const saveDevice = async () => {
+    setSavingDevice(true);
+    try {
+      await attendanceService.saveDeviceAsync(
+        {
+          ...(editingDevice
+            ? { id: editingDevice.id, recordVersion: editingDevice.recordVersion }
+            : {}),
+          code: deviceCode,
+          name: deviceName,
+          locationId: deviceLocationId,
+          ...(deviceSerial.trim() ? { serialNumber: deviceSerial } : {}),
+          ...(deviceModel.trim() ? { model: deviceModel } : {}),
+          isActive: deviceActive,
+          reason: deviceReason,
+        },
+        actorContext,
+      );
+      await loadDeviceAdministration();
+      setDeviceDialogOpen(false);
+      toast.success(editingDevice ? "Door terminal updated." : "Door terminal registered.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The terminal could not be saved.");
+    } finally {
+      setSavingDevice(false);
+    }
+  };
+
+  const saveDeviceMapping = async () => {
+    if (!mappingPunch) return;
+    setSavingMapping(true);
+    try {
+      const applied = await attendanceService.mapDeviceUserAsync(
+        {
+          deviceId: mappingPunch.deviceId,
+          deviceUserId: mappingPunch.deviceUserId,
+          employeeId: mappingEmployeeId,
+          reason: mappingReason,
+        },
+        actorContext,
+      );
+      await loadDeviceAdministration();
+      setMappingPunch(null);
+      setMappingEmployeeId("");
+      setMappingReason("");
+      setRevision((value) => value + 1);
+      toast.success(
+        applied
+          ? `Employee matched and ${applied} waiting punch${applied === 1 ? "" : "es"} applied.`
+          : "Terminal user matched to the employee.",
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The employee could not be matched.");
+    } finally {
+      setSavingMapping(false);
     }
   };
 
@@ -425,6 +577,9 @@ function AttendanceAdminContent() {
             <TabsTrigger value="site-visits">Site Visits ({pendingSiteVisits.length})</TabsTrigger>
             <TabsTrigger value="exceptions">
               Exception Cases ({openExceptionCases.length})
+            </TabsTrigger>
+            <TabsTrigger value="terminals">
+              Door Terminals ({deviceData.unmatched.length})
             </TabsTrigger>
             <TabsTrigger value="import">Import & Manual Entry</TabsTrigger>
             <TabsTrigger value="setup">Office Setup</TabsTrigger>
@@ -555,6 +710,172 @@ function AttendanceAdminContent() {
                       </TableCell>
                     </TableRow>
                   ))}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="terminals" className="space-y-4">
+          <Alert>
+            <DoorOpen className="h-4 w-4" />
+            <AlertTitle>Office door attendance</AlertTitle>
+            <AlertDescription>
+              Door punches appear in the same attendance record as portal clock-ins. Employee
+              numbers and VIA emails match automatically; unfamiliar terminal IDs wait here for HR
+              review.
+            </AlertDescription>
+          </Alert>
+          {deviceError ? (
+            <Alert variant="destructive">
+              <AlertTitle>Door terminals are unavailable</AlertTitle>
+              <AlertDescription>{deviceError}</AlertDescription>
+            </Alert>
+          ) : null}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-medium">Registered terminals</p>
+              <p className="text-sm text-muted-foreground">
+                See each office terminal, its latest attendance and the employees matched to it.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                disabled={deviceLoading}
+                onClick={() => void loadDeviceAdministration()}
+              >
+                <RefreshCw className={`mr-2 h-4 w-4 ${deviceLoading ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+              <Button onClick={openNewDevice}>
+                <DoorOpen className="mr-2 h-4 w-4" /> Register Terminal
+              </Button>
+            </div>
+          </div>
+          <Card className="overflow-hidden">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Terminal</TableHead>
+                    <TableHead>Office</TableHead>
+                    <TableHead>Serial / model</TableHead>
+                    <TableHead>Last received</TableHead>
+                    <TableHead>Staff matched</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {deviceData.devices.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="h-28 text-center text-muted-foreground">
+                        No door terminal has been registered yet.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    deviceData.devices.map((device) => (
+                      <TableRow key={device.id}>
+                        <TableCell>
+                          <span className="font-medium">{device.name}</span>
+                          <span className="block font-mono text-xs text-muted-foreground">
+                            {device.code}
+                          </span>
+                        </TableCell>
+                        <TableCell>{device.locationName}</TableCell>
+                        <TableCell>
+                          {device.serialNumber ?? "Not confirmed"}
+                          <span className="block text-xs text-muted-foreground">
+                            {device.model ?? "Model not recorded"}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          {device.lastSuccessfulSyncAt
+                            ? format(new Date(device.lastSuccessfulSyncAt), "dd MMM yyyy, HH:mm")
+                            : "Waiting for first sync"}
+                        </TableCell>
+                        <TableCell>
+                          {
+                            deviceData.mappings.filter((mapping) => mapping.deviceId === device.id)
+                              .length
+                          }
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={device.isActive ? "outline" : "secondary"}>
+                            {device.isActive ? "Active" : "Inactive"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button variant="ghost" size="sm" onClick={() => openDeviceEdit(device)}>
+                            Edit
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+
+          <div>
+            <p className="font-medium">Terminal users needing review</p>
+            <p className="text-sm text-muted-foreground">
+              Matching a user applies all waiting punches for that terminal identity.
+            </p>
+          </div>
+          <Card className="overflow-hidden">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Terminal user ID</TableHead>
+                    <TableHead>Name on machine</TableHead>
+                    <TableHead>Terminal</TableHead>
+                    <TableHead>First waiting punch</TableHead>
+                    <TableHead>Waiting punches</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {deviceData.unmatched.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                        Every received terminal user is matched.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    unmatchedDeviceUsers.map(({ punch, firstPunchAt, waitingCount }) => {
+                      return (
+                        <TableRow key={`${punch.deviceId}:${punch.deviceUserId}`}>
+                          <TableCell className="font-mono font-medium">
+                            {punch.deviceUserId}
+                          </TableCell>
+                          <TableCell className="font-medium">
+                            {punch.deviceUserName || "Name not available"}
+                          </TableCell>
+                          <TableCell>{punch.deviceName}</TableCell>
+                          <TableCell>
+                            {format(new Date(firstPunchAt), "dd MMM yyyy, HH:mm")}
+                          </TableCell>
+                          <TableCell>{waitingCount}</TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                setMappingPunch(punch);
+                                setMappingEmployeeId("");
+                                setMappingReason("");
+                              }}
+                            >
+                              Match Employee
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
                 </TableBody>
               </Table>
             </div>
@@ -784,7 +1105,8 @@ function AttendanceAdminContent() {
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Create a single audited attendance record for hardware or HR-supplied punches.
+                Add a confirmed attendance record from a door terminal or information received by
+                HR.
               </p>
               <Button
                 onClick={() => {
@@ -930,6 +1252,19 @@ function AttendanceAdminContent() {
                   onChange={(event) => setMaxAccuracy(event.target.value)}
                 />
               </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Ignore repeat punches within</label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="15"
+                  value={deduplicationMinutes}
+                  onChange={(event) => setDeduplicationMinutes(event.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Minutes; prevents accidental double taps.
+                </p>
+              </div>
               <div className="space-y-2 sm:col-span-2">
                 <label className="text-sm font-medium">Approved office networks</label>
                 <Input
@@ -965,6 +1300,173 @@ function AttendanceAdminContent() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={deviceDialogOpen} onOpenChange={setDeviceDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {editingDevice ? "Edit Door Terminal" : "Register Door Terminal"}
+            </DialogTitle>
+            <DialogDescription>
+              Add the terminal used at this office. Its private access key is never entered here.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2 sm:grid-cols-2">
+            <div className="space-y-2">
+              <label htmlFor="attendance-terminal-code" className="text-sm font-medium">
+                Terminal code
+              </label>
+              <Input
+                id="attendance-terminal-code"
+                value={deviceCode}
+                onChange={(event) => setDeviceCode(event.target.value)}
+                placeholder="main-entrance"
+              />
+            </div>
+            <div className="space-y-2">
+              <label htmlFor="attendance-terminal-name" className="text-sm font-medium">
+                Terminal name
+              </label>
+              <Input
+                id="attendance-terminal-name"
+                value={deviceName}
+                onChange={(event) => setDeviceName(event.target.value)}
+                placeholder="Main Entrance"
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <label htmlFor="attendance-terminal-office" className="text-sm font-medium">
+                Office
+              </label>
+              <Select value={deviceLocationId} onValueChange={setDeviceLocationId}>
+                <SelectTrigger id="attendance-terminal-office">
+                  <SelectValue placeholder="Select office" />
+                </SelectTrigger>
+                <SelectContent>
+                  {locations
+                    .filter((location) => location.isActive)
+                    .map((location) => (
+                      <SelectItem key={location.id} value={location.id}>
+                        {location.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label htmlFor="attendance-terminal-serial" className="text-sm font-medium">
+                Serial number
+              </label>
+              <Input
+                id="attendance-terminal-serial"
+                value={deviceSerial}
+                onChange={(event) => setDeviceSerial(event.target.value)}
+                placeholder="Can be learned at first sync"
+              />
+            </div>
+            <div className="space-y-2">
+              <label htmlFor="attendance-terminal-model" className="text-sm font-medium">
+                Model
+              </label>
+              <Input
+                id="attendance-terminal-model"
+                value={deviceModel}
+                onChange={(event) => setDeviceModel(event.target.value)}
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm sm:col-span-2">
+              <input
+                type="checkbox"
+                checked={deviceActive}
+                onChange={(event) => setDeviceActive(event.target.checked)}
+              />
+              Accept attendance from this terminal
+            </label>
+            <div className="space-y-2 sm:col-span-2">
+              <label htmlFor="attendance-terminal-reason" className="text-sm font-medium">
+                Reason
+              </label>
+              <Textarea
+                id="attendance-terminal-reason"
+                value={deviceReason}
+                onChange={(event) => setDeviceReason(event.target.value)}
+                placeholder="Why is this terminal being registered or changed?"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeviceDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={
+                !deviceCode.trim() ||
+                !deviceName.trim() ||
+                !deviceLocationId ||
+                deviceReason.trim().length < 5 ||
+                savingDevice
+              }
+              onClick={() => void saveDevice()}
+            >
+              {savingDevice ? "Saving..." : "Save Terminal"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(mappingPunch)} onOpenChange={(open) => !open && setMappingPunch(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Match Terminal User</DialogTitle>
+            <DialogDescription>
+              Link {mappingPunch?.deviceUserName ? `${mappingPunch.deviceUserName}, ` : ""}terminal
+              ID {mappingPunch?.deviceUserId} to exactly one VIA employee. Waiting punches will be
+              applied immediately and the decision will be recorded.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <label htmlFor="attendance-terminal-employee" className="text-sm font-medium">
+                Employee
+              </label>
+              <Select value={mappingEmployeeId} onValueChange={setMappingEmployeeId}>
+                <SelectTrigger id="attendance-terminal-employee">
+                  <SelectValue placeholder="Select employee" />
+                </SelectTrigger>
+                <SelectContent>
+                  {employees.map((employee) => (
+                    <SelectItem key={employee.id} value={employee.id}>
+                      {employee.preferredName} · {employee.employeeNumber} · {employee.workEmail}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label htmlFor="attendance-terminal-mapping-reason" className="text-sm font-medium">
+                Reason
+              </label>
+              <Textarea
+                id="attendance-terminal-mapping-reason"
+                value={mappingReason}
+                onChange={(event) => setMappingReason(event.target.value)}
+                placeholder="Confirm how this terminal identity was verified"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMappingPunch(null)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!mappingEmployeeId || mappingReason.trim().length < 5 || savingMapping}
+              onClick={() => void saveDeviceMapping()}
+            >
+              {savingMapping ? "Matching..." : "Confirm Match"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={manualOpen} onOpenChange={setManualOpen}>
         <DialogContent>
