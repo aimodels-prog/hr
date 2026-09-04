@@ -140,6 +140,8 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
   const employee = empService.getById(employeeId, getActorContext());
   const obCase = obService.getCaseByEmployeeId(employeeId, getActorContext());
   const tasks = obService.getSelfServiceTasks(employeeId, getActorContext());
+  const isRecordCompletion = obCase?.kind === "Employee Record Completion";
+  const processName = isRecordCompletion ? "employee record completion" : "onboarding";
 
   const isTaskDone = (t: OnboardingTask) => t.status === "Completed" || t.status === "Waived";
   const doneCount = tasks.filter(isTaskDone).length;
@@ -198,9 +200,8 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
           <CheckCircle2 className="h-8 w-8 text-muted-foreground/40" />
           <p className="font-medium">Nothing to complete here</p>
           <p className="max-w-sm text-sm text-muted-foreground">
-            There is no onboarding checklist on your record. This page only applies to new hires
-            still completing their intake. Once that is finished, or if you joined before this
-            checklist existed, it stays empty like this.
+            There is no employee setup checklist on your record. Completed information remains
+            available in My Profile.
           </p>
         </CardContent>
       </Card>
@@ -212,7 +213,7 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
       <Card className="border-rose-200 bg-rose-50/40">
         <CardContent className="py-10 text-center">
           <XCircle className="mx-auto mb-3 h-8 w-8 text-rose-600" />
-          <p className="font-medium">This onboarding process was cancelled</p>
+          <p className="font-medium">This {processName} process was cancelled</p>
           <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
             You cannot submit further onboarding information. Contact HR if you believe this is
             incorrect.
@@ -227,7 +228,11 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
       <Card className="border-emerald-200 bg-emerald-50/40">
         <CardContent className="py-10 text-center">
           <CheckCircle2 className="mx-auto mb-3 h-8 w-8 text-emerald-600" />
-          <p className="font-medium">Your onboarding is complete</p>
+          <p className="font-medium">
+            {isRecordCompletion
+              ? "Your employee record is complete"
+              : "Your onboarding is complete"}
+          </p>
           <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
             Your submitted details and documents are now part of your employee profile. Use My
             Profile when you need to request a future change.
@@ -244,8 +249,8 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
           <CheckCircle2 className="h-8 w-8 text-success" />
           <p className="font-medium">Nothing for you to submit</p>
           <p className="max-w-sm text-sm text-muted-foreground">
-            Your onboarding case has no items assigned to you right now. HR, IT, or your manager may
-            still have steps of their own in progress.
+            Your setup has no items assigned to you right now. HR or your manager may still have
+            steps of their own in progress.
           </p>
         </CardContent>
       </Card>
@@ -263,13 +268,19 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
           <div>
             <div className="font-medium">
               {allDone
-                ? "All required onboarding details submitted"
-                : "Complete your onboarding details"}
+                ? isRecordCompletion
+                  ? "All required employee details submitted"
+                  : "All required onboarding details submitted"
+                : isRecordCompletion
+                  ? "Complete your employee record"
+                  : "Complete your onboarding details"}
             </div>
             <div className="text-sm text-muted-foreground">
               {allDone
                 ? "Thank you - HR and Finance have what they need to set up your record and payroll."
-                : "HR and Finance need the information below before your first pay run and to activate your record."}
+                : isRecordCompletion
+                  ? "Complete the information below so VIA has an accurate and current employee record."
+                  : "HR and Finance need the information below before your first pay run and to activate your record."}
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">

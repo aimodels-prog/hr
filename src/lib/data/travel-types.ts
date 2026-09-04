@@ -1,8 +1,7 @@
 import type { BaseRecord, RecordId } from "./types.ts";
 
-// "Pre-authorised" (not "Approved") is the deliberate label once both HR and Accounts have
-// signed off before the trip - it authorises spend up to the estimate, it does not mean the
-// trip's expenses are final; that only happens at Closed once actuals are reviewed.
+// "Pre-authorised" authorises the trip and spend ceiling after the supervisor, HR and Accounts
+// reviews. It does not mean the post-trip expenses have been settled.
 export type TravelRequestStatus =
   | "Draft"
   | "Pending HR and Accounts"
@@ -59,9 +58,13 @@ export interface TravelRequest extends BaseRecord {
   notes?: string;
   evidenceFileId?: string; // Supporting docs, stored via the secure file repository
 
-  // Dual-track approvals
+  // Pre-travel approvals
+  managerApprovalStatus: TravelApprovalState;
   hrApprovalStatus: TravelApprovalState;
   accountsApprovalStatus: TravelApprovalState;
+  managerNotes?: string;
+  managerApprovedAt?: string;
+  managerApprovedBy?: RecordId;
   hrNotes?: string;
   accountsNotes?: string;
   hrApprovedAt?: string;

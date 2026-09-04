@@ -32,6 +32,10 @@ const DEFAULT_SETTINGS = {
   allowCopyPreviousWeek: true,
   payrollLockBehaviour: "Manual by HR" as const,
   requireHrOvertimeVerification: false,
+  overtimePreauthorisationRequired: true,
+  overtimeMaxDailyHours: 4,
+  overtimeMaxWeeklyHours: 12,
+  overtimeMaxMonthlyHours: 40,
   attendanceVarianceToleranceHours: 0.25,
 };
 
@@ -243,7 +247,11 @@ export async function submitTimesheetInDatabase(
     if (sheet.status !== "Draft" && sheet.status !== "Returned")
       throw new Error("This timesheet is not ready for submission.");
     const [employee] = await tx
-      .select({ lineManagerId: employees.lineManagerId, preferredName: employees.preferredName })
+      .select({
+        lineManagerId: employees.lineManagerId,
+        preferredName: employees.preferredName,
+        employmentConfirmationStatus: employees.employmentConfirmationStatus,
+      })
       .from(employees)
       .where(and(eq(employees.organisationId, organisationId), eq(employees.id, sheet.employeeId)))
       .limit(1);
@@ -251,6 +259,8 @@ export async function submitTimesheetInDatabase(
       throw new Error(
         "An active supervisor must be assigned before this timesheet can be submitted.",
       );
+    if (employee.employmentConfirmationStatus !== "Confirmed")
+      throw new Error("HR must confirm your employment details before you can submit a timesheet.");
     const entryRows = await tx
       .select()
       .from(timesheetEntries)
@@ -430,11 +440,22 @@ export async function decideTimesheetInDatabase(
       .from(timesheetSettings)
       .where(eq(timesheetSettings.organisationId, organisationId))
       .limit(1);
+    const reconciliationDays = reconciliation.days as Array<{
+      requiresExplanation?: boolean;
+      status?: string;
+    }>;
+    const requiresHrReview =
+      reconciliationDays.some((day) => day.requiresExplanation || day.status !== "Matched") ||
+      Number(sheet.totalHours) > Number(sheet.expectedHours);
     const next =
       decision === "return"
         ? "Returned"
         : manager
-          ? "Pending HR"
+          ? requiresHrReview
+            ? "Pending HR"
+            : settings?.payrollLockBehaviour === "Automatic on Approval"
+              ? "Payroll Locked"
+              : "Approved"
           : settings?.payrollLockBehaviour === "Automatic on Approval"
             ? "Payroll Locked"
             : "Approved";
@@ -444,11 +465,12 @@ export async function decideTimesheetInDatabase(
         status: next,
         managerNotes: notes?.trim(),
         attendanceReconciliationSnapshot: reconciliation,
-        ...(next === "Approved"
+        ...(manager
+          ? { supervisorReviewedAt: new Date().toISOString(), supervisorReviewedBy: actor.userId }
+          : {}),
+        ...(next === "Approved" || next === "Payroll Locked"
           ? { approvedAt: new Date().toISOString(), approvedBy: actor.userId }
-          : manager
-            ? { supervisorReviewedAt: new Date().toISOString(), supervisorReviewedBy: actor.userId }
-            : {}),
+          : {}),
         updatedAt: new Date(),
         updatedBy: actor.userId,
         recordVersion: sql`${timesheets.recordVersion} + 1`,
@@ -484,8 +506,9 @@ export async function decideTimesheetInDatabase(
           organisationId,
           hrUser.id,
           {
-            title: "Timesheet ready for HR approval",
-            message: "A supervisor-reviewed timesheet is ready for final approval.",
+            title: "Timesheet exception awaiting HR review",
+            message:
+              "A supervisor-approved timesheet contains an attendance or hours exception requiring HR review.",
             key: `timesheet-hr-${timesheetId}-${sheet.recordVersion + 1}`,
             entityId: timesheetId,
             path: `/staff/timesheet-approvals/${timesheetId}`,
@@ -521,7 +544,10 @@ export async function decideTimesheetInDatabase(
       module: "timesheets",
       entityType: "timesheet",
       entityId: timesheetId,
-      afterSummary: { status: next },
+      afterSummary: {
+        status: next,
+        hrExceptionReviewRequired: manager && requiresHrReview,
+      },
       reason: notes?.trim() ?? `Timesheet ${decision}d`,
       riskLevel: "High",
     } as typeof auditEvents.$inferInsert);
@@ -614,6 +640,10 @@ export async function listTimesheetSnapshotForActor(
           payrollLockBehaviour: settingsRow.payrollLockBehaviour as
             "Manual by HR" | "Automatic on Approval",
           requireHrOvertimeVerification: settingsRow.requireHrOvertimeVerification,
+          overtimePreauthorisationRequired: settingsRow.overtimePreauthorisationRequired,
+          overtimeMaxDailyHours: Number(settingsRow.overtimeMaxDailyHours),
+          overtimeMaxWeeklyHours: Number(settingsRow.overtimeMaxWeeklyHours),
+          overtimeMaxMonthlyHours: Number(settingsRow.overtimeMaxMonthlyHours),
           attendanceVarianceToleranceHours: Number(settingsRow.attendanceVarianceToleranceHours),
         }
       : DEFAULT_SETTINGS,
@@ -691,6 +721,10 @@ export async function updateTimesheetSettingsInDatabase(
     allowCopyPreviousWeek: boolean;
     payrollLockBehaviour: "Manual by HR" | "Automatic on Approval";
     requireHrOvertimeVerification: boolean;
+    overtimePreauthorisationRequired?: boolean;
+    overtimeMaxDailyHours?: number;
+    overtimeMaxWeeklyHours?: number;
+    overtimeMaxMonthlyHours?: number;
     attendanceVarianceToleranceHours: number;
   },
   actor: AuditActorContext,
@@ -713,6 +747,17 @@ export async function updateTimesheetSettingsInDatabase(
     throw new Error("Standard daily hours must be greater than zero and no more than 24.");
   if (!(settings.overtimeThresholdWeekly > 0 && settings.overtimeThresholdWeekly <= 168))
     throw new Error("Overtime threshold must be greater than zero and no more than 168 hours.");
+  const overtimePreauthorisationRequired = settings.overtimePreauthorisationRequired ?? true;
+  const overtimeMaxDailyHours = settings.overtimeMaxDailyHours ?? 4;
+  const overtimeMaxWeeklyHours = settings.overtimeMaxWeeklyHours ?? 12;
+  const overtimeMaxMonthlyHours = settings.overtimeMaxMonthlyHours ?? 40;
+  if (
+    overtimeMaxDailyHours <= 0 ||
+    overtimeMaxDailyHours > 24 ||
+    overtimeMaxWeeklyHours < overtimeMaxDailyHours ||
+    overtimeMaxMonthlyHours < overtimeMaxWeeklyHours
+  )
+    throw new Error("Enter valid daily, weekly and monthly overtime limits.");
   if (!(
     settings.attendanceVarianceToleranceHours >= 0 && settings.attendanceVarianceToleranceHours <= 2
   ))
@@ -733,6 +778,10 @@ export async function updateTimesheetSettingsInDatabase(
           ...settings,
           standardDailyHours: String(settings.standardDailyHours),
           overtimeThresholdWeekly: String(settings.overtimeThresholdWeekly),
+          overtimePreauthorisationRequired,
+          overtimeMaxDailyHours: String(overtimeMaxDailyHours),
+          overtimeMaxWeeklyHours: String(overtimeMaxWeeklyHours),
+          overtimeMaxMonthlyHours: String(overtimeMaxMonthlyHours),
           attendanceVarianceToleranceHours: String(settings.attendanceVarianceToleranceHours),
           updatedAt: new Date(),
           updatedBy: actor.userId,
@@ -746,6 +795,10 @@ export async function updateTimesheetSettingsInDatabase(
         ...settings,
         standardDailyHours: String(settings.standardDailyHours),
         overtimeThresholdWeekly: String(settings.overtimeThresholdWeekly),
+        overtimePreauthorisationRequired,
+        overtimeMaxDailyHours: String(overtimeMaxDailyHours),
+        overtimeMaxWeeklyHours: String(overtimeMaxWeeklyHours),
+        overtimeMaxMonthlyHours: String(overtimeMaxMonthlyHours),
         attendanceVarianceToleranceHours: String(settings.attendanceVarianceToleranceHours),
         createdBy: actor.userId,
         updatedBy: actor.userId,
@@ -763,7 +816,13 @@ export async function updateTimesheetSettingsInDatabase(
       entityType: "timesheet-settings",
       entityId: before?.id ?? organisationId,
       beforeSummary: before ? { recordVersion: before.recordVersion } : undefined,
-      afterSummary: settings,
+      afterSummary: {
+        ...settings,
+        overtimePreauthorisationRequired,
+        overtimeMaxDailyHours,
+        overtimeMaxWeeklyHours,
+        overtimeMaxMonthlyHours,
+      },
       reason: "Timesheet settings updated",
       riskLevel: "High",
     } as typeof auditEvents.$inferInsert);

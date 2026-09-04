@@ -24,7 +24,7 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
         userId: "user-rana",
         employeeId: "employee-rana",
         displayName: "Rana Nair",
-        workspaceEmail: "rana.nair@via.example",
+        workspaceEmail: "rana.nair@via-int.com",
         roles: ["Employee", "HR"],
         activeRole: "HR",
       },
@@ -35,7 +35,7 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
         employeeNumber: `VIA-E2E-${suffix}`,
         legalName: `Browser Newhire ${suffix}`,
         preferredName: `Newhire${suffix}`,
-        workEmail: `browser.newhire.${suffix}@via.example`,
+        workEmail: `browser.newhire.${suffix}@via-int.com`,
         department: "Operations",
         position: "Coordinator",
         location: "Muscat, Oman",
@@ -72,7 +72,9 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
 
   // --- Onboarding: start a case through the real dialog ---
   await page.goto("/staff/onboarding");
-  await expect(page.getByRole("heading", { name: "Onboarding", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Onboarding and employee setup", exact: true }),
+  ).toBeVisible();
   // The trigger and the dialog's own submit button are both labelled "Start onboarding" - the
   // dialog's copy is hidden (but present in the DOM) until opened, so .first() reliably hits
   // the trigger.

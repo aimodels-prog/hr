@@ -42,6 +42,18 @@ export const timesheetSettings = pgTable(
     requireHrOvertimeVerification: boolean("require_hr_overtime_verification")
       .notNull()
       .default(true),
+    overtimePreauthorisationRequired: boolean("overtime_preauthorisation_required")
+      .notNull()
+      .default(true),
+    overtimeMaxDailyHours: numeric("overtime_max_daily_hours", { precision: 5, scale: 2 })
+      .notNull()
+      .default("4"),
+    overtimeMaxWeeklyHours: numeric("overtime_max_weekly_hours", { precision: 6, scale: 2 })
+      .notNull()
+      .default("12"),
+    overtimeMaxMonthlyHours: numeric("overtime_max_monthly_hours", { precision: 7, scale: 2 })
+      .notNull()
+      .default("40"),
     attendanceVarianceToleranceHours: numeric("attendance_variance_tolerance_hours", {
       precision: 5,
       scale: 2,
@@ -66,6 +78,10 @@ export const timesheetSettings = pgTable(
     check(
       "timesheet_settings_tolerance_non_negative",
       sql`${table.attendanceVarianceToleranceHours} >= 0`,
+    ),
+    check(
+      "timesheet_settings_overtime_limits_positive",
+      sql`${table.overtimeMaxDailyHours} > 0 AND ${table.overtimeMaxWeeklyHours} > 0 AND ${table.overtimeMaxMonthlyHours} > 0`,
     ),
   ],
 );
@@ -486,6 +502,8 @@ export const attendanceExceptionCases = pgTable(
 );
 
 export const overtimeClaimStatus = pgEnum("overtime_claim_status", [
+  "Pending Pre-authorisation",
+  "Pre-authorised",
   "Pending Manager",
   "Pending HR",
   "Approved",
@@ -515,6 +533,14 @@ export const overtimeClaims = pgTable(
       .notNull()
       .references(() => locations.id, { onDelete: "restrict" }),
     reason: text("reason").notNull(),
+    requestKind: text("request_kind").notNull().default("Emergency Retrospective"),
+    emergencyReason: text("emergency_reason"),
+    authorisedHours: numeric("authorised_hours", { precision: 5, scale: 2 }),
+    preAuthorisedAt: timestamp("pre_authorised_at", { withTimezone: true, mode: "string" }),
+    preAuthorisedBy: uuid("pre_authorised_by").references(() => users.id, {
+      onDelete: "restrict",
+    }),
+    actualConfirmedAt: timestamp("actual_confirmed_at", { withTimezone: true, mode: "string" }),
     evidenceFileId: uuid("evidence_file_id").references(() => fileMetadata.id, {
       onDelete: "restrict",
     }),
@@ -547,6 +573,14 @@ export const overtimeClaims = pgTable(
       .where(sql`${table.archivedAt} IS NULL AND ${table.status} NOT IN ('Rejected', 'Corrected')`),
     check("overtime_claims_hours_range", sql`${table.hours} > 0 AND ${table.hours} <= 24`),
     check("overtime_claims_reason_not_blank", sql`btrim(${table.reason}) <> ''`),
+    check(
+      "overtime_claims_request_kind",
+      sql`${table.requestKind} IN ('Planned', 'Emergency Retrospective')`,
+    ),
+    check(
+      "overtime_claims_emergency_reason",
+      sql`${table.requestKind} <> 'Emergency Retrospective' OR btrim(coalesce(${table.emergencyReason}, '')) <> ''`,
+    ),
     check("overtime_claims_compensation", sql`${table.compensationType} IN ('Payment', 'TOIL')`),
     check(
       "overtime_claims_approval_consistency",

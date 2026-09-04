@@ -157,7 +157,7 @@ export const decideTravelRequestFn = createServerFn({ method: "POST" })
       .object({
         actor: Actor,
         requestId: z.string().uuid(),
-        stage: z.enum(["HR", "Accounts"]),
+        stage: z.enum(["Manager", "HR", "Accounts"]),
         decision: z.enum(["approve", "reject"]),
         reason: z.string().trim().max(2000).optional(),
       })

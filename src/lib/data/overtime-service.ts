@@ -403,13 +403,18 @@ export class OvertimeService {
     }
     const date = data.date;
     const hours = data.hours;
+    const requestKind = data.requestKind ?? "Emergency Retrospective";
+    const today = new Date().toISOString().slice(0, 10);
 
-    if (hours > MAX_CLAIM_HOURS_PER_DAY) {
-      throw new Error(`A single overtime claim cannot exceed ${MAX_CLAIM_HOURS_PER_DAY} hours.`);
-    }
-    if (date > new Date().toISOString().slice(0, 10)) {
-      throw new Error("Overtime cannot be claimed for a future date.");
-    }
+    if (requestKind === "Planned" && date < today)
+      throw new Error("Planned overtime must be requested before the work is performed.");
+    if (requestKind === "Emergency Retrospective" && date > today)
+      throw new Error("Use a planned overtime request for a future date.");
+    if (
+      data.requestKind === "Emergency Retrospective" &&
+      (data.emergencyReason?.trim().length ?? 0) < 5
+    )
+      throw new Error("Explain why prior approval could not be obtained for emergency overtime.");
     if (data.projectId) {
       const project = getProjectRepository().getById(data.projectId);
       if (!project || !project.isActive) {
@@ -443,6 +448,36 @@ export class OvertimeService {
     const tsService = new TimesheetService();
     const attService = new AttendanceService();
     const settings = tsService.getSettings(); // Re-use settings
+    const dailyLimit = settings.overtimeMaxDailyHours ?? MAX_CLAIM_HOURS_PER_DAY;
+    if (hours > dailyLimit)
+      throw new Error(`A single overtime request cannot exceed ${dailyLimit} hours.`);
+    const activeClaims = this.claimRepo
+      .list()
+      .filter(
+        (claim) =>
+          claim.employeeId === data.employeeId &&
+          claim.id !== data.originalClaimId &&
+          claim.status !== "Rejected" &&
+          claim.status !== "Corrected",
+      );
+    const target = new Date(`${date}T00:00:00Z`);
+    const weekStart = new Date(target);
+    weekStart.setUTCDate(target.getUTCDate() - ((target.getUTCDay() + 6) % 7));
+    const weekEnd = new Date(weekStart);
+    weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
+    const weeklyHours = activeClaims
+      .filter((claim) => {
+        const value = new Date(`${claim.date}T00:00:00Z`);
+        return value >= weekStart && value <= weekEnd;
+      })
+      .reduce((sum, claim) => sum + claim.hours, 0);
+    const monthlyHours = activeClaims
+      .filter((claim) => claim.date.slice(0, 7) === date.slice(0, 7))
+      .reduce((sum, claim) => sum + claim.hours, 0);
+    if (weeklyHours + hours > (settings.overtimeMaxWeeklyHours ?? 12))
+      throw new Error(`This request exceeds the weekly overtime limit.`);
+    if (monthlyHours + hours > (settings.overtimeMaxMonthlyHours ?? 40))
+      throw new Error(`This request exceeds the monthly overtime limit.`);
 
     // Cross checks
     const warnings: string[] = [];
@@ -460,7 +495,10 @@ export class OvertimeService {
       });
     });
 
-    if (tsHours < settings.standardDailyHours + hours) {
+    if (
+      requestKind === "Emergency Retrospective" &&
+      tsHours < settings.standardDailyHours + hours
+    ) {
       warnings.push(
         `Timesheet for ${date} shows only ${tsHours}h logged, which does not cover standard hours plus ${hours}h overtime.`,
       );
@@ -472,7 +510,10 @@ export class OvertimeService {
       .find((r) => r.employeeId === data.employeeId && r.date === date);
     const attHours = attRecord?.calculatedHours || 0;
 
-    if (attHours < settings.standardDailyHours + hours) {
+    if (
+      requestKind === "Emergency Retrospective" &&
+      attHours < settings.standardDailyHours + hours
+    ) {
       warnings.push(
         `Physical attendance punch for ${date} shows only ${attHours}h worked, which does not mathematically support ${hours}h overtime.`,
       );
@@ -483,6 +524,10 @@ export class OvertimeService {
       date,
       hours,
       reason: data.reason,
+      requestKind,
+      ...(requestKind === "Emergency Retrospective"
+        ? { emergencyReason: data.emergencyReason?.trim() || data.reason }
+        : {}),
       compensationType: data.compensationType === "TOIL" ? "TOIL" : "Payment",
       ...(data.projectId !== undefined ? { projectId: data.projectId } : {}),
       costCentreId: data.costCentreId,
@@ -491,7 +536,7 @@ export class OvertimeService {
       ...(data.evidenceFileId !== undefined ? { evidenceFileId: data.evidenceFileId } : {}),
       ...(data.originalClaimId !== undefined ? { originalClaimId: data.originalClaimId } : {}),
       crossCheckWarnings: warnings,
-      status: "Pending Manager",
+      status: requestKind === "Planned" ? "Pending Pre-authorisation" : "Pending Manager",
     };
   }
 
@@ -523,6 +568,8 @@ export class OvertimeService {
           date: data.date,
           hours: data.hours,
           reason: data.reason,
+          requestKind: data.requestKind ?? "Emergency Retrospective",
+          ...(data.emergencyReason ? { emergencyReason: data.emergencyReason } : {}),
           compensationType: data.compensationType === "TOIL" ? "TOIL" : "Payment",
           ...(data.projectId ? { projectId: this.databaseId("projects", data.projectId) } : {}),
           costCentreId: this.databaseId("costCentres", data.costCentreId),
@@ -550,6 +597,24 @@ export class OvertimeService {
     const created = this.claimRepo.create(claim, context);
     this.notifyManager(created, context);
     return created;
+  }
+
+  async confirmPlannedHours(
+    id: string,
+    actualHours: number,
+    note: string,
+    context: ActorContext,
+  ): Promise<void> {
+    const { confirmPlannedOvertimeFn } = await import("../server-functions/overtime.server.ts");
+    await confirmPlannedOvertimeFn({
+      data: {
+        actor: await this.serverActor(context),
+        claimId: this.databaseId("overtimeClaims", id),
+        actualHours,
+        note,
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
   }
 
   async decideClaimAsync(

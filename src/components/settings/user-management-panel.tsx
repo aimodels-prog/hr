@@ -50,7 +50,11 @@ const extraAccess: Array<{ role: Role; description: string }> = [
   },
   { role: "HR", description: "Manage recruitment, employee records, leave and people operations." },
   { role: "Accounts", description: "Prepare payroll and review approved travel costs." },
-  { role: "IT", description: "Employee access while IT responsibilities are prepared." },
+  {
+    role: "IT",
+    description:
+      "Restricted access for assigned equipment and account setup/removal tasks only. This does not grant access to confidential HR or payroll records.",
+  },
   { role: "Super Admin", description: "Full access to all areas and company settings." },
 ];
 

@@ -194,7 +194,7 @@ test(
       const employeeActor = actor(employeeUserId, employeeId, "Employee");
       const managerActor = actor(managerUserId, managerEmployeeId, "Line Manager");
       const hrActor = actor(hrUserId, hrEmployeeId, "HR");
-      await sql`UPDATE employees SET profile_setup_status = 'In Progress' WHERE id = ${employeeId}`;
+      await sql`UPDATE employees SET profile_setup_status = 'In Progress', employment_confirmation_status = 'Pending HR Review' WHERE id = ${employeeId}`;
       await assert.rejects(
         createLeaveRequestInDatabase(
           organisationId,
@@ -208,9 +208,9 @@ test(
           },
           employeeActor,
         ),
-        /Complete your employee profile/,
+        /HR must confirm your employment details/,
       );
-      await sql`UPDATE employees SET profile_setup_status = 'Completed' WHERE id = ${employeeId}`;
+      await sql`UPDATE employees SET profile_setup_status = 'Completed', employment_confirmation_status = 'Confirmed' WHERE id = ${employeeId}`;
       await assert.rejects(
         createLeaveRequestInDatabase(
           organisationId,

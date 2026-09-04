@@ -132,7 +132,7 @@ function HrTravelApprovalsContent() {
                     <TableHead>Destination</TableHead>
                     <TableHead>Dates</TableHead>
                     <TableHead>Purpose</TableHead>
-                    <TableHead>Accounts Status</TableHead>
+                    <TableHead>Supervisor / Accounts</TableHead>
                     <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -150,7 +150,10 @@ function HrTravelApprovalsContent() {
                           {r.purpose}
                         </TableCell>
                         <TableCell>
-                          <Badge variant="outline">{r.accountsApprovalStatus}</Badge>
+                          <div className="flex flex-col gap-1">
+                            <Badge variant="outline">Supervisor: {r.managerApprovalStatus}</Badge>
+                            <Badge variant="outline">Accounts: {r.accountsApprovalStatus}</Badge>
+                          </div>
                         </TableCell>
                         <TableCell className="text-right whitespace-nowrap">
                           {r.evidenceFileId && (

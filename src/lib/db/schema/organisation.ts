@@ -42,6 +42,7 @@ export const appSettings = pgTable(
     workingDays: integer("working_days").array().notNull(),
     standardDailyHours: numeric("standard_daily_hours", { precision: 5, scale: 2 }).notNull(),
     standardWeeklyHours: numeric("standard_weekly_hours", { precision: 6, scale: 2 }).notNull(),
+    probationDurationMonths: integer("probation_duration_months").notNull().default(3),
     leaveYearStart: text("leave_year_start").notNull(),
     leaveYearEnd: text("leave_year_end").notNull(),
     documentReminderDays: integer("document_reminder_days").array().notNull(),
@@ -71,6 +72,10 @@ export const appSettings = pgTable(
     check(
       "app_settings_weekly_hours_range",
       sql`${table.standardWeeklyHours} >= ${table.standardDailyHours} AND ${table.standardWeeklyHours} <= 168`,
+    ),
+    check(
+      "app_settings_probation_months_range",
+      sql`${table.probationDurationMonths} BETWEEN 0 AND 36`,
     ),
     check(
       "app_settings_leave_year_start_format",

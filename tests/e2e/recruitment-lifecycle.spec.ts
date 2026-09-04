@@ -7,7 +7,9 @@ test("public application progresses through shortlist, interview, offer and onbo
   const unique = Date.now().toString();
   const candidateEmail = `browser.candidate.${unique}@example.com`;
   await page.goto("/jobs/log-ops-lead");
-  await expect(page.getByText("Apply for this role")).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("heading", { name: "Apply for this position" })).toBeVisible({
+    timeout: 20_000,
+  });
 
   const fields = {
     firstName: "Browser",
@@ -51,7 +53,7 @@ test("public application progresses through shortlist, interview, offer and onbo
               userId: "user-rana",
               employeeId: "employee-rana",
               displayName: "Rana Nair",
-              workspaceEmail: "rana.nair@via.example",
+              workspaceEmail: "rana.nair@via-int.com",
               roles: ["Employee", "HR"],
               activeRole: "HR",
             },
@@ -80,7 +82,7 @@ test("public application progresses through shortlist, interview, offer and onbo
         userId: "user-rana",
         employeeId: "employee-rana",
         displayName: "Rana Nair",
-        workspaceEmail: "rana.nair@via.example",
+        workspaceEmail: "rana.nair@via-int.com",
         roles: ["Employee", "HR"],
         activeRole: "HR",
       },
@@ -140,7 +142,7 @@ test("public application progresses through shortlist, interview, offer and onbo
         userId: "user-rana",
         employeeId: "employee-rana",
         displayName: "Rana Nair",
-        workspaceEmail: "rana.nair@via.example",
+        workspaceEmail: "rana.nair@via-int.com",
         roles: ["Employee", "HR"],
         activeRole: "HR",
       },
@@ -200,7 +202,7 @@ test("public application progresses through shortlist, interview, offer and onbo
           userId: "user-rana",
           employeeId: "employee-rana",
           displayName: "Rana Nair",
-          workspaceEmail: "rana.nair@via.example",
+          workspaceEmail: "rana.nair@via-int.com",
           roles: ["Employee", "HR"],
           activeRole: "HR",
         },

@@ -142,7 +142,7 @@ export async function listTasksForActorInDatabase(
         'overtime-claim', o.id::text, o.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM overtime_claims o JOIN employees e ON e.id=o.employee_id
       WHERE o.organisation_id=${organisationId} AND o.archived_at IS NULL AND ${role}='Line Manager'
-        AND e.line_manager_id=${employeeId}::uuid AND o.status='Pending Manager'
+        AND e.line_manager_id=${employeeId}::uuid AND o.status IN ('Pending Pre-authorisation','Pending Manager')
 
       UNION ALL
       SELECT 'training-manager-' || r.id, 'Training', 'Review training request',
@@ -257,7 +257,7 @@ export async function listTasksForActorInDatabase(
         (r.updated_at::date + 2)::text, NULL, 'Review reimbursement', '/staff/travel-closures',
         'travel-request', r.id::text, r.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM travel_requests r JOIN employees e ON e.id=r.employee_id
-      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role}='Super Admin'
+      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role} IN ('Accounts','Super Admin')
         AND r.status='Pending Super Admin Closure'
 
       UNION ALL

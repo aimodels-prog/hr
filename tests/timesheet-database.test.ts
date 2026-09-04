@@ -163,7 +163,11 @@ test(
         decideTimesheetInDatabase(organisationId, timesheetId, "approve", undefined, managerActor),
       ]);
       assert.equal(managerRace.filter((result) => result.status === "fulfilled").length, 1);
-      await decideTimesheetInDatabase(organisationId, timesheetId, "approve", undefined, hrActor);
+      const [routineApproval] = await sql`
+        SELECT status, approved_by FROM timesheets WHERE id = ${timesheetId}
+      `;
+      assert.equal(routineApproval?.status, "Approved");
+      assert.equal(routineApproval?.approved_by, managerUserId);
       await lockTimesheetForPayrollInDatabase(organisationId, timesheetId, hrActor);
       const correctionId = await reopenTimesheetInDatabase(
         organisationId,

@@ -76,7 +76,9 @@ function OvertimeApprovalsContent() {
     .filter((e) => e.lineManagerId === currentUser.employeeId)
     .map((e) => e.id);
   const pendingManager = claims.filter(
-    (c) => c.status === "Pending Manager" && myDirectReports.includes(c.employeeId),
+    (c) =>
+      (c.status === "Pending Manager" || c.status === "Pending Pre-authorisation") &&
+      myDirectReports.includes(c.employeeId),
   );
   const pendingHr = claims.filter((c) => c.status === "Pending HR");
   const recordableEmployees = allEmployees.filter((employee) =>
@@ -100,7 +102,12 @@ function OvertimeApprovalsContent() {
     try {
       await otService.decideClaimAsync(id, "approve", undefined, actorContext);
       refresh();
-      toast.success("Overtime claim approved.");
+      const claim = claims.find((item) => item.id === id);
+      toast.success(
+        claim?.status === "Pending Pre-authorisation"
+          ? "Planned overtime pre-authorised."
+          : "Overtime claim approved.",
+      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to approve claim");
     }

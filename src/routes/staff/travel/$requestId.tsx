@@ -308,7 +308,7 @@ function TravelDetailRoute() {
                 <div className="flex items-start gap-4 pt-4 border-t">
                   <FileText className="w-5 h-5 text-blue-500" />
                   <div>
-                    <div className="font-medium">Super Admin Closure Notes</div>
+                    <div className="font-medium">Reimbursement review notes</div>
                     <div className="text-sm mt-1 bg-muted/50 p-2 rounded">
                       {request.closureNotes}
                     </div>

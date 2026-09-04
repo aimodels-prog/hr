@@ -361,7 +361,7 @@ test("a TOIL claim credits Compensation Leave exactly once when approved", async
     {
       employeeId: "employee-omar",
       date: "2026-08-10",
-      hours: 8,
+      hours: 4,
       reason: "Weekend deployment",
       compensationType: "TOIL",
     },
@@ -396,7 +396,7 @@ test("correcting approved TOIL reverses the original leave credit before reappro
     {
       employeeId: "employee-omar",
       date: "2026-08-08",
-      hours: 8,
+      hours: 4,
       reason: "Weekend deployment",
       compensationType: "TOIL",
     },
@@ -407,7 +407,7 @@ test("correcting approved TOIL reverses the original leave credit before reappro
     leave.calculateBalance("employee-omar", compPolicy.id, employee).available > startingBalance,
   );
 
-  await overtime.createCorrection(approved.id, 4, "Corrected deployment hours", employee);
+  await overtime.createCorrection(approved.id, 2, "Corrected deployment hours", employee);
   assert.equal(
     leave.calculateBalance("employee-omar", compPolicy.id, employee).available,
     startingBalance,
@@ -663,7 +663,7 @@ test("TOIL is never compiled or assigned as payable overtime", async () => {
     {
       employeeId: "employee-omar",
       date: "2026-08-12",
-      hours: 8,
+      hours: 4,
       reason: "Weekend deployment for time off",
       compensationType: "TOIL",
     },

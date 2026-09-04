@@ -115,6 +115,10 @@ const Settings = z
         allowCopyPreviousWeek: z.boolean(),
         payrollLockBehaviour: z.enum(["Manual by HR", "Automatic on Approval"]),
         requireHrOvertimeVerification: z.boolean(),
+        overtimePreauthorisationRequired: z.boolean(),
+        overtimeMaxDailyHours: z.number().positive().max(24),
+        overtimeMaxWeeklyHours: z.number().positive().max(168),
+        overtimeMaxMonthlyHours: z.number().positive().max(744),
         attendanceVarianceToleranceHours: z.number().min(0).max(2),
       })
       .strict(),

@@ -1,0 +1,1 @@
+ALTER TABLE "employees" ADD COLUMN "proposed_employment_details" jsonb;

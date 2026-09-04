@@ -197,6 +197,7 @@ async function createFirstLoginChecklist(
     id: caseId,
     organisationId,
     employeeId,
+    kind: "Employee Record Completion",
     status: "In Progress",
     createdBy: userId,
     updatedBy: userId,
@@ -345,6 +346,13 @@ async function loadPrincipal(
     ...(employeeRow.profileSetupCompletedAt
       ? { profileSetupCompletedAt: iso(employeeRow.profileSetupCompletedAt) }
       : {}),
+    employmentConfirmationStatus: employeeRow.employmentConfirmationStatus,
+    ...(employeeRow.employmentReviewNote
+      ? { employmentReviewNote: employeeRow.employmentReviewNote }
+      : {}),
+    ...(employeeRow.proposedEmploymentDetails
+      ? { proposedEmploymentDetails: employeeRow.proposedEmploymentDetails }
+      : {}),
     ...(employeeRow.proposedLineManagerEmail
       ? { proposedLineManagerEmail: employeeRow.proposedLineManagerEmail }
       : {}),
@@ -425,6 +433,7 @@ async function findOrCreatePortalUser(
           startDate: today,
           status: "Onboarding",
           profileSetupStatus: "In Progress",
+          employmentConfirmationStatus: "Not Submitted",
           createdBy: employeeId,
           updatedBy: employeeId,
         })
@@ -620,6 +629,7 @@ async function findOrCreatePortalUser(
         and(
           eq(employees.organisationId, organisationId),
           eq(employees.proposedLineManagerEmail, identity.email),
+          eq(employees.employmentConfirmationStatus, "Confirmed"),
           isNull(employees.lineManagerId),
           sql`${employees.id} <> ${employee.id}`,
         ),

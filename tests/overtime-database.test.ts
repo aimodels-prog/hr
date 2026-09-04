@@ -6,6 +6,7 @@ import postgres from "postgres";
 
 import {
   assignOvertimeToPayrollInDatabase,
+  confirmPlannedOvertimeInDatabase,
   correctOvertimeClaimInDatabase,
   createOvertimeClaimInDatabase,
   decideOvertimeClaimInDatabase,
@@ -190,6 +191,51 @@ test(
       assert.match(
         await exportPayrollOvertimeLedgerInDatabase(ids.organisation!, accountsActor),
         /Employee Number/,
+      );
+
+      const plannedId = await createOvertimeClaimInDatabase(
+        ids.organisation!,
+        {
+          ...base,
+          date: new Date().toISOString().slice(0, 10),
+          hours: 1,
+          requestKind: "Planned",
+          reason: "Planned month-end handover",
+        },
+        employeeActor,
+      );
+      await decideOvertimeClaimInDatabase(
+        ids.organisation!,
+        plannedId,
+        "approve",
+        "Approved before work starts",
+        managerActor,
+      );
+      assert.equal(
+        (await listOvertimeClaimsForActor(ids.organisation!, employeeActor)).find(
+          (claim) => claim.id === plannedId,
+        )?.status,
+        "Pre-authorised",
+      );
+      await confirmPlannedOvertimeInDatabase(
+        ids.organisation!,
+        plannedId,
+        1,
+        "Completed as planned",
+        employeeActor,
+      );
+      await decideOvertimeClaimInDatabase(
+        ids.organisation!,
+        plannedId,
+        "approve",
+        "Actual hours verified",
+        hrActor,
+      );
+      assert.equal(
+        (await listOvertimeClaimsForActor(ids.organisation!, employeeActor)).find(
+          (claim) => claim.id === plannedId,
+        )?.status,
+        "Approved",
       );
 
       const toilId = await createOvertimeClaimInDatabase(

@@ -46,6 +46,10 @@ export const onboardingCaseStatus = pgEnum("onboarding_case_status", [
   "Completed",
   "Cancelled",
 ]);
+export const onboardingCaseKind = pgEnum("onboarding_case_kind", [
+  "New Hire Onboarding",
+  "Employee Record Completion",
+]);
 export const onboardingCases = pgTable(
   "onboarding_cases",
   {
@@ -59,6 +63,7 @@ export const onboardingCases = pgTable(
     templateId: uuid("template_id").references(() => onboardingTemplates.id, {
       onDelete: "restrict",
     }),
+    kind: onboardingCaseKind("kind").notNull().default("New Hire Onboarding"),
     status: onboardingCaseStatus("status").notNull().default("In Progress"),
     progressPercentage: integer("progress_percentage").notNull().default(0),
     isReadyForStartDate: boolean("is_ready_for_start_date").notNull().default(false),

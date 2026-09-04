@@ -148,6 +148,20 @@
       "when": 1788476822737,
       "tag": "0020_robust_rocket_racer",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1788500915692,
+      "tag": "0021_romantic_the_enforcers",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1788501659861,
+      "tag": "0022_wide_blob",
+      "breakpoints": true
     }
   ]
 }

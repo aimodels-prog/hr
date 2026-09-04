@@ -11,12 +11,12 @@ function MyOnboardingRoute() {
   const { currentEmployee } = useCurrentUser();
 
   return (
-    <RequirePermission permission="onboarding:view_self" resourceName="My Onboarding">
+    <RequirePermission permission="onboarding:view_self" resourceName="My Setup">
       <div className="flex flex-col gap-6 max-w-3xl mx-auto pb-10">
         <PageHeader
-          title="My Onboarding"
-          description="Provide the details HR and Finance need to activate your record and set up payroll."
-          breadcrumbs={[{ label: "Overview" }, { label: "My Onboarding" }]}
+          title="My Employee Setup"
+          description="Confirm your employment information and keep your personal records and required documents complete."
+          breadcrumbs={[{ label: "Overview" }, { label: "My Employee Setup" }]}
         />
         {currentEmployee ? (
           <SelfServiceOnboardingForm employeeId={currentEmployee.id} />

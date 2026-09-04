@@ -204,6 +204,54 @@ function TimesheetSettingsRoute() {
                 />
               </div>
               <div className="space-y-2">
+                <Label>Maximum Overtime Per Day</Label>
+                <Input
+                  type="number"
+                  min={0.25}
+                  max={24}
+                  step={0.25}
+                  value={settings.overtimeMaxDailyHours}
+                  onChange={(event) =>
+                    setSettings({
+                      ...settings,
+                      overtimeMaxDailyHours: Number(event.target.value) || 0,
+                    })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Maximum Overtime Per Week</Label>
+                <Input
+                  type="number"
+                  min={0.25}
+                  max={168}
+                  step={0.25}
+                  value={settings.overtimeMaxWeeklyHours}
+                  onChange={(event) =>
+                    setSettings({
+                      ...settings,
+                      overtimeMaxWeeklyHours: Number(event.target.value) || 0,
+                    })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Maximum Overtime Per Month</Label>
+                <Input
+                  type="number"
+                  min={0.25}
+                  max={744}
+                  step={0.25}
+                  value={settings.overtimeMaxMonthlyHours}
+                  onChange={(event) =>
+                    setSettings({
+                      ...settings,
+                      overtimeMaxMonthlyHours: Number(event.target.value) || 0,
+                    })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
                 <Label>Attendance Variance Tolerance (Hours)</Label>
                 <Input
                   type="number"
@@ -248,6 +296,18 @@ function TimesheetSettingsRoute() {
                 onCheckedChange={(v) => setSettings({ ...settings, allowCopyPreviousWeek: v })}
               />
               <Label htmlFor="copy-week">Allow employees to copy entries from previous week</Label>
+            </div>
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="overtime-preauthorisation"
+                checked={settings.overtimePreauthorisationRequired}
+                onCheckedChange={(value) =>
+                  setSettings({ ...settings, overtimePreauthorisationRequired: value })
+                }
+              />
+              <Label htmlFor="overtime-preauthorisation">
+                Require overtime approval before planned extra work
+              </Label>
             </div>
             <div className="flex items-center space-x-2">
               <Switch

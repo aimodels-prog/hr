@@ -128,8 +128,8 @@ export class TravelService {
     }
   }
 
-  // The three review stages are independent checkpoints held by different departments - HR
-  // reviews policy/dates, Accounts reviews budget, Super Admin closes reimbursement - and none
+  // The review stages are independent checkpoints held by different roles - the supervisor
+  // confirms business need, HR reviews policy/dates, and Accounts reviews budget and settlement - and none
   // of them may be exercised by the traveller reviewing their own request.
   private requireReviewerRole(
     req: { employeeId: string },
@@ -467,6 +467,7 @@ export class TravelService {
       ...(data.notes !== undefined ? { notes: data.notes } : {}),
       ...(data.evidenceFileId !== undefined ? { evidenceFileId: data.evidenceFileId } : {}),
 
+      managerApprovalStatus: "Pending",
       hrApprovalStatus: "Pending",
       accountsApprovalStatus: "Pending",
       status: "Pending HR and Accounts",
@@ -504,6 +505,52 @@ export class TravelService {
     return this.repo.list().find((request) => request.id === id || request.databaseId === id)!;
   }
 
+  managerApprove(
+    id: string,
+    approve: boolean,
+    notes: string,
+    context: ActorContext,
+  ): TravelRequest {
+    const req = this.repo.getById(id);
+    if (!req) throw new Error("Not found");
+    const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
+    const isAssignedManager =
+      context.actor.activeRole === "Line Manager" &&
+      employee?.lineManagerId === context.actor.employeeId;
+    const isSuperAdmin = context.actor.activeRole === "Super Admin";
+    if ((!isAssignedManager && !isSuperAdmin) || context.actor.employeeId === req.employeeId) {
+      this.deny(
+        "review this travel request as supervisor",
+        id,
+        "Only the traveller's assigned supervisor can complete this review.",
+        context,
+      );
+    }
+    if (req.status !== "Pending HR and Accounts" || req.managerApprovalStatus !== "Pending") {
+      throw new Error("Invalid state for supervisor review.");
+    }
+    if (!approve && notes.trim().length < 3) {
+      throw new Error("Rejection requires a detailed reason.");
+    }
+
+    req.managerApprovalStatus = approve ? "Approved" : "Rejected";
+    req.managerNotes = notes.trim();
+    if (approve) {
+      req.managerApprovedAt = new Date().toISOString();
+      req.managerApprovedBy = context.actor.userId;
+    }
+    req.status = this.calculateFinalStatus(req);
+    this.capturePreAuthorisation(req);
+    const updated = this.repo.update(req.id, req, context);
+    this.recordEvent(
+      approve ? "travel_manager_approved" : "travel_manager_rejected",
+      updated,
+      context,
+    );
+    this.notifyStatusChange(updated, context);
+    return updated;
+  }
+
   hrApprove(id: string, approve: boolean, notes: string, context: ActorContext): TravelRequest {
     const req = this.repo.getById(id);
     if (!req) throw new Error("Not found");
@@ -532,6 +579,25 @@ export class TravelService {
     this.recordEvent(approve ? "travel_hr_approved" : "travel_hr_rejected", updated, context);
     this.notifyStatusChange(updated, context);
     return updated;
+  }
+
+  async managerApproveAsync(
+    id: string,
+    approve: boolean,
+    notes: string,
+    context: ActorContext,
+  ): Promise<void> {
+    const { decideTravelRequestFn } = await import("../server-functions/travel.server.ts");
+    await decideTravelRequestFn({
+      data: {
+        actor: await this.serverActor(context),
+        requestId: this.databaseId("travelRequests", id),
+        stage: "Manager",
+        decision: approve ? "approve" : "reject",
+        ...(notes.trim() ? { reason: notes.trim() } : {}),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
   }
 
   async hrApproveAsync(
@@ -790,7 +856,13 @@ export class TravelService {
   ): TravelRequest {
     const req = this.repo.getById(id);
     if (!req) throw new Error("Not found");
-    this.requireReviewerRole(req, context, ["Super Admin"], "close this travel reimbursement", id);
+    this.requireReviewerRole(
+      req,
+      context,
+      ["Accounts", "Super Admin"],
+      "settle this travel reimbursement",
+      id,
+    );
     if (req.status !== "Pending Super Admin Closure") throw new Error("Invalid state for closure.");
     if (!approve && (!notes || notes.trim().length < 3)) {
       throw new Error("Rejection requires a detailed reason.");
@@ -988,8 +1060,8 @@ export class TravelService {
         type: "Success",
       },
       "Pending Super Admin Closure": {
-        title: "Expenses submitted for closure",
-        message: `Your expense claim for ${req.destination} was submitted and is awaiting final closure.`,
+        title: "Expenses submitted for review",
+        message: `Your expense claim for ${req.destination} is awaiting Accounts review.`,
         type: "Info",
       },
     };
@@ -1026,10 +1098,18 @@ export class TravelService {
   }
 
   private calculateFinalStatus(req: TravelRequest): TravelRequestStatus {
-    if (req.hrApprovalStatus === "Rejected" || req.accountsApprovalStatus === "Rejected") {
+    if (
+      req.managerApprovalStatus === "Rejected" ||
+      req.hrApprovalStatus === "Rejected" ||
+      req.accountsApprovalStatus === "Rejected"
+    ) {
       return "Rejected";
     }
-    if (req.hrApprovalStatus === "Approved" && req.accountsApprovalStatus === "Approved") {
+    if (
+      req.managerApprovalStatus === "Approved" &&
+      req.hrApprovalStatus === "Approved" &&
+      req.accountsApprovalStatus === "Approved"
+    ) {
       return "Pre-authorised";
     }
     return "Pending HR and Accounts";

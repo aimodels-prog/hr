@@ -72,7 +72,7 @@ const navGroups: NavGroup[] = [
       },
       { title: "My Tasks", url: "/staff/my-tasks", icon: ClipboardCheck },
       {
-        title: "My Onboarding",
+        title: "My Employee Setup",
         url: "/staff/me/onboarding",
         icon: UserCheck,
         requiredPermission: "onboarding:view_self",
@@ -201,7 +201,7 @@ const navGroups: NavGroup[] = [
         requiredPermission: "leave:admin_all",
       },
       {
-        title: "Timesheets",
+        title: "My Timesheets",
         url: "/staff/timesheets",
         icon: CalendarClock,
         requiredPermission: "timesheet:view_self",
@@ -249,6 +249,12 @@ const navGroups: NavGroup[] = [
         requiredPermission: "travel:request_self",
       },
       {
+        title: "Team Travel Approvals",
+        url: "/staff/travel-approvals",
+        icon: ClipboardCheck,
+        requiredPermission: "travel:manager_review",
+      },
+      {
         title: "HR Travel Approvals",
         url: "/staff/travel-hr-approvals",
         icon: ClipboardCheck,
@@ -260,7 +266,7 @@ const navGroups: NavGroup[] = [
     label: "Finance",
     items: [
       {
-        title: "Payroll Dashboard",
+        title: "Payroll Inputs",
         url: "/staff/payroll/periods",
         icon: Calculator,
         requiredPermission: "payroll:view",
@@ -278,7 +284,7 @@ const navGroups: NavGroup[] = [
         requiredPermission: "travel:finance_review",
       },
       {
-        title: "Travel Reimbursements",
+        title: "Reimbursement Settlement",
         url: "/staff/travel-closures",
         icon: ClipboardCheck,
         requiredPermission: "travel:final_close",
@@ -344,14 +350,14 @@ const navGroups: NavGroup[] = [
         requiredRoles: ["Super Admin"],
       },
       {
-        title: "Settings & Master Data",
+        title: "Company Setup",
         url: "/staff/settings",
         icon: Settings,
         requiredPermission: "system:settings_manage",
       },
       {
         title: "Leave Policies",
-        url: "/staff/settings",
+        url: "/staff/leave-policies",
         icon: CalendarClock,
         requiredPermission: "leave:admin_all",
       },
@@ -434,10 +440,10 @@ export function HrSidebar() {
                   tooltip="Career portal"
                   className="h-9 rounded-lg px-2.5 text-[13px] text-sidebar-foreground/78"
                 >
-                  <Link to="/">
+                  <a href="https://careers.via-int.com">
                     <ExternalLink />
                     <span>Career portal</span>
-                  </Link>
+                  </a>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>

@@ -87,6 +87,7 @@ export type OnboardingCaseStatus = "In Progress" | "Completed" | "Cancelled";
 export interface OnboardingCase extends BaseRecord {
   employeeId: RecordId;
   templateId?: RecordId;
+  kind?: "New Hire Onboarding" | "Employee Record Completion";
   status: OnboardingCaseStatus;
 
   tasks: OnboardingTask[];

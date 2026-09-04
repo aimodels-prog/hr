@@ -25,7 +25,7 @@ import { decryptSensitiveJson, encryptSensitiveJson } from "../encryption.server
 import { readObjectFile } from "../object-storage.server.ts";
 import { employeeBankDetails, employees, roles, userRoles, users } from "../schema/employee.ts";
 import { employeeDocuments, fileMetadata } from "../schema/documents.ts";
-import { leavePolicies } from "../schema/leave.ts";
+import { appSettings } from "../schema/organisation.ts";
 import { departments, employmentTypes, locations, positions } from "../schema/master-data.ts";
 import {
   offboardingCases,
@@ -929,11 +929,21 @@ export async function listCoreHrLifecycleForActor(
   return {
     onboardingTemplates: canManageTemplates ? onTemplateRows.map(mapOnboardingTemplate) : [],
     onboardingCases: onCaseRows
-      .filter((row) => canSeeEmployeeLifecycle(employeeById.get(row.employeeId), actor))
+      .filter(
+        (row) =>
+          canSeeEmployeeLifecycle(employeeById.get(row.employeeId), actor) ||
+          (actor.activeRole === "IT" &&
+            (onTasksByCase.get(row.id) ?? []).some(
+              (task) =>
+                task.assignedUserId === actor.userId ||
+                (!task.assignedUserId && task.ownerRole === "IT"),
+            )),
+      )
       .map((row) => ({
         ...recordFields(row),
         employeeId: row.employeeId,
         ...(row.templateId ? { templateId: row.templateId } : {}),
+        kind: row.kind,
         status: row.status,
         tasks: onTasksByCase.get(row.id) ?? [],
         progressPercentage: row.progressPercentage,
@@ -946,7 +956,12 @@ export async function listCoreHrLifecycleForActor(
         (row) =>
           canSeeEmployeeLifecycle(employeeById.get(row.employeeId), actor) ||
           actor.activeRole === "Accounts" ||
-          actor.activeRole === "IT",
+          (actor.activeRole === "IT" &&
+            (offTasksByCase.get(row.id) ?? []).some(
+              (task) =>
+                task.assignedUserId === actor.userId ||
+                (!task.assignedUserId && task.ownerRole === "IT"),
+            )),
       )
       .map((row) => ({
         ...recordFields(row),
@@ -1048,6 +1063,7 @@ export async function createOnboardingCaseInDatabase(
       organisationId,
       employeeId: employee.id,
       templateId: template.id,
+      kind: "New Hire Onboarding",
       ...(input.assignedHRId ? { assignedHRId: input.assignedHRId } : {}),
       status: "In Progress",
       createdBy: actor.userId,
@@ -1442,8 +1458,8 @@ export async function saveOnboardingSelfServiceInDatabase(
         !managerEmail.endsWith("@via-int.com")
       )
         throw new Error("Complete your employment details and enter your supervisor's VIA email.");
-      const [[department], [position], [location], [employmentType], [manager], [annualPolicy]] =
-        await Promise.all([
+      const [[department], [position], [location], [employmentType], [manager]] = await Promise.all(
+        [
           tx
             .select()
             .from(departments)
@@ -1503,18 +1519,8 @@ export async function saveOnboardingSelfServiceInDatabase(
               ),
             )
             .limit(1),
-          tx
-            .select({ eligibility: leavePolicies.eligibility })
-            .from(leavePolicies)
-            .where(
-              and(
-                eq(leavePolicies.organisationId, organisationId),
-                eq(leavePolicies.code, "A/L"),
-                eq(leavePolicies.isEnabled, true),
-              ),
-            )
-            .limit(1),
-        ]);
+        ],
+      );
       if (!department || !position || !location || !employmentType)
         throw new Error("One of the selected employment options is no longer available.");
       if (
@@ -1527,38 +1533,93 @@ export async function saveOnboardingSelfServiceInDatabase(
         throw new Error("The selected position does not belong to the selected department.");
       if (manager?.id === row.employee.id)
         throw new Error("You cannot select yourself as your supervisor.");
-      const waitingMonths = Math.max(
-        0,
-        Number(
-          (annualPolicy?.eligibility as { minimumServiceMonths?: number } | null)
-            ?.minimumServiceMonths ?? 3,
-        ),
-      );
-      const probationDate = new Date(`${details.startDate}T00:00:00Z`);
-      probationDate.setUTCMonth(probationDate.getUTCMonth() + waitingMonths);
       await tx
         .update(employees)
         .set({
-          legalName: details.legalName.trim(),
-          preferredName: details.preferredName.trim(),
-          staffEntryType: details.staffEntryType,
-          startDate: details.startDate,
-          probationEndDate:
-            details.staffEntryType === "New Employee"
-              ? probationDate.toISOString().slice(0, 10)
-              : null,
-          departmentId: department.id,
-          positionId: position.id,
-          locationId: location.id,
-          employmentTypeId: employmentType.id,
-          lineManagerId: manager?.id ?? null,
+          proposedEmploymentDetails: {
+            legalName: details.legalName.trim(),
+            preferredName: details.preferredName.trim(),
+            staffEntryType: details.staffEntryType,
+            startDate: details.startDate,
+            departmentId: department.id,
+            positionId: position.id,
+            locationId: location.id,
+            employmentTypeId: employmentType.id,
+            lineManagerId: manager?.id ?? null,
+            lineManagerEmail: managerEmail,
+          },
           proposedLineManagerEmail: manager ? null : managerEmail,
+          employmentConfirmationStatus: "Pending HR Review",
+          employmentConfirmedAt: null,
+          employmentConfirmedBy: null,
+          employmentReviewNote: null,
           profileSetupStatus: "In Progress",
           updatedAt: new Date(),
           updatedBy: actor.userId,
           recordVersion: sql`${employees.recordVersion} + 1`,
         })
         .where(eq(employees.id, row.employee.id));
+
+      await tx
+        .update(onboardingCases)
+        .set({
+          kind:
+            details.staffEntryType === "New Employee"
+              ? "New Hire Onboarding"
+              : "Employee Record Completion",
+          updatedAt: new Date(),
+          updatedBy: actor.userId,
+          recordVersion: sql`${onboardingCases.recordVersion} + 1`,
+        })
+        .where(eq(onboardingCases.id, input.caseId));
+
+      const reviewers = await tx
+        .selectDistinct({ userId: users.id })
+        .from(users)
+        .innerJoin(userRoles, eq(userRoles.userId, users.id))
+        .innerJoin(roles, eq(roles.id, userRoles.roleId))
+        .where(
+          and(
+            eq(users.organisationId, organisationId),
+            eq(users.status, "Active"),
+            inArray(roles.code, ["HR", "Super Admin"]),
+          ),
+        );
+      for (const reviewer of reviewers) {
+        if (reviewer.userId === actor.userId) continue;
+        await tx
+          .insert(notifications)
+          .values({
+            organisationId,
+            recipientUserId: reviewer.userId,
+            type: "employment_details.review_requested",
+            title: "Employment details awaiting confirmation",
+            message: `${actor.displayName} submitted their employment details for confirmation.`,
+            priority: "High",
+            status: "Unread",
+            deduplicationKey: `employment-review-${row.employee.id}-${reviewer.userId}`,
+            link: {
+              entityType: "employee",
+              entityId: row.employee.id,
+              path: `/staff/employees/${row.employee.id}`,
+            },
+            createdBy: actor.userId,
+            updatedBy: actor.userId,
+          } as typeof notifications.$inferInsert)
+          .onConflictDoUpdate({
+            target: [
+              notifications.organisationId,
+              notifications.recipientUserId,
+              notifications.deduplicationKey,
+            ],
+            set: {
+              status: "Unread",
+              message: `${actor.displayName} resubmitted their employment details for confirmation.`,
+              updatedAt: new Date(),
+              updatedBy: actor.userId,
+            },
+          });
+      }
       if (details.staffEntryType === "New Employee") {
         const [contractTask] = await tx
           .select({ id: onboardingTasks.id })
@@ -1753,6 +1814,253 @@ export async function saveOnboardingSelfServiceInDatabase(
           { caseId: input.caseId, form: input.kind },
         ),
       );
+  });
+}
+
+export async function decideEmploymentDetailsInDatabase(
+  organisationId: string,
+  input: {
+    employeeId: string;
+    decision: "Confirmed" | "Changes Requested";
+    note: string;
+  },
+  actor: AuditActorContext,
+): Promise<void> {
+  if (!MANAGER_ROLES.includes(actor.activeRole))
+    throw new Error("Only HR or a Super Admin can confirm employment details.");
+  if (actor.employeeId === input.employeeId)
+    throw new Error("You cannot confirm your own employment details.");
+  if (input.decision === "Changes Requested" && input.note.trim().length < 3)
+    throw new Error("Explain what the employee needs to correct.");
+
+  const db = getDatabaseClient();
+  await db.transaction(async (tx) => {
+    const [employee] = await tx
+      .select()
+      .from(employees)
+      .where(
+        and(
+          eq(employees.organisationId, organisationId),
+          eq(employees.id, input.employeeId),
+          isNull(employees.archivedAt),
+        ),
+      )
+      .limit(1)
+      .for("update");
+    if (!employee) throw new Error("Employee not found.");
+    if (employee.employmentConfirmationStatus !== "Pending HR Review")
+      throw new Error("These employment details are no longer awaiting confirmation.");
+    const proposed = employee.proposedEmploymentDetails;
+    if (!proposed) throw new Error("The submitted employment information could not be found.");
+
+    if (input.decision === "Confirmed") {
+      const [[department], [position], [location], [employmentType]] = await Promise.all([
+        tx
+          .select({ id: departments.id })
+          .from(departments)
+          .where(
+            and(
+              eq(departments.organisationId, organisationId),
+              eq(departments.id, proposed.departmentId),
+              eq(departments.isActive, true),
+            ),
+          )
+          .limit(1),
+        tx
+          .select({ id: positions.id, departmentId: positions.departmentId })
+          .from(positions)
+          .where(
+            and(
+              eq(positions.organisationId, organisationId),
+              eq(positions.id, proposed.positionId),
+              eq(positions.isActive, true),
+            ),
+          )
+          .limit(1),
+        tx
+          .select({ id: locations.id })
+          .from(locations)
+          .where(
+            and(
+              eq(locations.organisationId, organisationId),
+              eq(locations.id, proposed.locationId),
+              eq(locations.isActive, true),
+            ),
+          )
+          .limit(1),
+        tx
+          .select({ id: employmentTypes.id })
+          .from(employmentTypes)
+          .where(
+            and(
+              eq(employmentTypes.organisationId, organisationId),
+              eq(employmentTypes.id, proposed.employmentTypeId),
+              eq(employmentTypes.isActive, true),
+            ),
+          )
+          .limit(1),
+      ]);
+      if (!department || !position || !location || !employmentType)
+        throw new Error("One of the submitted employment options is no longer active.");
+      if (position.departmentId && position.departmentId !== department.id)
+        throw new Error("The submitted position no longer belongs to the selected department.");
+    }
+
+    let confirmedManagerId: string | null = null;
+    if (proposed.lineManagerId || proposed.lineManagerEmail) {
+      const managerMatch = proposed.lineManagerId
+        ? eq(employees.id, proposed.lineManagerId)
+        : or(
+            eq(employees.workspaceEmail, proposed.lineManagerEmail),
+            eq(employees.workEmail, proposed.lineManagerEmail),
+          );
+      const [manager] = await tx
+        .select({ id: employees.id })
+        .from(employees)
+        .where(
+          and(
+            eq(employees.organisationId, organisationId),
+            managerMatch,
+            isNull(employees.archivedAt),
+            sql`${employees.status} NOT IN ('Inactive', 'Archived')`,
+          ),
+        )
+        .limit(1);
+      confirmedManagerId = manager?.id ?? null;
+    }
+    if (input.decision === "Confirmed" && !confirmedManagerId)
+      throw new Error("Assign an active supervisor before confirming these employment details.");
+    if (confirmedManagerId === employee.id)
+      throw new Error("An employee cannot be their own supervisor.");
+
+    const [settings] = await tx
+      .select({ probationDurationMonths: appSettings.probationDurationMonths })
+      .from(appSettings)
+      .where(eq(appSettings.organisationId, organisationId))
+      .limit(1);
+    const probationDate = new Date(`${proposed.startDate}T00:00:00Z`);
+    probationDate.setUTCMonth(
+      probationDate.getUTCMonth() + Math.max(0, settings?.probationDurationMonths ?? 3),
+    );
+    const today = new Date().toISOString().slice(0, 10);
+    const confirmedStatus =
+      employee.profileSetupStatus === "Completed" &&
+      proposed.staffEntryType === "New Employee" &&
+      probationDate.toISOString().slice(0, 10) > today
+        ? "Probation"
+        : employee.profileSetupStatus === "Completed"
+          ? "Active"
+          : employee.status;
+
+    await tx
+      .update(employees)
+      .set({
+        ...(input.decision === "Confirmed"
+          ? {
+              legalName: proposed.legalName,
+              preferredName: proposed.preferredName,
+              staffEntryType: proposed.staffEntryType,
+              startDate: proposed.startDate,
+              probationEndDate:
+                proposed.staffEntryType === "New Employee"
+                  ? probationDate.toISOString().slice(0, 10)
+                  : null,
+              departmentId: proposed.departmentId,
+              positionId: proposed.positionId,
+              locationId: proposed.locationId,
+              employmentTypeId: proposed.employmentTypeId,
+              lineManagerId: confirmedManagerId,
+              status: confirmedStatus,
+              proposedEmploymentDetails: null,
+              proposedLineManagerEmail: null,
+            }
+          : {}),
+        employmentConfirmationStatus: input.decision,
+        employmentConfirmedAt: input.decision === "Confirmed" ? new Date().toISOString() : null,
+        employmentConfirmedBy: input.decision === "Confirmed" ? actor.userId : null,
+        employmentReviewNote: input.note.trim() || null,
+        updatedAt: new Date(),
+        updatedBy: actor.userId,
+        recordVersion: sql`${employees.recordVersion} + 1`,
+      })
+      .where(eq(employees.id, employee.id));
+
+    if (input.decision === "Changes Requested") {
+      await tx
+        .update(onboardingTasks)
+        .set({
+          status: "Pending",
+          completedAt: null,
+          completedBy: null,
+          updatedAt: new Date(),
+          updatedBy: actor.userId,
+          recordVersion: sql`${onboardingTasks.recordVersion} + 1`,
+        })
+        .where(
+          and(
+            eq(onboardingTasks.organisationId, organisationId),
+            eq(onboardingTasks.selfServiceFormKey, "employment_details"),
+            inArray(
+              onboardingTasks.caseId,
+              tx
+                .select({ id: onboardingCases.id })
+                .from(onboardingCases)
+                .where(eq(onboardingCases.employeeId, employee.id)),
+            ),
+          ),
+        );
+    }
+
+    const [employeeUser] = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.organisationId, organisationId), eq(users.employeeId, employee.id)))
+      .limit(1);
+    if (employeeUser) {
+      await tx.insert(notifications).values({
+        organisationId,
+        recipientUserId: employeeUser.id,
+        type:
+          input.decision === "Confirmed"
+            ? "employment_details.confirmed"
+            : "employment_details.changes_requested",
+        title:
+          input.decision === "Confirmed"
+            ? "Employment details confirmed"
+            : "Employment details need an update",
+        message:
+          input.decision === "Confirmed"
+            ? "HR confirmed your VIA employment information."
+            : input.note.trim(),
+        priority: input.decision === "Confirmed" ? "Normal" : "High",
+        status: "Unread",
+        deduplicationKey: `employment-decision-${employee.id}-${employee.recordVersion + 1}`,
+        link: {
+          entityType: "employee",
+          entityId: employee.id,
+          path: "/staff/me/onboarding",
+        },
+        createdBy: actor.userId,
+        updatedBy: actor.userId,
+      } as typeof notifications.$inferInsert);
+    }
+
+    await tx.insert(auditEvents).values(
+      auditValues(
+        organisationId,
+        actor,
+        input.decision === "Confirmed" ? "confirm" : "request-changes",
+        "employee-employment-details",
+        employee.id,
+        input.note.trim() || "Employment details confirmed by HR",
+        {
+          previousStatus: employee.employmentConfirmationStatus,
+          status: input.decision,
+          submittedStartDate: proposed.startDate,
+          submittedLineManagerId: confirmedManagerId,
+        },
+      ),
+    );
   });
 }
 

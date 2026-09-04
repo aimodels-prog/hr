@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { Building, Settings2, FileDigit, Database, Download, Users } from "lucide-react";
+import { Building, Settings2, FileDigit, Database, Download } from "lucide-react";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
@@ -20,7 +20,6 @@ import {
   OrganisationSettingsPanel,
   NumberingSettingsPanel,
 } from "@/components/settings/organisation-settings-panel";
-import { UserManagementPanel } from "@/components/settings/user-management-panel";
 import { ProjectsPanel } from "@/components/settings/projects-panel";
 import {
   AlertDialog,
@@ -59,17 +58,14 @@ function SettingsRoute() {
     <RequirePermission permission="system:settings_manage" resourceName="Settings">
       <div className="flex flex-col gap-6 max-w-7xl mx-auto">
         <PageHeader
-          title="System Settings & Master Data"
-          description="Configure organisation parameters and manage foundational lookup data."
-          breadcrumbs={[{ label: "System" }, { label: "Settings" }]}
+          title="Company Setup"
+          description="Manage company information, people structures, workflow templates and reference lists."
+          breadcrumbs={[{ label: "System" }, { label: "Company Setup" }]}
         />
 
-        <Tabs defaultValue="users" className="w-full">
+        <Tabs defaultValue="org" className="w-full">
           <div className="overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0">
             <TabsList className="inline-flex h-auto p-1 flex-wrap items-center justify-start gap-1 w-full sm:w-auto">
-              <TabsTrigger value="users" className="gap-2">
-                <Users className="h-4 w-4" /> Users
-              </TabsTrigger>
               <TabsTrigger value="org" className="gap-2">
                 <Building className="h-4 w-4" /> Organisation
               </TabsTrigger>
@@ -131,10 +127,6 @@ function SettingsRoute() {
           </div>
 
           <div className="mt-6">
-            <TabsContent value="users">
-              <UserManagementPanel />
-            </TabsContent>
-
             <TabsContent value="org">
               <OrganisationSettingsPanel />
             </TabsContent>

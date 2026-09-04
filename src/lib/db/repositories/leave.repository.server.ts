@@ -335,6 +335,7 @@ export async function createLeaveRequestInDatabase(
         startDate: employees.startDate,
         status: employees.status,
         profileSetupStatus: employees.profileSetupStatus,
+        employmentConfirmationStatus: employees.employmentConfirmationStatus,
       })
       .from(employees)
       .where(and(eq(employees.organisationId, organisationId), eq(employees.id, input.employeeId)))
@@ -352,10 +353,8 @@ export async function createLeaveRequestInDatabase(
       .limit(1);
     if (!employee || !policy || ["Inactive", "Archived"].includes(employee.status))
       throw new Error("The employee or leave policy is not available.");
-    if (employee.profileSetupStatus !== "Completed")
-      throw new Error(
-        "Complete your employee profile and required documents before requesting leave.",
-      );
+    if (employee.employmentConfirmationStatus !== "Confirmed")
+      throw new Error("HR must confirm your employment details before you can request leave.");
     if (input.endDate < input.startDate)
       throw new Error("Leave end date cannot be before the start date.");
     if (input.reason.trim().length < 3)

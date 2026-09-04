@@ -48,7 +48,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
           userId: "user-omar",
           employeeId: "employee-omar",
           displayName: "Omar Rahman",
-          workspaceEmail: "omar.rahman@via.example",
+          workspaceEmail: "omar.rahman@via-int.com",
           activeRole: "Employee" as const,
           roles: ["Employee" as const],
         },
@@ -58,7 +58,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
           userId: "user-rana",
           employeeId: "employee-rana",
           displayName: "Rana Nair",
-          workspaceEmail: "rana.nair@via.example",
+          workspaceEmail: "rana.nair@via-int.com",
           activeRole: "HR" as const,
           roles: ["Employee" as const, "HR" as const],
         },
@@ -165,9 +165,11 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
       const overtime = await overtimeService.submitClaim(
         {
           employeeId: "employee-omar",
+          requestKind: "Emergency Retrospective",
           date: "2026-06-04",
           hours: 2,
           reason: labels.overtime,
+          emergencyReason: "Urgent shipment release could not be predicted before the work began.",
           projectId: "proj-001",
           costCentreId: "cc-operations",
           activityCodeId: "activity-delivery",
@@ -232,6 +234,17 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   await expect(overtimeRow).toBeVisible();
   await overtimeRow.getByRole("button", { name: "Approve" }).click();
   await expect(overtimeRow).toBeHidden();
+
+  await previewAs(page, "user-layla", "Line Manager", "/staff/travel-approvals");
+  const managerTravelRow = page.getByRole("row").filter({ hasText: labels.travel });
+  await expect(managerTravelRow).toBeVisible();
+  await managerTravelRow.getByRole("button", { name: "Approve", exact: true }).click();
+  const managerTravelDialog = page.getByRole("dialog", { name: "Approve business travel" });
+  await managerTravelDialog
+    .getByPlaceholder("Optional manager note")
+    .fill("Business purpose and timing confirmed.");
+  await managerTravelDialog.getByRole("button", { name: "Confirm approval" }).click();
+  await expect(managerTravelDialog).toBeHidden();
 
   await previewAs(
     page,
@@ -347,7 +360,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
             userId: "user-omar",
             employeeId: "employee-omar",
             displayName: "Omar Rahman",
-            workspaceEmail: "omar.rahman@via.example",
+            workspaceEmail: "omar.rahman@via-int.com",
             activeRole: "Employee",
             roles: ["Employee"],
           },
@@ -358,7 +371,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
     { travelId: records.travelId },
   );
 
-  await previewAs(page, "user-super-admin", "Super Admin", "/staff/travel-closures");
+  await previewAs(page, "user-mariam", "Accounts", "/staff/travel-closures");
   const closureRow = page
     .getByRole("row")
     .filter({ hasText: "Dubai, UAE" })

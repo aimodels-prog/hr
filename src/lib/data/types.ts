@@ -116,6 +116,25 @@ export interface Employee extends BaseRecord {
   staffEntryType?: StaffEntryType | undefined;
   profileSetupStatus?: ProfileSetupStatus | undefined;
   profileSetupCompletedAt?: string | undefined;
+  employmentConfirmationStatus?:
+    "Not Submitted" | "Pending HR Review" | "Confirmed" | "Changes Requested" | undefined;
+  employmentConfirmedAt?: string | undefined;
+  employmentConfirmedBy?: string | undefined;
+  employmentReviewNote?: string | undefined;
+  proposedEmploymentDetails?:
+    | {
+        legalName: string;
+        preferredName: string;
+        staffEntryType: StaffEntryType;
+        startDate: string;
+        departmentId: string;
+        positionId: string;
+        locationId: string;
+        employmentTypeId: string;
+        lineManagerId: string | null;
+        lineManagerEmail: string;
+      }
+    | undefined;
   proposedLineManagerEmail?: string | undefined;
   lineManagerId?: RecordId | undefined;
 
@@ -821,15 +840,15 @@ export interface AppSettings extends BaseRecord {
   workingDays: number[];
   standardDailyHours: number;
   standardWeeklyHours: number;
+  probationDurationMonths: number;
   leaveYearStart: string;
   leaveYearEnd: string;
   documentReminderDays: number[];
   employeeNumberFormat: string;
   candidateReferenceFormat: string;
   schemaVersion: number;
-  // New-hire self-service gate: when true, an employee with an in-progress onboarding
-  // case and incomplete mandatory self-service tasks (personal details, bank details,
-  // required documents) is routed to the onboarding form instead of the normal dashboard.
+  // Legacy compatibility setting. Essential employee services are never globally blocked;
+  // incomplete profile tasks are handled through progressive access and reminders.
   requireOnboardingCompletionBeforeDashboard: boolean;
 }
 

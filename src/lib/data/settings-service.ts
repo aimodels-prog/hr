@@ -33,6 +33,7 @@ export class SettingsService {
       workingDays: [0, 1, 2, 3, 4],
       standardDailyHours: 8,
       standardWeeklyHours: 40,
+      probationDurationMonths: 3,
       leaveYearStart: "01-01",
       leaveYearEnd: "12-31",
       documentReminderDays: [30, 15, 7],

@@ -66,12 +66,20 @@ export const travelRequests = pgTable(
     evidenceFileId: uuid("evidence_file_id").references(() => fileMetadata.id, {
       onDelete: "restrict",
     }),
+    managerApprovalStatus: travelApprovalState("manager_approval_status")
+      .notNull()
+      .default("Pending"),
     hrApprovalStatus: travelApprovalState("hr_approval_status").notNull().default("Pending"),
     accountsApprovalStatus: travelApprovalState("accounts_approval_status")
       .notNull()
       .default("Pending"),
     hrNotes: text("hr_notes"),
     accountsNotes: text("accounts_notes"),
+    managerNotes: text("manager_notes"),
+    managerApprovedAt: timestamp("manager_approved_at", { withTimezone: true, mode: "string" }),
+    managerApprovedBy: uuid("manager_approved_by").references(() => users.id, {
+      onDelete: "restrict",
+    }),
     hrApprovedAt: timestamp("hr_approved_at", { withTimezone: true, mode: "string" }),
     hrApprovedBy: uuid("hr_approved_by").references(() => users.id, { onDelete: "restrict" }),
     accountsApprovedAt: timestamp("accounts_approved_at", { withTimezone: true, mode: "string" }),
@@ -115,7 +123,7 @@ export const travelRequests = pgTable(
     check("travel_requests_currency_format", sql`${table.currency} ~ '^[A-Z]{3}$'`),
     check(
       "travel_requests_pre_authorised_dual_approval",
-      sql`${table.status} <> 'Pre-authorised' OR (${table.hrApprovalStatus} = 'Approved' AND ${table.accountsApprovalStatus} = 'Approved' AND ${table.preAuthorisedAt} IS NOT NULL)`,
+      sql`${table.status} <> 'Pre-authorised' OR (${table.managerApprovalStatus} = 'Approved' AND ${table.hrApprovalStatus} = 'Approved' AND ${table.accountsApprovalStatus} = 'Approved' AND ${table.preAuthorisedAt} IS NOT NULL)`,
     ),
     check("travel_requests_record_version_positive", sql`${table.recordVersion} >= 1`),
   ],
@@ -145,7 +153,7 @@ export const travelApprovals = pgTable(
   (table) => [
     uniqueIndex("travel_approvals_request_stage_unique").on(table.travelRequestId, table.stage),
     index("travel_approvals_org_state_idx").on(table.organisationId, table.state),
-    check("travel_approvals_stage", sql`${table.stage} IN ('HR', 'Accounts')`),
+    check("travel_approvals_stage", sql`${table.stage} IN ('Manager', 'HR', 'Accounts')`),
     check(
       "travel_approvals_rejection_reason",
       sql`${table.state} <> 'Rejected' OR btrim(coalesce(${table.reason}, '')) <> ''`,

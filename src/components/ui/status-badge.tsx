@@ -19,6 +19,12 @@ interface StatusBadgeProps extends Omit<BadgeProps, "variant"> {
 
 export function StatusBadge({ status, className, ...props }: StatusBadgeProps) {
   let colorClass = "bg-secondary text-secondary-foreground hover:bg-secondary/80";
+  const label =
+    status === "Pending HR and Accounts"
+      ? "Awaiting approvals"
+      : status === "Pending Super Admin Closure"
+        ? "Awaiting reimbursement review"
+        : status;
 
   switch (status) {
     case "Active":
@@ -38,10 +44,13 @@ export function StatusBadge({ status, className, ...props }: StatusBadgeProps) {
       colorClass = "bg-slate-500/15 text-slate-700 dark:text-slate-400 border-slate-500/20";
       break;
   }
+  if (status.startsWith("Pending ") || status === "Pending Pre-authorisation") {
+    colorClass = "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20";
+  }
 
   return (
     <Badge variant="outline" className={cn("font-medium", colorClass, className)} {...props}>
-      {status}
+      {label}
     </Badge>
   );
 }

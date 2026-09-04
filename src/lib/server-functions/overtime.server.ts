@@ -5,6 +5,7 @@ import {
   assignOvertimeToPayrollInDatabase,
   correctOvertimeClaimInDatabase,
   createOvertimeClaimInDatabase,
+  confirmPlannedOvertimeInDatabase,
   decideOvertimeClaimInDatabase,
   exportPayrollOvertimeLedgerInDatabase,
   listOvertimeClaimsForActor,
@@ -38,6 +39,8 @@ const Claim = z
     date: z.string().date(),
     hours: z.number().positive().max(24),
     reason: z.string().trim().min(3).max(2000),
+    requestKind: z.enum(["Planned", "Emergency Retrospective"]),
+    emergencyReason: z.string().trim().max(2000).optional(),
     compensationType: z.enum(["Payment", "TOIL"]),
     projectId: z.string().uuid().optional(),
     costCentreId: z.string().uuid(),
@@ -84,6 +87,8 @@ export const createOvertimeClaimFn = createServerFn({ method: "POST" })
           date: data.date,
           hours: data.hours,
           reason: data.reason,
+          requestKind: data.requestKind,
+          ...(data.emergencyReason ? { emergencyReason: data.emergencyReason } : {}),
           compensationType: data.compensationType,
           costCentreId: data.costCentreId,
           activityCodeId: data.activityCodeId,
@@ -103,6 +108,29 @@ export const createOvertimeClaimFn = createServerFn({ method: "POST" })
         ).catch(() => undefined);
       throw error;
     }
+  });
+
+export const confirmPlannedOvertimeFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: Actor,
+        claimId: z.string().uuid(),
+        actualHours: z.number().positive().max(24),
+        note: z.string().trim().max(2000),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    await confirmPlannedOvertimeInDatabase(
+      v.organisationId,
+      data.claimId,
+      data.actualHours,
+      data.note,
+      v.actor,
+    );
   });
 
 export const getOvertimeClaimsFn = createServerFn({ method: "GET" })

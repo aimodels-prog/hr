@@ -60,8 +60,9 @@ const managerCtx = createTestUserContext("Line Manager", "user-layla", "employee
 const hrCtx = createTestUserContext("HR", "user-rana", "employee-rana");
 const accountsCtx = createTestUserContext("Accounts", "user-mariam", "employee-mariam");
 const adminCtx = createTestUserContext("Super Admin", "user-super-admin", "employee-yusuf");
+const itCtx = createTestUserContext("IT", "user-it", "employee-it");
 
-test("role permissions enforce strict boundaries for all 5 roles", () => {
+test("role permissions enforce strict boundaries for every operational role", () => {
   // 1. Super Admin has all permissions
   const adminPermissions = getRolePermissions("Super Admin");
   assert.equal(adminPermissions.size, ALL_PERMISSIONS.length);
@@ -105,6 +106,16 @@ test("role permissions enforce strict boundaries for all 5 roles", () => {
   assert.equal(can("attendance:clock_self", employeeCtx), true);
   assert.equal(can("attendance:approve_direct_reports", employeeCtx), false);
   assert.equal(can("attendance:site_visit_approve", employeeCtx), false);
+
+  // IT remains an employee in all ordinary modules and receives no general HR, payroll,
+  // document-administration, recruitment, settings or audit authority.
+  assert.equal(can("employee:view_self", itCtx), true);
+  assert.equal(can("employee:view_all", itCtx), false);
+  assert.equal(can("document:view_all", itCtx), false);
+  assert.equal(can("payroll:view", itCtx), false);
+  assert.equal(can("recruitment:view_candidates", itCtx), false);
+  assert.equal(can("system:settings_manage", itCtx), false);
+  assert.equal(can("system:audit_view", itCtx), false);
 });
 
 test("union of assigned roles combines permissions correctly", () => {

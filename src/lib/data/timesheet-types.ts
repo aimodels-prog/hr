@@ -8,6 +8,10 @@ export interface TimesheetSettings {
   allowCopyPreviousWeek: boolean;
   payrollLockBehaviour: "Manual by HR" | "Automatic on Approval";
   requireHrOvertimeVerification: boolean;
+  overtimePreauthorisationRequired: boolean;
+  overtimeMaxDailyHours: number;
+  overtimeMaxWeeklyHours: number;
+  overtimeMaxMonthlyHours: number;
   attendanceVarianceToleranceHours: number;
 }
 

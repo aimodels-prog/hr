@@ -1706,3 +1706,49 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
     audit all passed. The dependency audit reported 0 vulnerabilities.
   - Production activation still requires applying migration 0020 and completing one real VIA Portal
     login and responsive browser acceptance against the deployed environment.
+
+### Step 50 - HR operating-model improvements (items 1-10)
+
+- Status: Items 1-9 complete in the repository on 2026-09-04. Item 10 verification is complete;
+  production release activation is recorded separately after the immutable commit is deployed.
+- Decisions and behaviour:
+  1. Employee-entered employment information is retained as a proposal until HR or Super Admin
+     confirms it. Confirmation atomically applies the approved name, staff category, start date,
+     department, position, location, employment type and actual supervisor; requested changes reopen
+     the employee task. Both decisions notify the employee and create an audit event.
+  2. Probation and leave eligibility are independent policies. Company Setup controls probation
+     duration, while each Leave Policy controls its own minimum service requirement.
+  3. First-login access is progressive. Employees can use their profile, setup and essential pages
+     while completing their record, but leave, timesheet, travel and overtime submissions remain
+     server-blocked until HR confirms the employment facts.
+  4. Existing-staff record completion and new-hire onboarding are distinct case types with clear
+     employee and HR wording, while continuing to use the same secure checklist engine.
+  5. Travel now requires the employee's actual supervisor to confirm business need before HR checks
+     policy and Accounts checks budget. All three decisions are required for Pre-authorised. Accounts
+     owns reimbursement settlement, with Super Admin retained as an authorised contingency role.
+  6. Routine reconciled timesheets finish after supervisor approval. Only attendance variances or
+     excess-hours exceptions enter HR review; payroll locking remains separate.
+  7. Planned overtime requires supervisor pre-authorisation. Emergency retrospective work requires
+     an explanation, and daily, weekly and monthly limits are configurable and enforced by the
+     server. Employees confirm actual hours after planned work; overages return to the supervisor.
+  8. Navigation was simplified and corrected: separate Leave Policies and Company Setup destinations,
+     one canonical Employee Files route, clear My Timesheets and Payroll Inputs labels, a careers
+     link to the public hostname, and no mojibake/encoding defects in application source.
+  9. IT is a restricted operational responsibility, not an HR administrator. It receives only
+     assigned or unassigned IT lifecycle tasks and cannot browse employee files, payroll,
+     recruitment, settings or global audit history.
+  10. Migration, service, role, browser, build, lint and dependency gates were rerun against clean
+      isolated infrastructure before release preparation.
+- Verification:
+  - Migrations 0021 and 0022 applied successfully from zero to a newly created PostgreSQL scratch
+    database. Deterministic staging data imported with the current field-encryption key.
+  - Complete PostgreSQL/MinIO suite passed: 310 tests, 310 passed, 0 failed and 0 skipped.
+  - Environment-independent suite passed: 304 tests, 280 passed, 24 expected infrastructure skips
+    and 0 failed.
+  - Complete local browser suite passed against a separate freshly migrated and seeded database:
+    13 journeys passed and the deployment-only production smoke was explicitly skipped. That smoke
+    requires the deployed worker and real SSO secret and remains part of Contabo release acceptance.
+  - Browser verification found and fixed a manager-travel refresh defect that saved the decision but
+    left the dialog open because it attempted an unauthorised organisation-wide refresh.
+  - TypeScript, ESLint, production build, Git whitespace validation and dependency audit passed. The
+    dependency audit reported 0 vulnerabilities.

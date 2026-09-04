@@ -26,6 +26,7 @@ const orgSchema = z.object({
   baseCurrency: z.string().min(1, "Required"),
   standardDailyHours: z.coerce.number().min(1).max(24),
   standardWeeklyHours: z.coerce.number().min(1).max(168),
+  probationDurationMonths: z.coerce.number().int().min(0).max(36),
   leaveYearStart: z.string().min(1, "Format MM-DD"),
   leaveYearEnd: z.string().min(1, "Format MM-DD"),
 });
@@ -50,6 +51,7 @@ export function OrganisationSettingsPanel() {
       baseCurrency: "",
       standardDailyHours: 8,
       standardWeeklyHours: 40,
+      probationDurationMonths: 3,
       leaveYearStart: "",
       leaveYearEnd: "",
     },
@@ -91,24 +93,6 @@ export function OrganisationSettingsPanel() {
       form.reset(updated);
       setWorkingDays(updated.workingDays);
       setReminderDays(updated.documentReminderDays.join(", "));
-    } catch (error: unknown) {
-      toast.error(error instanceof Error ? error.message : "Failed to save settings");
-    }
-  };
-
-  const toggleOnboardingGate = async (checked: boolean) => {
-    if (!settings) return;
-    try {
-      const updated = await settingsService.saveAppSettings(
-        { ...settings, requireOnboardingCompletionBeforeDashboard: checked },
-        getActorContext(),
-      );
-      toast.success(
-        checked
-          ? "Employees must now complete onboarding before accessing the dashboard."
-          : "Employees can now skip onboarding and access the dashboard.",
-      );
-      setSettings(updated);
     } catch (error: unknown) {
       toast.error(error instanceof Error ? error.message : "Failed to save settings");
     }
@@ -192,6 +176,23 @@ export function OrganisationSettingsPanel() {
                       <FormControl>
                         <Input type="number" {...field} />
                       </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="probationDurationMonths"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Standard Probation (Months)</FormLabel>
+                      <FormControl>
+                        <Input type="number" min={0} max={36} {...field} />
+                      </FormControl>
+                      <p className="text-xs text-muted-foreground">
+                        This controls employment probation only. Leave waiting periods are managed
+                        separately in Leave Policies.
+                      </p>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -282,27 +283,21 @@ export function OrganisationSettingsPanel() {
 
       <Card>
         <CardHeader>
-          <CardTitle>New Hire Onboarding Policy</CardTitle>
+          <CardTitle>Employee Setup Access</CardTitle>
           <CardDescription>
-            Controls what a new employee sees the first time they sign in with their work email.
+            Employees retain access to essential work services while completing their record.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center justify-between rounded-md border p-4">
+          <div className="rounded-md border p-4">
             <div className="space-y-0.5">
-              <Label className="text-sm font-medium">
-                Require onboarding details before dashboard access
-              </Label>
+              <Label className="text-sm font-medium">Progressive access is enabled</Label>
               <p className="text-sm text-muted-foreground max-w-xl">
-                When on, a new hire who has not finished onboarding will see the onboarding form
-                first. They can use the rest of VIA HR System after completing their personal, bank,
-                contract and ID information for HR and Finance.
+                Staff can use attendance, timesheets, tasks, notifications and their profile while
+                completing setup. Leave and other policy-dependent requests wait until HR confirms
+                employment information. Missing documents remain visible as required actions.
               </p>
             </div>
-            <Switch
-              checked={settings.requireOnboardingCompletionBeforeDashboard}
-              onCheckedChange={toggleOnboardingGate}
-            />
           </div>
         </CardContent>
       </Card>

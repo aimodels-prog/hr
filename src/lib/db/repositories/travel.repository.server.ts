@@ -127,10 +127,14 @@ function mapTravel(
     currency: row.currency,
     ...(row.notes ? { notes: row.notes } : {}),
     ...(row.evidenceFileId ? { evidenceFileId: row.evidenceFileId } : {}),
+    managerApprovalStatus: row.managerApprovalStatus,
     hrApprovalStatus: row.hrApprovalStatus,
     accountsApprovalStatus: row.accountsApprovalStatus,
     ...(row.hrNotes ? { hrNotes: row.hrNotes } : {}),
     ...(row.accountsNotes ? { accountsNotes: row.accountsNotes } : {}),
+    ...(row.managerNotes ? { managerNotes: row.managerNotes } : {}),
+    ...(row.managerApprovedAt ? { managerApprovedAt: row.managerApprovedAt } : {}),
+    ...(row.managerApprovedBy ? { managerApprovedBy: row.managerApprovedBy } : {}),
     ...(row.hrApprovedAt ? { hrApprovedAt: row.hrApprovedAt } : {}),
     ...(row.hrApprovedBy ? { hrApprovedBy: row.hrApprovedBy } : {}),
     ...(row.accountsApprovedAt ? { accountsApprovedAt: row.accountsApprovedAt } : {}),
@@ -171,6 +175,19 @@ export async function listTravelRequestsForActor(org: string, actor: AuditActorC
   if (!actor.employeeId) throw new Error("A verified employee is required.");
   const db = getDatabaseClient();
   const canReview = ["HR", "Accounts", "Super Admin"].includes(role(actor));
+  const directReports =
+    role(actor) === "Line Manager"
+      ? db
+          .select({ id: employees.id })
+          .from(employees)
+          .where(
+            and(
+              eq(employees.organisationId, org),
+              eq(employees.lineManagerId, actor.employeeId),
+              isNull(employees.archivedAt),
+            ),
+          )
+      : undefined;
   const rows = await db
     .select()
     .from(travelRequests)
@@ -178,7 +195,16 @@ export async function listTravelRequestsForActor(org: string, actor: AuditActorC
       and(
         eq(travelRequests.organisationId, org),
         isNull(travelRequests.archivedAt),
-        ...(canReview ? [] : [eq(travelRequests.employeeId, actor.employeeId)]),
+        ...(canReview
+          ? []
+          : role(actor) === "Line Manager" && directReports
+            ? [
+                or(
+                  eq(travelRequests.employeeId, actor.employeeId),
+                  inArray(travelRequests.employeeId, directReports),
+                )!,
+              ]
+            : [eq(travelRequests.employeeId, actor.employeeId)]),
       ),
     )
     .orderBy(desc(travelRequests.createdAt));
@@ -241,12 +267,20 @@ export async function createTravelRequestInDatabase(
         id: employees.id,
         status: employees.status,
         preferredName: employees.preferredName,
+        lineManagerId: employees.lineManagerId,
+        employmentConfirmationStatus: employees.employmentConfirmationStatus,
       })
       .from(employees)
       .where(and(eq(employees.organisationId, org), eq(employees.id, input.employeeId)))
       .limit(1);
     if (!employee || !["Active", "Probation", "Notice"].includes(employee.status))
       throw new Error("An active employee profile is required.");
+    if (employee.employmentConfirmationStatus !== "Confirmed")
+      throw new Error(
+        "HR must confirm your employment details before you can request business travel.",
+      );
+    if (!employee.lineManagerId)
+      throw new Error("Ask HR to assign your supervisor before requesting business travel.");
     await activeReference(tx, currencies, org, input.currencyId, "currency");
     const [currency] = await tx
       .select({ code: currencies.code })
@@ -308,17 +342,46 @@ export async function createTravelRequestInDatabase(
       createdBy: actor.userId,
       updatedBy: actor.userId,
     } as typeof travelRequests.$inferInsert);
-    const reviewers = await usersForRoles(tx, org, ["HR", "Accounts", "Super Admin"]);
+    const managerUserId = await userForEmployee(tx, org, employee.lineManagerId);
+    if (!managerUserId) throw new Error("Your assigned supervisor does not have active access.");
     await notify(
       tx,
       org,
-      reviewers,
+      [managerUserId],
       id,
       {
         title: "Travel request awaiting review",
         message: `${employee.preferredName} requested travel to ${input.destination.trim()}.`,
         key: `travel-submitted-${id}`,
+        path: "/staff/travel-approvals",
+        priority: "High",
+      },
+      actor.userId!,
+    );
+    await notify(
+      tx,
+      org,
+      await usersForRoles(tx, org, ["HR", "Super Admin"]),
+      id,
+      {
+        title: "Travel request awaiting HR review",
+        message: `${employee.preferredName} requested travel to ${input.destination.trim()}.`,
+        key: `travel-submitted-${id}`,
         path: "/staff/travel-hr-approvals",
+        priority: "High",
+      },
+      actor.userId!,
+    );
+    await notify(
+      tx,
+      org,
+      await usersForRoles(tx, org, ["Accounts"]),
+      id,
+      {
+        title: "Travel request awaiting budget review",
+        message: `${employee.preferredName} requested travel to ${input.destination.trim()}.`,
+        key: `travel-submitted-${id}`,
+        path: "/staff/travel-accounts-approvals",
         priority: "High",
       },
       actor.userId!,
@@ -361,6 +424,7 @@ export async function withdrawTravelRequestInDatabase(
       throw new Error("You can only withdraw your own travel request.");
     if (
       request.status !== "Pending HR and Accounts" ||
+      request.managerApprovalStatus !== "Pending" ||
       request.hrApprovalStatus !== "Pending" ||
       request.accountsApprovalStatus !== "Pending"
     )
@@ -392,7 +456,7 @@ export async function withdrawTravelRequestInDatabase(
 export async function decideTravelRequestInDatabase(
   org: string,
   requestId: string,
-  stage: "HR" | "Accounts",
+  stage: "Manager" | "HR" | "Accounts",
   decision: "approve" | "reject",
   reason: string | undefined,
   actor: AuditActorContext,
@@ -412,14 +476,37 @@ export async function decideTravelRequestInDatabase(
       throw new Error("You cannot approve your own travel request.");
     if (request.status !== "Pending HR and Accounts")
       throw new Error("This request is no longer awaiting approval.");
+    if (stage === "Manager") {
+      const [employee] = await tx
+        .select({ lineManagerId: employees.lineManagerId })
+        .from(employees)
+        .where(and(eq(employees.organisationId, org), eq(employees.id, request.employeeId)))
+        .limit(1);
+      if (
+        role(actor) !== "Super Admin" &&
+        (role(actor) !== "Line Manager" || employee?.lineManagerId !== actor.employeeId)
+      )
+        throw new Error("Only the employee's assigned supervisor can review the business need.");
+    }
     if (stage === "HR" && !["HR", "Super Admin"].includes(role(actor)))
       throw new Error("Only HR can complete the HR review.");
     if (stage === "Accounts" && !["Accounts", "Super Admin"].includes(role(actor)))
       throw new Error("Only Accounts can complete the budget review.");
     if (decision === "reject" && (reason?.trim().length ?? 0) < 3)
       throw new Error("A clear rejection reason is required.");
-    const current = stage === "HR" ? request.hrApprovalStatus : request.accountsApprovalStatus;
+    const current =
+      stage === "Manager"
+        ? request.managerApprovalStatus
+        : stage === "HR"
+          ? request.hrApprovalStatus
+          : request.accountsApprovalStatus;
     if (current !== "Pending") throw new Error(`${stage} has already decided this request.`);
+    const nextManager =
+      stage === "Manager"
+        ? decision === "approve"
+          ? "Approved"
+          : "Rejected"
+        : request.managerApprovalStatus;
     const nextHr =
       stage === "HR"
         ? decision === "approve"
@@ -435,7 +522,7 @@ export async function decideTravelRequestInDatabase(
     const nextStatus =
       decision === "reject"
         ? "Rejected"
-        : nextHr === "Approved" && nextAccounts === "Approved"
+        : nextManager === "Approved" && nextHr === "Approved" && nextAccounts === "Approved"
           ? "Pre-authorised"
           : "Pending HR and Accounts";
     const decidedAt = new Date().toISOString();
@@ -454,6 +541,14 @@ export async function decideTravelRequestInDatabase(
     await tx
       .update(travelRequests)
       .set({
+        ...(stage === "Manager"
+          ? {
+              managerApprovalStatus: nextManager,
+              managerNotes: reason?.trim() ?? null,
+              managerApprovedAt: decision === "approve" ? decidedAt : null,
+              managerApprovedBy: decision === "approve" ? actor.userId : null,
+            }
+          : {}),
         ...(stage === "HR"
           ? {
               hrApprovalStatus: nextHr,
@@ -504,10 +599,10 @@ export async function decideTravelRequestInDatabase(
                 : `${stage} review completed`,
           message:
             nextStatus === "Pre-authorised"
-              ? `Your trip to ${request.destination} is pre-authorised by HR and Accounts.`
+              ? `Your trip to ${request.destination} is pre-authorised by your supervisor, HR and Accounts.`
               : decision === "reject"
                 ? `Your trip to ${request.destination} was rejected. ${reason?.trim()}`
-                : `${stage} completed its review. The other approval is still required.`,
+                : `${stage} completed its review. The remaining approvals are still required.`,
           key: `travel-decision-${requestId}-${stage}`,
           path: `/staff/travel/${requestId}`,
           priority: decision === "reject" ? "High" : "Normal",
@@ -524,10 +619,16 @@ export async function decideTravelRequestInDatabase(
       entityId: requestId,
       beforeSummary: {
         status: request.status,
+        manager: request.managerApprovalStatus,
         hr: request.hrApprovalStatus,
         accounts: request.accountsApprovalStatus,
       },
-      afterSummary: { status: nextStatus, hr: nextHr, accounts: nextAccounts },
+      afterSummary: {
+        status: nextStatus,
+        manager: nextManager,
+        hr: nextHr,
+        accounts: nextAccounts,
+      },
       reason: reason?.trim() ?? `${stage} approved the travel request`,
       riskLevel: "High",
     } as typeof auditEvents.$inferInsert);
@@ -652,7 +753,7 @@ export async function submitTravelExpensesInDatabase(
         recordVersion: sql`${travelRequests.recordVersion} + 1`,
       })
       .where(eq(travelRequests.id, requestId));
-    const admins = await usersForRoles(tx, org, ["Super Admin"]);
+    const admins = await usersForRoles(tx, org, ["Accounts", "Super Admin"]);
     await notify(
       tx,
       org,
@@ -693,8 +794,8 @@ export async function closeTravelReimbursementInDatabase(
   notes: string | undefined,
   actor: AuditActorContext,
 ) {
-  if (role(actor) !== "Super Admin")
-    throw new Error("Only Super Admin can close or return reimbursements.");
+  if (!["Accounts", "Super Admin"].includes(role(actor)))
+    throw new Error("Only Accounts or a Super Admin can settle or return reimbursements.");
   if (decision === "reject" && (notes?.trim().length ?? 0) < 3)
     throw new Error("A clear return reason is required.");
   const db = getDatabaseClient();

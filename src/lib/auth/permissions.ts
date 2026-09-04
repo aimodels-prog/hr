@@ -44,6 +44,7 @@ export const ALL_PERMISSIONS = [
 
   // Travel & Reimbursements
   "travel:request_self",
+  "travel:manager_review",
   "travel:hr_review",
   "travel:finance_review",
   "travel:final_close",
@@ -102,8 +103,9 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     "recruitment:score_interviews_assigned",
   ],
 
-  // "IT" is not defined in PRODUCT_IMPLEMENTATION_PLAN.md's role list yet - until it is,
-  // grant the same self-service baseline as Employee rather than assuming elevated access.
+  // Restricted operational role for individually assigned equipment, access-provisioning and
+  // access-removal tasks. IT receives no general employee-file, recruitment, payroll, settings or
+  // audit access; its personal self-service permissions remain the same as every employee.
   IT: [
     "employee:view_self",
     "employee:edit_self",
@@ -144,6 +146,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     "attendance:approve_direct_reports",
     "attendance:site_visit_request_self",
     "travel:request_self",
+    "travel:manager_review",
     "document:view_self",
     "document:view_direct_reports",
     "onboarding:view_self",
@@ -223,6 +226,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     "attendance:site_visit_request_self",
     "travel:request_self",
     "travel:finance_review",
+    "travel:final_close",
     "payroll:view",
     "payroll:prepare",
     "payroll:export",

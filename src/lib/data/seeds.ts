@@ -326,6 +326,7 @@ const settings: AppSettings[] = [
     workingDays: [0, 1, 2, 3, 4],
     standardDailyHours: 8,
     standardWeeklyHours: 40,
+    probationDurationMonths: 3,
     leaveYearStart: "01-01",
     leaveYearEnd: "12-31",
     documentReminderDays: [90, 60, 30, 14, 7, 1],

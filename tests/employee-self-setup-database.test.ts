@@ -5,7 +5,10 @@ import test from "node:test";
 import postgres from "postgres";
 
 import { createPortalSession } from "../src/lib/db/repositories/portal-session.repository.server.ts";
-import { saveOnboardingSelfServiceInDatabase } from "../src/lib/db/repositories/core-hr-lifecycle.repository.server.ts";
+import {
+  decideEmploymentDetailsInDatabase,
+  saveOnboardingSelfServiceInDatabase,
+} from "../src/lib/db/repositories/core-hr-lifecycle.repository.server.ts";
 import {
   createLeaveRequestInDatabase,
   rolloverLeaveBalancesInDatabase,
@@ -64,10 +67,10 @@ test(
       await sql`
         INSERT INTO app_settings (
           organisation_id, timezone, base_currency, working_days, standard_daily_hours,
-          standard_weekly_hours, leave_year_start, leave_year_end, document_reminder_days,
+          standard_weekly_hours, probation_duration_months, leave_year_start, leave_year_end, document_reminder_days,
           employee_number_format, candidate_reference_format, created_by, updated_by
         ) VALUES (
-          ${organisationId}, 'Asia/Dubai', 'AED', ${[1, 2, 3, 4, 5]}, 8, 40,
+          ${organisationId}, 'Asia/Dubai', 'AED', ${[1, 2, 3, 4, 5]}, 8, 40, 6,
           '01-01', '12-31', ${[60, 30, 14, 7]}, 'EMAIL', 'CAN-{YYYY}-{SEQ}',
           ${bootstrapId}, ${bootstrapId}
         )
@@ -169,14 +172,16 @@ test(
         actor,
       );
       const [pendingManager] = await sql`
-        SELECT staff_entry_type, profile_setup_status, proposed_line_manager_email,
-               probation_end_date
+        SELECT staff_entry_type, profile_setup_status, employment_confirmation_status,
+               proposed_employment_details, proposed_line_manager_email, probation_end_date
         FROM employees WHERE id = ${employeeSession.employee.id}
       `;
-      assert.equal(pendingManager?.staff_entry_type, "New Employee");
+      assert.equal(pendingManager?.staff_entry_type, null);
       assert.equal(pendingManager?.profile_setup_status, "In Progress");
+      assert.equal(pendingManager?.employment_confirmation_status, "Pending HR Review");
+      assert.equal(pendingManager?.proposed_employment_details?.staffEntryType, "New Employee");
       assert.equal(pendingManager?.proposed_line_manager_email, managerEmail);
-      assert.ok(pendingManager?.probation_end_date);
+      assert.equal(pendingManager?.probation_end_date, null);
 
       const managerSession = await createPortalSession(
         {
@@ -189,11 +194,31 @@ test(
         { lifetimeSeconds: 28_800 },
       );
       const [linked] = await sql`
-        SELECT line_manager_id, proposed_line_manager_email
+        SELECT line_manager_id, proposed_line_manager_email, proposed_employment_details
         FROM employees WHERE id = ${employeeSession.employee.id}
       `;
-      assert.equal(linked?.line_manager_id, managerSession.employee.id);
-      assert.equal(linked?.proposed_line_manager_email, null);
+      assert.equal(linked?.line_manager_id, null);
+      assert.equal(linked?.proposed_line_manager_email, managerEmail);
+
+      const hrEmail = `hr-${organisationId}@via-int.com`;
+      const hrSession = await createPortalSession(
+        {
+          email: hrEmail,
+          name: "VIA HR Reviewer",
+          portalRole: "hr",
+          mappedRole: "HR",
+          expiresAt: Math.floor(Date.now() / 1000) + 120,
+        },
+        { lifetimeSeconds: 28_800 },
+      );
+      const hrActor = {
+        userId: hrSession.user.id,
+        employeeId: hrSession.employee.id,
+        displayName: hrSession.user.displayName,
+        workspaceEmail: hrEmail,
+        roles: ["Employee", "HR"] as const,
+        activeRole: "HR" as const,
+      };
 
       await assert.rejects(
         createLeaveRequestInDatabase(
@@ -207,7 +232,31 @@ test(
           },
           actor,
         ),
-        /Complete your employee profile/,
+        /HR must confirm your employment details/,
+      );
+
+      await decideEmploymentDetailsInDatabase(
+        organisationId,
+        { employeeId: employeeSession.employee.id, decision: "Confirmed", note: "Checked" },
+        hrActor,
+      );
+      const [confirmedEmployment] = await sql`
+        SELECT staff_entry_type, line_manager_id, employment_confirmation_status,
+               proposed_employment_details, proposed_line_manager_email, probation_end_date
+        FROM employees WHERE id = ${employeeSession.employee.id}
+      `;
+      assert.equal(confirmedEmployment?.staff_entry_type, "New Employee");
+      assert.equal(confirmedEmployment?.line_manager_id, managerSession.employee.id);
+      assert.equal(confirmedEmployment?.employment_confirmation_status, "Confirmed");
+      assert.equal(confirmedEmployment?.proposed_employment_details, null);
+      assert.equal(confirmedEmployment?.proposed_line_manager_email, null);
+      const expectedProbation = new Date(`${dateAfter(0)}T00:00:00Z`);
+      expectedProbation.setUTCMonth(expectedProbation.getUTCMonth() + 6);
+      assert.equal(
+        confirmedEmployment?.probation_end_date instanceof Date
+          ? confirmedEmployment.probation_end_date.toISOString().slice(0, 10)
+          : confirmedEmployment?.probation_end_date,
+        expectedProbation.toISOString().slice(0, 10),
       );
 
       const [personalTask] = await sql<{ id: string }[]>`

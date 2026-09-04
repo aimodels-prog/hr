@@ -38,6 +38,10 @@ const DEFAULT_SETTINGS: TimesheetSettings = {
   allowCopyPreviousWeek: true,
   payrollLockBehaviour: "Manual by HR",
   requireHrOvertimeVerification: false,
+  overtimePreauthorisationRequired: true,
+  overtimeMaxDailyHours: 4,
+  overtimeMaxWeeklyHours: 12,
+  overtimeMaxMonthlyHours: 40,
   attendanceVarianceToleranceHours: 0.25,
 };
 
@@ -1157,15 +1161,30 @@ export class TimesheetService {
           "This timesheet has unexplained attendance differences and must be returned to the employee.",
         );
       }
-      ts.status = "Pending HR";
+      const requiresHrReview =
+        reconciliation.days.some((day) => day.requiresExplanation || day.status !== "Matched") ||
+        ts.totalHours > ts.expectedHours;
+      const settings = this.getSettings();
+      ts.status = requiresHrReview
+        ? "Pending HR"
+        : settings.payrollLockBehaviour === "Automatic on Approval"
+          ? "Payroll Locked"
+          : "Approved";
       ts.supervisorReviewedAt = new Date().toISOString();
       ts.supervisorReviewedBy = context.actor.userId;
       ts.attendanceReconciliationSnapshot = reconciliation;
+      if (!requiresHrReview) {
+        ts.approvedAt = new Date().toISOString();
+        ts.approvedBy = context.actor.userId;
+      }
       const updated = this.timesheetRepo.update(ts.id, ts, {
         ...context,
-        reason: "Supervisor reviewed and sent the timesheet to HR",
+        reason: requiresHrReview
+          ? "Supervisor approved an exception timesheet for HR review"
+          : "Supervisor approved the routine timesheet",
       });
-      this.notifyHrReviewers(updated, context);
+      if (requiresHrReview) this.notifyHrReviewers(updated, context);
+      else this.notifyEmployee(updated, context);
       return updated;
     }
 

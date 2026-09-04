@@ -149,6 +149,8 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
   const [isSalaryEditOpen, setIsSalaryEditOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
   const [, setProfileVersion] = useState(0);
+  const [employmentReviewNote, setEmploymentReviewNote] = useState("");
+  const [employmentDecisionPending, setEmploymentDecisionPending] = useState(false);
   const [statusAction, setStatusAction] = useState<
     "Active" | "Suspended" | "Archived" | "Restore" | null
   >(null);
@@ -316,6 +318,43 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
       setProfileVersion((value) => value + 1);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update employee");
+    }
+  };
+
+  const decideEmploymentDetails = async (decision: "Confirmed" | "Changes Requested") => {
+    if (!currentUser) return;
+    if (decision === "Changes Requested" && employmentReviewNote.trim().length < 3) {
+      toast.error("Explain what the employee needs to correct.");
+      return;
+    }
+    setEmploymentDecisionPending(true);
+    try {
+      const { decideEmploymentDetailsFn } =
+        await import("@/lib/server-functions/core-hr-lifecycle.server");
+      await decideEmploymentDetailsFn({
+        data: {
+          actor: {
+            actorId: currentUser.userId,
+            actorEmail: currentUser.workspaceEmail,
+            activeRole: currentUser.activeRole,
+          },
+          employeeId,
+          decision,
+          note: employmentReviewNote.trim(),
+        },
+      });
+      await employeeService.hydrateCompatibilityCache(currentUser.getActorContext());
+      setEmploymentReviewNote("");
+      setProfileVersion((value) => value + 1);
+      toast.success(
+        decision === "Confirmed"
+          ? "Employment details confirmed"
+          : "The employee has been asked to update their details",
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The decision could not be saved");
+    } finally {
+      setEmploymentDecisionPending(false);
     }
   };
 
@@ -985,6 +1024,103 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
             </TabsContent>
 
             <TabsContent value="employment" className="space-y-6 mt-0">
+              {employee.employmentConfirmationStatus && (
+                <Card>
+                  <CardHeader>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <CardTitle>Employment information review</CardTitle>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          Employment dates, assignment and reporting line become confirmed only
+                          after HR review.
+                        </p>
+                      </div>
+                      <StatusBadge status={employee.employmentConfirmationStatus} />
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {employee.proposedEmploymentDetails && (
+                      <div className="grid gap-3 rounded-xl border bg-muted/25 p-4 sm:grid-cols-2 lg:grid-cols-3">
+                        {[
+                          ["Employee type", employee.proposedEmploymentDetails.staffEntryType],
+                          ["Start date", employee.proposedEmploymentDetails.startDate],
+                          [
+                            "Department",
+                            departments.find(
+                              (item) =>
+                                item.id === employee.proposedEmploymentDetails?.departmentId,
+                            )?.name ?? "Unavailable",
+                          ],
+                          [
+                            "Position",
+                            positions.find(
+                              (item) => item.id === employee.proposedEmploymentDetails?.positionId,
+                            )?.name ?? "Unavailable",
+                          ],
+                          [
+                            "Location",
+                            locations.find(
+                              (item) => item.id === employee.proposedEmploymentDetails?.locationId,
+                            )?.name ?? "Unavailable",
+                          ],
+                          [
+                            "Employment type",
+                            employmentTypes.find(
+                              (item) =>
+                                item.id === employee.proposedEmploymentDetails?.employmentTypeId,
+                            )?.name ?? "Unavailable",
+                          ],
+                          [
+                            "Supervisor",
+                            allEmployees.find(
+                              (item) =>
+                                item.id === employee.proposedEmploymentDetails?.lineManagerId,
+                            )?.preferredName ?? employee.proposedEmploymentDetails.lineManagerEmail,
+                          ],
+                        ].map(([label, value]) => (
+                          <div key={label}>
+                            <p className="text-xs font-medium text-muted-foreground">{label}</p>
+                            <p className="mt-1 text-sm font-semibold">{value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {employee.employmentReviewNote && (
+                      <p className="rounded-lg border bg-muted/40 p-3 text-sm">
+                        {employee.employmentReviewNote}
+                      </p>
+                    )}
+                    {canEditEmployment &&
+                      employee.employmentConfirmationStatus === "Pending HR Review" && (
+                        <div className="space-y-3">
+                          <Textarea
+                            value={employmentReviewNote}
+                            onChange={(event) => setEmploymentReviewNote(event.target.value)}
+                            placeholder="Optional confirmation note, or explain what needs correcting"
+                            aria-label="Employment review note"
+                          />
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              onClick={() => decideEmploymentDetails("Confirmed")}
+                              disabled={employmentDecisionPending}
+                            >
+                              <ShieldCheck className="h-4 w-4" /> Confirm details
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => decideEmploymentDetails("Changes Requested")}
+                              disabled={employmentDecisionPending}
+                            >
+                              Request changes
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                  </CardContent>
+                </Card>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between">

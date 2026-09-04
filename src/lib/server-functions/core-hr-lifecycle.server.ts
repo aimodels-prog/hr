@@ -15,6 +15,7 @@ import {
   rescheduleOnboardingCaseInDatabase,
   readLifecycleTaskEvidenceInDatabase,
   saveOnboardingSelfServiceInDatabase,
+  decideEmploymentDetailsInDatabase,
   saveOffboardingTemplateInDatabase,
   saveOnboardingTemplateInDatabase,
   updateOffboardingTaskInDatabase,
@@ -535,6 +536,39 @@ export const saveOnboardingSelfServiceFn = createServerFn({ method: "POST" })
       verified.actor,
     );
     return lifecycleSnapshotAfterChange(verified.organisationId, verified.actor, data.caseId);
+  });
+
+const DecideEmploymentDetails = z
+  .object({
+    actor: Actor,
+    employeeId: z.string().uuid(),
+    decision: z.enum(["Confirmed", "Changes Requested"]),
+    note: z.string().trim().max(1000),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.decision === "Changes Requested" && value.note.length < 3)
+      context.addIssue({
+        code: "custom",
+        path: ["note"],
+        message: "Explain what the employee needs to correct.",
+      });
+  });
+
+export const decideEmploymentDetailsFn = createServerFn({ method: "POST" })
+  .validator((input) => DecideEmploymentDetails.parse(input))
+  .handler(async ({ data }) => {
+    const verified = await verify(data.actor);
+    await decideEmploymentDetailsInDatabase(
+      verified.organisationId,
+      {
+        employeeId: data.employeeId,
+        decision: data.decision,
+        note: data.note,
+      },
+      verified.actor,
+    );
+    return lifecycleSnapshotAfterChange(verified.organisationId, verified.actor);
   });
 
 const StartOffboarding = z

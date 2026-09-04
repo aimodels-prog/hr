@@ -958,6 +958,22 @@ export class TaskService {
           subjectName: employeeName(request.employeeId),
         });
       }
+      if (isActive(request) && request.status === "Pending Super Admin Closure") {
+        addTask({
+          id: `travel-close-${request.id}`,
+          module: "Travel",
+          title: "Review reimbursement",
+          description: `${employeeName(request.employeeId)} submitted trip expenses for ${request.destination}.`,
+          priority: "High",
+          dueDate: addDays(request.updatedAt.slice(0, 10), 3),
+          actionLabel: "Review reimbursement",
+          actionUrl: "/staff/travel-closures",
+          sourceType: "travel-request",
+          sourceId: request.id,
+          subjectEmployeeId: request.employeeId,
+          subjectName: employeeName(request.employeeId),
+        });
+      }
     }
     for (const period of storage.readCollection<PayrollPeriod>("payrollPeriods")) {
       const unresolved = period.exceptions.filter((exception) => !exception.acknowledged);

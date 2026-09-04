@@ -1,14 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import { createFileRoute, Outlet } from "@tanstack/react-router";
-import { Sparkles } from "lucide-react";
+import { useEffect, useState } from "react";
+import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
+import { ClipboardCheck, Sparkles } from "lucide-react";
 
 import { HrSidebar } from "@/components/hr-sidebar";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { NotificationDrawer } from "@/components/layout/notification-drawer";
 import { DevRoleSwitcher } from "@/components/dev-role-switcher";
 import { useCurrentUser } from "@/lib/auth";
-import { PageHeader } from "@/components/ui/page-header";
-import { SelfServiceOnboardingForm } from "@/components/onboarding/self-service-onboarding-form";
 import { OnboardingService } from "@/lib/data/onboarding-service";
 import { SettingsService } from "@/lib/data/settings-service";
 import { MasterDataService } from "@/lib/data/master-data";
@@ -71,7 +69,6 @@ function StaffLayout() {
   > | null>(null);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
-  const [gateCleared, setGateCleared] = useState(false);
   const currentUserId = currentUser?.id ?? "user-rana";
   const currentEmployeeId = currentUser?.employeeId ?? "employee-rana";
   const currentDisplayName = currentUser?.displayName ?? "Rana Nair";
@@ -150,17 +147,14 @@ function StaffLayout() {
     vacancyService,
   ]);
 
-  const isGated = useMemo(() => {
-    if (gateCleared || !currentEmployee || !settings) return false;
-    const firstLoginSetupRequired = currentEmployee.profileSetupStatus === "In Progress";
-    if (!firstLoginSetupRequired && !settings.requireOnboardingCompletionBeforeDashboard)
-      return false;
-    try {
-      return obService.hasIncompleteSelfServiceTasks(currentEmployee.id, getActorContext());
-    } catch {
-      return firstLoginSetupRequired;
-    }
-  }, [currentEmployee, gateCleared, getActorContext, obService, settings]);
+  const setupNeedsAttention =
+    currentEmployee?.profileSetupStatus === "In Progress" ||
+    currentEmployee?.employmentConfirmationStatus === "Pending HR Review" ||
+    currentEmployee?.employmentConfirmationStatus === "Changes Requested";
+  const employmentChangesRequested =
+    currentEmployee?.employmentConfirmationStatus === "Changes Requested";
+  const awaitingEmploymentConfirmation =
+    currentEmployee?.employmentConfirmationStatus === "Pending HR Review";
 
   if (!settings && bootstrapError) {
     return (
@@ -211,20 +205,36 @@ function StaffLayout() {
             </div>
           </header>
           <main className="page-grid flex-1 p-4 sm:p-6 lg:p-8">
-            {isGated && currentEmployee ? (
-              <div className="flex flex-col gap-6 max-w-3xl mx-auto pb-10">
-                <PageHeader
-                  title="Welcome - let's finish setting up your record"
-                  description="Confirm your employment details, personal information and required documents. Once complete, your employee services will open automatically."
-                />
-                <SelfServiceOnboardingForm
-                  employeeId={currentEmployee.id}
-                  onAllComplete={() => setGateCleared(true)}
-                />
+            {setupNeedsAttention && (
+              <div className="mx-auto mb-5 flex max-w-7xl flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex gap-3">
+                  <ClipboardCheck className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+                  <div>
+                    <p className="font-medium">
+                      {employmentChangesRequested
+                        ? "Update your employment information"
+                        : awaitingEmploymentConfirmation &&
+                            currentEmployee?.profileSetupStatus === "Completed"
+                          ? "Your employment information is with HR"
+                          : "Complete your employee record"}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {employmentChangesRequested
+                        ? currentEmployee?.employmentReviewNote ||
+                          "HR requested changes before confirming your employment information."
+                        : awaitingEmploymentConfirmation &&
+                            currentEmployee?.profileSetupStatus === "Completed"
+                          ? "Your details are saved. Leave, timesheets, travel and overtime become available after HR confirms your employment information."
+                          : "You can continue using essential work services while you finish your details and documents. Leave becomes available after HR confirms your employment information."}
+                    </p>
+                  </div>
+                </div>
+                <Button asChild size="sm" className="shrink-0">
+                  <Link to="/staff/me/onboarding">Continue setup</Link>
+                </Button>
               </div>
-            ) : (
-              <Outlet />
             )}
+            <Outlet />
           </main>
         </div>
       </div>

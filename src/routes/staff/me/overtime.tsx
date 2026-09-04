@@ -78,6 +78,11 @@ function MyOvertimeRoute() {
   const [reason, setReason] = useState("");
   const [originalClaimId, setOriginalClaimId] = useState("");
   const [compensationType, setCompensationType] = useState<OvertimeCompensationType>("Payment");
+  const [requestKind, setRequestKind] = useState<"Planned" | "Emergency Retrospective">("Planned");
+  const [emergencyReason, setEmergencyReason] = useState("");
+  const [actualClaim, setActualClaim] = useState<OvertimeClaim | null>(null);
+  const [actualHours, setActualHours] = useState("");
+  const [actualNote, setActualNote] = useState("");
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
@@ -89,8 +94,10 @@ function MyOvertimeRoute() {
     setActivityCodeId("");
     setLocationCodeId("");
     setReason("");
+    setEmergencyReason("");
     setOriginalClaimId("");
     setCompensationType("Payment");
+    setRequestKind("Planned");
     setEvidenceFile(null);
     setDialogOpen(true);
   };
@@ -134,12 +141,18 @@ function MyOvertimeRoute() {
             activityCodeId,
             locationCodeId,
             reason,
+            requestKind,
+            ...(requestKind === "Emergency Retrospective" ? { emergencyReason } : {}),
             compensationType,
           },
           actorContext,
           evidenceFile ?? undefined,
         );
-        toast.success("Overtime claim sent to your manager.");
+        toast.success(
+          requestKind === "Planned"
+            ? "Planned overtime sent for pre-authorisation."
+            : "Emergency overtime claim sent to your manager.",
+        );
       }
       setClaims(otService.getClaimsForEmployee(currentUser.employeeId!, actorContext));
       setDialogOpen(false);
@@ -225,6 +238,20 @@ function MyOvertimeRoute() {
                       )}
                     </TableCell>
                     <TableCell className="text-right">
+                      {claim.status === "Pre-authorised" &&
+                        claim.date <= new Date().toISOString().slice(0, 10) && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setActualClaim(claim);
+                              setActualHours(String(claim.authorisedHours ?? claim.hours));
+                              setActualNote("");
+                            }}
+                          >
+                            Confirm actual hours
+                          </Button>
+                        )}
                       {claim.status === "Approved" && (
                         <Button
                           variant="ghost"
@@ -262,6 +289,33 @@ function MyOvertimeRoute() {
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
+              {!originalClaimId && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Request type</label>
+                  <Select
+                    value={requestKind}
+                    onValueChange={(value) =>
+                      setRequestKind(value as "Planned" | "Emergency Retrospective")
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Planned">
+                        Planned overtime - request before working
+                      </SelectItem>
+                      <SelectItem value="Emergency Retrospective">
+                        Emergency overtime already worked
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Planned overtime must be approved by your supervisor before the extra work.
+                    Emergency retrospective claims require a clear explanation.
+                  </p>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Date</label>
@@ -386,6 +440,18 @@ function MyOvertimeRoute() {
                   onChange={(e) => setReason(e.target.value)}
                 />
               </div>
+              {!originalClaimId && requestKind === "Emergency Retrospective" && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">
+                    Why approval was not requested first
+                  </label>
+                  <Textarea
+                    placeholder="Explain the unexpected event that made prior approval impossible."
+                    value={emergencyReason}
+                    onChange={(event) => setEmergencyReason(event.target.value)}
+                  />
+                </div>
+              )}
               {!originalClaimId && (
                 <div className="space-y-2">
                   <label className="text-sm font-medium flex items-center gap-1">
@@ -411,10 +477,87 @@ function MyOvertimeRoute() {
                   !activityCodeId ||
                   !locationCodeId ||
                   reason.trim().length < 5 ||
+                  (requestKind === "Emergency Retrospective" &&
+                    emergencyReason.trim().length < 5) ||
                   isUploading
                 }
               >
-                {isUploading ? "Submitting..." : "Submit Claim"}
+                {isUploading
+                  ? "Submitting..."
+                  : originalClaimId
+                    ? "Send correction"
+                    : requestKind === "Planned"
+                      ? "Request approval"
+                      : "Submit emergency claim"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={Boolean(actualClaim)} onOpenChange={(open) => !open && setActualClaim(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Confirm actual overtime</DialogTitle>
+              <DialogDescription>
+                Record the hours actually worked. If they exceed the authorised amount, your
+                supervisor must review the difference again.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-3">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Actual hours worked</label>
+                <Input
+                  type="number"
+                  min="0.25"
+                  max="24"
+                  step="0.25"
+                  value={actualHours}
+                  onChange={(event) => setActualHours(event.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Note</label>
+                <Textarea
+                  value={actualNote}
+                  onChange={(event) => setActualNote(event.target.value)}
+                  placeholder="Required when actual hours exceed the authorised hours"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setActualClaim(null)}>
+                Cancel
+              </Button>
+              <Button
+                disabled={isUploading || !actualHours}
+                onClick={() => {
+                  if (!actualClaim) return;
+                  setIsUploading(true);
+                  void otService
+                    .confirmPlannedHours(
+                      actualClaim.id,
+                      Number(actualHours),
+                      actualNote,
+                      currentUser.getActorContext(),
+                    )
+                    .then(() => {
+                      setClaims(
+                        otService.getClaimsForEmployee(
+                          currentUser.employeeId!,
+                          currentUser.getActorContext(),
+                        ),
+                      );
+                      setActualClaim(null);
+                      toast.success("Actual overtime hours submitted");
+                    })
+                    .catch((error) =>
+                      toast.error(
+                        error instanceof Error ? error.message : "Actual hours could not be saved.",
+                      ),
+                    )
+                    .finally(() => setIsUploading(false));
+                }}
+              >
+                Submit actual hours
               </Button>
             </DialogFooter>
           </DialogContent>

@@ -26,6 +26,7 @@ import { Route as StaffInterviewsRouteImport } from './routes/staff/interviews'
 import { Route as StaffLeaveRouteImport } from './routes/staff/leave'
 import { Route as StaffLeaveAdminRouteImport } from './routes/staff/leave-admin'
 import { Route as StaffLeaveApprovalsRouteImport } from './routes/staff/leave-approvals'
+import { Route as StaffLeavePoliciesRouteImport } from './routes/staff/leave-policies'
 import { Route as StaffMyTasksRouteImport } from './routes/staff/my-tasks'
 import { Route as StaffOffboardingRouteImport } from './routes/staff/offboarding'
 import { Route as StaffOffersRouteImport } from './routes/staff/offers'
@@ -43,6 +44,7 @@ import { Route as StaffTimesheetsRouteImport } from './routes/staff/timesheets'
 import { Route as StaffTrainingRouteImport } from './routes/staff/training'
 import { Route as StaffTravelRouteImport } from './routes/staff/travel'
 import { Route as StaffTravelAccountsApprovalsRouteImport } from './routes/staff/travel-accounts-approvals'
+import { Route as StaffTravelApprovalsRouteImport } from './routes/staff/travel-approvals'
 import { Route as StaffTravelClosuresRouteImport } from './routes/staff/travel-closures'
 import { Route as StaffTravelHrApprovalsRouteImport } from './routes/staff/travel-hr-approvals'
 import { Route as StaffUsersRouteImport } from './routes/staff/users'
@@ -178,6 +180,11 @@ const StaffLeaveApprovalsRoute = StaffLeaveApprovalsRouteImport.update({
   path: '/leave-approvals',
   getParentRoute: () => StaffRoute,
 } as any)
+const StaffLeavePoliciesRoute = StaffLeavePoliciesRouteImport.update({
+  id: '/leave-policies',
+  path: '/leave-policies',
+  getParentRoute: () => StaffRoute,
+} as any)
 const StaffMyTasksRoute = StaffMyTasksRouteImport.update({
   id: '/my-tasks',
   path: '/my-tasks',
@@ -265,6 +272,11 @@ const StaffTravelAccountsApprovalsRoute =
     path: '/travel-accounts-approvals',
     getParentRoute: () => StaffRoute,
   } as any)
+const StaffTravelApprovalsRoute = StaffTravelApprovalsRouteImport.update({
+  id: '/travel-approvals',
+  path: '/travel-approvals',
+  getParentRoute: () => StaffRoute,
+} as any)
 const StaffTravelClosuresRoute = StaffTravelClosuresRouteImport.update({
   id: '/travel-closures',
   path: '/travel-closures',
@@ -542,6 +554,7 @@ export interface FileRoutesByFullPath {
   '/staff/leave': typeof StaffLeaveRoute
   '/staff/leave-admin': typeof StaffLeaveAdminRoute
   '/staff/leave-approvals': typeof StaffLeaveApprovalsRoute
+  '/staff/leave-policies': typeof StaffLeavePoliciesRoute
   '/staff/my-tasks': typeof StaffMyTasksRoute
   '/staff/offboarding': typeof StaffOffboardingRouteWithChildren
   '/staff/offers': typeof StaffOffersRoute
@@ -559,6 +572,7 @@ export interface FileRoutesByFullPath {
   '/staff/training': typeof StaffTrainingRouteWithChildren
   '/staff/travel': typeof StaffTravelRouteWithChildren
   '/staff/travel-accounts-approvals': typeof StaffTravelAccountsApprovalsRoute
+  '/staff/travel-approvals': typeof StaffTravelApprovalsRoute
   '/staff/travel-closures': typeof StaffTravelClosuresRoute
   '/staff/travel-hr-approvals': typeof StaffTravelHrApprovalsRoute
   '/staff/users': typeof StaffUsersRoute
@@ -624,6 +638,7 @@ export interface FileRoutesByTo {
   '/staff/leave': typeof StaffLeaveRoute
   '/staff/leave-admin': typeof StaffLeaveAdminRoute
   '/staff/leave-approvals': typeof StaffLeaveApprovalsRoute
+  '/staff/leave-policies': typeof StaffLeavePoliciesRoute
   '/staff/my-tasks': typeof StaffMyTasksRoute
   '/staff/offers': typeof StaffOffersRoute
   '/staff/org-chart': typeof StaffOrgChartRoute
@@ -635,6 +650,7 @@ export interface FileRoutesByTo {
   '/staff/timesheet-settings': typeof StaffTimesheetSettingsRoute
   '/staff/timesheets': typeof StaffTimesheetsRoute
   '/staff/travel-accounts-approvals': typeof StaffTravelAccountsApprovalsRoute
+  '/staff/travel-approvals': typeof StaffTravelApprovalsRoute
   '/staff/travel-closures': typeof StaffTravelClosuresRoute
   '/staff/travel-hr-approvals': typeof StaffTravelHrApprovalsRoute
   '/staff/users': typeof StaffUsersRoute
@@ -704,6 +720,7 @@ export interface FileRoutesById {
   '/staff/leave': typeof StaffLeaveRoute
   '/staff/leave-admin': typeof StaffLeaveAdminRoute
   '/staff/leave-approvals': typeof StaffLeaveApprovalsRoute
+  '/staff/leave-policies': typeof StaffLeavePoliciesRoute
   '/staff/my-tasks': typeof StaffMyTasksRoute
   '/staff/offboarding': typeof StaffOffboardingRouteWithChildren
   '/staff/offers': typeof StaffOffersRoute
@@ -721,6 +738,7 @@ export interface FileRoutesById {
   '/staff/training': typeof StaffTrainingRouteWithChildren
   '/staff/travel': typeof StaffTravelRouteWithChildren
   '/staff/travel-accounts-approvals': typeof StaffTravelAccountsApprovalsRoute
+  '/staff/travel-approvals': typeof StaffTravelApprovalsRoute
   '/staff/travel-closures': typeof StaffTravelClosuresRoute
   '/staff/travel-hr-approvals': typeof StaffTravelHrApprovalsRoute
   '/staff/users': typeof StaffUsersRoute
@@ -791,6 +809,7 @@ export interface FileRouteTypes {
     | '/staff/leave'
     | '/staff/leave-admin'
     | '/staff/leave-approvals'
+    | '/staff/leave-policies'
     | '/staff/my-tasks'
     | '/staff/offboarding'
     | '/staff/offers'
@@ -808,6 +827,7 @@ export interface FileRouteTypes {
     | '/staff/training'
     | '/staff/travel'
     | '/staff/travel-accounts-approvals'
+    | '/staff/travel-approvals'
     | '/staff/travel-closures'
     | '/staff/travel-hr-approvals'
     | '/staff/users'
@@ -873,6 +893,7 @@ export interface FileRouteTypes {
     | '/staff/leave'
     | '/staff/leave-admin'
     | '/staff/leave-approvals'
+    | '/staff/leave-policies'
     | '/staff/my-tasks'
     | '/staff/offers'
     | '/staff/org-chart'
@@ -884,6 +905,7 @@ export interface FileRouteTypes {
     | '/staff/timesheet-settings'
     | '/staff/timesheets'
     | '/staff/travel-accounts-approvals'
+    | '/staff/travel-approvals'
     | '/staff/travel-closures'
     | '/staff/travel-hr-approvals'
     | '/staff/users'
@@ -952,6 +974,7 @@ export interface FileRouteTypes {
     | '/staff/leave'
     | '/staff/leave-admin'
     | '/staff/leave-approvals'
+    | '/staff/leave-policies'
     | '/staff/my-tasks'
     | '/staff/offboarding'
     | '/staff/offers'
@@ -969,6 +992,7 @@ export interface FileRouteTypes {
     | '/staff/training'
     | '/staff/travel'
     | '/staff/travel-accounts-approvals'
+    | '/staff/travel-approvals'
     | '/staff/travel-closures'
     | '/staff/travel-hr-approvals'
     | '/staff/users'
@@ -1151,6 +1175,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StaffLeaveApprovalsRouteImport
       parentRoute: typeof StaffRoute
     }
+    '/staff/leave-policies': {
+      id: '/staff/leave-policies'
+      path: '/leave-policies'
+      fullPath: '/staff/leave-policies'
+      preLoaderRoute: typeof StaffLeavePoliciesRouteImport
+      parentRoute: typeof StaffRoute
+    }
     '/staff/my-tasks': {
       id: '/staff/my-tasks'
       path: '/my-tasks'
@@ -1268,6 +1299,13 @@ declare module '@tanstack/react-router' {
       path: '/travel-accounts-approvals'
       fullPath: '/staff/travel-accounts-approvals'
       preLoaderRoute: typeof StaffTravelAccountsApprovalsRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/travel-approvals': {
+      id: '/staff/travel-approvals'
+      path: '/travel-approvals'
+      fullPath: '/staff/travel-approvals'
+      preLoaderRoute: typeof StaffTravelApprovalsRouteImport
       parentRoute: typeof StaffRoute
     }
     '/staff/travel-closures': {
@@ -1784,6 +1822,7 @@ interface StaffRouteChildren {
   StaffLeaveRoute: typeof StaffLeaveRoute
   StaffLeaveAdminRoute: typeof StaffLeaveAdminRoute
   StaffLeaveApprovalsRoute: typeof StaffLeaveApprovalsRoute
+  StaffLeavePoliciesRoute: typeof StaffLeavePoliciesRoute
   StaffMyTasksRoute: typeof StaffMyTasksRoute
   StaffOffboardingRoute: typeof StaffOffboardingRouteWithChildren
   StaffOffersRoute: typeof StaffOffersRoute
@@ -1801,6 +1840,7 @@ interface StaffRouteChildren {
   StaffTrainingRoute: typeof StaffTrainingRouteWithChildren
   StaffTravelRoute: typeof StaffTravelRouteWithChildren
   StaffTravelAccountsApprovalsRoute: typeof StaffTravelAccountsApprovalsRoute
+  StaffTravelApprovalsRoute: typeof StaffTravelApprovalsRoute
   StaffTravelClosuresRoute: typeof StaffTravelClosuresRoute
   StaffTravelHrApprovalsRoute: typeof StaffTravelHrApprovalsRoute
   StaffUsersRoute: typeof StaffUsersRoute
@@ -1837,6 +1877,7 @@ const StaffRouteChildren: StaffRouteChildren = {
   StaffLeaveRoute: StaffLeaveRoute,
   StaffLeaveAdminRoute: StaffLeaveAdminRoute,
   StaffLeaveApprovalsRoute: StaffLeaveApprovalsRoute,
+  StaffLeavePoliciesRoute: StaffLeavePoliciesRoute,
   StaffMyTasksRoute: StaffMyTasksRoute,
   StaffOffboardingRoute: StaffOffboardingRouteWithChildren,
   StaffOffersRoute: StaffOffersRoute,
@@ -1854,6 +1895,7 @@ const StaffRouteChildren: StaffRouteChildren = {
   StaffTrainingRoute: StaffTrainingRouteWithChildren,
   StaffTravelRoute: StaffTravelRouteWithChildren,
   StaffTravelAccountsApprovalsRoute: StaffTravelAccountsApprovalsRoute,
+  StaffTravelApprovalsRoute: StaffTravelApprovalsRoute,
   StaffTravelClosuresRoute: StaffTravelClosuresRoute,
   StaffTravelHrApprovalsRoute: StaffTravelHrApprovalsRoute,
   StaffUsersRoute: StaffUsersRoute,

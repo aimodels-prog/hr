@@ -24,6 +24,10 @@ test("production release smoke covers health, secure CV intake and all five role
   page,
   request,
 }) => {
+  test.skip(
+    process.env["VIA_HR_RUN_PRODUCTION_SMOKE"] !== "true",
+    "Run against the deployed production stack with its worker and SSO secret.",
+  );
   test.setTimeout(180_000);
 
   for (const [path, expected] of [
@@ -40,7 +44,7 @@ test("production release smoke covers health, secure CV intake and all five role
   const unique = Date.now().toString();
   await page.goto("/");
   await page.getByRole("link", { name: /Logistics Operations Lead/i }).click();
-  await expect(page.getByText("Apply for this role")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Apply for this position" })).toBeVisible();
   for (const [name, value] of Object.entries({
     firstName: "Production",
     lastName: "Smoke",

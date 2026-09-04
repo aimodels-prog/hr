@@ -859,6 +859,7 @@ async function convertAcceptedOffer(
     id: onboardingCaseId,
     organisationId,
     employeeId,
+    kind: "New Hire Onboarding",
     templateId: template.id,
     status: "In Progress",
     progressPercentage: 0,

@@ -81,6 +81,8 @@ export async function createOvertimeClaimInDatabase(
     date: string;
     hours: number;
     reason: string;
+    requestKind?: "Planned" | "Emergency Retrospective";
+    emergencyReason?: string;
     compensationType: "Payment" | "TOIL";
     projectId?: string;
     costCentreId: string;
@@ -91,11 +93,21 @@ export async function createOvertimeClaimInDatabase(
   actor: AuditActorContext,
 ): Promise<string> {
   if (!actor.employeeId) throw new Error("A verified employee is required.");
-  if (new Date(`${input.date}T00:00:00Z`) > new Date())
-    throw new Error("Overtime cannot be submitted for a future date.");
-  if (!Number.isFinite(input.hours) || input.hours <= 0 || input.hours > 12)
-    throw new Error("Overtime hours must be greater than zero and no more than 12.");
+  const requestKind = input.requestKind ?? "Emergency Retrospective";
+  if (
+    input.requestKind === "Emergency Retrospective" &&
+    (input.emergencyReason?.trim().length ?? 0) < 5
+  )
+    throw new Error("Explain why prior approval could not be obtained for emergency overtime.");
+  const today = new Date().toISOString().slice(0, 10);
+  if (requestKind === "Planned" && input.date < today)
+    throw new Error("Planned overtime must be requested before the work is performed.");
+  if (requestKind === "Emergency Retrospective" && input.date > today)
+    throw new Error("Use a planned overtime request for a future date.");
+  if (!Number.isFinite(input.hours) || input.hours <= 0 || input.hours > 24)
+    throw new Error("Overtime hours must be greater than zero and no more than 24.");
   if (!input.reason.trim()) throw new Error("Explain why the overtime was worked.");
+  const emergencyReason = input.emergencyReason?.trim() || input.reason.trim();
   const db = getDatabaseClient();
   const id = randomUUID();
   await db.transaction(async (tx) => {
@@ -105,12 +117,17 @@ export async function createOvertimeClaimInDatabase(
         lineManagerId: employees.lineManagerId,
         status: employees.status,
         preferredName: employees.preferredName,
+        employmentConfirmationStatus: employees.employmentConfirmationStatus,
       })
       .from(employees)
       .where(and(eq(employees.organisationId, organisationId), eq(employees.id, input.employeeId)))
       .limit(1);
     if (!employee || !["Active", "Probation", "Notice"].includes(employee.status))
       throw new Error("Select an active employee.");
+    if (employee.employmentConfirmationStatus !== "Confirmed")
+      throw new Error(
+        "HR must confirm the employee's employment details before overtime can be submitted.",
+      );
     const isSelf = actor.employeeId === input.employeeId;
     const isAssignedManager =
       activeRole(actor) === "Line Manager" && employee.lineManagerId === actor.employeeId;
@@ -169,6 +186,29 @@ export async function createOvertimeClaimInDatabase(
       .where(eq(timesheetSettings.organisationId, organisationId))
       .limit(1);
     const standardHours = Number(settings?.standardDailyHours ?? 8);
+    const dailyLimit = Number(settings?.overtimeMaxDailyHours ?? 4);
+    const weeklyLimit = Number(settings?.overtimeMaxWeeklyHours ?? 12);
+    const monthlyLimit = Number(settings?.overtimeMaxMonthlyHours ?? 40);
+    if (input.hours > dailyLimit)
+      throw new Error(`Overtime cannot exceed the configured daily limit of ${dailyLimit} hours.`);
+    const [periodTotals] = await tx
+      .select({
+        weekly: sql<number>`coalesce(sum(${overtimeClaims.hours}) filter (where date_trunc('week', ${overtimeClaims.date}::timestamp) = date_trunc('week', ${input.date}::date::timestamp)), 0)`,
+        monthly: sql<number>`coalesce(sum(${overtimeClaims.hours}) filter (where date_trunc('month', ${overtimeClaims.date}::timestamp) = date_trunc('month', ${input.date}::date::timestamp)), 0)`,
+      })
+      .from(overtimeClaims)
+      .where(
+        and(
+          eq(overtimeClaims.organisationId, organisationId),
+          eq(overtimeClaims.employeeId, input.employeeId),
+          sql`${overtimeClaims.archivedAt} IS NULL`,
+          sql`${overtimeClaims.status} NOT IN ('Rejected','Corrected')`,
+        ),
+      );
+    if (Number(periodTotals?.weekly ?? 0) + input.hours > weeklyLimit)
+      throw new Error(`This request exceeds the weekly overtime limit of ${weeklyLimit} hours.`);
+    if (Number(periodTotals?.monthly ?? 0) + input.hours > monthlyLimit)
+      throw new Error(`This request exceeds the monthly overtime limit of ${monthlyLimit} hours.`);
     const [timesheetHours] = await tx
       .select({ total: sql<number>`coalesce(sum(${timesheetEntries.hours}),0)` })
       .from(timesheetEntries)
@@ -194,9 +234,15 @@ export async function createOvertimeClaimInDatabase(
       )
       .limit(1);
     const crossCheckWarnings: string[] = [];
-    if (Number(timesheetHours?.total ?? 0) < standardHours + input.hours)
+    if (
+      requestKind === "Emergency Retrospective" &&
+      Number(timesheetHours?.total ?? 0) < standardHours + input.hours
+    )
       crossCheckWarnings.push(`Timesheet hours do not yet support ${input.hours} overtime hours.`);
-    if (Number(attendance?.hours ?? 0) < standardHours + input.hours)
+    if (
+      requestKind === "Emergency Retrospective" &&
+      Number(attendance?.hours ?? 0) < standardHours + input.hours
+    )
       crossCheckWarnings.push(`Attendance hours do not yet support ${input.hours} overtime hours.`);
     await tx.insert(overtimeClaims).values({
       id,
@@ -205,6 +251,8 @@ export async function createOvertimeClaimInDatabase(
       date: input.date,
       hours: String(input.hours),
       reason: input.reason.trim(),
+      requestKind,
+      ...(requestKind === "Emergency Retrospective" ? { emergencyReason } : {}),
       compensationType: input.compensationType,
       projectId: input.projectId,
       costCentreId: input.costCentreId,
@@ -212,7 +260,7 @@ export async function createOvertimeClaimInDatabase(
       locationId: input.locationId,
       evidenceFileId: input.evidenceFileId,
       crossCheckWarnings,
-      status: "Pending Manager",
+      status: requestKind === "Planned" ? "Pending Pre-authorisation" : "Pending Manager",
       createdBy: actor.userId,
       updatedBy: actor.userId,
     } as typeof overtimeClaims.$inferInsert);
@@ -227,7 +275,11 @@ export async function createOvertimeClaimInDatabase(
       module: "overtime",
       entityType: "overtime-claim",
       entityId: id,
-      afterSummary: { hours: input.hours, compensationType: input.compensationType },
+      afterSummary: {
+        hours: input.hours,
+        compensationType: input.compensationType,
+        requestKind,
+      },
       reason: isSelf ? "Submitted an overtime claim" : "Recorded overtime on behalf of an employee",
       riskLevel: "Medium",
     } as typeof auditEvents.$inferInsert);
@@ -248,8 +300,11 @@ export async function createOvertimeClaimInDatabase(
       managerUser?.id,
       {
         type: "Approval",
-        title: "Overtime awaiting your review",
-        message: `${employee.preferredName}'s ${input.hours} hour overtime claim is ready for review.`,
+        title:
+          requestKind === "Planned"
+            ? "Planned overtime awaiting pre-authorisation"
+            : "Emergency overtime awaiting your review",
+        message: `${employee.preferredName}'s ${input.hours} hour overtime request is ready for review.`,
         key: `overtime-manager-${id}`,
         claimId: id,
       },
@@ -282,7 +337,8 @@ export async function decideOvertimeClaimInDatabase(
       .from(employees)
       .where(eq(employees.id, claim.employeeId))
       .limit(1);
-    const manager = claim.status === "Pending Manager";
+    const preAuthorisation = claim.status === "Pending Pre-authorisation";
+    const manager = claim.status === "Pending Manager" || preAuthorisation;
     const hr = claim.status === "Pending HR";
     if (
       (manager &&
@@ -295,7 +351,14 @@ export async function decideOvertimeClaimInDatabase(
       throw new Error("You cannot approve your own overtime claim.");
     if (decision === "reject" && !notes?.trim())
       throw new Error("A reason is required when rejecting overtime.");
-    const next = decision === "reject" ? "Rejected" : manager ? "Pending HR" : "Approved";
+    const next =
+      decision === "reject"
+        ? "Rejected"
+        : preAuthorisation
+          ? "Pre-authorised"
+          : manager
+            ? "Pending HR"
+            : "Approved";
     let toilCreditedAt: string | undefined;
     let toilPolicy: typeof leavePolicies.$inferSelect | undefined;
     let toilDays = 0;
@@ -326,6 +389,13 @@ export async function decideOvertimeClaimInDatabase(
       .set({
         status: next,
         ...(manager ? { managerNotes: notes?.trim() } : { hrNotes: notes?.trim() }),
+        ...(next === "Pre-authorised"
+          ? {
+              authorisedHours: claim.hours,
+              preAuthorisedAt: new Date().toISOString(),
+              preAuthorisedBy: actor.userId,
+            }
+          : {}),
         ...(next === "Approved"
           ? {
               approvedAt: new Date().toISOString(),
@@ -435,17 +505,168 @@ export async function decideOvertimeClaimInDatabase(
         employeeUser?.id,
         {
           type: "Info",
-          title: next === "Approved" ? "Overtime approved" : "Overtime rejected",
+          title:
+            next === "Approved"
+              ? "Overtime approved"
+              : next === "Pre-authorised"
+                ? "Planned overtime pre-authorised"
+                : "Overtime rejected",
           message:
             next === "Approved"
               ? "Your overtime claim has completed approval."
-              : `Your overtime claim was rejected: ${notes?.trim()}`,
+              : next === "Pre-authorised"
+                ? "Your supervisor approved the planned overtime. Confirm the actual hours after the work date."
+                : `Your overtime claim was rejected: ${notes?.trim()}`,
           key: `overtime-decision-${claimId}-${next}`,
           claimId,
         },
         actor.userId,
       );
     }
+  });
+}
+
+export async function confirmPlannedOvertimeInDatabase(
+  organisationId: string,
+  claimId: string,
+  actualHours: number,
+  note: string,
+  actor: AuditActorContext,
+): Promise<void> {
+  if (!actor.employeeId) throw new Error("A verified employee is required.");
+  const db = getDatabaseClient();
+  await db.transaction(async (tx) => {
+    const [claim] = await tx
+      .select()
+      .from(overtimeClaims)
+      .where(and(eq(overtimeClaims.organisationId, organisationId), eq(overtimeClaims.id, claimId)))
+      .limit(1)
+      .for("update");
+    if (!claim || claim.employeeId !== actor.employeeId)
+      throw new Error("You can confirm only your own planned overtime.");
+    if (claim.status !== "Pre-authorised" || claim.requestKind !== "Planned")
+      throw new Error("This planned overtime is not ready for actual-hours confirmation.");
+    const today = new Date().toISOString().slice(0, 10);
+    if (claim.date > today)
+      throw new Error("Confirm actual hours on or after the planned work date.");
+    const [settings] = await tx
+      .select()
+      .from(timesheetSettings)
+      .where(eq(timesheetSettings.organisationId, organisationId))
+      .limit(1);
+    const dailyLimit = Number(settings?.overtimeMaxDailyHours ?? 4);
+    const weeklyLimit = Number(settings?.overtimeMaxWeeklyHours ?? 12);
+    const monthlyLimit = Number(settings?.overtimeMaxMonthlyHours ?? 40);
+    if (!Number.isFinite(actualHours) || actualHours <= 0 || actualHours > dailyLimit)
+      throw new Error(`Actual overtime must be above zero and within ${dailyLimit} hours.`);
+    const [otherTotals] = await tx
+      .select({
+        weekly: sql<number>`coalesce(sum(${overtimeClaims.hours}) filter (where date_trunc('week', ${overtimeClaims.date}::timestamp) = date_trunc('week', ${claim.date}::date::timestamp)), 0)`,
+        monthly: sql<number>`coalesce(sum(${overtimeClaims.hours}) filter (where date_trunc('month', ${overtimeClaims.date}::timestamp) = date_trunc('month', ${claim.date}::date::timestamp)), 0)`,
+      })
+      .from(overtimeClaims)
+      .where(
+        and(
+          eq(overtimeClaims.organisationId, organisationId),
+          eq(overtimeClaims.employeeId, claim.employeeId),
+          sql`${overtimeClaims.id} <> ${claim.id}`,
+          sql`${overtimeClaims.archivedAt} IS NULL`,
+          sql`${overtimeClaims.status} NOT IN ('Rejected','Corrected')`,
+        ),
+      );
+    if (Number(otherTotals?.weekly ?? 0) + actualHours > weeklyLimit)
+      throw new Error(`Actual overtime exceeds the weekly limit of ${weeklyLimit} hours.`);
+    if (Number(otherTotals?.monthly ?? 0) + actualHours > monthlyLimit)
+      throw new Error(`Actual overtime exceeds the monthly limit of ${monthlyLimit} hours.`);
+    const authorisedHours = Number(claim.authorisedHours ?? claim.hours);
+    const exceeded = actualHours > authorisedHours;
+    if (exceeded && note.trim().length < 5)
+      throw new Error("Explain why actual overtime exceeded the pre-authorised hours.");
+
+    await tx
+      .update(overtimeClaims)
+      .set({
+        hours: String(actualHours),
+        actualConfirmedAt: new Date().toISOString(),
+        status: exceeded ? "Pending Manager" : "Pending HR",
+        ...(note.trim() ? { reason: `${claim.reason}\nActual-hours note: ${note.trim()}` } : {}),
+        updatedAt: new Date(),
+        updatedBy: actor.userId,
+        recordVersion: sql`${overtimeClaims.recordVersion} + 1`,
+      })
+      .where(eq(overtimeClaims.id, claim.id));
+
+    let reviewerIds: Array<string | undefined>;
+    if (exceeded) {
+      const [employee] = await tx
+        .select({ managerId: employees.lineManagerId })
+        .from(employees)
+        .where(eq(employees.id, claim.employeeId))
+        .limit(1);
+      const [managerUser] = employee?.managerId
+        ? await tx
+            .select({ id: users.id })
+            .from(users)
+            .where(
+              and(
+                eq(users.organisationId, organisationId),
+                eq(users.employeeId, employee.managerId),
+                eq(users.status, "Active"),
+              ),
+            )
+            .limit(1)
+        : [];
+      reviewerIds = [managerUser?.id];
+    } else {
+      reviewerIds = (
+        await tx
+          .select({ id: users.id })
+          .from(users)
+          .innerJoin(userRoles, eq(userRoles.userId, users.id))
+          .innerJoin(roles, eq(roles.id, userRoles.roleId))
+          .where(
+            and(
+              eq(users.organisationId, organisationId),
+              eq(users.status, "Active"),
+              inArray(roles.code, ["HR", "Super Admin"]),
+            ),
+          )
+      ).map((row) => row.id);
+    }
+    for (const reviewerId of reviewerIds)
+      await createNotice(
+        tx,
+        organisationId,
+        reviewerId,
+        {
+          type: "Approval",
+          title: exceeded
+            ? "Overtime exceeded pre-authorisation"
+            : "Overtime ready for HR verification",
+          message: exceeded
+            ? `Actual overtime was ${actualHours} hours against ${authorisedHours} authorised hours.`
+            : "Pre-authorised overtime was completed and is ready for HR verification.",
+          key: `overtime-actual-${claim.id}-${claim.recordVersion + 1}-${reviewerId}`,
+          claimId: claim.id,
+        },
+        actor.userId,
+      );
+    await tx.insert(auditEvents).values({
+      organisationId,
+      actorUserId: actor.userId,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole ?? null,
+      actorRoles: actor.roles ?? [],
+      action: "confirm-actual-hours",
+      module: "overtime",
+      entityType: "overtime-claim",
+      entityId: claim.id,
+      beforeSummary: { authorisedHours },
+      afterSummary: { actualHours, status: exceeded ? "Pending Manager" : "Pending HR" },
+      reason: note.trim() || "Confirmed actual planned overtime hours",
+      riskLevel: exceeded ? "High" : "Medium",
+    } as typeof auditEvents.$inferInsert);
   });
 }
 
@@ -494,6 +715,12 @@ export async function listOvertimeClaimsForActor(organisationId: string, actor: 
     activityCodeId: row.activityCodeId,
     locationCodeId: row.locationId,
     reason: row.reason,
+    requestKind: row.requestKind as "Planned" | "Emergency Retrospective",
+    ...(row.emergencyReason ? { emergencyReason: row.emergencyReason } : {}),
+    ...(row.authorisedHours !== null ? { authorisedHours: Number(row.authorisedHours) } : {}),
+    ...(row.preAuthorisedAt ? { preAuthorisedAt: row.preAuthorisedAt } : {}),
+    ...(row.preAuthorisedBy ? { preAuthorisedBy: row.preAuthorisedBy } : {}),
+    ...(row.actualConfirmedAt ? { actualConfirmedAt: row.actualConfirmedAt } : {}),
     ...(row.evidenceFileId ? { evidenceFileId: row.evidenceFileId } : {}),
     compensationType: row.compensationType as "Payment" | "TOIL",
     ...(row.toilCreditedAt ? { toilCreditedAt: row.toilCreditedAt } : {}),
@@ -632,6 +859,8 @@ export async function correctOvertimeClaimInDatabase(
       activityCodeId: original.activityCodeId,
       locationId: original.locationId,
       reason: input.reason.trim(),
+      requestKind: "Emergency Retrospective",
+      emergencyReason: input.reason.trim(),
       evidenceFileId,
       compensationType: original.compensationType,
       crossCheckWarnings: original.crossCheckWarnings,

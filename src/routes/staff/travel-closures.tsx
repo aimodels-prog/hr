@@ -123,8 +123,8 @@ function TravelClosuresContent() {
   return (
     <div className="flex flex-col gap-6 max-w-[1200px] mx-auto pb-10">
       <PageHeader
-        title="Travel Reimbursement Closure"
-        description="Review post-trip actual expenses and variance explanations to authorise final reimbursement."
+        title="Travel Reimbursement Settlement"
+        description="Accounts reviews post-trip expenses, receipts and variances before settling the reimbursement. Super Admin remains available for exceptional cases."
       />
 
       <Tabs defaultValue="pending">

@@ -276,9 +276,11 @@ test("rejecting requires a reason from both HR and Accounts", async () => {
   assert.throws(() => travel.accountsApprove(req.id, false, "  ", accounts), /detailed reason/);
 });
 
-test("a request only reaches Pre-authorised once BOTH HR and Accounts approve", async () => {
+test("a request only reaches Pre-authorised once the supervisor, HR and Accounts approve", async () => {
   const { travel } = harness();
   const req = await submitBasicRequest(travel);
+  const afterManager = travel.managerApprove(req.id, true, "Work travel is required", manager);
+  assert.equal(afterManager.status, "Pending HR and Accounts");
   const afterHr = travel.hrApprove(req.id, true, "Dates look fine", hr);
   assert.equal(afterHr.status, "Pending HR and Accounts");
   const afterAccounts = travel.accountsApprove(req.id, true, "Within budget", accounts);
@@ -302,6 +304,7 @@ test("a request only reaches Pre-authorised once BOTH HR and Accounts approve", 
 test("expense lines cannot change the currency of the pre-authorised trip", async () => {
   const { travel, files } = harness();
   const req = await submitBasicRequest(travel);
+  travel.managerApprove(req.id, true, "Work travel is required", manager);
   travel.hrApprove(req.id, true, "Fine", hr);
   travel.accountsApprove(req.id, true, "Fine", accounts);
   const receipt = await files.save(
@@ -339,6 +342,7 @@ test("expense lines cannot change the currency of the pre-authorised trip", asyn
 test("either reviewer rejecting sends the whole request to Rejected", async () => {
   const { travel } = harness();
   const req = await submitBasicRequest(travel);
+  travel.managerApprove(req.id, true, "Work travel is required", manager);
   travel.hrApprove(req.id, true, "Fine", hr);
   const afterAccounts = travel.accountsApprove(
     req.id,
@@ -352,6 +356,7 @@ test("either reviewer rejecting sends the whole request to Rejected", async () =
 test("expense lines require a positive amount, a bill reference, and a date inside the trip window", async () => {
   const { travel } = harness();
   const req = await submitBasicRequest(travel);
+  travel.managerApprove(req.id, true, "Work travel is required", manager);
   travel.hrApprove(req.id, true, "Fine", hr);
   const approved = travel.accountsApprove(req.id, true, "Fine", accounts);
   assert.equal(approved.status, "Pre-authorised");
@@ -387,6 +392,7 @@ test("expense lines require a positive amount, a bill reference, and a date insi
 test("expense receipt files are verified for existence and ownership before being accepted", async () => {
   const { travel, files } = harness();
   const req = await submitBasicRequest(travel);
+  travel.managerApprove(req.id, true, "Work travel is required", manager);
   travel.hrApprove(req.id, true, "Fine", hr);
   travel.accountsApprove(req.id, true, "Fine", accounts);
 
@@ -498,6 +504,7 @@ test("evidence and receipt downloads are restricted to the traveller and reviewe
 test("closing the reimbursement produces Closed, and rejecting expenses clears stale totals", async () => {
   const { travel, files } = harness();
   const req = await submitBasicRequest(travel);
+  travel.managerApprove(req.id, true, "Work travel is required", manager);
   travel.hrApprove(req.id, true, "Fine", hr);
   travel.accountsApprove(req.id, true, "Fine", accounts);
 
@@ -583,6 +590,7 @@ test("late-closed reimbursement carries into the next payroll and keeps OMR sepa
     ),
   );
   const req = await submitBasicRequest(travel);
+  travel.managerApprove(req.id, true, "Work travel is required", manager);
   travel.hrApprove(req.id, true, "Fine", hr);
   travel.accountsApprove(req.id, true, "Fine", accounts);
   const receipt = await files.save(

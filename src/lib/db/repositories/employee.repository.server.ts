@@ -136,6 +136,15 @@ export async function listEmployeesForOrganisation(organisationId: string): Prom
       ...(row.profileSetupCompletedAt
         ? { profileSetupCompletedAt: requiredIso(row.profileSetupCompletedAt) }
         : {}),
+      employmentConfirmationStatus: row.employmentConfirmationStatus,
+      ...(row.employmentConfirmedAt
+        ? { employmentConfirmedAt: requiredIso(row.employmentConfirmedAt) }
+        : {}),
+      ...(row.employmentConfirmedBy ? { employmentConfirmedBy: row.employmentConfirmedBy } : {}),
+      ...(row.employmentReviewNote ? { employmentReviewNote: row.employmentReviewNote } : {}),
+      ...(row.proposedEmploymentDetails
+        ? { proposedEmploymentDetails: row.proposedEmploymentDetails }
+        : {}),
       ...(row.proposedLineManagerEmail
         ? { proposedLineManagerEmail: row.proposedLineManagerEmail }
         : {}),

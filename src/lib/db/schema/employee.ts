@@ -46,6 +46,12 @@ export const profileSetupStatus = pgEnum("profile_setup_status", [
   "In Progress",
   "Completed",
 ]);
+export const employmentConfirmationStatus = pgEnum("employment_confirmation_status", [
+  "Not Submitted",
+  "Pending HR Review",
+  "Confirmed",
+  "Changes Requested",
+]);
 
 export const systemRoleCode = pgEnum("system_role_code", [
   "Employee",
@@ -111,6 +117,30 @@ export const employees = pgTable(
       withTimezone: true,
       mode: "string",
     }),
+    employmentConfirmationStatus: employmentConfirmationStatus("employment_confirmation_status")
+      .notNull()
+      .default("Confirmed"),
+    employmentConfirmedAt: timestamp("employment_confirmed_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    // Kept as an audit UUID rather than a database foreign key because users already
+    // has a required employee foreign key. Avoiding a circular schema dependency also
+    // keeps generated query types strict and stable.
+    employmentConfirmedBy: uuid("employment_confirmed_by"),
+    employmentReviewNote: text("employment_review_note"),
+    proposedEmploymentDetails: jsonb("proposed_employment_details").$type<{
+      legalName: string;
+      preferredName: string;
+      staffEntryType: "New Employee" | "Existing Employee";
+      startDate: string;
+      departmentId: string;
+      positionId: string;
+      locationId: string;
+      employmentTypeId: string;
+      lineManagerId: string | null;
+      lineManagerEmail: string;
+    }>(),
     proposedLineManagerEmail: text("proposed_line_manager_email"),
     workspaceEmail: text("workspace_email"),
     candidateId: uuid("candidate_id"),

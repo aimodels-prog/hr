@@ -18,6 +18,7 @@ const AppSettingsInputSchema = z.object({
   workingDays: z.array(z.number().int().min(0).max(6)).min(1, "Select at least one working day"),
   standardDailyHours: z.number().positive().max(24, "Daily hours cannot exceed 24"),
   standardWeeklyHours: z.number().positive().max(168, "Weekly hours cannot exceed 168"),
+  probationDurationMonths: z.number().int().min(0).max(36),
   leaveYearStart: z.string().regex(/^\d{2}-\d{2}$/, "Format must be MM-DD"),
   leaveYearEnd: z.string().regex(/^\d{2}-\d{2}$/, "Format must be MM-DD"),
   documentReminderDays: z.array(z.number().int().min(1).max(3650)),

@@ -18,7 +18,7 @@ const testDatabaseUrl = process.env["VIA_HR_TEST_DATABASE_URL"]?.trim();
 if (testDatabaseUrl) process.env["DATABASE_URL"] = testDatabaseUrl;
 
 test(
-  "travel is scoped, dual-approved, reimbursed and assigned to payroll in PostgreSQL",
+  "travel is supervisor, HR and Accounts approved, reimbursed and assigned to payroll in PostgreSQL",
   { skip: !testDatabaseUrl },
   async () => {
     assert.match(new URL(testDatabaseUrl!).pathname.slice(1).toLowerCase(), /(test|scratch)/);
@@ -35,6 +35,8 @@ test(
         "currency",
         "employee",
         "employeeUser",
+        "managerEmployee",
+        "managerUser",
         "hrEmployee",
         "hrUser",
         "accountsEmployee",
@@ -47,7 +49,7 @@ test(
     const actor = (
       userId: string,
       employeeId: string,
-      activeRole: "Employee" | "HR" | "Accounts" | "Super Admin",
+      activeRole: "Employee" | "Line Manager" | "HR" | "Accounts" | "Super Admin",
     ) => ({
       userId,
       employeeId,
@@ -73,6 +75,7 @@ test(
       await sql`INSERT INTO projects (id,organisation_id,name,code,is_active,order_index,cost_centre_id,created_by,updated_by) VALUES (${ids.project},${ids.organisation},'Client Visit','CLIENT',true,1,${ids.costCentre},${ids.adminUser},${ids.adminUser})`;
       for (const [employeeKey, userKey, name] of [
         ["employee", "employeeUser", "Employee"],
+        ["managerEmployee", "managerUser", "Line Manager"],
         ["hrEmployee", "hrUser", "HR"],
         ["accountsEmployee", "accountsUser", "Accounts"],
         ["adminEmployee", "adminUser", "Super Admin"],
@@ -82,17 +85,20 @@ test(
       }
       const roleRows = await sql<
         { id: string; code: string }[]
-      >`SELECT id,code FROM roles WHERE code IN ('HR','Accounts','Super Admin')`;
+      >`SELECT id,code FROM roles WHERE code IN ('Line Manager','HR','Accounts','Super Admin')`;
       const roleIds = Object.fromEntries(roleRows.map((row) => [row.code, row.id]));
       for (const [userId, code] of [
+        [ids.managerUser, "Line Manager"],
         [ids.hrUser, "HR"],
         [ids.accountsUser, "Accounts"],
         [ids.adminUser, "Super Admin"],
       ] as const)
         await sql`INSERT INTO user_roles (organisation_id,user_id,role_id,assigned_by) VALUES (${ids.organisation},${userId},${roleIds[code]},${ids.adminUser})`;
+      await sql`UPDATE employees SET line_manager_id=${ids.managerEmployee} WHERE id=${ids.employee}`;
       await sql`INSERT INTO payroll_periods (id,organisation_id,name,start_date,end_date,cutoff_date,payment_date,status,created_by,updated_by) VALUES (${ids.payrollPeriod},${ids.organisation},'September Payroll','2026-09-01','2026-09-30','2026-09-25','2026-09-30','Collecting Inputs',${ids.accountsUser},${ids.accountsUser})`;
 
       const employee = actor(ids.employeeUser!, ids.employee!, "Employee");
+      const manager = actor(ids.managerUser!, ids.managerEmployee!, "Line Manager");
       const hr = actor(ids.hrUser!, ids.hrEmployee!, "HR");
       const accounts = actor(ids.accountsUser!, ids.accountsEmployee!, "Accounts");
       const admin = actor(ids.adminUser!, ids.adminEmployee!, "Super Admin");
@@ -125,6 +131,14 @@ test(
           employee,
         ),
         /own|Only HR/,
+      );
+      await decideTravelRequestInDatabase(
+        ids.organisation!,
+        requestId,
+        "Manager",
+        "approve",
+        "Business need confirmed",
+        manager,
       );
       const decisions = await Promise.allSettled([
         decideTravelRequestInDatabase(
@@ -175,7 +189,7 @@ test(
         requestId,
         "reject",
         "Please correct the receipt",
-        admin,
+        accounts,
       );
       const returned = (await listTravelRequestsForActor(ids.organisation!, employee))[0]!;
       assert.equal(returned.status, "Pre-authorised");
@@ -207,7 +221,7 @@ test(
         requestId,
         "close",
         "Receipts verified",
-        admin,
+        accounts,
       );
       await assignTravelReimbursementsToPayrollInDatabase(
         ids.organisation!,

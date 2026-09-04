@@ -164,8 +164,8 @@ function OnboardingDashboard() {
     <RequirePermission permission="onboarding:manage_all" resourceName="Onboarding">
       <div className="mx-auto flex max-w-[1280px] flex-col gap-6 pb-10" data-revision={revision}>
         <PageHeader
-          title="Onboarding"
-          description="Prepare every new employee for a safe, organised and confident first day."
+          title="Onboarding and employee setup"
+          description="Guide new hires through joining and help existing staff complete their employee records."
           actions={
             <Button onClick={() => setCreateOpen(true)}>
               <Plus className="h-4 w-4" /> Start onboarding
@@ -186,7 +186,7 @@ function OnboardingDashboard() {
         )}
         <Tabs defaultValue="cases" className="space-y-6">
           <TabsList>
-            <TabsTrigger value="cases">Employee onboarding</TabsTrigger>
+            <TabsTrigger value="cases">Employee cases</TabsTrigger>
             <TabsTrigger value="templates">Checklist templates</TabsTrigger>
           </TabsList>
           <TabsContent value="cases" className="space-y-6">
@@ -213,7 +213,7 @@ function OnboardingDashboard() {
             <Card>
               <CardHeader className="gap-4 md:flex-row md:items-end md:justify-between">
                 <div>
-                  <CardTitle>Employee onboarding</CardTitle>
+                  <CardTitle>Employee cases</CardTitle>
                   <CardDescription>
                     Review progress, start-date readiness, overdue work and assigned owners.
                   </CardDescription>
@@ -307,6 +307,11 @@ function OnboardingDashboard() {
                             </div>
                           </div>
                           <div className="flex flex-wrap gap-2">
+                            <Badge variant="secondary">
+                              {onboardingCase.kind === "Employee Record Completion"
+                                ? "Existing staff setup"
+                                : "New hire onboarding"}
+                            </Badge>
                             <Badge
                               variant={onboardingCase.isReadyForStartDate ? "default" : "outline"}
                             >
