@@ -44,7 +44,17 @@ jobs:
         run: npm test
 
       - name: Check dependency advisories
-        run: npm run security:audit
+        run: |
+          for attempt in 1 2 3; do
+            if timeout 90s npm run security:audit; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::The dependency-audit attempt failed; retrying ($attempt/3)."
+              sleep 10
+            fi
+          done
+          exit 1
 
       - name: Build the production Node application
         run: npm run build
