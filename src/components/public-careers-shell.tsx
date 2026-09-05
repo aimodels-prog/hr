@@ -87,8 +87,12 @@ export function PublicCareersFooter() {
 
       <div className="mx-auto grid max-w-[1480px] gap-12 px-5 py-12 sm:px-8 md:grid-cols-2 lg:grid-cols-[1.35fr_.75fr_.85fr_1fr] lg:px-10 lg:py-16">
         <div>
-          <a href="https://www.via-int.com/" aria-label="Visit the VIA International website">
-            <BrandLogo invert className="h-14" />
+          <a
+            href="https://www.via-int.com/"
+            aria-label="Visit the VIA International website"
+            className="inline-flex rounded-sm bg-white px-4 py-3 shadow-sm"
+          >
+            <BrandLogo className="h-14" />
           </a>
           <p className="mt-6 max-w-md text-sm leading-6 text-blue-50/80">
             International civil engineering consultancy delivering transport, water, geotechnical
