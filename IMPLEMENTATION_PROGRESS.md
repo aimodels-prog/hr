@@ -1814,3 +1814,37 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
     terminal names plus offline retry (3/3), and Python compilation passed.
   - The PostgreSQL browser journey passed with the machine name visible in both the unmatched table
     and the manual matching dialog (1/1).
+
+### Step 53 - Guided biometric connector installation and secure pairing
+
+- Status: Complete in the VIA HR repository and the office connector repository on 2026-09-05.
+  Connecting the real door terminal still requires running the installer on an office computer that
+  can reach the terminal.
+- Decisions and behaviour:
+  - HR or Super Admin connects a registered terminal using a 12-character, single-use code that
+    expires after 15 minutes. Only its SHA-256 hash is stored before redemption.
+  - The office connector exchanges the code for a random terminal-specific credential. VIA HR
+    encrypts the server copy with application field encryption; the code and credential are never
+    returned to browser administration lists or written to audit details.
+  - New connector batches use the scoped credential. The deployment-managed global HMAC credential
+    remains only for backward compatibility with already installed collectors.
+  - Pairing is transactionally single-use, validates an already registered serial number when one is
+    supplied, rate-limits failed attempts and records code creation and successful pairing in the
+    audit history without secret values.
+  - A double-click Windows installer creates an isolated virtual environment, installs the connector
+    under ProgramData, adds automatic startup and a desktop shortcut, and opens a guided setup page.
+  - Guided setup can discover common TCP terminals on the office network, tests the selected device,
+    stores its LAN settings locally and connects it to VIA HR. The terminal COMKey and biometric
+    templates never leave the office.
+- Verification:
+  - Migration 0025 applied successfully from zero to a clean PostgreSQL 17 database.
+  - The real PostgreSQL pairing lifecycle passed, including encrypted credential recovery and
+    single-use rejection (1/1).
+  - The environment-independent VIA HR suite passed: 313 tests, 288 passed, 25 expected
+    infrastructure skips and zero failures. Pairing, authentication, rate-limit and
+    request-security coverage is included in that suite.
+  - A fresh migrated and seeded PostgreSQL browser journey passed terminal registration and secure
+    one-time pairing-code creation as HR (1/1).
+  - The connector image rebuilt successfully and all Python tests passed (28/28). Its login page
+    started successfully in an isolated container, and the Windows installer passed PowerShell
+    syntax validation.

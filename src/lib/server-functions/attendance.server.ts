@@ -20,6 +20,7 @@ import {
   updateAttendanceExceptionInvestigationInDatabase,
 } from "../db/repositories/attendance.repository.server.ts";
 import {
+  createAttendanceConnectorPairingCode,
   listAttendanceDeviceAdministration,
   mapAttendanceDeviceUserInDatabase,
   saveAttendanceDeviceInDatabase,
@@ -119,6 +120,15 @@ export const saveAttendanceDeviceFn = createServerFn({ method: "POST" })
       data.reason,
       v.actor,
     );
+  });
+
+export const createAttendanceConnectorPairingCodeFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z.object({ actor: Actor, deviceId: z.string().uuid() }).strict().parse(input),
+  )
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    return createAttendanceConnectorPairingCode(v.organisationId, data.deviceId, v.actor);
   });
 
 const AttendanceDeviceMapping = z

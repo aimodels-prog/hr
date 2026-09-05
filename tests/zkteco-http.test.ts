@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  resetZktecoPairingRateLimitForTests,
   resolveZktecoIntegrationRequest,
   signZktecoPayload,
 } from "../src/lib/integrations/zkteco-http.server.ts";
+
+test.afterEach(() => resetZktecoPairingRateLimitForTests());
 
 const secret = "test-only-zkteco-secret-that-is-long-enough";
 const now = new Date("2026-09-04T08:00:00.000Z");
@@ -62,6 +65,81 @@ test("accepts a correctly signed ZKTeco batch without a portal session", async (
       ?.deviceUserName,
     "Ahmed Hassan",
   );
+});
+
+test("accepts a paired connector credential without using the legacy shared secret", async () => {
+  let legacySecretRead = false;
+  const pairedRequest = request();
+  pairedRequest.headers.set("x-via-auth-version", "2");
+  const response = await resolveZktecoIntegrationRequest(pairedRequest, now, {
+    secret: () => {
+      legacySecretRead = true;
+      return "wrong-legacy-secret-that-is-long-enough";
+    },
+    organisationId: async () => "00000000-0000-4000-8000-000000000001",
+    credential: async () => secret,
+    ingest: async () => ({ accepted: 1, duplicates: 0, unmatched: 0, rejected: 0 }),
+  });
+  assert.equal(response?.status, 200);
+  assert.equal(legacySecretRead, false);
+});
+
+test("redeems a one-time connector pairing code without an HR browser session", async () => {
+  let suppliedCode = "";
+  const response = await resolveZktecoIntegrationRequest(
+    new Request("https://hr.via-int.com/api/integrations/zkteco/pair", {
+      method: "POST",
+      body: JSON.stringify({
+        pairingCode: "ABCD-EFGH-2345",
+        connectorVersion: "1.1",
+        connectorPlatform: "Windows",
+      }),
+      headers: { "content-type": "application/json", "x-real-ip": "192.0.2.10" },
+    }),
+    now,
+    {
+      secret: () => secret,
+      organisationId: async () => "not-used",
+      ingest: async () => ({ accepted: 0, duplicates: 0, unmatched: 0, rejected: 0 }),
+      pair: async (code) => {
+        suppliedCode = code;
+        return {
+          deviceCode: "main-entrance",
+          deviceName: "Main Entrance",
+          ingestUrl: "/api/integrations/zkteco/punches",
+          credential: "paired-device-credential-that-is-long-enough",
+        };
+      },
+    },
+  );
+  assert.ok(response);
+  assert.equal(response.status, 200);
+  assert.equal(suppliedCode, "ABCD-EFGH-2345");
+  assert.equal((await response.json()).deviceCode, "main-entrance");
+});
+
+test("rate limits repeated pairing attempts", async () => {
+  const dependencies = {
+    secret: () => secret,
+    organisationId: async () => "not-used",
+    ingest: async () => ({ accepted: 0, duplicates: 0, unmatched: 0, rejected: 0 }),
+    pair: async () => {
+      throw new Error("The pairing code is invalid or expired.");
+    },
+  };
+  let response: Response | undefined;
+  for (let attempt = 0; attempt < 11; attempt += 1) {
+    response = await resolveZktecoIntegrationRequest(
+      new Request("https://hr.via-int.com/api/integrations/zkteco/pair", {
+        method: "POST",
+        body: JSON.stringify({ pairingCode: "ABCD-EFGH-2345" }),
+        headers: { "content-type": "application/json", "x-real-ip": "198.51.100.4" },
+      }),
+      now,
+      dependencies,
+    );
+  }
+  assert.equal(response?.status, 429);
 });
 
 test("rejects a wrong ZKTeco signature before database access", async () => {

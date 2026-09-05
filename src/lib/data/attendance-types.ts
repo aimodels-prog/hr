@@ -60,6 +60,10 @@ export interface AttendanceDevice {
   lastSeenAt?: string | undefined;
   lastSuccessfulSyncAt?: string | undefined;
   lastError?: string | undefined;
+  pairedAt?: string | undefined;
+  pairingExpiresAt?: string | undefined;
+  connectorVersion?: string | undefined;
+  connectorPlatform?: string | undefined;
 }
 
 export interface AttendanceDeviceMapping {

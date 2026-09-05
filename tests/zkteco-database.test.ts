@@ -5,9 +5,12 @@ import { test } from "node:test";
 import postgres from "postgres";
 
 import {
+  createAttendanceConnectorPairingCode,
   ingestZktecoPunchBatch,
   listAttendanceDeviceAdministration,
   mapAttendanceDeviceUserInDatabase,
+  redeemAttendanceConnectorPairingCode,
+  resolveAttendanceDeviceCredential,
   saveAttendanceDeviceInDatabase,
 } from "../src/lib/db/repositories/zkteco.repository.server.ts";
 
@@ -104,11 +107,63 @@ test(
         "Register the office terminal",
         hrActor,
       );
+      const previousKeyId = process.env["VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID"];
+      const previousKeys = process.env["VIA_HR_FIELD_ENCRYPTION_KEYS"];
+      process.env["VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID"] = "test";
+      process.env["VIA_HR_FIELD_ENCRYPTION_KEYS"] = JSON.stringify({
+        test: Buffer.alloc(32, 7).toString("base64"),
+      });
+      try {
+        await assert.rejects(
+          createAttendanceConnectorPairingCode(organisationId, deviceId, {
+            userId: randomUUID(),
+            employeeId,
+            displayName: "Terminal Employee",
+            activeRole: "Employee",
+            roles: ["Employee"],
+          }),
+          /Only HR or a Super Admin/,
+        );
+        const pairing = await createAttendanceConnectorPairingCode(
+          organisationId,
+          deviceId,
+          hrActor,
+        );
+        assert.match(pairing.code, /^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+        const redeemed = await redeemAttendanceConnectorPairingCode(pairing.code, {
+          connectorVersion: "1.1",
+          connectorPlatform: "Windows",
+          serialNumber: "SN-TEST-001",
+        });
+        assert.equal(redeemed.deviceCode, "front-door");
+        assert.equal(
+          await resolveAttendanceDeviceCredential(organisationId, "front-door"),
+          redeemed.credential,
+        );
+        await assert.rejects(
+          redeemAttendanceConnectorPairingCode(pairing.code, {}),
+          /invalid or expired/,
+        );
+      } finally {
+        if (previousKeyId === undefined)
+          delete process.env["VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID"];
+        else process.env["VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID"] = previousKeyId;
+        if (previousKeys === undefined) delete process.env["VIA_HR_FIELD_ENCRYPTION_KEYS"];
+        else process.env["VIA_HR_FIELD_ENCRYPTION_KEYS"] = previousKeys;
+      }
+      const pairedAdministration = await listAttendanceDeviceAdministration(
+        organisationId,
+        hrActor,
+      );
+      const pairedDeviceVersion = pairedAdministration.devices.find(
+        ({ device }) => device.id === deviceId,
+      )?.device.recordVersion;
+      assert.ok(pairedDeviceVersion);
       await saveAttendanceDeviceInDatabase(
         organisationId,
         {
           id: deviceId,
-          recordVersion: 1,
+          recordVersion: pairedDeviceVersion,
           code: "front-door",
           name: "Front Door Terminal",
           locationId,
@@ -124,7 +179,7 @@ test(
           organisationId,
           {
             id: deviceId,
-            recordVersion: 1,
+            recordVersion: pairedDeviceVersion,
             code: "front-door",
             name: "Stale terminal edit",
             locationId,

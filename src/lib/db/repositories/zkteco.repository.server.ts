@@ -1,10 +1,11 @@
 import "@tanstack/react-start/server-only";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { and, asc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 
 import { getDatabaseClient, type ViaHrDatabase } from "../client.ts";
+import { decryptSensitiveJson, encryptSensitiveJson } from "../encryption.server.ts";
 import { employees, roles, userRoles, users } from "../schema/employee.ts";
 import { locations } from "../schema/master-data.ts";
 import { appSettings } from "../schema/organisation.ts";
@@ -41,6 +42,28 @@ export interface ZktecoBatchResult {
   duplicates: number;
   unmatched: number;
   rejected: number;
+}
+
+export interface AttendanceConnectorPairingResult {
+  deviceCode: string;
+  deviceName: string;
+  ingestUrl: string;
+  credential: string;
+}
+
+function normalizePairingCode(value: string): string {
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function pairingCodeHash(value: string): string {
+  return createHash("sha256").update(normalizePairingCode(value), "utf8").digest("hex");
+}
+
+function formatPairingCode(value: string): string {
+  return `${value.slice(0, 4)}-${value.slice(4, 8)}-${value.slice(8, 12)}`;
 }
 
 function requireAttendanceAdministrator(actor: AuditActorContext): void {
@@ -399,6 +422,164 @@ async function notifyUnmatchedDeviceUser(
       } as typeof notifications.$inferInsert)
       .onConflictDoNothing();
   }
+}
+
+export async function createAttendanceConnectorPairingCode(
+  organisationId: string,
+  deviceId: string,
+  actor: AuditActorContext,
+): Promise<{ code: string; expiresAt: string; deviceCode: string; deviceName: string }> {
+  requireAttendanceAdministrator(actor);
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const random = randomBytes(12);
+  const unformatted = [...random].map((byte) => alphabet[byte % alphabet.length]).join("");
+  const code = formatPairingCode(unformatted);
+  const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
+  const db = getDatabaseClient();
+  return db.transaction(async (tx) => {
+    const [device] = await tx
+      .select()
+      .from(attendanceDevices)
+      .where(
+        and(
+          eq(attendanceDevices.organisationId, organisationId),
+          eq(attendanceDevices.id, deviceId),
+          eq(attendanceDevices.isActive, true),
+          sql`${attendanceDevices.archivedAt} IS NULL`,
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!device) throw new Error("Select an active door terminal.");
+    await tx
+      .update(attendanceDevices)
+      .set({
+        pairingCodeHash: pairingCodeHash(code),
+        pairingExpiresAt: expiresAt,
+        updatedAt: new Date(),
+        updatedBy: actor.userId!,
+        recordVersion: sql`${attendanceDevices.recordVersion} + 1`,
+      })
+      .where(eq(attendanceDevices.id, device.id));
+    await tx.insert(auditEvents).values({
+      organisationId,
+      actorUserId: actor.userId,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [],
+      action: "create-connector-pairing-code",
+      module: "attendance",
+      entityType: "attendance-device",
+      entityId: device.id,
+      afterSummary: { deviceCode: device.code, expiresAt },
+      reason: "A one-time office connector pairing code was requested.",
+      riskLevel: "High",
+    } as typeof auditEvents.$inferInsert);
+    return { code, expiresAt, deviceCode: device.code, deviceName: device.name };
+  });
+}
+
+export async function redeemAttendanceConnectorPairingCode(
+  code: string,
+  input: {
+    connectorVersion?: string;
+    connectorPlatform?: string;
+    serialNumber?: string;
+    model?: string;
+  },
+): Promise<AttendanceConnectorPairingResult> {
+  const normalized = normalizePairingCode(code);
+  if (normalized.length !== 12) throw new Error("The pairing code is invalid or expired.");
+  const db = getDatabaseClient();
+  return db.transaction(async (tx) => {
+    const [device] = await tx
+      .select()
+      .from(attendanceDevices)
+      .where(
+        and(
+          eq(attendanceDevices.pairingCodeHash, pairingCodeHash(normalized)),
+          eq(attendanceDevices.isActive, true),
+          sql`${attendanceDevices.archivedAt} IS NULL`,
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!device?.pairingExpiresAt || new Date(device.pairingExpiresAt).getTime() <= Date.now()) {
+      throw new Error("The pairing code is invalid or expired.");
+    }
+    if (
+      device.serialNumber &&
+      input.serialNumber?.trim() &&
+      device.serialNumber !== input.serialNumber.trim()
+    ) {
+      throw new Error("The terminal serial number does not match the registered device.");
+    }
+    const credential = randomBytes(32).toString("base64url");
+    const now = new Date().toISOString();
+    await tx
+      .update(attendanceDevices)
+      .set({
+        pairingCodeHash: null,
+        pairingExpiresAt: null,
+        credentialEncrypted: encryptSensitiveJson({ credential }),
+        pairedAt: now,
+        connectorVersion: input.connectorVersion?.trim().slice(0, 80) || null,
+        connectorPlatform: input.connectorPlatform?.trim().slice(0, 160) || null,
+        serialNumber: device.serialNumber ?? input.serialNumber?.trim() ?? null,
+        model: input.model?.trim() || device.model,
+        lastSeenAt: now,
+        lastError: null,
+        updatedAt: new Date(),
+        updatedBy: device.id,
+        recordVersion: sql`${attendanceDevices.recordVersion} + 1`,
+      })
+      .where(eq(attendanceDevices.id, device.id));
+    await tx.insert(auditEvents).values({
+      organisationId: device.organisationId,
+      actorDisplayName: `VIA attendance connector: ${device.name}`,
+      activeRole: "System",
+      actorRoles: [],
+      action: "pair-attendance-connector",
+      module: "attendance",
+      entityType: "attendance-device",
+      entityId: device.id,
+      afterSummary: {
+        deviceCode: device.code,
+        connectorVersion: input.connectorVersion?.trim() || undefined,
+        connectorPlatform: input.connectorPlatform?.trim() || undefined,
+      },
+      reason: "The one-time pairing code was redeemed by an office connector.",
+      riskLevel: "High",
+    } as typeof auditEvents.$inferInsert);
+    return {
+      deviceCode: device.code,
+      deviceName: device.name,
+      ingestUrl: "/api/integrations/zkteco/punches",
+      credential,
+    };
+  });
+}
+
+export async function resolveAttendanceDeviceCredential(
+  organisationId: string,
+  deviceCode: string,
+): Promise<string | undefined> {
+  const db = getDatabaseClient();
+  const [device] = await db
+    .select({ credentialEncrypted: attendanceDevices.credentialEncrypted })
+    .from(attendanceDevices)
+    .where(
+      and(
+        eq(attendanceDevices.organisationId, organisationId),
+        eq(attendanceDevices.code, deviceCode),
+        eq(attendanceDevices.isActive, true),
+        sql`${attendanceDevices.archivedAt} IS NULL`,
+      ),
+    )
+    .limit(1);
+  if (!device?.credentialEncrypted) return undefined;
+  return decryptSensitiveJson<{ credential: string }>(device.credentialEncrypted).credential;
 }
 
 export async function ingestZktecoPunchBatch(
@@ -831,5 +1012,28 @@ export async function listAttendanceDeviceAdministration(
       .orderBy(asc(attendanceDevicePunches.occurredAt))
       .limit(500),
   ]);
-  return { devices, mappings, unmatched };
+  return {
+    devices: devices.map(({ device, locationName }) => ({
+      device: {
+        id: device.id,
+        recordVersion: device.recordVersion,
+        code: device.code,
+        name: device.name,
+        locationId: device.locationId,
+        serialNumber: device.serialNumber,
+        model: device.model,
+        isActive: device.isActive,
+        lastSeenAt: device.lastSeenAt,
+        lastSuccessfulSyncAt: device.lastSuccessfulSyncAt,
+        lastError: device.lastError,
+        pairingExpiresAt: device.pairingExpiresAt,
+        pairedAt: device.pairedAt,
+        connectorVersion: device.connectorVersion,
+        connectorPlatform: device.connectorPlatform,
+      },
+      locationName,
+    })),
+    mappings,
+    unmatched,
+  };
 }

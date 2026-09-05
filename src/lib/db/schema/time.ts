@@ -298,6 +298,12 @@ export const attendanceDevices = pgTable(
       mode: "string",
     }),
     lastError: text("last_error"),
+    pairingCodeHash: text("pairing_code_hash"),
+    pairingExpiresAt: timestamp("pairing_expires_at", { withTimezone: true, mode: "string" }),
+    credentialEncrypted: text("credential_encrypted"),
+    pairedAt: timestamp("paired_at", { withTimezone: true, mode: "string" }),
+    connectorVersion: text("connector_version"),
+    connectorPlatform: text("connector_platform"),
   },
   (table) => [
     uniqueIndex("attendance_devices_org_code_unique").on(table.organisationId, table.code),

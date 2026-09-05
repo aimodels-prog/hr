@@ -786,6 +786,12 @@ export class AttendanceService {
           ? { lastSuccessfulSyncAt: new Date(device.lastSuccessfulSyncAt).toISOString() }
           : {}),
         ...(device.lastError ? { lastError: device.lastError } : {}),
+        ...(device.pairedAt ? { pairedAt: new Date(device.pairedAt).toISOString() } : {}),
+        ...(device.pairingExpiresAt
+          ? { pairingExpiresAt: new Date(device.pairingExpiresAt).toISOString() }
+          : {}),
+        ...(device.connectorVersion ? { connectorVersion: device.connectorVersion } : {}),
+        ...(device.connectorPlatform ? { connectorPlatform: device.connectorPlatform } : {}),
       })),
       mappings: snapshot.mappings.map(({ mapping, employeeName }) => ({
         id: mapping.id,
@@ -860,6 +866,17 @@ export class AttendanceService {
     });
     await this.hydrateFromDatabase(context);
     return result.appliedPunches;
+  }
+
+  async createDevicePairingCodeAsync(
+    deviceId: string,
+    context: ActorContext,
+  ): Promise<{ code: string; expiresAt: string; deviceCode: string; deviceName: string }> {
+    const { createAttendanceConnectorPairingCodeFn } =
+      await import("../server-functions/attendance.server.ts");
+    return createAttendanceConnectorPairingCodeFn({
+      data: { actor: this.serverActor(context), deviceId },
+    });
   }
 
   async importRowsAsync(rows: AttendanceImportRow[], context: ActorContext): Promise<number> {

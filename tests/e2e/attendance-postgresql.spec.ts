@@ -74,6 +74,35 @@ test("employee site visit persists to PostgreSQL and HR approval survives a role
   await expect(employeeRow).toContainText("Cancelled");
 });
 
+test("HR creates a one-time code for an office attendance connector", async ({ page }) => {
+  const suffix = Date.now().toString();
+  const deviceCode = `pair-door-${suffix.slice(-10)}`;
+  const deviceName = `Pairing Door ${suffix.slice(-6)}`;
+
+  await page.goto("/staff");
+  await previewAs(page, "user-rana", "HR", "/staff/attendance");
+  await page.getByRole("tab", { name: /Door Terminals/ }).click();
+  await page.getByRole("button", { name: "Register Terminal" }).click();
+  const terminalDialog = page.getByRole("dialog", { name: "Register Door Terminal" });
+  await terminalDialog.getByLabel("Terminal code").fill(deviceCode);
+  await terminalDialog.getByLabel("Terminal name").fill(deviceName);
+  await terminalDialog.getByLabel("Office").click();
+  await page.getByRole("option").first().click();
+  await terminalDialog
+    .getByLabel("Reason")
+    .fill("Connect the office terminal through the guided installer.");
+  await terminalDialog.getByRole("button", { name: "Save Terminal" }).click();
+  await expect(terminalDialog).toBeHidden();
+
+  const terminalRow = page.getByRole("row").filter({ hasText: deviceName });
+  await terminalRow.getByRole("button", { name: "Connect" }).click();
+  const pairingDialog = page.getByRole("dialog", { name: `Connect ${deviceName}` });
+  await expect(pairingDialog.getByText(/^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/)).toBeVisible();
+  await expect(pairingDialog).toContainText("It can be used only once");
+  await pairingDialog.getByRole("button", { name: "Done" }).click();
+  await expect(pairingDialog).toBeHidden();
+});
+
 test("HR registers a door terminal and recovers a signed unmatched punch", async ({
   page,
   request,

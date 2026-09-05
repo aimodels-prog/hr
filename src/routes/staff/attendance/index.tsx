@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import {
   CheckCircle2,
+  Copy,
   DoorOpen,
   Download,
   FileUp,
@@ -166,6 +167,10 @@ function AttendanceAdminContent() {
   const [mappingPunch, setMappingPunch] = useState<UnmatchedAttendancePunch | null>(null);
   const [mappingEmployeeId, setMappingEmployeeId] = useState("");
   const [mappingReason, setMappingReason] = useState("");
+  const [pairingDevice, setPairingDevice] = useState<AttendanceDevice | null>(null);
+  const [pairingCode, setPairingCode] = useState("");
+  const [pairingExpiresAt, setPairingExpiresAt] = useState("");
+  const [creatingPairingCode, setCreatingPairingCode] = useState(false);
   const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
 
   const loadDeviceAdministration = async () => {
@@ -477,6 +482,24 @@ function AttendanceAdminContent() {
     }
   };
 
+  const createPairingCode = async (device: AttendanceDevice) => {
+    setPairingDevice(device);
+    setPairingCode("");
+    setPairingExpiresAt("");
+    setCreatingPairingCode(true);
+    try {
+      const result = await attendanceService.createDevicePairingCodeAsync(device.id, actorContext);
+      setPairingCode(result.code);
+      setPairingExpiresAt(result.expiresAt);
+      await loadDeviceAdministration();
+    } catch (error) {
+      setPairingDevice(null);
+      toast.error(error instanceof Error ? error.message : "A pairing code could not be created.");
+    } finally {
+      setCreatingPairingCode(false);
+    }
+  };
+
   const decideVisit = async (approve: boolean) => {
     if (!reviewVisit) return;
     try {
@@ -763,7 +786,7 @@ function AttendanceAdminContent() {
                     <TableHead>Serial / model</TableHead>
                     <TableHead>Last received</TableHead>
                     <TableHead>Staff matched</TableHead>
-                    <TableHead>Status</TableHead>
+                    <TableHead>Connection</TableHead>
                     <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -802,14 +825,33 @@ function AttendanceAdminContent() {
                           }
                         </TableCell>
                         <TableCell>
-                          <Badge variant={device.isActive ? "outline" : "secondary"}>
-                            {device.isActive ? "Active" : "Inactive"}
+                          <Badge variant={device.pairedAt ? "default" : "secondary"}>
+                            {device.pairedAt ? "Connected" : "Not connected"}
                           </Badge>
+                          {device.connectorVersion ? (
+                            <span className="mt-1 block text-xs text-muted-foreground">
+                              Connector {device.connectorVersion}
+                            </span>
+                          ) : null}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button variant="ghost" size="sm" onClick={() => openDeviceEdit(device)}>
-                            Edit
-                          </Button>
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={creatingPairingCode || !device.isActive}
+                              onClick={() => void createPairingCode(device)}
+                            >
+                              {device.pairedAt ? "Reconnect" : "Connect"}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openDeviceEdit(device)}
+                            >
+                              Edit
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))
@@ -1300,6 +1342,72 @@ function AttendanceAdminContent() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog
+        open={Boolean(pairingDevice)}
+        onOpenChange={(open) => {
+          if (!open && !creatingPairingCode) {
+            setPairingDevice(null);
+            setPairingCode("");
+            setPairingExpiresAt("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Connect {pairingDevice?.name}</DialogTitle>
+            <DialogDescription>
+              Enter this one-time code in the VIA Attendance Connector on the office computer. No
+              permanent secret needs to be copied.
+            </DialogDescription>
+          </DialogHeader>
+          {creatingPairingCode ? (
+            <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">
+              <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> Creating a secure code…
+            </div>
+          ) : pairingCode ? (
+            <div className="space-y-5">
+              <div className="rounded-lg border bg-muted/30 p-5 text-center">
+                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Pairing code
+                </p>
+                <p className="mt-2 font-mono text-2xl font-semibold tracking-widest sm:text-3xl">
+                  {pairingCode}
+                </p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Expires {format(new Date(pairingExpiresAt), "dd MMM yyyy, HH:mm")}
+                </p>
+              </div>
+              <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
+                <li>Open VIA Attendance Connector on the computer connected to the terminal.</li>
+                <li>Select this terminal and choose “Connect to VIA HR”.</li>
+                <li>Enter the code above. It can be used only once.</li>
+              </ol>
+            </div>
+          ) : null}
+          <DialogFooter>
+            {pairingCode ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={async () => {
+                  await navigator.clipboard.writeText(pairingCode);
+                  toast.success("Pairing code copied.");
+                }}
+              >
+                <Copy className="mr-2 h-4 w-4" /> Copy code
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              onClick={() => setPairingDevice(null)}
+              disabled={creatingPairingCode}
+            >
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={deviceDialogOpen} onOpenChange={setDeviceDialogOpen}>
         <DialogContent>

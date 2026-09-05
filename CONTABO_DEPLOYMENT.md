@@ -180,25 +180,35 @@ trusted proxy addresses explicitly before changing this configuration.
 
 ## ZKTeco door-terminal bridge
 
-The ZKTeco terminal is never exposed to Contabo or the public internet. The office NAS runs the
-Python collector from `integrations/zkteco-bridge`, reads the terminal on LAN port 4370, and sends
-signed batches outbound to:
+The ZKTeco terminal is never exposed to Contabo or the public internet. The VIA Attendance
+Connector runs on one always-on Windows office computer or NAS, reads the terminal on LAN port
+4370, and sends signed batches outbound to:
 
 ```text
 POST https://hr.via-int.com/api/integrations/zkteco/punches
 ```
 
-Generate a dedicated secret of at least 32 random bytes. Store it as
-`VIA_HR_ZKTECO_INGEST_SECRET` in the owner-readable Contabo `.env.production` file and as
-`VIA_HR_DEVICE_SECRET` in the NAS container environment. It must not equal the Portal SSO,
-database, object-storage, field-encryption or backup secret. Do not put the terminal COMKey or
-fingerprint templates on Contabo.
+The preferred installation does not ask an administrator to copy a permanent secret. In VIA HR,
+HR or Super Admin registers the terminal under **Attendance Administration > Door Terminals** and
+selects **Connect**. VIA HR displays a one-time code that expires after 15 minutes. Run
+`deploy/Install VIA Attendance.cmd` on the office computer, open the guided setup page, enter the
+terminal details and the one-time code, then select **Connect**. The connector exchanges the code
+once for a terminal-specific credential and stores it only on that office computer.
 
-In VIA HR, HR or Super Admin registers the terminal under **Attendance Administration → Door
-Terminals**. The registered code must exactly match the device `id` in the collector's
-`config.yaml`. Exact VIA email and employee-number matches are automatic; all other terminal IDs
-remain in the review queue until HR explicitly matches them. Repeated pulls are safe because both
-the collector and PostgreSQL use a deterministic event identifier.
+The installer starts the connector automatically with Windows and adds a **VIA
+Attendance** desktop shortcut. The guided page can search the local network for common ZKTeco
+terminals; UDP-only or unusual networks may still require the terminal IP, port and COMKey to be
+entered manually. The COMKey and fingerprint templates stay in the office and are never sent to
+Contabo.
+
+`VIA_HR_ZKTECO_INGEST_SECRET` remains a deployment-managed compatibility credential for an older
+collector. It must still be a dedicated value of at least 32 random characters and must not equal
+the Portal SSO, database, object-storage, field-encryption or backup secret. New connectors use the
+one-time pairing flow and do not receive this global credential.
+
+Exact VIA email and employee-number matches are automatic; all other terminal IDs remain in the HR
+review queue until HR explicitly matches them. Repeated pulls are safe because both the connector
+and PostgreSQL use a deterministic event identifier.
 
 This is the selected first production anti-spoofing control. Managed-device or
 trusted-mobile attestation can be added later without replacing the network and

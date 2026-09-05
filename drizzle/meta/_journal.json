@@ -176,6 +176,13 @@
       "when": 1788515795239,
       "tag": "0024_salty_boom_boom",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1788625389791,
+      "tag": "0025_elite_eternals",
+      "breakpoints": true
     }
   ]
 }

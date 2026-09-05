@@ -5,9 +5,14 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
 import { resolveDefaultOrganisationId } from "../db/organisation.server.ts";
-import { ingestZktecoPunchBatch } from "../db/repositories/zkteco.repository.server.ts";
+import {
+  ingestZktecoPunchBatch,
+  redeemAttendanceConnectorPairingCode,
+  resolveAttendanceDeviceCredential,
+} from "../db/repositories/zkteco.repository.server.ts";
 
 export const ZKTECO_INGEST_PATH = "/api/integrations/zkteco/punches";
+export const ZKTECO_PAIR_PATH = "/api/integrations/zkteco/pair";
 
 const Punch = z
   .object({
@@ -33,6 +38,16 @@ const Batch = z
   })
   .strict();
 
+const PairRequest = z
+  .object({
+    pairingCode: z.string().trim().min(12).max(20),
+    connectorVersion: z.string().trim().min(1).max(80).optional(),
+    connectorPlatform: z.string().trim().min(1).max(160).optional(),
+    serialNumber: z.string().trim().min(1).max(128).optional(),
+    model: z.string().trim().min(1).max(128).optional(),
+  })
+  .strict();
+
 function json(payload: unknown, status: number): Response {
   return Response.json(payload, {
     status,
@@ -55,13 +70,30 @@ interface ZktecoHttpDependencies {
   secret: () => string;
   organisationId: () => Promise<string>;
   ingest: typeof ingestZktecoPunchBatch;
+  credential?: typeof resolveAttendanceDeviceCredential;
+  pair?: typeof redeemAttendanceConnectorPairingCode;
 }
 
 const defaultDependencies: ZktecoHttpDependencies = {
   secret: ingestSecret,
   organisationId: resolveDefaultOrganisationId,
   ingest: ingestZktecoPunchBatch,
+  credential: resolveAttendanceDeviceCredential,
+  pair: redeemAttendanceConnectorPairingCode,
 };
+
+const pairingAttempts = new Map<string, { count: number; resetAt: number }>();
+
+function pairingRateLimited(request: Request, now: Date): boolean {
+  const address = request.headers.get("x-real-ip")?.trim() || "direct-client";
+  const current = pairingAttempts.get(address);
+  if (!current || current.resetAt <= now.getTime()) {
+    pairingAttempts.set(address, { count: 1, resetAt: now.getTime() + 60_000 });
+    return false;
+  }
+  current.count += 1;
+  return current.count > 10;
+}
 
 export function signZktecoPayload(timestamp: string, body: string, secret: string): string {
   return createHmac("sha256", secret).update(`${timestamp}.${body}`, "utf8").digest("hex");
@@ -86,14 +118,46 @@ export async function resolveZktecoIntegrationRequest(
   dependencies: ZktecoHttpDependencies = defaultDependencies,
 ): Promise<Response | undefined> {
   const url = new URL(request.url);
-  if (url.pathname !== ZKTECO_INGEST_PATH) return undefined;
+  if (url.pathname !== ZKTECO_INGEST_PATH && url.pathname !== ZKTECO_PAIR_PATH) return undefined;
   if (request.method !== "POST") {
     return new Response(null, {
       status: 405,
       headers: { allow: "POST", "cache-control": "no-store, max-age=0" },
     });
   }
+  if (url.pathname === ZKTECO_PAIR_PATH) {
+    if (pairingRateLimited(request, now)) {
+      return json({ error: "too_many_pairing_attempts" }, 429);
+    }
+    try {
+      const input = PairRequest.parse(await request.json());
+      const pair = dependencies.pair ?? defaultDependencies.pair!;
+      return json(
+        await pair(input.pairingCode, {
+          ...(input.connectorVersion ? { connectorVersion: input.connectorVersion } : {}),
+          ...(input.connectorPlatform ? { connectorPlatform: input.connectorPlatform } : {}),
+          ...(input.serialNumber ? { serialNumber: input.serialNumber } : {}),
+          ...(input.model ? { model: input.model } : {}),
+        }),
+        200,
+      );
+    } catch (error) {
+      if (error instanceof z.ZodError || error instanceof SyntaxError) {
+        return json({ error: "invalid_pairing_request" }, 400);
+      }
+      const message = error instanceof Error ? error.message : "";
+      if (
+        message === "The pairing code is invalid or expired." ||
+        message === "The terminal serial number does not match the registered device."
+      ) {
+        return json({ error: "pairing_not_accepted" }, 401);
+      }
+      console.error("An attendance connector could not be paired.", error);
+      return json({ error: "pairing_failed" }, 500);
+    }
+  }
   const deviceCode = request.headers.get("x-via-device-id")?.trim().toLowerCase() ?? "";
+  const authenticationVersion = request.headers.get("x-via-auth-version")?.trim() ?? "1";
   const timestamp = request.headers.get("x-via-timestamp")?.trim() ?? "";
   const signature = request.headers.get("x-via-signature")?.trim() ?? "";
   if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(deviceCode) || !/^\d{10,13}$/.test(timestamp)) {
@@ -106,12 +170,24 @@ export async function resolveZktecoIntegrationRequest(
   let body = "";
   try {
     body = await request.text();
-    if (!validSignature(timestamp, body, signature, dependencies.secret())) {
+    let organisationId: string | undefined;
+    let credential: string;
+    if (authenticationVersion === "2") {
+      organisationId = await dependencies.organisationId();
+      credential = (await dependencies.credential?.(organisationId, deviceCode)) ?? "";
+      if (!credential) return json({ error: "invalid_device_authentication" }, 401);
+    } else {
+      credential = dependencies.secret();
+    }
+    if (!validSignature(timestamp, body, signature, credential)) {
       return json({ error: "invalid_device_authentication" }, 401);
     }
     const batch = Batch.parse(JSON.parse(body));
-    const organisationId = await dependencies.organisationId();
-    const result = await dependencies.ingest(organisationId, deviceCode, batch);
+    const result = await dependencies.ingest(
+      organisationId ?? (await dependencies.organisationId()),
+      deviceCode,
+      batch,
+    );
     return json(result, 200);
   } catch (error) {
     if (error instanceof z.ZodError || error instanceof SyntaxError) {
@@ -127,4 +203,8 @@ export async function resolveZktecoIntegrationRequest(
     console.error("A signed ZKTeco attendance batch could not be processed.", error);
     return json({ error: "attendance_ingestion_failed" }, 500);
   }
+}
+
+export function resetZktecoPairingRateLimitForTests(): void {
+  pairingAttempts.clear();
 }

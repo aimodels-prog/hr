@@ -66,6 +66,22 @@ test("production mutations without an Origin header are rejected", async () => {
   });
 });
 
+test("office connector pairing and punch requests do not require a browser Origin", async () => {
+  await withSsoEnvironment(() => {
+    for (const pathname of ["/api/integrations/zkteco/pair", "/api/integrations/zkteco/punches"]) {
+      assert.equal(
+        enforceRequestSecurity(
+          new Request(`https://hr.via-int.com${pathname}`, {
+            method: "POST",
+            headers: { accept: "application/json" },
+          }),
+        ),
+        null,
+      );
+    }
+  });
+});
+
 test("safe reads and health checks do not require an Origin header", async () => {
   await withSsoEnvironment(() => {
     assert.equal(enforceRequestSecurity(new Request("https://hr.via-int.com/staff")), null);
