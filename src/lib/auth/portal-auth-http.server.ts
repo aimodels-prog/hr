@@ -117,7 +117,16 @@ export function isPublicServerFunction(pathname: string): boolean {
 }
 
 export function isPublicApplicationPath(pathname: string): boolean {
-  if (pathname === "/" || pathname === "/jobs" || pathname.startsWith("/jobs/")) return true;
+  if (
+    pathname === "/" ||
+    pathname === "/jobs" ||
+    pathname.startsWith("/jobs/") ||
+    pathname === "/candidate-privacy" ||
+    pathname === "/privacy" ||
+    pathname === "/terms" ||
+    pathname === "/accessibility"
+  )
+    return true;
   if (pathname.startsWith("/health/")) return true;
   if (pathname === "/favicon.ico" || pathname === "/favicon.png" || pathname === "/robots.txt") {
     return true;

@@ -10,7 +10,11 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AccessibilityRouteImport } from './routes/accessibility'
+import { Route as CandidatePrivacyRouteImport } from './routes/candidate-privacy'
+import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as StaffRouteImport } from './routes/staff'
+import { Route as TermsRouteImport } from './routes/terms'
 import { Route as JobsIndexRouteImport } from './routes/jobs.index'
 import { Route as JobsJobIdRouteImport } from './routes/jobs.$jobId'
 import { Route as JobsAppliedRouteImport } from './routes/jobs.applied'
@@ -100,9 +104,29 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AccessibilityRoute = AccessibilityRouteImport.update({
+  id: '/accessibility',
+  path: '/accessibility',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CandidatePrivacyRoute = CandidatePrivacyRouteImport.update({
+  id: '/candidate-privacy',
+  path: '/candidate-privacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StaffRoute = StaffRouteImport.update({
   id: '/staff',
   path: '/staff',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TermsRoute = TermsRouteImport.update({
+  id: '/terms',
+  path: '/terms',
   getParentRoute: () => rootRouteImport,
 } as any)
 const JobsIndexRoute = JobsIndexRouteImport.update({
@@ -540,7 +564,11 @@ const StaffPerformanceReviewsReviewIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/accessibility': typeof AccessibilityRoute
+  '/candidate-privacy': typeof CandidatePrivacyRoute
+  '/privacy': typeof PrivacyRoute
   '/staff': typeof StaffRouteWithChildren
+  '/terms': typeof TermsRoute
   '/jobs/$jobId': typeof JobsJobIdRoute
   '/jobs/applied': typeof JobsAppliedRoute
   '/staff/anniversaries': typeof StaffAnniversariesRoute
@@ -627,6 +655,10 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/accessibility': typeof AccessibilityRoute
+  '/candidate-privacy': typeof CandidatePrivacyRoute
+  '/privacy': typeof PrivacyRoute
+  '/terms': typeof TermsRoute
   '/jobs/$jobId': typeof JobsJobIdRoute
   '/jobs/applied': typeof JobsAppliedRoute
   '/staff/anniversaries': typeof StaffAnniversariesRoute
@@ -706,7 +738,11 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/accessibility': typeof AccessibilityRoute
+  '/candidate-privacy': typeof CandidatePrivacyRoute
+  '/privacy': typeof PrivacyRoute
   '/staff': typeof StaffRouteWithChildren
+  '/terms': typeof TermsRoute
   '/jobs/$jobId': typeof JobsJobIdRoute
   '/jobs/applied': typeof JobsAppliedRoute
   '/staff/anniversaries': typeof StaffAnniversariesRoute
@@ -795,7 +831,11 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/accessibility'
+    | '/candidate-privacy'
+    | '/privacy'
     | '/staff'
+    | '/terms'
     | '/jobs/$jobId'
     | '/jobs/applied'
     | '/staff/anniversaries'
@@ -882,6 +922,10 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/accessibility'
+    | '/candidate-privacy'
+    | '/privacy'
+    | '/terms'
     | '/jobs/$jobId'
     | '/jobs/applied'
     | '/staff/anniversaries'
@@ -960,7 +1004,11 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/accessibility'
+    | '/candidate-privacy'
+    | '/privacy'
     | '/staff'
+    | '/terms'
     | '/jobs/$jobId'
     | '/jobs/applied'
     | '/staff/anniversaries'
@@ -1048,7 +1096,11 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AccessibilityRoute: typeof AccessibilityRoute
+  CandidatePrivacyRoute: typeof CandidatePrivacyRoute
+  PrivacyRoute: typeof PrivacyRoute
   StaffRoute: typeof StaffRouteWithChildren
+  TermsRoute: typeof TermsRoute
   JobsJobIdRoute: typeof JobsJobIdRoute
   JobsAppliedRoute: typeof JobsAppliedRoute
   JobsIndexRoute: typeof JobsIndexRoute
@@ -1063,11 +1115,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/accessibility': {
+      id: '/accessibility'
+      path: '/accessibility'
+      fullPath: '/accessibility'
+      preLoaderRoute: typeof AccessibilityRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/candidate-privacy': {
+      id: '/candidate-privacy'
+      path: '/candidate-privacy'
+      fullPath: '/candidate-privacy'
+      preLoaderRoute: typeof CandidatePrivacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/staff': {
       id: '/staff'
       path: '/staff'
       fullPath: '/staff'
       preLoaderRoute: typeof StaffRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/terms': {
+      id: '/terms'
+      path: '/terms'
+      fullPath: '/terms'
+      preLoaderRoute: typeof TermsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/jobs/': {
@@ -1925,7 +2005,11 @@ const StaffRouteWithChildren = StaffRoute._addFileChildren(StaffRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AccessibilityRoute: AccessibilityRoute,
+  CandidatePrivacyRoute: CandidatePrivacyRoute,
+  PrivacyRoute: PrivacyRoute,
   StaffRoute: StaffRouteWithChildren,
+  TermsRoute: TermsRoute,
   JobsJobIdRoute: JobsJobIdRoute,
   JobsAppliedRoute: JobsAppliedRoute,
   JobsIndexRoute: JobsIndexRoute,

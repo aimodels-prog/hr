@@ -34,6 +34,12 @@ test("careers surface serves only public recruitment and sends staff browsers to
       resolveAppSurfaceRequest(new Request("https://careers.via-int.com/api/public/vacancies")),
       undefined,
     );
+    for (const pathname of ["/candidate-privacy", "/privacy", "/terms", "/accessibility"]) {
+      assert.equal(
+        resolveAppSurfaceRequest(new Request(`https://careers.via-int.com${pathname}`)),
+        undefined,
+      );
+    }
     const staff = resolveAppSurfaceRequest(
       new Request("https://careers.via-int.com/staff/me/profile?tab=personal"),
     );
@@ -66,6 +72,16 @@ test("staff surface refuses public APIs and sends public pages to careers", asyn
       careers?.headers.get("location"),
       "https://careers.via-int.com/jobs/example?source=portal",
     );
+    for (const pathname of ["/candidate-privacy", "/privacy", "/terms", "/accessibility"]) {
+      const informationPage = resolveAppSurfaceRequest(
+        new Request(`https://hr.via-int.com${pathname}`),
+      );
+      assert.equal(informationPage?.status, 308);
+      assert.equal(
+        informationPage?.headers.get("location"),
+        `https://careers.via-int.com${pathname}`,
+      );
+    }
     const publicApi = resolveAppSurfaceRequest(
       new Request("https://hr.via-int.com/api/public/vacancies"),
     );
