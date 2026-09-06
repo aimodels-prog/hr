@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { loadBootstrapSuperAdminEmails } from "../src/lib/auth/portal-sso-config.server.ts";
@@ -44,4 +45,9 @@ test("Super Admin email allowlist rejects identities outside VIA", () => {
       assert.throws(loadBootstrapSuperAdminEmails, /only valid @via-int\.com email addresses/);
     },
   );
+});
+
+test("production staff container receives the Super Admin allowlist", () => {
+  const compose = readFileSync(new URL("../compose.production.yaml", import.meta.url), "utf8");
+  assert.match(compose, /VIA_HR_SUPER_ADMIN_EMAILS: \$\{VIA_HR_SUPER_ADMIN_EMAILS:-\}/);
 });

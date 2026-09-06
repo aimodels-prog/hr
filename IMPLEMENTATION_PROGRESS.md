@@ -1863,6 +1863,8 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
   - The allowlist accepts only normalized addresses in the configured VIA email domain. Removing an
     address from deployment configuration does not silently revoke an existing assignment; role
     revocation remains an explicit, audited User Management action.
+  - Production Compose passes the deployment-controlled allowlist only to the private staff
+    runtime, ensuring first-login assignment is available inside the running application.
 - Verification:
   - Configuration tests cover normalization, deduplication and rejection of an external address.
   - The PostgreSQL Portal-session integration test covers first-login assignment, both effective
