@@ -49,6 +49,13 @@ issuer is `via-portal`, audience and `appSlug` are `via-hr`, and email belongs t
 Unknown Portal role values never grant elevated HR access. Employee, Line Manager, HR, Accounts
 and Super Admin access continue to come from VIA HR user management.
 
+The initial production Super Admin identities are explicitly controlled by
+`VIA_HR_SUPER_ADMIN_EMAILS`. A listed `@via-int.com` address receives Employee and Super Admin
+access atomically on its first verified Portal sign-in, and the assignment is recorded as a
+critical security audit event. Portal JWT role text cannot grant this access. Removing an address
+from the environment does not revoke an already assigned role; revoke it deliberately in User
+Management so the change and reason remain auditable.
+
 Production URLs:
 
 - Public vacancies and applications: `https://careers.via-int.com`

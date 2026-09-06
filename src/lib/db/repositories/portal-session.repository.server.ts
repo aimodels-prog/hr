@@ -7,7 +7,10 @@ import type { Employee, Role, User } from "../../data/types.ts";
 import type { CurrentUserContext } from "../../auth/permissions.ts";
 import { getRolePermissions } from "../../auth/permissions.ts";
 import type { VerifiedPortalIdentity } from "../../auth/portal-token.server.ts";
-import { MAX_HR_SESSION_SECONDS } from "../../auth/portal-sso-config.server.ts";
+import {
+  loadBootstrapSuperAdminEmails,
+  MAX_HR_SESSION_SECONDS,
+} from "../../auth/portal-sso-config.server.ts";
 import { getDatabaseClient } from "../client.ts";
 import { departments, employmentTypes, locations, positions } from "../schema/master-data.ts";
 import { employees, roles, userRoles, users } from "../schema/employee.ts";
@@ -559,6 +562,49 @@ async function findOrCreatePortalUser(
         reason: "Baseline access verified by VIA Portal",
       })
       .onConflictDoNothing();
+
+    if (loadBootstrapSuperAdminEmails().has(identity.email)) {
+      const [superAdminRole] = await tx
+        .select({ id: roles.id })
+        .from(roles)
+        .where(eq(roles.code, "Super Admin"))
+        .limit(1);
+      if (!superAdminRole) throw new Error("The Super Admin role is not configured.");
+
+      const assigned = await tx
+        .insert(userRoles)
+        .values({
+          organisationId,
+          userId: activeUser.id,
+          roleId: superAdminRole.id,
+          assignedBy: activeUser.id,
+          reason: "Explicit production Super Admin identity",
+        })
+        .onConflictDoNothing()
+        .returning({ roleId: userRoles.roleId });
+
+      if (assigned.length > 0) {
+        await tx.insert(auditEvents).values({
+          organisationId,
+          actorUserId: activeUser.id,
+          actorEmployeeId: employee.id,
+          actorDisplayName: identity.name,
+          activeRole: "Super Admin",
+          actorRoles: ["Employee", "Super Admin"],
+          action: "bootstrap-super-admin-access",
+          module: "security",
+          entityType: "user",
+          entityId: activeUser.id,
+          afterSummary: {
+            email: identity.email,
+            assignedRole: "Super Admin",
+            source: "deployment allowlist",
+          },
+          reason: "Explicitly configured production Super Admin identity",
+          riskLevel: "Critical",
+        });
+      }
+    }
 
     const [mapping] = await tx
       .select()

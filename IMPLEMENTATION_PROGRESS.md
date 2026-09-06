@@ -1848,3 +1848,22 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
   - The connector image rebuilt successfully and all Python tests passed (28/28). Its login page
     started successfully in an isolated container, and the Windows installer passed PowerShell
     syntax validation.
+
+### Step 54 - Explicit production Super Admin identity
+
+- Status: Complete in the repository on 2026-09-06; production deployment verification follows the
+  immutable release process.
+- Decisions and behaviour:
+  - `ai.models@via-int.com` is configured as an explicit production Super Admin identity through the
+    deployment environment, not through a Portal-provided role claim.
+  - On the identity's first signature-verified VIA Portal sign-in, the employee, user, Employee role
+    and Super Admin role are created or linked in one PostgreSQL transaction.
+  - The exceptional role assignment is idempotent and records a Critical security audit event. An
+    unknown or privileged-looking Portal role string still grants only baseline Employee access.
+  - The allowlist accepts only normalized addresses in the configured VIA email domain. Removing an
+    address from deployment configuration does not silently revoke an existing assignment; role
+    revocation remains an explicit, audited User Management action.
+- Verification:
+  - Configuration tests cover normalization, deduplication and rejection of an external address.
+  - The PostgreSQL Portal-session integration test covers first-login assignment, both effective
+    roles and creation of the Critical audit event.

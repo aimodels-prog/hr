@@ -30,7 +30,9 @@ test(
     const employmentTypeId = randomUUID();
     const email = `portal-${organisationId}@via-int.com`;
     const priorOrg = process.env["VIA_HR_ORGANISATION_ID"];
+    const priorSuperAdminEmails = process.env["VIA_HR_SUPER_ADMIN_EMAILS"];
     process.env["VIA_HR_ORGANISATION_ID"] = organisationId;
+    delete process.env["VIA_HR_SUPER_ADMIN_EMAILS"];
     clearDefaultOrganisationCacheForTests();
 
     try {
@@ -143,10 +145,35 @@ test(
       `;
       assert.equal(Number(selfRegistrationAudit?.count), 1);
       await revokePortalSession(firstLogin.sessionToken);
+
+      const superAdminEmail = `super-admin-${organisationId}@via-int.com`;
+      process.env["VIA_HR_SUPER_ADMIN_EMAILS"] = superAdminEmail;
+      const superAdminLogin = await createPortalSession(
+        {
+          email: superAdminEmail,
+          name: "Configured Super Admin",
+          portalRole: "user",
+          mappedRole: "Employee",
+          expiresAt: Math.floor(Date.now() / 1000) + 120,
+        },
+        { lifetimeSeconds: 28_800 },
+      );
+      assert.deepEqual(new Set(superAdminLogin.user.roles), new Set(["Employee", "Super Admin"]));
+      const [adminAudit] = await sql`
+        SELECT count(*)::int AS count FROM audit_events
+        WHERE organisation_id = ${organisationId}
+          AND entity_id = ${superAdminLogin.user.id}
+          AND action = 'bootstrap-super-admin-access'
+          AND risk_level = 'Critical'
+      `;
+      assert.equal(Number(adminAudit?.count), 1);
+      await revokePortalSession(superAdminLogin.sessionToken);
     } finally {
       clearDefaultOrganisationCacheForTests();
       if (priorOrg === undefined) delete process.env["VIA_HR_ORGANISATION_ID"];
       else process.env["VIA_HR_ORGANISATION_ID"] = priorOrg;
+      if (priorSuperAdminEmails === undefined) delete process.env["VIA_HR_SUPER_ADMIN_EMAILS"];
+      else process.env["VIA_HR_SUPER_ADMIN_EMAILS"] = priorSuperAdminEmails;
       await sql.end();
     }
   },

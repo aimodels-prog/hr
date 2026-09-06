@@ -68,6 +68,38 @@ export function getPortalSsoSecret(): Uint8Array {
   return new TextEncoder().encode(secret);
 }
 
+function resolveAllowedEmailDomain(): string {
+  const domain = (process.env["ALLOWED_EMAIL_DOMAIN"]?.trim() || "via-int.com").toLowerCase();
+  if (!/^[a-z0-9.-]+$/.test(domain) || domain.includes("..")) {
+    throw new Error("ALLOWED_EMAIL_DOMAIN is invalid.");
+  }
+  return domain;
+}
+
+/**
+ * Deployment-controlled identities that receive Super Admin access on their first
+ * verified VIA Portal sign-in. Portal role claims are deliberately not consulted.
+ */
+export function loadBootstrapSuperAdminEmails(): ReadonlySet<string> {
+  const domain = resolveAllowedEmailDomain();
+  const configured = process.env["VIA_HR_SUPER_ADMIN_EMAILS"]?.trim();
+  if (!configured) return new Set<string>();
+
+  const emails = configured
+    .split(/[;,]/)
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
+
+  for (const email of emails) {
+    if (!/^[^@\s]+@[^@\s]+$/.test(email) || !email.endsWith(`@${domain}`)) {
+      throw new Error(
+        `VIA_HR_SUPER_ADMIN_EMAILS must contain only valid @${domain} email addresses.`,
+      );
+    }
+  }
+  return new Set(emails);
+}
+
 export function loadPortalSsoConfig(): PortalSsoConfig {
   const enabled = isPortalSsoEnabled();
   const portalUrl = absoluteUrl("PORTAL_URL", "https://portal.via-int.com");
@@ -82,14 +114,9 @@ export function loadPortalSsoConfig(): PortalSsoConfig {
   const audience = process.env["PORTAL_SSO_AUDIENCE"]?.trim() || "via-hr";
   const appSlug = process.env["PORTAL_APP_SLUG"]?.trim() || "via-hr";
   const algorithm = process.env["PORTAL_SSO_ALGORITHM"]?.trim() || "HS256";
-  const allowedEmailDomain = (
-    process.env["ALLOWED_EMAIL_DOMAIN"]?.trim() || "via-int.com"
-  ).toLowerCase();
+  const allowedEmailDomain = resolveAllowedEmailDomain();
 
   if (algorithm !== "HS256") throw new Error("PORTAL_SSO_ALGORITHM must be HS256.");
-  if (!/^[a-z0-9.-]+$/.test(allowedEmailDomain) || allowedEmailDomain.includes("..")) {
-    throw new Error("ALLOWED_EMAIL_DOMAIN is invalid.");
-  }
   if (
     portalUrl.protocol !== "https:" ||
     (appOrigin.protocol !== "https:" && !isExplicitlyAllowedLoopback(appOrigin))
