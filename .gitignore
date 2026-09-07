@@ -24,6 +24,10 @@ test-leave.ts
 test-results/
 playwright-report/
 
+# Local deployment image archives
+via-hr-*.tar
+via-hr-*.tar.gz
+
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars
