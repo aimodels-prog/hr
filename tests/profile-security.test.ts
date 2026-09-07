@@ -376,6 +376,11 @@ test("Core HR raw repositories reject page-level actors and scoped reads respect
 
   const directory = service.getDirectoryEmployees(employee);
   assert.ok(directory.length > 1, "the work directory remains available to employees");
+  assert.equal(
+    directory.find((item) => item.id === "employee-omar")?.phone,
+    "+968 9900 1003",
+    "a colleague's contact phone remains available in the company directory",
+  );
   assert.ok(
     directory.every(
       (item) =>

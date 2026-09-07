@@ -1,0 +1,1 @@
+ALTER TABLE "candidate_preparation_runs" ADD COLUMN "ranking_model" text;

@@ -2,7 +2,6 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { useCurrentUser } from "@/lib/auth";
-import { getApplicationDataServices } from "@/lib/data/application-data";
 import { getMasterDataRepository, getProjectRepository } from "@/lib/data/master-data";
 import { OvertimeService } from "@/lib/data/overtime-service";
 import type { OvertimeCompensationType } from "@/lib/data/overtime-types";
@@ -65,21 +64,8 @@ export function OvertimeOnBehalfDialog({
 
   const submit = async () => {
     const context = currentUser.getActorContext();
-    let uploadedFileId: string | undefined;
     setSaving(true);
     try {
-      if (evidence) {
-        const saved = await getApplicationDataServices().files.save(
-          {
-            blob: evidence,
-            name: evidence.name,
-            mimeType: evidence.type,
-            owner: { entityType: "overtime-claim", entityId: employeeId },
-          },
-          context,
-        );
-        uploadedFileId = saved.id;
-      }
       await new OvertimeService().submitClaim(
         {
           employeeId,
@@ -91,21 +77,14 @@ export function OvertimeOnBehalfDialog({
           locationCodeId,
           reason,
           compensationType,
-          ...(uploadedFileId ? { evidenceFileId: uploadedFileId } : {}),
         },
         context,
+        evidence ?? undefined,
       );
-      uploadedFileId = undefined;
       onSuccess();
       onOpenChange(false);
       toast.success("Overtime claim recorded and sent for approval.");
     } catch (error) {
-      if (uploadedFileId) {
-        await getApplicationDataServices().files.delete(uploadedFileId, {
-          ...context,
-          reason: "On-behalf overtime submission failed",
-        });
-      }
       toast.error(error instanceof Error ? error.message : "The claim could not be recorded.");
     } finally {
       setSaving(false);

@@ -241,7 +241,7 @@ export class CandidatePoolService {
     input: {
       file: Blob;
       fileName: string;
-      source: CandidateCvSource;
+      source: Exclude<CandidateCvSource, "Internal Application">;
       receivedAt: string;
       consentStatus: CandidateConsentStatus;
       vacancyId?: string;
@@ -290,6 +290,7 @@ export class CandidatePoolService {
             receivedAt: receivedAt.toISOString(),
             processingStatus: "Extracting",
             extractionMethod: "Local Preview",
+            documentRoute: "Unknown",
             extractedFields: {},
             fieldConfidence: {},
             extractionWarnings: [],
@@ -409,6 +410,7 @@ export class CandidatePoolService {
         receivedAt: input.application.createdAt,
         processingStatus: "Uploaded",
         extractionMethod: "Candidate Provided",
+        documentRoute: "Unknown",
         extractedFields: {
           firstName: input.candidate.firstName,
           lastName: input.candidate.lastName,

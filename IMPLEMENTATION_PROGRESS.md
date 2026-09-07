@@ -1869,3 +1869,75 @@ This checklist tracks the prompts in `IMPLEMENTATION_PROMPT_PLAYBOOK.md`. A step
   - Configuration tests cover normalization, deduplication and rejection of an external address.
   - The PostgreSQL Portal-session integration test covers first-login assignment, both effective
     roles and creation of the Critical audit event.
+
+### Step 55 - Employee opportunities, internal applications and referrals
+
+- Status: Complete in the repository on 2026-09-06. Migration 0026 must be applied as part of the
+  next immutable deployment before the feature is enabled on Contabo.
+- Decisions and behaviour:
+  - Every active employee, including people currently using HR, Accounts, Line Manager or Super
+    Admin responsibilities, can open one staff Opportunities area and use their employee identity.
+  - The dashboard provides direct actions to apply for an open VIA position or recommend someone.
+    The sidebar provides a permanent Opportunities destination with separate Open Positions, My
+    Applications and My Referrals views.
+  - Internal applications use the employee's verified VIA record, require a role-specific CV,
+    availability and every configured screening answer, and create a separate Candidate Pool
+    application without exposing recruitment scores or HR notes to the employee.
+  - Employee recommendations capture the recommender from the verified employee account, accept a
+    vacancy or future Candidate Pool consideration, require the candidate's details and original CV,
+    and record how the employee knows the person. Staff see only their own referrals.
+  - PostgreSQL is authoritative. Candidate, application, recommendation, CV metadata, processing
+    job, notifications and audit events are committed through server-controlled transactions.
+    Failed transactions remove the newly uploaded object so files are not orphaned.
+  - CVs use the existing encrypted object-storage path and durable preparation worker. Recommended
+    candidates are pinned into that vacancy's assessment group on the server, while their objective
+    score remains unchanged.
+  - HR and Super Admin receive workflow notifications and can see the employee recommender on the
+    normal Candidate Pool record. An active HR owner is assigned automatically.
+  - HR controls, per vacancy, whether staff applications and employee recommendations are accepted.
+    Changes use optimistic concurrency and immutable audit history.
+- Verification:
+  - Migration 0026 applied successfully from zero to an isolated PostgreSQL database.
+  - The live PostgreSQL and object-storage transaction journey passed for internal application,
+    referral, employee ownership, recommendation pinning, CV source and audit history (1/1).
+  - The fresh-database browser journey passed from the employee dashboard through an internal
+    application and a future-opportunity recommendation, including both employee history views
+    (1/1).
+  - The environment-independent suite passed: 317 tests, 291 passed, 26 expected infrastructure
+    skips and zero failures. TypeScript, ESLint and the production build passed.
+
+### Step 56 - Employee work setup, HR document completion and organisation directory
+
+- Status: Complete in the repository on 2026-09-06. The changes require the normal immutable
+  deployment before they are visible on Contabo.
+- Decisions and behaviour:
+  - Employee setup captures whether the person is a new or existing employee, VIA start date,
+    supervisor VIA email, department, position, work location, employment type and whether a visa
+    or work permit is needed. A requested correction reopens the employee's previously supplied
+    values instead of presenting a blank form.
+  - Employees upload their visa or work-permit file but do not complete official document numbers,
+    authority, country or validity dates. HR enters and confirms those fields during verification;
+    incomplete official records cannot be verified.
+  - HR can add a missing department, position, work location or employment type directly inside
+    the employment editor. The PostgreSQL-backed option is selected immediately. HR cannot use this
+    shortcut to administer unrelated system settings, and edit/archive authority remains controlled.
+  - The Employee Directory is a company contact directory, not a copy of the HR employee register.
+    Staff can find colleagues by name, VIA email, position, department or location and see only VIA
+    email, contact phone, position, department, work location and supervisor. HR-only, identity,
+    payroll, family and other personal records are excluded.
+  - The Organisation Chart shows the company structure to staff without opening colleagues' HR
+    profiles. HR and Super Admin can arrange reporting lines directly on the chart, including the
+    CEO or highest country leader at the top. Updates are validated for self-reporting and cycles,
+    recorded with a reason and reporting-line history, and committed in PostgreSQL.
+  - Production Sign out now submits outside the closing account menu so the HR session is reliably
+    revoked before returning the browser to VIA Portal. VIA Portal remains the only login authority.
+- Verification:
+  - Focused SSO and Core HR security coverage passed (27/27), including local-session revocation and
+    colleague-directory privacy.
+  - Fresh PostgreSQL employee tests passed (2/2), including employee setup, HR visa verification,
+    top-level organisation placement and reporting-line restoration.
+  - The fresh PostgreSQL browser journey passed inline master-data creation, organisation-chart
+    editing, Directory, Files, Onboarding and Offboarding (1/1).
+  - The full environment-independent suite passed: 317 tests, 291 passed, 26 expected
+    infrastructure skips and zero failures. TypeScript, ESLint, production build, Git whitespace
+    validation and dependency audit passed; the dependency audit reported zero vulnerabilities.

@@ -88,9 +88,11 @@ test("the ClamAV stream protocol accepts clean files and refuses detected malwar
 
 test("request protection enforces body limits, rate limits and security headers", () => {
   const priorMutationLimit = process.env["VIA_HR_MUTATION_RATE_LIMIT"];
+  const priorAppOrigin = process.env["APP_ORIGIN"];
   try {
     resetRequestSecurityForTests();
     process.env["VIA_HR_MUTATION_RATE_LIMIT"] = "2";
+    process.env["APP_ORIGIN"] = "https://hr.example.test";
     const oversized = enforceRequestSecurity(
       new Request("https://hr.example.test/action", {
         method: "POST",
@@ -100,7 +102,10 @@ test("request protection enforces body limits, rate limits and security headers"
     );
     assert.equal(oversized?.status, 413);
 
-    const request = new Request("https://hr.example.test/action", { method: "POST" });
+    const request = new Request("https://hr.example.test/action", {
+      method: "POST",
+      headers: { origin: "https://hr.example.test" },
+    });
     assert.equal(enforceRequestSecurity(request, 2_000), null);
     assert.equal(enforceRequestSecurity(request, 2_001), null);
     assert.equal(enforceRequestSecurity(request, 2_002)?.status, 429);
@@ -113,6 +118,8 @@ test("request protection enforces body limits, rate limits and security headers"
     resetRequestSecurityForTests();
     if (priorMutationLimit === undefined) delete process.env["VIA_HR_MUTATION_RATE_LIMIT"];
     else process.env["VIA_HR_MUTATION_RATE_LIMIT"] = priorMutationLimit;
+    if (priorAppOrigin === undefined) delete process.env["APP_ORIGIN"];
+    else process.env["APP_ORIGIN"] = priorAppOrigin;
   }
 });
 

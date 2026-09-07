@@ -307,6 +307,10 @@ export async function listRecruitmentReadSnapshot(
       ...(row.screeningDecision
         ? { screeningDecision: row.screeningDecision as CandidateApplication["screeningDecision"] }
         : {}),
+      ...(row.internalApplicantEmployeeId
+        ? { internalApplicantEmployeeId: row.internalApplicantEmployeeId }
+        : {}),
+      ...(row.submittedByEmployeeId ? { submittedByEmployeeId: row.submittedByEmployeeId } : {}),
     })),
     candidateCvRecords: cvRows.map((row) => ({
       ...base(row),
@@ -319,6 +323,7 @@ export async function listRecruitmentReadSnapshot(
       receivedAt: row.receivedAt,
       processingStatus: row.processingStatus,
       extractionMethod: row.extractionMethod as CandidateCvRecord["extractionMethod"],
+      documentRoute: row.documentRoute as CandidateCvRecord["documentRoute"],
       extractedFields: row.extractedFields as CandidateCvRecord["extractedFields"],
       fieldConfidence: row.fieldConfidence as CandidateCvRecord["fieldConfidence"],
       extractionWarnings: row.extractionWarnings,
@@ -343,6 +348,7 @@ export async function listRecruitmentReadSnapshot(
       status: row.status as CandidatePreparationRun["status"],
       documentRoute: row.documentRoute as CandidatePreparationRun["documentRoute"],
       preparationMethod: row.preparationMethod as CandidatePreparationRun["preparationMethod"],
+      ...(row.rankingModel ? { rankingModel: row.rankingModel } : {}),
       extractedProfile: row.extractedProfile as CandidatePreparationRun["extractedProfile"],
       fieldConfidence: row.fieldConfidence as CandidatePreparationRun["fieldConfidence"],
       ...(row.preliminaryScore !== null ? { preliminaryScore: Number(row.preliminaryScore) } : {}),
@@ -453,6 +459,9 @@ export async function listRecruitmentReadSnapshot(
       ...(row.commercialTerms ? { commercialTerms: row.commercialTerms } : {}),
       sourceOutcome: row.sourceOutcome,
       ...(row.employeeId ? { employeeId: row.employeeId } : {}),
+      ...(row.recommenderEmployeeId ? { recommenderEmployeeId: row.recommenderEmployeeId } : {}),
+      candidateAware: row.candidateAware,
+      ...(row.yearsKnown !== null ? { yearsKnown: row.yearsKnown } : {}),
     })),
     shortlistSnapshots: shortlistRows.map((row) => ({
       ...base(row),

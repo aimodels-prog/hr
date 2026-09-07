@@ -14,11 +14,11 @@ import {
   WalletCards,
   Clock3,
   Users,
+  HeartHandshake,
   type LucideIcon,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { useCurrentUser } from "@/lib/auth";
 import { EmployeeDashboard } from "@/components/dashboards/employee-dashboard";
 import { ManagerDashboard } from "@/components/dashboards/manager-dashboard";
@@ -42,15 +42,8 @@ export const Route = createFileRoute("/staff/")({
 });
 
 function Dashboard() {
-  const {
-    displayName,
-    activeRole,
-    can: checkCan,
-    currentEmployee,
-    id: currentUserId,
-  } = useCurrentUser();
-  const canManageRecruitment = checkCan("recruitment:manage_vacancies");
-  const quickActions: Array<{
+  const { displayName, activeRole, currentEmployee, id: currentUserId } = useCurrentUser();
+  const roleQuickActions: Array<{
     title: string;
     description: string;
     to: string;
@@ -67,20 +60,6 @@ function Dashboard() {
             tone: "bg-primary/10 text-primary",
           },
           {
-            title: "Import candidates",
-            description: "Review an HR spreadsheet",
-            to: "/staff/candidates/import",
-            icon: Upload,
-            tone: "bg-info/10 text-info",
-          },
-          {
-            title: "Interview centre",
-            description: "Schedules and scorecards",
-            to: "/staff/interviews",
-            icon: CalendarPlus,
-            tone: "bg-success/10 text-success",
-          },
-          {
             title: "Create employee",
             description: "Add a staff record",
             to: "/staff/employees/new",
@@ -88,9 +67,9 @@ function Dashboard() {
             tone: "bg-warning/10 text-warning",
           },
           {
-            title: "Import employees",
-            description: "Bring in a batch from a spreadsheet",
-            to: "/staff/employees/import",
+            title: "Add a candidate CV",
+            description: "Save a CV in the Candidate Pool",
+            to: "/staff/candidates/intake",
             icon: Upload,
             tone: "bg-info/10 text-info",
           },
@@ -100,13 +79,6 @@ function Dashboard() {
             to: "/staff/onboarding",
             icon: UserCheck,
             tone: "bg-primary/10 text-primary",
-          },
-          {
-            title: "Document expiry",
-            description: "Review compliance risk",
-            to: "/staff/document-expiry",
-            icon: ShieldCheck,
-            tone: "bg-destructive/10 text-destructive",
           },
         ]
       : activeRole === "Line Manager"
@@ -247,6 +219,24 @@ function Dashboard() {
                 },
               ];
 
+  const quickActions = [
+    ...roleQuickActions,
+    {
+      title: "Apply for a position",
+      description: "Explore open VIA opportunities",
+      to: "/staff/opportunities?action=apply",
+      icon: Briefcase,
+      tone: "bg-primary/10 text-primary",
+    },
+    {
+      title: "Recommend someone",
+      description: "Send a candidate and CV to HR",
+      to: "/staff/opportunities?action=refer",
+      icon: HeartHandshake,
+      tone: "bg-success/10 text-success",
+    },
+  ];
+
   return (
     <div className="mx-auto max-w-7xl space-y-6 pb-10">
       {/* Header Banner */}
@@ -271,14 +261,61 @@ function Dashboard() {
             </p>
           )}
         </div>
-        {activeRole === "HR" && canManageRecruitment && (
-          <Button asChild variant="outline" className="w-full justify-start md:w-auto">
-            <Link to="/staff/vacancies/new">
-              <FilePlus2 className="mr-2 h-4 w-4" /> New Vacancy
-            </Link>
-          </Button>
-        )}
       </div>
+
+      {activeRole === "HR" && currentEmployee && (
+        <section aria-labelledby="my-day-heading">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h2 id="my-day-heading" className="text-sm font-bold">
+                My day
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                Your own attendance, leave, timesheet and assigned work
+              </p>
+            </div>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            {[
+              {
+                title: "My attendance",
+                to: "/staff/me/attendance",
+                icon: Clock3,
+              },
+              {
+                title: "My leave",
+                to: "/staff/me/leave-balances",
+                icon: CalendarPlus,
+              },
+              {
+                title: "My timesheet",
+                to: "/staff/me/timesheets",
+                icon: ClipboardCheck,
+              },
+              {
+                title: "My tasks",
+                to: "/staff/my-tasks",
+                icon: UserCheck,
+              },
+            ].map((item) => {
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.title}
+                  to={item.to}
+                  className="group flex min-h-12 items-center gap-3 rounded-xl border border-border/80 bg-card px-3 py-2.5 shadow-sm transition-colors hover:border-primary/30 hover:bg-muted/30"
+                >
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Icon className="h-4 w-4" />
+                  </span>
+                  <span className="text-sm font-semibold">{item.title}</span>
+                  <ArrowRight className="ml-auto h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                </Link>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {(activeRole === "Employee" || activeRole === "IT") && currentEmployee && (
         <EmployeeDashboard employee={currentEmployee} userId={currentUserId} />

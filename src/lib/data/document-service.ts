@@ -492,7 +492,19 @@ export class DocumentService {
     this.documentRepo.update(documentId, { status: "Valid" }, actorContext);
   }
 
-  async verifyDocumentAsync(documentId: string, actorContext: ActorContext): Promise<void> {
+  async verifyDocumentAsync(
+    documentId: string,
+    actorContext: ActorContext,
+    details?: {
+      documentNumber?: string;
+      issueDate?: string;
+      expiryDate?: string;
+      issuingAuthority?: string;
+      issuingCountry?: string;
+      notes?: string;
+      visibility?: "Public" | "Restricted";
+    },
+  ): Promise<void> {
     const { decideEmployeeDocumentFn } =
       await import("../server-functions/core-hr-lifecycle.server.ts");
     await decideEmployeeDocumentFn({
@@ -500,6 +512,7 @@ export class DocumentService {
         actor: await this.serverActor(actorContext),
         documentId,
         decision: "verify",
+        ...details,
       },
     });
     await this.hydrateCompatibilityCache(actorContext);

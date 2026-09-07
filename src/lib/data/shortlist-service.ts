@@ -5,7 +5,6 @@ import type { ActorContext, CandidateScoreRun, ShortlistSnapshot } from "./types
 import { CandidateService } from "./candidate-service.ts";
 
 const MIN_SHORTLIST_SIZE = 1;
-const MAX_SHORTLIST_SIZE = 10;
 const INELIGIBLE_STAGES = ["Hired", "Offer", "Withdrawn", "Archived"];
 
 function hasShortlistManageRole(actorContext: ActorContext): boolean {
@@ -33,13 +32,12 @@ function validateShortlistSelection(
     | "overrides"
   >,
 ): void {
-  if (
-    !Number.isInteger(snapshot.targetSize) ||
-    snapshot.targetSize < MIN_SHORTLIST_SIZE ||
-    snapshot.targetSize > MAX_SHORTLIST_SIZE
-  ) {
+  if (!Number.isInteger(snapshot.targetSize) || snapshot.targetSize < MIN_SHORTLIST_SIZE) {
+    throw new Error("The shortlist must contain at least one candidate.");
+  }
+  if (snapshot.targetSize > snapshot.rankedCandidateIds.length) {
     throw new Error(
-      `The shortlist size must be between ${MIN_SHORTLIST_SIZE} and ${MAX_SHORTLIST_SIZE}.`,
+      `Only ${snapshot.rankedCandidateIds.length} ranked candidates are available for this shortlist.`,
     );
   }
   const selectedIds = new Set(snapshot.selectedCandidateIds);
@@ -185,13 +183,12 @@ export class ShortlistService {
       throw new Error("Unauthorized to manage shortlists.");
     }
     validateOverrideReasons(payload.overrides);
-    if (
-      !Number.isInteger(payload.targetSize) ||
-      payload.targetSize < MIN_SHORTLIST_SIZE ||
-      payload.targetSize > MAX_SHORTLIST_SIZE
-    ) {
+    if (!Number.isInteger(payload.targetSize) || payload.targetSize < MIN_SHORTLIST_SIZE) {
+      throw new Error("The shortlist must contain at least one candidate.");
+    }
+    if (payload.targetSize > payload.rankedCandidateIds.length) {
       throw new Error(
-        `The shortlist size must be between ${MIN_SHORTLIST_SIZE} and ${MAX_SHORTLIST_SIZE}.`,
+        `Only ${payload.rankedCandidateIds.length} ranked candidates are available for this shortlist.`,
       );
     }
 

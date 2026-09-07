@@ -106,6 +106,17 @@ export function DevRoleSwitcher() {
     [refreshRecords],
   );
 
+  const handleSignOut = useCallback(() => {
+    // Submit outside the dropdown tree. Closing a menu can unmount an inline form before some
+    // browsers complete its default submission, which made Sign out appear to do nothing.
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = "/auth/logout";
+    form.style.display = "none";
+    document.body.appendChild(form);
+    form.submit();
+  }, []);
+
   return (
     <div className="flex items-center">
       <DropdownMenu open={open} onOpenChange={handleOpenChange}>
@@ -241,11 +252,17 @@ export function DevRoleSwitcher() {
               Development role preview is active.
             </p>
           ) : (
-            <form action="/auth/logout" method="post" className="px-1 py-1">
-              <Button type="submit" variant="ghost" size="sm" className="w-full justify-start">
+            <div className="px-1 py-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="w-full justify-start"
+                onClick={handleSignOut}
+              >
                 Sign out of VIA HR
               </Button>
-            </form>
+            </div>
           )}
         </DropdownMenuContent>
       </DropdownMenu>

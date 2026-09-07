@@ -22,7 +22,6 @@ import type {
 import { SYSTEM_ACTOR } from "./types.ts";
 
 const MIN_ASSESSMENT_SIZE = 1;
-const MAX_ASSESSMENT_SIZE = 10;
 
 function isHr(context: ActorContext): boolean {
   return (
@@ -684,14 +683,8 @@ export class CandidatePreparationService {
     context: ActorContext,
   ): CandidateAssessmentBatch {
     assertHr(context, "assessment_batch_create_denied", vacancyId);
-    if (
-      !Number.isInteger(targetSize) ||
-      targetSize < MIN_ASSESSMENT_SIZE ||
-      targetSize > MAX_ASSESSMENT_SIZE
-    ) {
-      throw new Error(
-        `Choose between ${MIN_ASSESSMENT_SIZE} and ${MAX_ASSESSMENT_SIZE} candidates.`,
-      );
+    if (!Number.isInteger(targetSize) || targetSize < MIN_ASSESSMENT_SIZE) {
+      throw new Error("Choose at least one candidate.");
     }
     const vacancy = this.vacancyRepo.getById(vacancyId);
     if (!vacancy) throw new Error("Vacancy not found.");

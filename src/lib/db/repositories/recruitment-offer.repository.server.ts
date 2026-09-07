@@ -1033,6 +1033,43 @@ export async function transitionJobOfferInDatabase(
   });
 }
 
+/**
+ * Repairs an accepted legacy offer that predates automatic offer conversion.
+ * New offers are converted by transitionJobOfferInDatabase when they become Accepted; this
+ * entry point exists only so the recovery screen cannot recreate that workflow in browser state.
+ */
+export async function convertAcceptedJobOfferInDatabase(
+  organisationId: string,
+  offerId: string,
+  actor: AuditActorContext,
+): Promise<{ employeeId: string; userId: string; onboardingCaseId: string }> {
+  recruiter(actor);
+  await ensureCoreHrLifecycleTemplates(organisationId, actor);
+  const db = getDatabaseClient();
+  return db.transaction(async (tx) => {
+    const [offer] = await tx
+      .select()
+      .from(jobOffers)
+      .where(and(eq(jobOffers.organisationId, organisationId), eq(jobOffers.id, offerId)))
+      .for("update")
+      .limit(1);
+    if (!offer) throw new Error("Offer not found.");
+    if (offer.status !== "Accepted")
+      throw new Error("Only an accepted offer can be converted to an employee.");
+    const conversion = await convertAcceptedOffer(tx, organisationId, offer, actor);
+    await audit(tx, organisationId, actor, {
+      action: "convert-accepted-offer",
+      entityType: "offer",
+      entityId: offer.id,
+      reason: "Completed employee creation for a previously accepted offer",
+      before: { convertedToEmployeeId: offer.convertedToEmployeeId },
+      after: conversion,
+      risk: "Critical",
+    });
+    return conversion;
+  });
+}
+
 export async function generateJobOfferDocumentInDatabase(
   organisationId: string,
   offerId: string,

@@ -190,7 +190,9 @@ export const configureAttendanceOfficeFn = createServerFn({ method: "POST" })
 const Correction = z
   .object({
     actor: Actor,
-    attendanceRecordId: z.string().uuid(),
+    attendanceRecordId: z.string().uuid().optional(),
+    employeeId: z.string().uuid().optional(),
+    date: z.string().date().optional(),
     proposedClockIn: z
       .string()
       .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
@@ -202,7 +204,11 @@ const Correction = z
     explanation: z.string().trim().min(5).max(2000),
     evidenceFileId: z.string().uuid().optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) => Boolean(value.attendanceRecordId) !== Boolean(value.employeeId && value.date),
+    "Provide either an attendance record or the employee and missing date.",
+  );
 export const requestAttendanceCorrectionFn = createServerFn({ method: "POST" })
   .validator((input) => Correction.parse(input))
   .handler(async ({ data }) => {
@@ -210,7 +216,9 @@ export const requestAttendanceCorrectionFn = createServerFn({ method: "POST" })
     return requestAttendanceCorrectionInDatabase(
       v.organisationId,
       {
-        attendanceRecordId: data.attendanceRecordId,
+        ...(data.attendanceRecordId ? { attendanceRecordId: data.attendanceRecordId } : {}),
+        ...(data.employeeId ? { employeeId: data.employeeId } : {}),
+        ...(data.date ? { date: data.date } : {}),
         explanation: data.explanation,
         ...(data.proposedClockIn ? { proposedClockIn: data.proposedClockIn } : {}),
         ...(data.proposedClockOut ? { proposedClockOut: data.proposedClockOut } : {}),

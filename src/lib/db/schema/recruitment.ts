@@ -87,6 +87,8 @@ export const vacancies = pgTable(
     mandatoryCriteria: jsonb("mandatory_criteria").$type<string[]>(),
     notes: text("notes").notNull().default(""),
     screeningQuestions: jsonb("screening_questions").$type<string[]>().notNull().default([]),
+    acceptsInternalApplications: boolean("accepts_internal_applications").notNull().default(true),
+    acceptsEmployeeReferrals: boolean("accepts_employee_referrals").notNull().default(true),
   },
   (table) => [
     index("vacancies_org_status_idx").on(table.organisationId, table.status),
@@ -331,6 +333,13 @@ export const candidateApplications = pgTable(
     ),
     preparationStatus: text("preparation_status"),
     screeningDecision: text("screening_decision"),
+    internalApplicantEmployeeId: uuid("internal_applicant_employee_id").references(
+      () => employees.id,
+      { onDelete: "restrict" },
+    ),
+    submittedByEmployeeId: uuid("submitted_by_employee_id").references(() => employees.id, {
+      onDelete: "restrict",
+    }),
   },
   (table) => [
     uniqueIndex("candidate_applications_org_reference_unique").on(
@@ -340,6 +349,14 @@ export const candidateApplications = pgTable(
     uniqueIndex("cand_app_cand_vac_unique_idx").on(table.candidateId, table.vacancyId),
     index("candidate_applications_org_status_idx").on(table.organisationId, table.status),
     index("candidate_applications_vacancy_idx").on(table.vacancyId),
+    index("candidate_applications_internal_employee_idx").on(
+      table.organisationId,
+      table.internalApplicantEmployeeId,
+    ),
+    index("candidate_applications_submitter_idx").on(
+      table.organisationId,
+      table.submittedByEmployeeId,
+    ),
     check("candidate_applications_reference_not_blank", sql`btrim(${table.referenceId}) <> ''`),
     check("candidate_applications_record_version_positive", sql`${table.recordVersion} >= 1`),
   ],
@@ -354,6 +371,7 @@ export const candidateCvSource = pgEnum("candidate_cv_source", [
   "Walk-in",
   "HR Upload",
   "Other",
+  "Internal Application",
 ]);
 
 export const cvProcessingStatus = pgEnum("cv_processing_status", [
@@ -399,8 +417,23 @@ export const candidateRecommendations = pgTable(
     commercialTerms: text("commercial_terms"),
     sourceOutcome: text("source_outcome").notNull(),
     employeeId: uuid("employee_id").references(() => employees.id, { onDelete: "restrict" }),
+    recommenderEmployeeId: uuid("recommender_employee_id").references(() => employees.id, {
+      onDelete: "restrict",
+    }),
+    candidateAware: boolean("candidate_aware").notNull().default(false),
+    yearsKnown: integer("years_known"),
   },
-  (table) => [index("candidate_recommendations_org_idx").on(table.organisationId)],
+  (table) => [
+    index("candidate_recommendations_org_idx").on(table.organisationId),
+    index("candidate_recommendations_employee_idx").on(
+      table.organisationId,
+      table.recommenderEmployeeId,
+    ),
+    check(
+      "candidate_recommendations_years_known_non_negative",
+      sql`${table.yearsKnown} IS NULL OR ${table.yearsKnown} >= 0`,
+    ),
+  ],
 );
 
 export const candidateCvRecords = pgTable(
@@ -423,6 +456,7 @@ export const candidateCvRecords = pgTable(
     receivedAt: timestamp("received_at", { withTimezone: true, mode: "string" }).notNull(),
     processingStatus: cvProcessingStatus("processing_status").notNull(),
     extractionMethod: text("extraction_method").notNull(),
+    documentRoute: text("document_route").notNull().default("Unknown"),
     extractedFields: jsonb("extracted_fields").notNull().default({}),
     fieldConfidence: jsonb("field_confidence").notNull().default({}),
     extractionWarnings: jsonb("extraction_warnings").$type<string[]>().notNull().default([]),
@@ -438,6 +472,43 @@ export const candidateCvRecords = pgTable(
     }),
   },
   (table) => [index("candidate_cv_records_org_idx").on(table.organisationId)],
+);
+
+/**
+ * A reusable, non-generative extraction of a unique CV file. The original document remains in
+ * encrypted object storage; this cache prevents OCR and parsing the same bytes more than once.
+ */
+export const candidateCvExtractions = pgTable(
+  "candidate_cv_extractions",
+  {
+    ...mutableRecordColumns,
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "restrict" }),
+    checksum: text("checksum").notNull(),
+    processorVersion: text("processor_version").notNull(),
+    documentRoute: text("document_route").notNull(),
+    extractionMethod: text("extraction_method").notNull(),
+    /** AES-256-GCM envelope of the prepared CV text used for future vacancy comparisons. */
+    semanticTextEncrypted: text("semantic_text_encrypted"),
+    extractedFields: jsonb("extracted_fields").notNull().default({}),
+    fieldConfidence: jsonb("field_confidence").notNull().default({}),
+    evidence: jsonb("evidence").$type<string[]>().notNull().default([]),
+    warnings: jsonb("warnings").$type<string[]>().notNull().default([]),
+    textQuality: numeric("text_quality").notNull(),
+  },
+  (table) => [
+    uniqueIndex("candidate_cv_extractions_checksum_version_unique").on(
+      table.organisationId,
+      table.checksum,
+      table.processorVersion,
+    ),
+    index("candidate_cv_extractions_org_idx").on(table.organisationId),
+    check(
+      "candidate_cv_extractions_text_quality_range",
+      sql`${table.textQuality} >= 0 AND ${table.textQuality} <= 1`,
+    ),
+  ],
 );
 
 export const candidatePreparationRuns = pgTable(
@@ -467,6 +538,7 @@ export const candidatePreparationRuns = pgTable(
     status: text("status").notNull(),
     documentRoute: text("document_route").notNull(),
     preparationMethod: text("preparation_method").notNull(),
+    rankingModel: text("ranking_model"),
     extractedProfile: jsonb("extracted_profile").notNull().default({}),
     fieldConfidence: jsonb("field_confidence").notNull().default({}),
     preliminaryScore: numeric("preliminary_score"),
@@ -522,10 +594,7 @@ export const candidateAssessmentBatches = pgTable(
   },
   (table) => [
     index("candidate_assessment_batches_org_idx").on(table.organisationId),
-    check(
-      "candidate_assessment_batches_target_size",
-      sql`${table.targetSize} >= 1 AND ${table.targetSize} <= 10`,
-    ),
+    check("candidate_assessment_batches_target_size", sql`${table.targetSize} >= 1`),
   ],
 );
 
@@ -693,10 +762,7 @@ export const shortlistSnapshots = pgTable(
   },
   (table) => [
     index("shortlist_snapshots_org_idx").on(table.organisationId),
-    check(
-      "shortlist_snapshots_size_check",
-      sql`${table.targetSize} >= 1 AND ${table.targetSize} <= 10`,
-    ),
+    check("shortlist_snapshots_size_check", sql`${table.targetSize} >= 1`),
   ],
 );
 

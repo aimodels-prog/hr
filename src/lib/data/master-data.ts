@@ -121,7 +121,7 @@ export class MasterDataService {
     input: NewRecord<MasterRecord>,
     context: ActorContext,
   ): Promise<MasterRecord> {
-    this.requireAdministrator(context, `create a ${collection} record`);
+    this.requireCreator(collection, context);
     this.validateMasterRecord(collection, input);
     if (!usesBrowserServerFunctions()) {
       this.requireUnique(collection, input.name, input.code);
@@ -399,6 +399,34 @@ export class MasterDataService {
       riskLevel: "High",
     });
     throw new Error(`Only a Super Admin can ${action}.`);
+  }
+
+  private requireCreator(collection: MasterDataCollection, context: ActorContext): void {
+    const hrManagedCollections: MasterDataCollection[] = [
+      "departments",
+      "positions",
+      "locations",
+      "employmentTypes",
+    ];
+    if (
+      context.actor.activeRole === "Super Admin" ||
+      (context.actor.activeRole === "HR" && hrManagedCollections.includes(collection))
+    ) {
+      return;
+    }
+    const message = hrManagedCollections.includes(collection)
+      ? "Only HR or a Super Admin can add this option."
+      : "Only a Super Admin can add this setting.";
+    getApplicationDataServices().audit.record({
+      context,
+      action: "access-denied",
+      module: "settings",
+      entityType: collection,
+      entityId: "create",
+      reason: message,
+      riskLevel: "High",
+    });
+    throw new Error(message);
   }
 
   private validateMasterRecord(

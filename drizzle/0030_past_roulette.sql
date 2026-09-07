@@ -1,0 +1,1 @@
+ALTER TABLE "candidate_cv_extractions" ADD COLUMN "semantic_text_encrypted" text;

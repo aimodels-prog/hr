@@ -196,6 +196,8 @@ export class VacancyService {
           mandatoryCriteria: data.mandatoryCriteria ?? [],
           notes: data.notes ?? "",
           screeningQuestions: data.screeningQuestions ?? [],
+          acceptsInternalApplications: data.acceptsInternalApplications ?? true,
+          acceptsEmployeeReferrals: data.acceptsEmployeeReferrals ?? true,
         },
       },
     });

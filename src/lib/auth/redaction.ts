@@ -71,12 +71,11 @@ export function redactEmployee(
 
   const safe = { ...employee };
 
-  // Personal-file data is never part of the general employee directory. HR can administer it
-  // and the employee can see their own record; Accounts and supervisors receive only the
-  // operational fields needed for their work.
+  // Personal-file data is never part of the general employee directory. The employee's contact
+  // phone remains available as an internal colleague contact; home address, personal email and
+  // the rest of the HR file remain private.
   if (!isSelf && !isHR) {
     safe.personalEmail = undefined;
-    safe.phone = undefined;
     safe.address = undefined;
     safe.emergencyContacts = [];
     safe.dependants = [];

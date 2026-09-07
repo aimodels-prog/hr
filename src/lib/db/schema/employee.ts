@@ -140,6 +140,7 @@ export const employees = pgTable(
       employmentTypeId: string;
       lineManagerId: string | null;
       lineManagerEmail: string;
+      visaRequired: boolean;
     }>(),
     proposedLineManagerEmail: text("proposed_line_manager_email"),
     workspaceEmail: text("workspace_email"),

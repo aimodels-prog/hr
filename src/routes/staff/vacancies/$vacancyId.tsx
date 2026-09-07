@@ -20,6 +20,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { updateVacancyOpportunitySettingsFn } from "@/lib/server-functions/vacancy.server";
 import {
   Dialog,
   DialogContent,
@@ -106,6 +108,14 @@ function VacancyDetailRoute() {
   );
 
   const [activeTab, setActiveTab] = useState("overview");
+  const [acceptsInternalApplications, setAcceptsInternalApplications] = useState(
+    vacancy.acceptsInternalApplications ?? true,
+  );
+  const [acceptsEmployeeReferrals, setAcceptsEmployeeReferrals] = useState(
+    vacancy.acceptsEmployeeReferrals ?? true,
+  );
+  const [vacancyVersion, setVacancyVersion] = useState(vacancy.recordVersion);
+  const [savingOpportunitySettings, setSavingOpportunitySettings] = useState(false);
   const [transitionDialog, setTransitionDialog] = useState<{
     open: boolean;
     action: string;
@@ -138,12 +148,36 @@ function VacancyDetailRoute() {
   );
   const [assessmentChangeReason, setAssessmentChangeReason] = useState("");
 
+  const saveOpportunitySettings = async () => {
+    const databaseId = vacancy.databaseId ?? vacancy.id;
+    setSavingOpportunitySettings(true);
+    try {
+      const newVersion = await updateVacancyOpportunitySettingsFn({
+        data: {
+          actor: {
+            actorId: context.actor.userId,
+            ...(context.actor.workspaceEmail ? { actorEmail: context.actor.workspaceEmail } : {}),
+            activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+          },
+          vacancyId: databaseId,
+          expectedVersion: vacancyVersion,
+          acceptsInternalApplications,
+          acceptsEmployeeReferrals,
+        },
+      });
+      setVacancyVersion(newVersion);
+      toast.success("Staff opportunity settings saved.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The settings could not be saved.");
+    } finally {
+      setSavingOpportunitySettings(false);
+    }
+  };
+
   // Shortlist State
   const [shortlist, setShortlist] = useState<ShortlistSnapshot | undefined>(initialShortlist);
   const [isShortlistMode, setIsShortlistMode] = useState(false);
-  const [targetSize, setTargetSize] = useState(
-    Math.min(10, Math.max(1, initialShortlist?.targetSize ?? 5)),
-  );
+  const [targetSize, setTargetSize] = useState(Math.max(1, initialShortlist?.targetSize ?? 5));
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<string>>(
     new Set(initialShortlist?.selectedCandidateIds || []),
   );
@@ -617,6 +651,47 @@ function VacancyDetailRoute() {
                     </div>
                   </div>
                 </div>
+                <div className="space-y-3 border-t pt-4">
+                  <div>
+                    <h3 className="font-medium">Staff opportunities</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Choose how this position appears to people already working at VIA.
+                    </p>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="flex items-center justify-between rounded-lg border p-4">
+                      <div>
+                        <Label htmlFor="allow-internal-applications">Staff applications</Label>
+                        <p className="text-xs text-muted-foreground">Allow employees to apply.</p>
+                      </div>
+                      <Switch
+                        id="allow-internal-applications"
+                        checked={acceptsInternalApplications}
+                        onCheckedChange={setAcceptsInternalApplications}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg border p-4">
+                      <div>
+                        <Label htmlFor="allow-employee-referrals">Staff recommendations</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Allow employees to recommend someone.
+                        </p>
+                      </div>
+                      <Switch
+                        id="allow-employee-referrals"
+                        checked={acceptsEmployeeReferrals}
+                        onCheckedChange={setAcceptsEmployeeReferrals}
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={() => void saveOpportunitySettings()}
+                    disabled={savingOpportunitySettings}
+                  >
+                    {savingOpportunitySettings ? "Saving..." : "Save staff access"}
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
@@ -848,13 +923,14 @@ function VacancyDetailRoute() {
                         <Input
                           type="number"
                           min={1}
-                          max={10}
+                          max={Math.max(
+                            1,
+                            new Set(preparationRuns.map((run) => run.candidateId)).size,
+                          )}
                           value={targetSize}
                           onChange={(event) => {
                             const value = Number(event.target.value);
-                            setTargetSize(
-                              Number.isFinite(value) ? Math.min(10, Math.max(1, value)) : 1,
-                            );
+                            setTargetSize(Number.isFinite(value) ? Math.max(1, value) : 1);
                           }}
                         />
                       </div>
@@ -1030,7 +1106,7 @@ function VacancyDetailRoute() {
                           <Slider
                             value={[targetSize]}
                             min={1}
-                            max={10}
+                            max={Math.max(1, assessmentScores.length)}
                             step={1}
                             onValueChange={(v) => setTargetSize(v[0] ?? 5)}
                             className="flex-1"
@@ -1038,11 +1114,11 @@ function VacancyDetailRoute() {
                           <Input
                             type="number"
                             min={1}
-                            max={10}
+                            max={Math.max(1, assessmentScores.length)}
                             value={targetSize}
                             onChange={(e) => {
                               const n = parseInt(e.target.value, 10);
-                              setTargetSize(Number.isFinite(n) ? Math.min(10, Math.max(1, n)) : 1);
+                              setTargetSize(Number.isFinite(n) ? Math.max(1, n) : 1);
                             }}
                             className="w-20 text-center"
                           />

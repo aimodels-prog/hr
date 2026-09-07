@@ -66,9 +66,10 @@ test(
     const sql = postgres(testDatabaseUrl!, { max: 1, prepare: false });
     try {
       const [user] = await sql`
-        SELECT u.id, u.employee_id, u.display_name, u.organisation_id
+        SELECT u.id, u.employee_id, u.display_name, u.organisation_id, u.workspace_email
         FROM users u
-        WHERE u.workspace_email = 'rana.nair@via-int.com' AND u.status = 'Active'
+        WHERE u.status = 'Active'
+        ORDER BY u.created_at
         LIMIT 1
       `;
       assert.ok(user);
@@ -76,7 +77,7 @@ test(
         userId: String(user.id),
         employeeId: String(user.employee_id),
         displayName: String(user.display_name),
-        workspaceEmail: "rana.nair@via-int.com",
+        workspaceEmail: String(user.workspace_email),
         organisationId: String(user.organisation_id),
         roles: ["Employee", "HR"] as const,
         activeRole: "HR" as const,

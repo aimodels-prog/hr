@@ -43,6 +43,8 @@ test(
       "VIA_HR_TEST_DATABASE_URL must identify a visibly test-only database",
     );
     const sql = postgres(testDbUrl!, { max: 1, prepare: false });
+    const priorPortalSso = process.env["PORTAL_SSO_ENABLED"];
+    process.env["PORTAL_SSO_ENABLED"] = "false";
 
     try {
       const orgId = randomUUID();
@@ -366,6 +368,8 @@ test(
       }
     } finally {
       await sql.end();
+      if (priorPortalSso === undefined) delete process.env["PORTAL_SSO_ENABLED"];
+      else process.env["PORTAL_SSO_ENABLED"] = priorPortalSso;
     }
   },
 );

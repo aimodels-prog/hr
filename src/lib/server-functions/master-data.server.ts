@@ -137,11 +137,21 @@ export const createMasterDataFn = createServerFn({ method: "POST" })
     const { verified, actor, error } = await verifyServerActorRole(
       orgId,
       data.actorId,
-      "Super Admin",
+      undefined,
       data.actorEmail,
     );
 
-    if (!verified || !actor) {
+    const hrManagedCollections = new Set([
+      "departments",
+      "positions",
+      "locations",
+      "employmentTypes",
+    ]);
+    const mayCreate =
+      actor?.roles.includes("Super Admin") ||
+      (actor?.roles.includes("HR") && hrManagedCollections.has(data.collection));
+
+    if (!verified || !actor || !mayCreate) {
       const db = getDatabaseClient();
       await db.insert(auditEvents).values({
         organisationId: orgId,
@@ -152,11 +162,27 @@ export const createMasterDataFn = createServerFn({ method: "POST" })
         module: "settings",
         entityType: data.collection,
         entityId: orgId,
-        reason: error ?? "Only a Super Admin can create master data.",
+        reason:
+          error ??
+          (hrManagedCollections.has(data.collection)
+            ? "Only HR or a Super Admin can add this option."
+            : "Only a Super Admin can create this setting."),
         riskLevel: "High",
       });
-      throw new Error(`Unauthorized: ${error ?? "Only a Super Admin can create master data."}`);
+      throw new Error(
+        `Unauthorized: ${
+          error ??
+          (hrManagedCollections.has(data.collection)
+            ? "Only HR or a Super Admin can add this option."
+            : "Only a Super Admin can create this setting.")
+        }`,
+      );
     }
+
+    const authorisedActor = {
+      ...actor,
+      activeRole: actor.roles.includes("Super Admin") ? ("Super Admin" as const) : ("HR" as const),
+    };
 
     const { name, code, date } = data.input;
 
@@ -193,7 +219,7 @@ export const createMasterDataFn = createServerFn({ method: "POST" })
     );
     if (duplicate) throw new Error("A record with the same name or code already exists.");
 
-    return createCollectionRecord(orgId, data.collection, data.input, actor);
+    return createCollectionRecord(orgId, data.collection, data.input, authorisedActor);
   });
 
 export const updateMasterDataFn = createServerFn({ method: "POST" })

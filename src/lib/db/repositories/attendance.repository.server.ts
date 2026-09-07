@@ -1,13 +1,14 @@
 import "@tanstack/react-start/server-only";
 
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 
 import { getDatabaseClient } from "../client.ts";
 import { deleteObjectFile, readObjectFile } from "../object-storage.server.ts";
 import { employees, users } from "../schema/employee.ts";
 import { fileMetadata } from "../schema/documents.ts";
-import { locations } from "../schema/master-data.ts";
+import { locations, publicHolidays } from "../schema/master-data.ts";
+import { leaveRequests } from "../schema/leave.ts";
 import { appSettings } from "../schema/organisation.ts";
 import { auditEvents } from "../schema/system.ts";
 import {
@@ -725,7 +726,9 @@ export async function captureAttendancePunchInDatabase(
 export async function requestAttendanceCorrectionInDatabase(
   organisationId: string,
   input: {
-    attendanceRecordId: string;
+    attendanceRecordId?: string;
+    employeeId?: string;
+    date?: string;
     proposedClockIn?: string;
     proposedClockOut?: string;
     explanation: string;
@@ -738,18 +741,123 @@ export async function requestAttendanceCorrectionInDatabase(
   const db = getDatabaseClient();
   const id = randomUUID();
   await db.transaction(async (tx) => {
-    const [record] = await tx
-      .select()
-      .from(attendanceRecords)
-      .where(
-        and(
-          eq(attendanceRecords.organisationId, organisationId),
-          eq(attendanceRecords.id, input.attendanceRecordId),
-          eq(attendanceRecords.employeeId, actor.employeeId!),
-        ),
-      )
-      .limit(1);
+    let record: typeof attendanceRecords.$inferSelect | undefined;
+    if (input.attendanceRecordId) {
+      [record] = await tx
+        .select()
+        .from(attendanceRecords)
+        .where(
+          and(
+            eq(attendanceRecords.organisationId, organisationId),
+            eq(attendanceRecords.id, input.attendanceRecordId),
+            eq(attendanceRecords.employeeId, actor.employeeId!),
+          ),
+        )
+        .limit(1);
+    } else {
+      if (!input.employeeId || !input.date)
+        throw new Error("The employee and missing attendance date are required.");
+      if (input.employeeId !== actor.employeeId)
+        throw new Error("Employees can request corrections only for their own attendance.");
+      const [[employee], [settings], [policy]] = await Promise.all([
+        tx
+          .select({ id: employees.id, locationId: employees.locationId, status: employees.status })
+          .from(employees)
+          .where(
+            and(eq(employees.organisationId, organisationId), eq(employees.id, actor.employeeId!)),
+          )
+          .limit(1),
+        tx
+          .select({ timezone: appSettings.timezone, workingDays: appSettings.workingDays })
+          .from(appSettings)
+          .where(eq(appSettings.organisationId, organisationId))
+          .limit(1),
+        tx
+          .select()
+          .from(attendancePolicies)
+          .where(eq(attendancePolicies.organisationId, organisationId))
+          .limit(1),
+      ]);
+      if (!employee || ["Inactive", "Archived"].includes(employee.status))
+        throw new Error("An active employee profile is required.");
+      if (!policy) throw new Error("Attendance settings are not configured.");
+      const timezone = settings?.timezone ?? "UTC";
+      const workingDays = settings?.workingDays ?? [1, 2, 3, 4, 5];
+      const today = zonedParts(new Date(), timezone).date;
+      if (input.date > today) throw new Error("Future attendance cannot be corrected.");
+      const dayOfWeek = new Date(`${input.date}T12:00:00.000Z`).getUTCDay();
+      if (!workingDays.includes(dayOfWeek))
+        throw new Error("Rest days cannot be changed through a punch correction.");
+      const holidayScope = employee.locationId
+        ? or(isNull(publicHolidays.locationId), eq(publicHolidays.locationId, employee.locationId))
+        : isNull(publicHolidays.locationId);
+      const [[holiday], [approvedLeave]] = await Promise.all([
+        tx
+          .select({ id: publicHolidays.id })
+          .from(publicHolidays)
+          .where(
+            and(
+              eq(publicHolidays.organisationId, organisationId),
+              eq(publicHolidays.holidayDate, input.date),
+              eq(publicHolidays.isActive, true),
+              isNull(publicHolidays.archivedAt),
+              holidayScope,
+            ),
+          )
+          .limit(1),
+        tx
+          .select({ id: leaveRequests.id })
+          .from(leaveRequests)
+          .where(
+            and(
+              eq(leaveRequests.organisationId, organisationId),
+              eq(leaveRequests.employeeId, actor.employeeId!),
+              inArray(leaveRequests.status, ["Approved", "Taken"]),
+              sql`${leaveRequests.startDate} <= ${input.date}`,
+              sql`${leaveRequests.endDate} >= ${input.date}`,
+            ),
+          )
+          .limit(1),
+      ]);
+      if (holiday) throw new Error("Public holidays cannot be changed through a punch correction.");
+      if (approvedLeave)
+        throw new Error("Approved leave days cannot be changed through a punch correction.");
+      [record] = await tx
+        .insert(attendanceRecords)
+        .values({
+          organisationId,
+          employeeId: actor.employeeId!,
+          date: input.date,
+          expectedClockIn: policy.expectedClockIn,
+          expectedClockOut: policy.expectedClockOut,
+          breakMinutes: policy.defaultBreakMinutes,
+          source: "Manual Entry",
+          workMode: "Office",
+          status: "Absent",
+          calculatedHours: "0",
+          isLate: false,
+          isEarlyDeparture: false,
+          createdBy: actor.userId,
+          updatedBy: actor.userId,
+        } as typeof attendanceRecords.$inferInsert)
+        .onConflictDoNothing()
+        .returning();
+      if (!record)
+        [record] = await tx
+          .select()
+          .from(attendanceRecords)
+          .where(
+            and(
+              eq(attendanceRecords.organisationId, organisationId),
+              eq(attendanceRecords.employeeId, actor.employeeId!),
+              eq(attendanceRecords.date, input.date),
+            ),
+          )
+          .limit(1);
+    }
     if (!record) throw new Error("Attendance record not found.");
+    if (["On Leave", "Holiday", "Rest Day"].includes(record.status))
+      throw new Error(`${record.status} days cannot be changed through a punch correction.`);
     if (!input.proposedClockIn && !input.proposedClockOut)
       throw new Error("Enter at least one corrected attendance time.");
     if (!record.clockOutAt && !input.proposedClockOut)

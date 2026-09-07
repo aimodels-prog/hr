@@ -60,6 +60,32 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
   await page.getByPlaceholder("Search name or ID...").fill(newHire.employeeNumber);
   await expect(page.getByText(newHire.employeeNumber, { exact: true })).toBeVisible();
 
+  // HR can create a missing dropdown option while editing employment details, without leaving
+  // the employee workflow or opening the wider system-settings area.
+  await page.goto(`/staff/employees/${newHire.id}`);
+  await page.getByRole("tab", { name: /Employment/ }).click();
+  await page.getByRole("button", { name: "Edit employment details" }).click();
+  const employmentDialog = page.getByRole("dialog", { name: "Update Employment Records" });
+  await employmentDialog.getByRole("button", { name: "Add department" }).click();
+  const newDepartment = `Browser Department ${unique}`;
+  await employmentDialog.getByLabel("New department").fill(newDepartment);
+  await employmentDialog.getByRole("button", { name: "Add and select" }).click();
+  await expect(page.getByText(`${newDepartment} added as a new department`)).toBeVisible();
+  await expect(employmentDialog.getByRole("combobox").first()).toHaveText(newDepartment);
+  await page.keyboard.press("Escape");
+
+  // HR can arrange the company structure from the organisation chart itself. The update is
+  // persisted through the reporting-line transaction, including the special top-level position.
+  await page.goto("/staff/org-chart");
+  await expect(page.getByRole("heading", { name: "Organisation Chart" })).toBeVisible();
+  await page.getByLabel("Employee to arrange").click();
+  await page.getByRole("option", { name: new RegExp(`Newhire${unique}`) }).click();
+  await page.getByLabel("Reports to").click();
+  await page.getByRole("option", { name: "Top of organisation" }).click();
+  await page.getByLabel("Reason").fill("Country reporting structure confirmed by HR");
+  await page.getByRole("button", { name: "Save reporting line" }).click();
+  await expect(page.getByText("Reporting line updated.")).toBeVisible();
+
   // --- Employee Files ---
   await page.goto("/staff/files");
   await expect(page.getByText("Employee Files").first()).toBeVisible();

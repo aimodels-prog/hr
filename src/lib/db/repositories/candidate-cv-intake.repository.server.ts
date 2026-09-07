@@ -5,11 +5,19 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 
 import type { CandidateConsentStatus, CandidateCvSource } from "../../data/types.ts";
-import { LocalCvExtractionProvider } from "../../integrations/cv-extraction.ts";
+import {
+  CV_PROCESSOR_VERSION,
+  calculateCvSemanticSimilarity,
+  extractCandidateCv,
+  type ProductionCvExtractionResult,
+} from "../../integrations/cv-processing.server.ts";
+import { validatePublicCv } from "../../recruitment/public-application-validation.server.ts";
 import { getDatabaseClient } from "../client.ts";
+import { decryptSensitiveJson, encryptSensitiveJson } from "../encryption.server.ts";
 import { deleteObjectFile, readObjectFile, saveObjectFile } from "../object-storage.server.ts";
 import {
   candidateApplications,
+  candidateCvExtractions,
   candidateCvRecords,
   candidatePreparationRuns,
   candidates,
@@ -27,14 +35,92 @@ function words(value: string): string[] {
     .filter((word) => word.length > 2);
 }
 
-export function buildCandidatePreliminaryAssessment(
+const CONCEPT_GROUPS = [
+  ["freight forwarding", "freight", "international shipping", "shipping operations"],
+  ["supply chain", "supply-chain", "logistics"],
+  ["financial planning and analysis", "fp&a", "fpa", "financial planning"],
+  ["health and safety", "hse", "ehs", "occupational safety"],
+  ["human resources", "hr", "people operations"],
+  ["business development", "commercial development", "sales development"],
+  ["project management", "programme management", "program management"],
+  ["quality assurance", "quality control", "qa", "qc"],
+  ["customs clearance", "customs brokerage", "customs compliance"],
+  ["data analysis", "analytics", "business intelligence"],
+] as const;
+
+function normalizedConcepts(value: string): Set<string> {
+  const normalized = ` ${value.toLowerCase().replace(/[^a-z0-9+#&.]+/g, " ")} `;
+  const result = new Set(words(normalized));
+  for (const group of CONCEPT_GROUPS) {
+    if (group.some((phrase) => normalized.includes(` ${phrase} `)))
+      for (const phrase of group) result.add(phrase);
+  }
+  return result;
+}
+
+function termMatches(term: string, profile: string, concepts: Set<string>): boolean {
+  const normalizedTerm = term.toLowerCase().trim();
+  const normalizedProfile = profile.toLowerCase();
+  if (normalizedProfile.includes(normalizedTerm)) return true;
+  for (const group of CONCEPT_GROUPS) {
+    if (
+      group.some((phrase) => normalizedTerm.includes(phrase)) &&
+      group.some((phrase) => concepts.has(phrase))
+    )
+      return true;
+  }
+  const ignored = new Set(["and", "the", "with", "for", "required", "minimum", "must", "have"]);
+  const meaningful = words(normalizedTerm).filter((item) => !ignored.has(item));
+  if (!meaningful.length) return false;
+  const matched = meaningful.filter((item) => concepts.has(item)).length;
+  return matched / meaningful.length >= 0.65;
+}
+
+export function buildCvSemanticTexts(
   candidate: typeof candidates.$inferSelect,
   vacancy: typeof vacancies.$inferSelect,
   extractedFields: Record<string, unknown>,
 ) {
+  return {
+    vacancyText: [
+      vacancy.title,
+      vacancy.summary,
+      ...vacancy.responsibilities,
+      ...vacancy.requirements,
+      ...(vacancy.mandatoryCriteria ?? []),
+      ...vacancy.skills.required,
+      ...(vacancy.skills.preferred ?? []),
+    ].join("\n"),
+    candidateText: [
+      candidate.currentTitle,
+      candidate.currentCompany,
+      candidate.location,
+      candidate.workEligibility,
+      ...(candidate.skills ?? []),
+      ...(candidate.education ?? []),
+      ...(candidate.certifications ?? []),
+      ...(candidate.languages ?? []),
+      JSON.stringify(extractedFields),
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  };
+}
+
+export function buildCandidatePreliminaryAssessment(
+  candidate: typeof candidates.$inferSelect,
+  vacancy: typeof vacancies.$inferSelect,
+  extractedFields: Record<string, unknown>,
+  semanticMatch?: { score: number; model: string },
+  documentConfidence?: number,
+) {
   const extractedSkills = Array.isArray(extractedFields["skills"])
     ? extractedFields["skills"].filter((item): item is string => typeof item === "string")
     : [];
+  const extractedList = (key: string) =>
+    Array.isArray(extractedFields[key])
+      ? extractedFields[key].filter((item): item is string => typeof item === "string")
+      : [];
   const profile = [
     candidate.currentTitle,
     candidate.currentCompany,
@@ -43,26 +129,31 @@ export function buildCandidatePreliminaryAssessment(
     ...(candidate.education ?? []),
     ...(candidate.certifications ?? []),
     ...(candidate.languages ?? []),
+    candidate.workEligibility,
     ...extractedSkills,
+    ...extractedList("education"),
+    ...extractedList("certifications"),
+    ...extractedList("languages"),
+    typeof extractedFields["workEligibility"] === "string"
+      ? extractedFields["workEligibility"]
+      : "",
     typeof extractedFields["currentTitle"] === "string" ? extractedFields["currentTitle"] : "",
     typeof extractedFields["currentCompany"] === "string" ? extractedFields["currentCompany"] : "",
   ]
     .filter(Boolean)
     .join(" ");
-  const profileWords = new Set(words(profile));
+  const profileWords = normalizedConcepts(profile);
   const criterionChecks = (vacancy.mandatoryCriteria ?? []).map((criterion) => {
-    const criterionWords = words(criterion);
-    const confirmed =
-      criterionWords.length > 0 && criterionWords.every((word) => profileWords.has(word));
+    const confirmed = termMatches(criterion, profile, profileWords);
     return {
       criterion,
       status: confirmed ? ("Confirmed" as const) : ("Needs Review" as const),
-      ...(confirmed ? { evidence: "Matched in the prepared CV and candidate profile." } : {}),
+      ...(confirmed ? { evidence: `Relevant evidence was found for "${criterion}".` } : {}),
     };
   });
   const preparedSkills = [...new Set([...(candidate.skills ?? []), ...extractedSkills])];
   const matches = vacancy.skills.required.filter((required) =>
-    words(required).every((word) => profileWords.has(word)),
+    termMatches(required, profile, profileWords),
   );
   const missing = vacancy.skills.required.filter((required) => !matches.includes(required));
   const requiredYears = Number(vacancy.minimumExperience.match(/\d+/)?.[0] ?? 0);
@@ -80,35 +171,36 @@ export function buildCandidatePreliminaryAssessment(
   const skillScore = vacancy.skills.required.length
     ? (matches.length / vacancy.skills.required.length) * 100
     : 100;
-  const vacancyWords = new Set(
-    words(
-      [vacancy.title, vacancy.summary, ...vacancy.requirements, ...vacancy.skills.required].join(
-        " ",
-      ),
-    ),
+  const vacancyWords = normalizedConcepts(
+    [vacancy.title, vacancy.summary, ...vacancy.requirements, ...vacancy.skills.required].join(" "),
   );
-  const semanticScore = vacancyWords.size
-    ? Math.min(
-        100,
-        ([...vacancyWords].filter((word) => profileWords.has(word)).length / vacancyWords.size) *
-          180,
-      )
-    : 100;
+  const semanticScore =
+    semanticMatch?.score ??
+    (vacancyWords.size
+      ? Math.min(
+          100,
+          ([...vacancyWords].filter((word) => profileWords.has(word)).length / vacancyWords.size) *
+            180,
+        )
+      : 100);
   const score = Math.round(
-    compulsoryScore * 0.45 + experienceScore * 0.25 + skillScore * 0.2 + semanticScore * 0.1,
+    compulsoryScore * 0.35 + experienceScore * 0.2 + skillScore * 0.25 + semanticScore * 0.2,
   );
   const unconfirmed = criterionChecks.some((item) => item.status === "Needs Review");
   const band = unconfirmed
     ? "Compulsory Criterion Not Confirmed"
-    : missing.length
+    : documentConfidence !== undefined && documentConfidence < 0.6
       ? "Needs HR Review"
-      : score >= 80
-        ? "Strong Match"
-        : score >= 55
-          ? "Potential Match"
-          : "Needs HR Review";
+      : missing.length
+        ? "Needs HR Review"
+        : score >= 80
+          ? "Strong Match"
+          : score >= 55
+            ? "Potential Match"
+            : "Needs HR Review";
   return {
     extractedProfile: { ...extractedFields, skills: preparedSkills },
+    rankingModel: semanticMatch?.model ?? "VIA structured matching 2",
     preliminaryScore: score,
     band,
     compulsoryChecks: criterionChecks,
@@ -117,6 +209,7 @@ export function buildCandidatePreliminaryAssessment(
     evidence: [
       `${actualYears} years of experience assessed against ${vacancy.minimumExperience}.`,
       ...(matches.length ? [`Matched required skills: ${matches.join(", ")}.`] : []),
+      `Role relevance is ${Math.round(semanticScore)}% based on the CV and vacancy.`,
     ],
     status: band === "Strong Match" || band === "Potential Match" ? "Ready" : "Needs Review",
   };
@@ -141,6 +234,11 @@ export async function uploadCandidateCvIntakeToDatabase(
     throw new Error("Only HR or a Super Admin can add candidate CVs.");
   }
   if (!actor.userId) throw new Error("A verified VIA user is required.");
+  const verifiedMimeType = validatePublicCv(
+    input.fileName,
+    input.mimeType,
+    Buffer.from(input.bytes),
+  );
   const db = getDatabaseClient();
   if (input.vacancyId) {
     const [vacancy] = await db
@@ -164,7 +262,7 @@ export async function uploadCandidateCvIntakeToDatabase(
     organisationId,
     bytes: input.bytes,
     name: input.fileName,
-    mimeType: input.mimeType,
+    mimeType: verifiedMimeType,
     owner: { entityType: "candidate-cv", entityId: cvRecordId },
     actor,
   });
@@ -174,7 +272,7 @@ export async function uploadCandidateCvIntakeToDatabase(
         id: documentId,
         organisationId,
         name: input.fileName,
-        mimeType: input.mimeType,
+        mimeType: verifiedMimeType,
         size: input.bytes.byteLength,
         checksum: metadata.checksum,
         ownerEntityType: "candidate-cv",
@@ -315,11 +413,61 @@ export async function processNextCandidateCvJob(
       { displayName: "VIA HR Background Worker", activeRole: "Super Admin" },
       "Processed candidate CV extraction job",
     );
-    const ownedBytes = Uint8Array.from(stored.bytes);
-    const extraction = await new LocalCvExtractionProvider().extract({
-      file: new Blob([ownedBytes.buffer], { type: stored.metadata.mimeType }),
-      fileName: stored.metadata.name,
-    });
+    const checksum = stored.metadata.checksum;
+    if (!checksum) throw new Error("The saved CV has no integrity checksum.");
+    const [cachedExtraction] = await db
+      .select()
+      .from(candidateCvExtractions)
+      .where(
+        and(
+          eq(candidateCvExtractions.organisationId, job.organisationId),
+          eq(candidateCvExtractions.checksum, checksum),
+          eq(candidateCvExtractions.processorVersion, CV_PROCESSOR_VERSION),
+        ),
+      )
+      .limit(1);
+    let extraction: ProductionCvExtractionResult;
+    let reusedExtraction = false;
+    if (cachedExtraction) {
+      reusedExtraction = true;
+      extraction = {
+        fields: cachedExtraction.extractedFields as ProductionCvExtractionResult["fields"],
+        confidence: cachedExtraction.fieldConfidence as ProductionCvExtractionResult["confidence"],
+        warnings: cachedExtraction.warnings,
+        evidence: cachedExtraction.evidence,
+        method: "Python Service",
+        documentRoute:
+          cachedExtraction.documentRoute as ProductionCvExtractionResult["documentRoute"],
+        textQuality: Number(cachedExtraction.textQuality),
+        semanticText: cachedExtraction.semanticTextEncrypted
+          ? decryptSensitiveJson<string>(cachedExtraction.semanticTextEncrypted)
+          : JSON.stringify(cachedExtraction.extractedFields),
+      };
+    } else {
+      extraction = await extractCandidateCv({
+        bytes: Uint8Array.from(stored.bytes),
+        fileName: stored.metadata.name,
+        mimeType: stored.metadata.mimeType,
+      });
+      await db
+        .insert(candidateCvExtractions)
+        .values({
+          organisationId: job.organisationId,
+          checksum,
+          processorVersion: CV_PROCESSOR_VERSION,
+          documentRoute: extraction.documentRoute,
+          extractionMethod: extraction.method,
+          semanticTextEncrypted: encryptSensitiveJson(extraction.semanticText),
+          extractedFields: extraction.fields,
+          fieldConfidence: extraction.confidence,
+          evidence: extraction.evidence,
+          warnings: extraction.warnings,
+          textQuality: String(extraction.textQuality),
+          createdBy: job.updatedBy,
+          updatedBy: job.updatedBy,
+        })
+        .onConflictDoNothing();
+    }
     const [preparation] = await db
       .select()
       .from(candidatePreparationRuns)
@@ -357,18 +505,30 @@ export async function processNextCandidateCvJob(
       if (!candidate || !vacancy) throw new Error("Candidate preparation references are invalid.");
       if (vacancy.recordVersion !== preparation.vacancyRecordVersion)
         throw new Error("The vacancy changed while this CV was being prepared.");
+      const semanticTexts = buildCvSemanticTexts(
+        candidate,
+        vacancy,
+        extraction.fields as Record<string, unknown>,
+      );
+      const semanticMatch = await calculateCvSemanticSimilarity({
+        ...semanticTexts,
+        candidateText: extraction.semanticText,
+      });
       prepared = buildCandidatePreliminaryAssessment(
         candidate,
         vacancy,
         extraction.fields as Record<string, unknown>,
+        semanticMatch,
+        extraction.textQuality,
       );
     }
     await db.transaction(async (tx) => {
       await tx
         .update(candidateCvRecords)
         .set({
-          processingStatus: "Awaiting HR Review",
+          processingStatus: cv.candidateId ? "Ready" : "Awaiting HR Review",
           extractionMethod: extraction.method,
+          documentRoute: reusedExtraction ? "Reuse Prepared CV" : extraction.documentRoute,
           extractedFields: extraction.fields,
           fieldConfidence: extraction.confidence,
           extractionWarnings: extraction.warnings,
@@ -378,22 +538,19 @@ export async function processNextCandidateCvJob(
         })
         .where(eq(candidateCvRecords.id, cv.id));
       if (preparation && prepared) {
-        const documentRoute =
-          stored.metadata.mimeType.includes("word") ||
-          stored.metadata.mimeType.includes("officedocument")
-            ? "Word Document"
-            : stored.metadata.mimeType.startsWith("image/")
-              ? "OCR Required"
-              : "Searchable PDF";
         await tx
           .update(candidatePreparationRuns)
           .set({
             ...prepared,
             preliminaryScore: String(prepared.preliminaryScore),
-            documentRoute,
+            documentRoute: reusedExtraction ? "Reuse Prepared CV" : extraction.documentRoute,
             preparationMethod: "Python Service",
+            rankingModel: prepared.rankingModel,
             fieldConfidence: extraction.confidence,
-            warnings: extraction.warnings,
+            evidence: [...prepared.evidence, ...extraction.evidence],
+            warnings: reusedExtraction
+              ? [...extraction.warnings, "Reused the verified preparation for this identical CV."]
+              : extraction.warnings,
             startedAt: preparation.startedAt ?? new Date().toISOString(),
             completedAt: new Date().toISOString(),
             failureReason: null,
@@ -454,6 +611,24 @@ export async function processNextCandidateCvJob(
           recordVersion: sql`${candidateCvRecords.recordVersion} + 1`,
         })
         .where(eq(candidateCvRecords.id, job.entityId));
+      await tx
+        .update(candidatePreparationRuns)
+        .set({
+          status: failed ? "Processing Failed" : "Queued",
+          band: failed ? "Processing Problem" : null,
+          failureReason: message,
+          warnings: [message],
+          completedAt: failed ? new Date().toISOString() : null,
+          updatedAt: new Date(),
+          updatedBy: job.updatedBy,
+          recordVersion: sql`${candidatePreparationRuns.recordVersion} + 1`,
+        })
+        .where(
+          and(
+            eq(candidatePreparationRuns.organisationId, job.organisationId),
+            eq(candidatePreparationRuns.cvRecordId, job.entityId),
+          ),
+        );
     });
   }
   return true;
@@ -674,10 +849,46 @@ export async function finaliseCandidateCvIntakeInDatabase(
       ]);
       if (!preparedCandidate || !preparedVacancy)
         throw new Error("The candidate or vacancy could not be prepared.");
+      const semanticTexts = buildCvSemanticTexts(
+        preparedCandidate,
+        preparedVacancy,
+        cv.extractedFields as Record<string, unknown>,
+      );
+      const [document] = await tx
+        .select({ checksum: recruitmentDocuments.checksum })
+        .from(recruitmentDocuments)
+        .where(
+          and(
+            eq(recruitmentDocuments.organisationId, organisationId),
+            eq(recruitmentDocuments.id, cv.fileId),
+          ),
+        )
+        .limit(1);
+      const documentChecksum = document?.checksum;
+      const [cached] = documentChecksum
+        ? await tx
+            .select({ semanticTextEncrypted: candidateCvExtractions.semanticTextEncrypted })
+            .from(candidateCvExtractions)
+            .where(
+              and(
+                eq(candidateCvExtractions.organisationId, organisationId),
+                eq(candidateCvExtractions.checksum, documentChecksum),
+                eq(candidateCvExtractions.processorVersion, CV_PROCESSOR_VERSION),
+              ),
+            )
+            .limit(1)
+        : [];
+      const semanticMatch = await calculateCvSemanticSimilarity({
+        ...semanticTexts,
+        ...(cached?.semanticTextEncrypted
+          ? { candidateText: decryptSensitiveJson<string>(cached.semanticTextEncrypted) }
+          : {}),
+      });
       const result = buildCandidatePreliminaryAssessment(
         preparedCandidate,
         preparedVacancy,
         cv.extractedFields as Record<string, unknown>,
+        semanticMatch,
       );
       preparationRunId = randomUUID();
       await tx.insert(candidatePreparationRuns).values({
@@ -690,10 +901,9 @@ export async function finaliseCandidateCvIntakeInDatabase(
         cvRecordId: cv.id,
         cvFileId: cv.fileId,
         status: result.status,
-        documentRoute: cv.originalFileName.toLowerCase().endsWith(".docx")
-          ? "Word Document"
-          : "Searchable PDF",
+        documentRoute: cv.documentRoute,
         preparationMethod: "Python Service",
+        rankingModel: result.rankingModel,
         extractedProfile: result.extractedProfile,
         fieldConfidence: cv.fieldConfidence,
         preliminaryScore: String(result.preliminaryScore),

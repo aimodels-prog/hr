@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Table,
@@ -107,6 +108,16 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
   const [loadError, setLoadError] = useState("");
   const [rejectingDocumentId, setRejectingDocumentId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
+  const [verifyingDocument, setVerifyingDocument] = useState<EmployeeDocument | null>(null);
+  const [verificationDetails, setVerificationDetails] = useState({
+    documentNumber: "",
+    issuingAuthority: "",
+    issuingCountry: "",
+    issueDate: "",
+    expiryDate: "",
+    notes: "",
+    visibility: "Restricted" as DocumentVisibility,
+  });
 
   useEffect(() => {
     let active = true;
@@ -186,6 +197,9 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
       visibility: "Public",
     },
   });
+  const selectedDocumentType = form.watch("type");
+  const hrCompletesVisaDetails =
+    isSelf && (selectedDocumentType === "visa" || selectedDocumentType === "work_permit");
 
   const getActorContext = (reason: string) => ({
     ...currentUser.getActorContext(),
@@ -204,13 +218,19 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
 
       const metadata = {
         type: values.type,
-        visibility: values.visibility,
-        ...(values.documentNumber ? { documentNumber: values.documentNumber } : {}),
-        ...(values.issueDate ? { issueDate: values.issueDate } : {}),
-        ...(values.expiryDate ? { expiryDate: values.expiryDate } : {}),
-        ...(values.issuingAuthority ? { issuingAuthority: values.issuingAuthority } : {}),
-        ...(values.issuingCountry ? { issuingCountry: values.issuingCountry } : {}),
-        ...(values.notes ? { notes: values.notes } : {}),
+        visibility: hrCompletesVisaDetails ? ("Restricted" as const) : values.visibility,
+        ...(!hrCompletesVisaDetails && values.documentNumber
+          ? { documentNumber: values.documentNumber }
+          : {}),
+        ...(!hrCompletesVisaDetails && values.issueDate ? { issueDate: values.issueDate } : {}),
+        ...(!hrCompletesVisaDetails && values.expiryDate ? { expiryDate: values.expiryDate } : {}),
+        ...(!hrCompletesVisaDetails && values.issuingAuthority
+          ? { issuingAuthority: values.issuingAuthority }
+          : {}),
+        ...(!hrCompletesVisaDetails && values.issuingCountry
+          ? { issuingCountry: values.issuingCountry }
+          : {}),
+        ...(!hrCompletesVisaDetails && values.notes ? { notes: values.notes } : {}),
       };
 
       if (isReplacing) {
@@ -269,12 +289,74 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
   const handleVerify = async (id: string, approve: boolean) => {
     try {
       if (approve) {
-        await documentService.verifyDocumentAsync(id, getActorContext("HR verification"));
-        toast.success("Document verified");
+        const document = allDocs.find((item) => item.id === id);
+        if (!document) throw new Error("The document could not be loaded.");
+        setVerificationDetails({
+          documentNumber: document.documentNumber || "",
+          issuingAuthority: document.issuingAuthority || "",
+          issuingCountry: document.issuingCountry || "",
+          issueDate: document.issueDate || "",
+          expiryDate: document.expiryDate || "",
+          notes: document.notes || "",
+          visibility: document.visibility,
+        });
+        setVerifyingDocument(document);
+        return;
       } else {
         setRejectingDocumentId(id);
         return;
       }
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Verification action failed");
+    }
+  };
+
+  const confirmVerification = async () => {
+    if (!verifyingDocument) return;
+    const requiresOfficialDetails = ["passport", "visa", "national_id", "work_permit"].includes(
+      verifyingDocument.type,
+    );
+    if (
+      requiresOfficialDetails &&
+      (!verificationDetails.documentNumber.trim() ||
+        !verificationDetails.issuingAuthority.trim() ||
+        !verificationDetails.issueDate ||
+        !verificationDetails.expiryDate)
+    ) {
+      toast.error("Complete all required official document details before verifying.");
+      return;
+    }
+    if (
+      verificationDetails.issueDate &&
+      verificationDetails.expiryDate &&
+      verificationDetails.expiryDate < verificationDetails.issueDate
+    ) {
+      toast.error("Expiry date cannot be before the issue date.");
+      return;
+    }
+    try {
+      await documentService.verifyDocumentAsync(
+        verifyingDocument.id,
+        getActorContext("HR verified the document and confirmed its official details"),
+        {
+          ...(verificationDetails.documentNumber.trim()
+            ? { documentNumber: verificationDetails.documentNumber.trim() }
+            : {}),
+          ...(verificationDetails.issuingAuthority.trim()
+            ? { issuingAuthority: verificationDetails.issuingAuthority.trim() }
+            : {}),
+          ...(verificationDetails.issuingCountry.trim()
+            ? { issuingCountry: verificationDetails.issuingCountry.trim() }
+            : {}),
+          ...(verificationDetails.issueDate ? { issueDate: verificationDetails.issueDate } : {}),
+          ...(verificationDetails.expiryDate ? { expiryDate: verificationDetails.expiryDate } : {}),
+          ...(verificationDetails.notes.trim() ? { notes: verificationDetails.notes.trim() } : {}),
+          visibility: verificationDetails.visibility,
+        },
+      );
+      toast.success("Document details saved and verified");
+      setVerifyingDocument(null);
       setRefresh((value) => value + 1);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Verification action failed");
@@ -385,120 +467,135 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
                     )}
                   />
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <FormField
-                      control={form.control}
-                      name="documentNumber"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Document ID</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="visibility"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Visibility</FormLabel>
-                          <Select
-                            onValueChange={field.onChange}
-                            defaultValue={field.value as string}
-                          >
+                  {hrCompletesVisaDetails && (
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                      Upload the visa or work-permit file only. HR will complete all official
+                      document details and confirm them during verification.
+                    </div>
+                  )}
+
+                  {!hrCompletesVisaDetails && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="documentNumber"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Document ID</FormLabel>
                             <FormControl>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
+                              <Input {...field} />
                             </FormControl>
-                            <SelectContent>
-                              <SelectItem value="Public">Standard (Public)</SelectItem>
-                              <SelectItem value="Restricted">Restricted (HR Only)</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="visibility"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Visibility</FormLabel>
+                            <Select
+                              onValueChange={field.onChange}
+                              defaultValue={field.value as string}
+                            >
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="Public">Standard (Public)</SelectItem>
+                                <SelectItem value="Restricted">Restricted (HR Only)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  )}
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <FormField
-                      control={form.control}
-                      name="issuingAuthority"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Issuing Authority</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="issuingCountry"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Issuing Country</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
+                  {!hrCompletesVisaDetails && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="issuingAuthority"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Issuing Authority</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="issuingCountry"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Issuing Country</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  )}
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <FormField
-                      control={form.control}
-                      name="issueDate"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Issue Date</FormLabel>
-                          <FormControl>
-                            <Input type="date" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="expiryDate"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Expiry Date</FormLabel>
-                          <FormControl>
-                            <Input type="date" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
+                  {!hrCompletesVisaDetails && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="issueDate"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Issue Date</FormLabel>
+                            <FormControl>
+                              <Input type="date" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="expiryDate"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Expiry Date</FormLabel>
+                            <FormControl>
+                              <Input type="date" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  )}
 
-                  <FormField
-                    control={form.control}
-                    name="notes"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Notes</FormLabel>
-                        <FormControl>
-                          <Textarea {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  {!hrCompletesVisaDetails && (
+                    <FormField
+                      control={form.control}
+                      name="notes"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Notes</FormLabel>
+                          <FormControl>
+                            <Textarea {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
 
                   <div>
-                    <FormLabel>File Attachment (Max 10 MB) *</FormLabel>
+                    <Label>File Attachment (Max 10 MB) *</Label>
                     <div className="mt-1 flex items-center gap-2">
                       <Button
                         type="button"
@@ -674,6 +771,126 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
       </Card>
 
       <Dialog
+        open={Boolean(verifyingDocument)}
+        onOpenChange={(open) => {
+          if (!open) setVerifyingDocument(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Complete and verify document</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Check the uploaded file, enter the official details, then verify the record. These
+            details are completed by HR.
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="verify-document-number">Document number *</Label>
+              <Input
+                id="verify-document-number"
+                value={verificationDetails.documentNumber}
+                onChange={(event) =>
+                  setVerificationDetails((current) => ({
+                    ...current,
+                    documentNumber: event.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="verify-authority">Issuing authority *</Label>
+              <Input
+                id="verify-authority"
+                value={verificationDetails.issuingAuthority}
+                onChange={(event) =>
+                  setVerificationDetails((current) => ({
+                    ...current,
+                    issuingAuthority: event.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="verify-country">Issuing country</Label>
+              <Input
+                id="verify-country"
+                value={verificationDetails.issuingCountry}
+                onChange={(event) =>
+                  setVerificationDetails((current) => ({
+                    ...current,
+                    issuingCountry: event.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Access</Label>
+              <Select
+                value={verificationDetails.visibility}
+                onValueChange={(value: DocumentVisibility) =>
+                  setVerificationDetails((current) => ({ ...current, visibility: value }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Restricted">Restricted to employee and HR</SelectItem>
+                  <SelectItem value="Public">Standard employee document</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="verify-issue-date">Issue date *</Label>
+              <Input
+                id="verify-issue-date"
+                type="date"
+                value={verificationDetails.issueDate}
+                onChange={(event) =>
+                  setVerificationDetails((current) => ({
+                    ...current,
+                    issueDate: event.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="verify-expiry-date">Expiry date *</Label>
+              <Input
+                id="verify-expiry-date"
+                type="date"
+                min={verificationDetails.issueDate || undefined}
+                value={verificationDetails.expiryDate}
+                onChange={(event) =>
+                  setVerificationDetails((current) => ({
+                    ...current,
+                    expiryDate: event.target.value,
+                  }))
+                }
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="verify-notes">HR notes</Label>
+            <Textarea
+              id="verify-notes"
+              value={verificationDetails.notes}
+              onChange={(event) =>
+                setVerificationDetails((current) => ({ ...current, notes: event.target.value }))
+              }
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setVerifyingDocument(null)}>
+              Cancel
+            </Button>
+            <Button onClick={() => void confirmVerification()}>Save and verify</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={Boolean(rejectingDocumentId)}
         onOpenChange={(open) => {
           if (!open) {
@@ -687,7 +904,7 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
             <DialogTitle>Reject document</DialogTitle>
           </DialogHeader>
           <div className="space-y-2">
-            <FormLabel htmlFor="document-rejection-reason">Reason</FormLabel>
+            <Label htmlFor="document-rejection-reason">Reason</Label>
             <Textarea
               id="document-rejection-reason"
               value={rejectionReason}

@@ -877,27 +877,30 @@ export type CreateEmployeeInput = Omit<
   | "recordVersion"
   | "archivedAt"
 > & {
-  lineManagerId?: string;
+  lineManagerId?: string | null;
   projectId?: string;
   costCentreId?: string;
 };
 
-export type EmploymentRecordChanges = Pick<
-  Partial<Employee>,
-  | "department"
-  | "position"
-  | "grade"
-  | "location"
-  | "employmentType"
-  | "staffEntryType"
-  | "lineManagerId"
-  | "projectId"
-  | "costCentreId"
-  | "startDate"
-  | "probationEndDate"
-  | "weeklyHours"
-  | "salary"
->;
+export type EmploymentRecordChanges = Omit<
+  Pick<
+    Partial<Employee>,
+    | "department"
+    | "position"
+    | "grade"
+    | "location"
+    | "employmentType"
+    | "staffEntryType"
+    | "lineManagerId"
+    | "projectId"
+    | "costCentreId"
+    | "startDate"
+    | "probationEndDate"
+    | "weeklyHours"
+    | "salary"
+  >,
+  "lineManagerId"
+> & { lineManagerId?: string | null | undefined };
 
 export async function updateEmploymentRecordInDatabase(
   organisationId: string,
@@ -968,9 +971,7 @@ export async function updateEmploymentRecordInDatabase(
       "employment type",
     );
 
-    if (changes.lineManagerId !== undefined) {
-      if (!changes.lineManagerId)
-        throw new Error("Every employee must have an assigned supervisor.");
+    if (changes.lineManagerId !== undefined && changes.lineManagerId !== null) {
       if (changes.lineManagerId === employeeId)
         throw new Error("An employee cannot report to themselves.");
       const organisationEmployees = await tx
@@ -1067,7 +1068,7 @@ export async function updateEmploymentRecordInDatabase(
         .where(and(eq(employees.organisationId, organisationId), eq(employees.id, employeeId)));
     }
 
-    if (changes.lineManagerId && changes.lineManagerId !== current.lineManagerId) {
+    if (changes.lineManagerId !== undefined && changes.lineManagerId !== current.lineManagerId) {
       await tx
         .update(employeeReportingLines)
         .set({
@@ -1085,16 +1086,18 @@ export async function updateEmploymentRecordInDatabase(
             isNull(employeeReportingLines.archivedAt),
           ),
         );
-      await tx.insert(employeeReportingLines).values({
-        organisationId,
-        employeeId,
-        supervisorId: changes.lineManagerId,
-        effectiveFrom: effectiveDate,
-        isPrimary: true,
-        reason,
-        createdBy: actor.userId ?? employeeId,
-        updatedBy: actor.userId ?? employeeId,
-      });
+      if (changes.lineManagerId) {
+        await tx.insert(employeeReportingLines).values({
+          organisationId,
+          employeeId,
+          supervisorId: changes.lineManagerId,
+          effectiveFrom: effectiveDate,
+          isPrimary: true,
+          reason,
+          createdBy: actor.userId ?? employeeId,
+          updatedBy: actor.userId ?? employeeId,
+        });
+      }
     }
 
     for (const field of fields) {

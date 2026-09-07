@@ -95,6 +95,8 @@ const formSchema = z.object({
 
   // 5. Screening
   screeningQuestions: z.array(z.object({ question: z.string().min(1) })),
+  acceptsInternalApplications: z.boolean(),
+  acceptsEmployeeReferrals: z.boolean(),
   notes: z.string().optional(),
 
   // 6. Job Description (AI Drafted)
@@ -140,6 +142,8 @@ function NewVacancy() {
       salaryCurrency: "AED",
       salaryVisible: false,
       screeningQuestions: [],
+      acceptsInternalApplications: true,
+      acceptsEmployeeReferrals: true,
       notes: "",
       summary: "",
       responsibilities: "",
@@ -283,6 +287,8 @@ function NewVacancy() {
             }
           : undefined,
       screeningQuestions: values.screeningQuestions.map((q) => q.question),
+      acceptsInternalApplications: values.acceptsInternalApplications,
+      acceptsEmployeeReferrals: values.acceptsEmployeeReferrals,
       notes: values.notes || "",
       summary: values.summary || "",
       responsibilities: values.responsibilities?.split("\n").filter(Boolean) || [],
@@ -679,6 +685,42 @@ function NewVacancy() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-2">
+                <FormField
+                  control={form.control}
+                  name="acceptsInternalApplications"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center justify-between rounded-lg border p-4">
+                      <div className="space-y-1">
+                        <FormLabel>Allow staff applications</FormLabel>
+                        <p className="text-sm text-muted-foreground">
+                          Staff can apply from their VIA dashboard.
+                        </p>
+                      </div>
+                      <FormControl>
+                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="acceptsEmployeeReferrals"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center justify-between rounded-lg border p-4">
+                      <div className="space-y-1">
+                        <FormLabel>Allow staff recommendations</FormLabel>
+                        <p className="text-sm text-muted-foreground">
+                          Staff can recommend someone and upload their CV.
+                        </p>
+                      </div>
+                      <FormControl>
+                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+              </div>
               {screeningFields.map((f, i) => (
                 <div key={f.id} className="flex items-center gap-4">
                   <FormField

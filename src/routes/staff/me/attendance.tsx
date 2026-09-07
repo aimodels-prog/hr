@@ -243,9 +243,7 @@ function MyAttendanceRoute() {
     setSubmittingCorrection(true);
     let uploadedFileId: string | undefined;
     try {
-      const persistedRecord = correctionRecord.id.startsWith("virtual-")
-        ? attendanceService.ensureRecordForDate(employeeId, correctionRecord.date, actorContext)
-        : correctionRecord;
+      const isMissingRecord = correctionRecord.id.startsWith("virtual-");
       let evidenceFileId: string | undefined;
       if (evidence) {
         const metadata = await getApplicationDataServices().files.save(
@@ -253,7 +251,7 @@ function MyAttendanceRoute() {
             blob: evidence,
             name: evidence.name,
             mimeType: evidence.type,
-            owner: { entityType: "attendance-record", entityId: persistedRecord.id },
+            owner: { entityType: "attendance-record", entityId: correctionRecord.id },
           },
           actorContext,
         );
@@ -261,12 +259,13 @@ function MyAttendanceRoute() {
         uploadedFileId = metadata.id;
       }
       await attendanceService.requestCorrectionAsync(
-        persistedRecord.id,
+        correctionRecord.id,
         proposedIn,
         proposedOut,
         explanation,
         actorContext,
         evidenceFileId,
+        isMissingRecord ? { employeeId, date: correctionRecord.date } : undefined,
       );
       uploadedFileId = undefined;
       setCorrectionRecord(null);

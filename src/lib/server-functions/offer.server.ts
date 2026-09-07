@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import * as z from "zod";
 
 import {
+  convertAcceptedJobOfferInDatabase,
   finaliseHiringDecisionInDatabase,
   generateJobOfferDocumentInDatabase,
   prepareManualInterviewHireInDatabase,
@@ -124,6 +125,15 @@ export const transitionJobOfferFn = createServerFn({ method: "POST" })
       data.reason,
       verified.actor,
     );
+  });
+
+export const convertAcceptedJobOfferFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z.object({ actor: Actor, offerId: z.string().uuid() }).strict().parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await recruiter(data.actor);
+    return convertAcceptedJobOfferInDatabase(verified.organisationId, data.offerId, verified.actor);
   });
 
 export const generateJobOfferDocumentFn = createServerFn({ method: "POST" })

@@ -56,6 +56,32 @@ export class ConversionService {
     employeeData: Partial<Employee>,
     context: ActorContext,
   ): Promise<string> {
+    if (typeof window !== "undefined") {
+      const candidate = this.candidateService.getCandidate(candidateId, context);
+      if (!candidate) throw new Error("Candidate not found");
+      const offer = this.offerRepo.getById(offerId);
+      if (!offer) throw new Error("Offer not found");
+      if (offer.candidateId !== candidate.id)
+        throw new Error("The accepted offer does not belong to this candidate.");
+      const { convertAcceptedJobOfferFn } = await import("../server-functions/offer.server.ts");
+      const converted = await convertAcceptedJobOfferFn({
+        data: {
+          actor: {
+            actorId: context.actor.userId,
+            ...(context.actor.workspaceEmail ? { actorEmail: context.actor.workspaceEmail } : {}),
+            activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
+          },
+          offerId: offer.id,
+        },
+      });
+      await Promise.all([
+        this.candidateService.hydrateCompatibilityCache(context),
+        this.empService.hydrateCompatibilityCache(context),
+        this.obService.hydrateCompatibilityCache(context),
+      ]);
+      return converted.employeeId;
+    }
+
     const candidate = this.candidateService.getCandidate(candidateId, context);
     if (!candidate) throw new Error("Candidate not found");
 

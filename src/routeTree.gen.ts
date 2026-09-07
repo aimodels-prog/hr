@@ -35,6 +35,7 @@ import { Route as StaffMyTasksRouteImport } from './routes/staff/my-tasks'
 import { Route as StaffOffboardingRouteImport } from './routes/staff/offboarding'
 import { Route as StaffOffersRouteImport } from './routes/staff/offers'
 import { Route as StaffOnboardingRouteImport } from './routes/staff/onboarding'
+import { Route as StaffOpportunitiesRouteImport } from './routes/staff/opportunities'
 import { Route as StaffOrgChartRouteImport } from './routes/staff/org-chart'
 import { Route as StaffOvertimeApprovalsRouteImport } from './routes/staff/overtime-approvals'
 import { Route as StaffPayrollRouteImport } from './routes/staff/payroll'
@@ -227,6 +228,11 @@ const StaffOffersRoute = StaffOffersRouteImport.update({
 const StaffOnboardingRoute = StaffOnboardingRouteImport.update({
   id: '/onboarding',
   path: '/onboarding',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffOpportunitiesRoute = StaffOpportunitiesRouteImport.update({
+  id: '/opportunities',
+  path: '/opportunities',
   getParentRoute: () => StaffRoute,
 } as any)
 const StaffOrgChartRoute = StaffOrgChartRouteImport.update({
@@ -587,6 +593,7 @@ export interface FileRoutesByFullPath {
   '/staff/offboarding': typeof StaffOffboardingRouteWithChildren
   '/staff/offers': typeof StaffOffersRoute
   '/staff/onboarding': typeof StaffOnboardingRouteWithChildren
+  '/staff/opportunities': typeof StaffOpportunitiesRoute
   '/staff/org-chart': typeof StaffOrgChartRoute
   '/staff/overtime-approvals': typeof StaffOvertimeApprovalsRoute
   '/staff/payroll': typeof StaffPayrollRouteWithChildren
@@ -673,6 +680,7 @@ export interface FileRoutesByTo {
   '/staff/leave-policies': typeof StaffLeavePoliciesRoute
   '/staff/my-tasks': typeof StaffMyTasksRoute
   '/staff/offers': typeof StaffOffersRoute
+  '/staff/opportunities': typeof StaffOpportunitiesRoute
   '/staff/org-chart': typeof StaffOrgChartRoute
   '/staff/overtime-approvals': typeof StaffOvertimeApprovalsRoute
   '/staff/performance': typeof StaffPerformanceRouteWithChildren
@@ -761,6 +769,7 @@ export interface FileRoutesById {
   '/staff/offboarding': typeof StaffOffboardingRouteWithChildren
   '/staff/offers': typeof StaffOffersRoute
   '/staff/onboarding': typeof StaffOnboardingRouteWithChildren
+  '/staff/opportunities': typeof StaffOpportunitiesRoute
   '/staff/org-chart': typeof StaffOrgChartRoute
   '/staff/overtime-approvals': typeof StaffOvertimeApprovalsRoute
   '/staff/payroll': typeof StaffPayrollRouteWithChildren
@@ -854,6 +863,7 @@ export interface FileRouteTypes {
     | '/staff/offboarding'
     | '/staff/offers'
     | '/staff/onboarding'
+    | '/staff/opportunities'
     | '/staff/org-chart'
     | '/staff/overtime-approvals'
     | '/staff/payroll'
@@ -940,6 +950,7 @@ export interface FileRouteTypes {
     | '/staff/leave-policies'
     | '/staff/my-tasks'
     | '/staff/offers'
+    | '/staff/opportunities'
     | '/staff/org-chart'
     | '/staff/overtime-approvals'
     | '/staff/performance'
@@ -1027,6 +1038,7 @@ export interface FileRouteTypes {
     | '/staff/offboarding'
     | '/staff/offers'
     | '/staff/onboarding'
+    | '/staff/opportunities'
     | '/staff/org-chart'
     | '/staff/overtime-approvals'
     | '/staff/payroll'
@@ -1288,6 +1300,13 @@ declare module '@tanstack/react-router' {
       path: '/onboarding'
       fullPath: '/staff/onboarding'
       preLoaderRoute: typeof StaffOnboardingRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/opportunities': {
+      id: '/staff/opportunities'
+      path: '/opportunities'
+      fullPath: '/staff/opportunities'
+      preLoaderRoute: typeof StaffOpportunitiesRouteImport
       parentRoute: typeof StaffRoute
     }
     '/staff/org-chart': {
@@ -1907,6 +1926,7 @@ interface StaffRouteChildren {
   StaffOffboardingRoute: typeof StaffOffboardingRouteWithChildren
   StaffOffersRoute: typeof StaffOffersRoute
   StaffOnboardingRoute: typeof StaffOnboardingRouteWithChildren
+  StaffOpportunitiesRoute: typeof StaffOpportunitiesRoute
   StaffOrgChartRoute: typeof StaffOrgChartRoute
   StaffOvertimeApprovalsRoute: typeof StaffOvertimeApprovalsRoute
   StaffPayrollRoute: typeof StaffPayrollRouteWithChildren
@@ -1962,6 +1982,7 @@ const StaffRouteChildren: StaffRouteChildren = {
   StaffOffboardingRoute: StaffOffboardingRouteWithChildren,
   StaffOffersRoute: StaffOffersRoute,
   StaffOnboardingRoute: StaffOnboardingRouteWithChildren,
+  StaffOpportunitiesRoute: StaffOpportunitiesRoute,
   StaffOrgChartRoute: StaffOrgChartRoute,
   StaffOvertimeApprovalsRoute: StaffOvertimeApprovalsRoute,
   StaffPayrollRoute: StaffPayrollRouteWithChildren,

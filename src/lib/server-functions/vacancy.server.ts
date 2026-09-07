@@ -7,6 +7,7 @@ import {
   listVacanciesForOrganisation,
   saveVacancyDraftInDatabase,
   transitionVacancyInDatabase,
+  updateVacancyOpportunitySettingsInDatabase,
   type VacancyDraftInput,
 } from "../db/repositories/vacancy.repository.server.ts";
 import {
@@ -110,6 +111,8 @@ const VacancyDraft = z
     mandatoryCriteria: z.array(z.string()).max(100).optional(),
     notes: z.string().max(10_000).default(""),
     screeningQuestions: z.array(z.string().trim().min(1)).max(30).default([]),
+    acceptsInternalApplications: z.boolean().default(true),
+    acceptsEmployeeReferrals: z.boolean().default(true),
   })
   .strict()
   .transform((value) => ({
@@ -126,6 +129,35 @@ export const saveVacancyDraftFn = createServerFn({ method: "POST" })
     return saveVacancyDraftInDatabase(
       verified.organisationId,
       data.vacancy as VacancyDraftInput,
+      verified.actor,
+    );
+  });
+
+const OpportunitySettingsRequest = z
+  .object({
+    actor: ActorInput,
+    vacancyId: z.string().uuid(),
+    expectedVersion: z.number().int().positive(),
+    acceptsInternalApplications: z.boolean(),
+    acceptsEmployeeReferrals: z.boolean(),
+  })
+  .strict();
+
+export const updateVacancyOpportunitySettingsFn = createServerFn({ method: "POST" })
+  .validator((input: z.infer<typeof OpportunitySettingsRequest>) =>
+    OpportunitySettingsRequest.parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await verifyRecruitmentActor(data.actor);
+    return updateVacancyOpportunitySettingsInDatabase(
+      verified.organisationId,
+      {
+        vacancyId: data.vacancyId,
+        expectedVersion: data.expectedVersion,
+        acceptsInternalApplications: data.acceptsInternalApplications,
+        acceptsEmployeeReferrals: data.acceptsEmployeeReferrals,
+        reason: "Updated staff application and recommendation availability",
+      },
       verified.actor,
     );
   });

@@ -51,20 +51,29 @@ test("organisation settings require Super Admin", async () => {
 test("master data writes are permission controlled, unique and dependency safe", async () => {
   harness();
   const service = new MasterDataService();
+  const legal = await service.create(
+    "departments",
+    { name: "Legal", code: "LEGAL", isActive: true, orderIndex: 8 },
+    hr,
+  );
+  assert.equal(legal.name, "Legal");
   await assert.rejects(
     service.create(
-      "departments",
-      { name: "Legal", code: "LEGAL", isActive: true, orderIndex: 8 },
+      "publicHolidays",
+      {
+        name: "Unapproved Holiday",
+        date: "2026-11-01",
+        isActive: true,
+        orderIndex: 8,
+      },
       hr,
     ),
     /Only a Super Admin/,
   );
-  const legal = await service.create(
-    "departments",
-    { name: "Legal", code: "LEGAL", isActive: true, orderIndex: 8 },
-    superAdmin,
+  await assert.rejects(
+    service.update("departments", legal.id, { name: "Legal Affairs" }, hr),
+    /Only a Super Admin/,
   );
-  assert.equal(legal.name, "Legal");
   await assert.rejects(
     service.create(
       "departments",

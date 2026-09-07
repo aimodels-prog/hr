@@ -509,7 +509,7 @@ export const createAssessmentBatchFn = createServerFn({ method: "POST" })
       .object({
         actor: RecruitmentActor,
         vacancyId: z.string().uuid(),
-        targetSize: z.number().int().min(1).max(10),
+        targetSize: z.number().int().min(1),
       })
       .strict()
       .parse(input),
@@ -563,8 +563,8 @@ export const saveShortlistDraftFn = createServerFn({ method: "POST" })
       .object({
         actor: RecruitmentActor,
         vacancyId: z.string().uuid(),
-        targetSize: z.number().int().min(1).max(10),
-        selectedCandidateIds: z.array(z.string().uuid()).min(1).max(10),
+        targetSize: z.number().int().min(1),
+        selectedCandidateIds: z.array(z.string().uuid()).min(1),
         overrideReasons: z.array(
           z.object({ candidateId: z.string().uuid(), reason: z.string().trim().min(5).max(1000) }),
         ),

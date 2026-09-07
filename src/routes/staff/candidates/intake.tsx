@@ -5,6 +5,8 @@ import { AlertCircle, CheckCircle2, FileSearch, RotateCcw, Upload } from "lucide
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
 import type { CandidateCvRecord, CandidateCvSource, RecommenderType } from "@/lib/data/types";
+
+type DirectCandidateCvSource = Exclude<CandidateCvSource, "Internal Application">;
 import { VacancyService } from "@/lib/data/vacancy-service";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +29,7 @@ export const Route = createFileRoute("/staff/candidates/intake")({
   component: CandidateIntakeRoute,
 });
 
-const SOURCES: CandidateCvSource[] = [
+const SOURCES: DirectCandidateCvSource[] = [
   "Direct Email",
   "WhatsApp",
   "Employee Referral",
@@ -76,7 +78,7 @@ function CandidateIntakePage() {
   );
 
   const [file, setFile] = useState<File | null>(null);
-  const [source, setSource] = useState<CandidateCvSource>("Direct Email");
+  const [source, setSource] = useState<DirectCandidateCvSource>("Direct Email");
   const [receivedDate, setReceivedDate] = useState(new Date().toISOString().slice(0, 10));
   const [vacancyId, setVacancyId] = useState("none");
   const [isRecommended, setIsRecommended] = useState(false);
@@ -133,7 +135,7 @@ function CandidateIntakePage() {
     const extracted = record.extractedFields;
     setIntake(record);
     setFile(null);
-    setSource(record.source);
+    setSource(record.source === "Internal Application" ? "HR Upload" : record.source);
     setReceivedDate(record.receivedAt.slice(0, 10));
     setVacancyId(record.vacancyId || "none");
     setIsRecommended(Boolean(record.recommendationPending));
@@ -455,7 +457,7 @@ function CandidateIntakePage() {
                 <Label>How it was received</Label>
                 <Select
                   value={source}
-                  onValueChange={(value) => setSource(value as CandidateCvSource)}
+                  onValueChange={(value) => setSource(value as DirectCandidateCvSource)}
                   disabled={Boolean(intake)}
                 >
                   <SelectTrigger>

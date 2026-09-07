@@ -41,11 +41,45 @@ import { parseCandidateSpreadsheetInDatabase } from "../src/lib/db/repositories/
 
 const testDatabaseUrl = process.env["VIA_HR_TEST_DATABASE_URL"]?.trim();
 const hasObjectStorage = Boolean(process.env["VIA_HR_OBJECT_STORAGE_ENDPOINT"]?.trim());
+const hasCvProcessor = Boolean(process.env["VIA_HR_CV_PROCESSOR_URL"]?.trim());
 if (testDatabaseUrl) process.env["DATABASE_URL"] = testDatabaseUrl;
+
+function testPdf(): Uint8Array {
+  const text = [
+    "Database Applicant database.applicant@example.test +971501234567",
+    "Seven years of logistics, freight forwarding and customs clearance experience",
+    ...Array.from({ length: 24 }, () => "supply chain international shipping operations"),
+  ].join(" ");
+  const lines = text.match(/.{1,75}(?:\s|$)/g)?.map((line) => line.trim()) ?? [text];
+  const stream = `BT /F1 9 Tf 40 760 Td ${lines
+    .map((line, index) => `${index ? "0 -13 Td " : ""}(${line.replace(/([\\()])/g, "\\$1")}) Tj`)
+    .join(" ")} ET`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+    `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let body = "%PDF-1.4\n";
+  const offsets = [0];
+  for (let index = 0; index < objects.length; index += 1) {
+    offsets.push(Buffer.byteLength(body));
+    body += `${index + 1} 0 obj\n${objects[index]}\nendobj\n`;
+  }
+  const xref = Buffer.byteLength(body);
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  body += offsets
+    .slice(1)
+    .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
+    .join("");
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(body, "ascii");
+}
 
 test(
   "public application atomically creates the Candidate Pool, CV, queue and audit records",
-  { skip: !testDatabaseUrl || !hasObjectStorage },
+  { skip: !testDatabaseUrl || !hasObjectStorage || !hasCvProcessor },
   async () => {
     assert.match(new URL(testDatabaseUrl!).pathname.slice(1).toLowerCase(), /(test|scratch)/);
     const sql = postgres(testDatabaseUrl!, { max: 1, prepare: false });
@@ -79,7 +113,7 @@ test(
         id: vacancyId,
         organisation_id: String(seedVacancy.organisation_id),
       };
-      const cv = new TextEncoder().encode("%PDF-1.7\nVIA HR applicant integration test\n%%EOF");
+      const cv = testPdf();
       const result = await submitPublicApplicationToDatabase(String(vacancy.organisation_id), {
         vacancyId: String(vacancy.id),
         firstName: "Database",
@@ -159,7 +193,7 @@ test(
         WHERE ca.id = ${result.applicationId}
       `;
       assert.ok(["Ready", "Needs Review"].includes(String(prepared.preparation_status)));
-      assert.equal(prepared.processing_status, "Awaiting HR Review");
+      assert.equal(prepared.processing_status, "Ready");
       assert.equal(prepared.has_extracted_fields, true);
       assert.ok(Number.isFinite(Number(prepared.preliminary_score)));
 

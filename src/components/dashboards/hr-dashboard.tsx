@@ -19,14 +19,13 @@ import { TravelService } from "@/lib/data/travel-service";
 import { InterviewService } from "@/lib/data/interview-service";
 import { ScorecardService } from "@/lib/data/scorecard-service";
 import { OfferService } from "@/lib/data/offer-service";
-import type { ApplicationStatus, Employee } from "@/lib/data/types";
+import type { Employee } from "@/lib/data/types";
 import { isCurrentWorkforceMember } from "@/components/dashboards/dashboard-data";
 import { useCurrentUser } from "@/lib/auth";
 import {
   AttentionQueue,
   PulseStrip,
   DashboardPanel,
-  BreakdownBars,
   ProgressRing,
   type AttentionItem,
   type PulseMetric,
@@ -37,14 +36,6 @@ function formatNames(names: string[], max = 3): string {
   if (names.length <= max) return names.join(", ");
   return `${names.slice(0, max).join(", ")} +${names.length - max} more`;
 }
-
-const APPLICATION_STAGES: ApplicationStatus[] = [
-  "New",
-  "Shortlisted",
-  "Interviewing",
-  "Offered",
-  "Hired",
-];
 
 export function HrDashboard() {
   const currentUser = useCurrentUser();
@@ -110,13 +101,6 @@ export function HrDashboard() {
       ).length,
     0,
   );
-  const stageCounts = APPLICATION_STAGES.map((stage) => ({
-    stage,
-    count: candidates.reduce(
-      (acc, c) => acc + c.applications.filter((a) => a.status === stage).length,
-      0,
-    ),
-  }));
   const allInterviews = interviewService.getInterviews(currentUser.getActorContext());
   const upcomingInterviews = allInterviews
     .filter(
@@ -141,29 +125,11 @@ export function HrDashboard() {
     return !scorecardService.calculateInterviewMetrics(interview.id, interview.panelUserIds)
       .isComplete;
   });
-  const manualInterviews = allInterviews.filter(
-    (interview) => interview.source === "Manual / Offline",
-  );
   const allOffers = offerService.getAllOffers(currentUser.getActorContext());
   const offersAwaitingResponse = allOffers.filter((offer) => offer.status === "Sent");
   const activeOffers = allOffers.filter((offer) =>
     ["Draft", "Pending Approval", "Approved", "Ready to Send", "Sent"].includes(offer.status),
   );
-
-  const departmentCounts = [...new Set(activeEmployees.map((employee) => employee.department))]
-    .map((department) => ({
-      label: department || "Unassigned",
-      value: activeEmployees.filter((employee) => employee.department === department).length,
-    }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 6);
-  const locationCounts = [...new Set(activeEmployees.map((employee) => employee.location))]
-    .map((location) => ({
-      label: location || "Unassigned",
-      value: activeEmployees.filter((employee) => employee.location === location).length,
-    }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 5);
 
   // ---------- Documents ----------
   const allDocs = docService.getDocuments(currentUser.getActorContext());
@@ -223,6 +189,10 @@ export function HrDashboard() {
     .filter((r) => r.status === "Approved" || r.status === "Taken")
     .filter((r) => new Date(r.startDate) <= weekEnd && new Date(r.endDate) >= today)
     .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+  const onLeaveToday = onLeaveThisWeek.filter(
+    (request) => new Date(request.startDate) <= today && new Date(request.endDate) >= today,
+  );
+  const peopleOnLeaveToday = new Set(onLeaveToday.map((request) => request.employeeId)).size;
 
   // ---------- Attention Queue ----------
   const attentionItems: AttentionItem[] = [];
@@ -333,67 +303,61 @@ export function HrDashboard() {
   // ---------- Pulse Strip ----------
   const pulseMetrics: PulseMetric[] = [
     {
-      label: "Current Headcount",
+      label: "Current workforce",
       value: String(activeEmployees.length),
-      ...(joinerDelta !== 0
-        ? {
-            deltaDirection: joinerDelta > 0 ? "up" : "down",
-            deltaText: `${joinerDelta > 0 ? "+" : ""}${joinerDelta} vs last month`,
-          }
-        : {}),
-      note: `${thisMonthJoiners.length} joined this month`,
+      note: "Active employees",
     },
     {
-      label: "Open Vacancies",
-      value: String(vacancies.length),
+      label: "Not on leave today",
+      value: String(Math.max(activeEmployees.length - peopleOnLeaveToday, 0)),
+      note: `${peopleOnLeaveToday} on approved leave`,
     },
     {
-      label: "Active Applicants",
-      value: String(applicants),
+      label: "Joining this month",
+      value: String(thisMonthJoiners.length),
+      note:
+        joinerDelta === 0
+          ? "Same as last month"
+          : `${joinerDelta > 0 ? "+" : ""}${joinerDelta} compared with last month`,
     },
     {
-      label: "Onboarding Cases",
-      value: String(activeCases.length),
-    },
-    {
-      label: "Pending Leave",
-      value: String(pendingLeave.length),
-    },
-    {
-      label: "Returned Timesheets",
-      value: String(overdueTimesheets.length),
-    },
-    {
-      label: "Upcoming Interviews",
-      value: String(upcomingInterviews.length),
-      note: `${manualInterviews.length} manual recorded`,
-    },
-    {
-      label: "Active Offers",
-      value: String(activeOffers.length),
-      note: `${offersAwaitingResponse.length} awaiting response`,
+      label: "Documents requiring action",
+      value: String(docsExpiringCritical.length + docsExpiringWarning.length),
+      note: `${docsExpiringCritical.length} urgent`,
     },
   ];
 
   return (
     <div className="flex flex-col gap-4">
-      <AttentionQueue items={attentionItems} />
+      <section aria-labelledby="hr-attention-heading">
+        <div className="mb-3">
+          <h2 id="hr-attention-heading" className="text-sm font-bold">
+            Needs my attention
+          </h2>
+          <p className="text-xs text-muted-foreground">The most important HR work to move today</p>
+        </div>
+        <AttentionQueue items={attentionItems.slice(0, 5)} />
+        {attentionItems.length > 5 ? (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {attentionItems.length - 5} more item{attentionItems.length - 5 === 1 ? "" : "s"} can be
+            reviewed from My Tasks.
+          </p>
+        ) : null}
+      </section>
 
       <PulseStrip metrics={pulseMetrics} />
 
-      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-3">
         <DashboardPanel
-          title="On Leave This Week"
+          title="People on leave today"
           viewAllLabel="Open Leave Admin"
           viewAllTo="/staff/leave-admin"
         >
-          {onLeaveThisWeek.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No employees on approved leave this week.
-            </p>
+          {onLeaveToday.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No employees are on approved leave.</p>
           ) : (
             <div className="flex flex-col divide-y divide-border">
-              {onLeaveThisWeek.map((r) => (
+              {onLeaveToday.slice(0, 5).map((r) => (
                 <div
                   key={r.id}
                   className="flex items-center justify-between py-2 text-sm first:pt-0 last:pb-0"
@@ -422,38 +386,8 @@ export function HrDashboard() {
         </DashboardPanel>
 
         <DashboardPanel
-          title="Recruitment Funnel"
-          description="Active application movement by stage"
-          viewAllLabel="Manage Vacancies"
-          viewAllTo="/staff/vacancies"
-        >
-          <BreakdownBars
-            items={stageCounts.map(({ stage, count }) => ({ label: stage, value: count }))}
-            emptyMessage="No applications have entered the funnel."
-          />
-        </DashboardPanel>
-
-        <DashboardPanel
-          title="Workforce by Department"
-          description={`${activeEmployees.length} current employees across ${departmentCounts.length} departments`}
-          viewAllLabel="Employee Directory"
-          viewAllTo="/staff/employees"
-        >
-          <BreakdownBars items={departmentCounts} emptyMessage="No current employees recorded." />
-        </DashboardPanel>
-
-        <DashboardPanel
-          title="Workforce by Location"
-          description="Current workforce distribution"
-          viewAllLabel="People Reports"
-          viewAllTo="/staff/reports"
-        >
-          <BreakdownBars items={locationCounts} emptyMessage="No employee locations recorded." />
-        </DashboardPanel>
-
-        <DashboardPanel
-          title="Onboarding Health"
-          description={`${activeCases.length} active · ${stalledCases.length} with overdue work`}
+          title="Onboarding readiness"
+          description={`${activeCases.length} active · ${stalledCases.length} needing intervention`}
           viewAllLabel="Open Onboarding"
           viewAllTo="/staff/onboarding"
         >
@@ -475,16 +409,16 @@ export function HrDashboard() {
         </DashboardPanel>
 
         <DashboardPanel
-          title="Hiring Operations"
-          description="Interviews and offers requiring movement"
-          viewAllLabel="Interview Centre"
-          viewAllTo="/staff/interviews"
+          title="Recruitment"
+          description="Current hiring work"
+          viewAllLabel="Open Vacancies"
+          viewAllTo="/staff/vacancies"
         >
           <div className="grid grid-cols-2 gap-3">
             {[
-              ["Upcoming", upcomingInterviews.length],
-              ["Awaiting scores", interviewsAwaitingScores.length],
-              ["Manual records", manualInterviews.length],
+              ["Open vacancies", vacancies.length],
+              ["Active applicants", applicants],
+              ["Upcoming interviews", upcomingInterviews.length],
               ["Active offers", activeOffers.length],
             ].map(([label, value]) => (
               <div key={String(label)} className="rounded-lg border bg-muted/20 p-3">

@@ -21,6 +21,7 @@ import {
   Laptop,
   Mail,
   MapPin,
+  Plus,
   Plane,
   ShieldCheck,
   TrendingUp,
@@ -31,6 +32,7 @@ import { useCurrentUser, redactEmployee, isEmployeeInScope } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -59,8 +61,12 @@ import {
 } from "@/components/ui/dialog";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { OffboardingService } from "@/lib/data/offboarding-service";
-import type { EmployeeSalary } from "@/lib/data/types";
-import { getMasterDataRepository, getProjectRepository } from "@/lib/data/master-data";
+import type { EmployeeSalary, MasterRecord } from "@/lib/data/types";
+import {
+  getMasterDataRepository,
+  getProjectRepository,
+  MasterDataService,
+} from "@/lib/data/master-data";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -87,6 +93,23 @@ import { EquipmentTab } from "./equipment-tab";
 import { AuditViewer } from "@/components/audit-viewer";
 import { getApplicationDataServices } from "@/lib/data/application-data";
 import type { DevPreviewContextValue } from "@/lib/auth";
+
+type EmploymentMasterDataCollection = "departments" | "positions" | "locations" | "employmentTypes";
+
+function refreshedEmploymentOptions(
+  collection: EmploymentMasterDataCollection,
+  refreshVersion: number,
+  additions: MasterRecord[],
+) {
+  void refreshVersion;
+  const byName = new Map(
+    [...getMasterDataRepository(collection).list(), ...additions].map((record) => [
+      record.name.toLowerCase(),
+      record,
+    ]),
+  );
+  return [...byName.values()];
+}
 
 const editFormSchema = z.object({
   department: z.string().min(1),
@@ -155,6 +178,17 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
     "Active" | "Suspended" | "Archived" | "Restore" | null
   >(null);
   const [statusReason, setStatusReason] = useState("");
+  const [masterDataVersion, setMasterDataVersion] = useState(0);
+  const [quickAddedOptions, setQuickAddedOptions] = useState<
+    Record<EmploymentMasterDataCollection, MasterRecord[]>
+  >({ departments: [], positions: [], locations: [], employmentTypes: [] });
+  const [quickSelectedValues, setQuickSelectedValues] = useState<
+    Partial<Record<EmploymentMasterDataCollection, string | undefined>>
+  >({});
+  const [quickAddCollection, setQuickAddCollection] =
+    useState<EmploymentMasterDataCollection | null>(null);
+  const [quickAddName, setQuickAddName] = useState("");
+  const [quickAddBusy, setQuickAddBusy] = useState(false);
 
   // Viewing your own record, regardless of what admin permissions you happen to hold, is a
   // different mode: it is your personal page, not an HR management console, so status-change
@@ -163,6 +197,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
 
   const employeeService = useMemo(() => new EmployeeService(), []);
   const offboardingService = useMemo(() => new OffboardingService(), []);
+  const masterDataService = useMemo(() => new MasterDataService(), []);
 
   const rawEmployee = employeeService.getById(employeeId, currentUser.getActorContext(), {
     includeArchived: true,
@@ -211,12 +246,30 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
     [currentUser, employeeService, employeeId],
   );
 
-  const departments = useMemo(() => getMasterDataRepository("departments").list(), []);
-  const locations = useMemo(() => getMasterDataRepository("locations").list(), []);
+  const departments = useMemo(
+    () =>
+      refreshedEmploymentOptions("departments", masterDataVersion, quickAddedOptions.departments),
+    [masterDataVersion, quickAddedOptions.departments],
+  );
+  const locations = useMemo(
+    () => refreshedEmploymentOptions("locations", masterDataVersion, quickAddedOptions.locations),
+    [masterDataVersion, quickAddedOptions.locations],
+  );
   const grades = useMemo(() => getMasterDataRepository("grades").list(), []);
-  const positions = useMemo(() => getMasterDataRepository("positions").list(), []);
+  const positions = useMemo(
+    () => refreshedEmploymentOptions("positions", masterDataVersion, quickAddedOptions.positions),
+    [masterDataVersion, quickAddedOptions.positions],
+  );
   const projects = useMemo(() => getProjectRepository().list(), []);
-  const employmentTypes = useMemo(() => getMasterDataRepository("employmentTypes").list(), []);
+  const employmentTypes = useMemo(
+    () =>
+      refreshedEmploymentOptions(
+        "employmentTypes",
+        masterDataVersion,
+        quickAddedOptions.employmentTypes,
+      ),
+    [masterDataVersion, quickAddedOptions.employmentTypes],
+  );
 
   const form = useForm<z.infer<typeof editFormSchema>>({
     resolver: zodResolver(editFormSchema),
@@ -302,6 +355,10 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
         employeeId,
         {
           ...changes,
+          department: quickSelectedValues.departments ?? changes.department,
+          position: quickSelectedValues.positions ?? changes.position,
+          location: quickSelectedValues.locations ?? changes.location,
+          employmentType: quickSelectedValues.employmentTypes ?? changes.employmentType,
           lineManagerId:
             changes.lineManagerId === "none" || !changes.lineManagerId
               ? undefined
@@ -314,10 +371,66 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
         getActorContext(reason),
       );
       toast.success("Employment details saved");
+      setQuickSelectedValues({});
       setIsEditOpen(false);
       setProfileVersion((value) => value + 1);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update employee");
+    }
+  };
+
+  const quickAddLabels: Record<EmploymentMasterDataCollection, string> = {
+    departments: "department",
+    positions: "position",
+    locations: "work location",
+    employmentTypes: "employment type",
+  };
+
+  const createEmploymentOption = async () => {
+    if (!quickAddCollection || !quickAddName.trim()) return;
+    const label = quickAddLabels[quickAddCollection] ?? "option";
+    setQuickAddBusy(true);
+    try {
+      const record = await masterDataService.create(
+        quickAddCollection,
+        {
+          name: quickAddName.trim(),
+          isActive: true,
+          orderIndex: getMasterDataRepository(quickAddCollection).list().length,
+        },
+        currentUser.getActorContext(),
+      );
+      const fieldByCollection = {
+        departments: "department",
+        positions: "position",
+        locations: "location",
+        employmentTypes: "employmentType",
+      } as const;
+      const createdCollection = quickAddCollection;
+      setQuickAddedOptions((current) => ({
+        ...current,
+        [createdCollection]: [...current[createdCollection], record],
+      }));
+      setQuickSelectedValues((current) => ({
+        ...current,
+        [createdCollection]: record.name,
+      }));
+      setMasterDataVersion((value) => value + 1);
+      setQuickAddCollection(null);
+      setQuickAddName("");
+      // Let the newly created SelectItem mount before assigning its value. Radix clears a value
+      // that has no registered item, which otherwise leaves the field blank after a successful add.
+      window.setTimeout(() => {
+        form.setValue(fieldByCollection[createdCollection], record.name, {
+          shouldDirty: true,
+          shouldValidate: true,
+        });
+      }, 0);
+      toast.success(`${record.name} added as a new ${label}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : `Could not add ${label}`);
+    } finally {
+      setQuickAddBusy(false);
     }
   };
 
@@ -425,6 +538,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
       // offboarding clearance process (mandatory tasks + financial + legal clearance) instead
       // of a raw status flip that skips it entirely.
       if (targetStatus === "Inactive" || targetStatus === "Archived") {
+        await offboardingService.hydrateCompatibilityCache(currentUser.getActorContext());
         const existingCase = offboardingService.getCaseByEmployeeId(
           employeeId,
           currentUser.getActorContext(),
@@ -443,7 +557,34 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
           // and financial/legal clearance are done) is what applies the terminal Inactive
           // status, so we do not also call changeEmployeeStatus here.
           const today = new Date().toISOString().split("T")[0] as string;
-          offboardingService.startCase(
+          const matchingTemplate = offboardingService
+            .getTemplates(currentUser.getActorContext())
+            .filter((template) => template.isActive)
+            .sort(
+              (left, right) =>
+                right.departments.length +
+                right.employmentTypes.length -
+                (left.departments.length + left.employmentTypes.length),
+            )
+            .find(
+              (template) =>
+                (template.departments.length === 0 ||
+                  template.departments.includes(employee.department)) &&
+                (template.employmentTypes.length === 0 ||
+                  template.employmentTypes.includes(employee.employmentType)),
+            );
+          if (!matchingTemplate)
+            throw new Error("Create an active offboarding checklist for this employee first.");
+          const hrOwner = employeeService
+            .getUsers(currentUser.getActorContext())
+            .find(
+              (user) =>
+                user.status === "Active" &&
+                user.roles.includes("HR") &&
+                (currentUser.activeRole !== "HR" || user.id === currentUser.id),
+            );
+          if (!hrOwner) throw new Error("Assign an active HR case owner before offboarding.");
+          await offboardingService.startCaseAsync(
             employeeId,
             "Other",
             today,
@@ -451,6 +592,11 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
             false,
             reason,
             getActorContext(reason),
+            {
+              templateId: matchingTemplate.id,
+              assignedHRId: hrOwner.id,
+              confidentialityLevel: "Standard",
+            },
           );
           toast.success(
             "Offboarding case started. The employee has been moved to Notice status - finalise clearance from the Employee lifecycle tab to complete the change.",
@@ -1077,6 +1223,12 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                 item.id === employee.proposedEmploymentDetails?.lineManagerId,
                             )?.preferredName ?? employee.proposedEmploymentDetails.lineManagerEmail,
                           ],
+                          [
+                            "Visa or work permit needed",
+                            employee.proposedEmploymentDetails.visaRequired === false
+                              ? "No"
+                              : "Yes",
+                          ],
                         ].map(([label, value]) => (
                           <div key={label}>
                             <p className="text-xs font-medium text-muted-foreground">{label}</p>
@@ -1131,6 +1283,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                         onOpenChange={(open) => {
                           setIsEditOpen(open);
                           if (open) {
+                            setQuickSelectedValues({});
                             form.reset({
                               department: employee.department,
                               position: employee.position,
@@ -1148,7 +1301,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                         }}
                       >
                         <DialogTrigger asChild>
-                          <Button variant="ghost" size="sm">
+                          <Button variant="ghost" size="sm" aria-label="Edit employment details">
                             <Edit2 className="h-4 w-4" />
                           </Button>
                         </DialogTrigger>
@@ -1164,6 +1317,73 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                               onSubmit={form.handleSubmit(onEditSubmit)}
                               className="space-y-4 pt-4"
                             >
+                              <div className="rounded-xl border bg-muted/25 p-4">
+                                <p className="text-sm font-medium">Need a new option?</p>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  Add it here and it will be selected immediately. You do not need
+                                  to leave this employee record.
+                                </p>
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  {(
+                                    [
+                                      ["departments", "Department"],
+                                      ["positions", "Position"],
+                                      ["locations", "Work location"],
+                                      ["employmentTypes", "Employment type"],
+                                    ] as const
+                                  ).map(([collection, label]) => (
+                                    <Button
+                                      key={collection}
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => {
+                                        setQuickAddCollection(collection);
+                                        setQuickAddName("");
+                                      }}
+                                    >
+                                      <Plus className="h-3.5 w-3.5" /> Add {label.toLowerCase()}
+                                    </Button>
+                                  ))}
+                                </div>
+                                {quickAddCollection && (
+                                  <div className="mt-4 flex flex-col gap-2 rounded-lg border bg-background p-3 sm:flex-row sm:items-end">
+                                    <div className="flex-1 space-y-1.5">
+                                      <Label htmlFor="quick-add-employment-option">
+                                        New {quickAddLabels[quickAddCollection]}
+                                      </Label>
+                                      <Input
+                                        id="quick-add-employment-option"
+                                        value={quickAddName}
+                                        autoFocus
+                                        onChange={(event) => setQuickAddName(event.target.value)}
+                                        onKeyDown={(event) => {
+                                          if (event.key === "Enter") {
+                                            event.preventDefault();
+                                            void createEmploymentOption();
+                                          }
+                                        }}
+                                      />
+                                    </div>
+                                    <div className="flex gap-2">
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        onClick={() => setQuickAddCollection(null)}
+                                      >
+                                        Cancel
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        disabled={quickAddBusy || !quickAddName.trim()}
+                                        onClick={() => void createEmploymentOption()}
+                                      >
+                                        {quickAddBusy ? "Adding..." : "Add and select"}
+                                      </Button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                               <div className="grid grid-cols-2 gap-4">
                                 <FormField
                                   control={form.control}
@@ -1172,12 +1392,21 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                     <FormItem>
                                       <FormLabel>Department</FormLabel>
                                       <Select
-                                        onValueChange={field.onChange}
-                                        defaultValue={field.value as string}
+                                        onValueChange={(value) => {
+                                          if (!value) return;
+                                          setQuickSelectedValues((current) => ({
+                                            ...current,
+                                            departments: undefined,
+                                          }));
+                                          field.onChange(value);
+                                        }}
+                                        value={quickSelectedValues.departments ?? field.value}
                                       >
                                         <FormControl>
                                           <SelectTrigger>
-                                            <SelectValue />
+                                            <SelectValue>
+                                              {quickSelectedValues.departments ?? field.value}
+                                            </SelectValue>
                                           </SelectTrigger>
                                         </FormControl>
                                         <SelectContent>
@@ -1198,12 +1427,21 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                     <FormItem>
                                       <FormLabel>Position</FormLabel>
                                       <Select
-                                        onValueChange={field.onChange}
-                                        defaultValue={field.value as string}
+                                        onValueChange={(value) => {
+                                          if (!value) return;
+                                          setQuickSelectedValues((current) => ({
+                                            ...current,
+                                            positions: undefined,
+                                          }));
+                                          field.onChange(value);
+                                        }}
+                                        value={quickSelectedValues.positions ?? field.value}
                                       >
                                         <FormControl>
                                           <SelectTrigger>
-                                            <SelectValue />
+                                            <SelectValue>
+                                              {quickSelectedValues.positions ?? field.value}
+                                            </SelectValue>
                                           </SelectTrigger>
                                         </FormControl>
                                         <SelectContent>
@@ -1225,7 +1463,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                       <FormLabel>Grade</FormLabel>
                                       <Select
                                         onValueChange={field.onChange}
-                                        defaultValue={field.value as string}
+                                        value={field.value as string}
                                       >
                                         <FormControl>
                                           <SelectTrigger>
@@ -1251,12 +1489,21 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                     <FormItem>
                                       <FormLabel>Location</FormLabel>
                                       <Select
-                                        onValueChange={field.onChange}
-                                        defaultValue={field.value as string}
+                                        onValueChange={(value) => {
+                                          if (!value) return;
+                                          setQuickSelectedValues((current) => ({
+                                            ...current,
+                                            locations: undefined,
+                                          }));
+                                          field.onChange(value);
+                                        }}
+                                        value={quickSelectedValues.locations ?? field.value}
                                       >
                                         <FormControl>
                                           <SelectTrigger>
-                                            <SelectValue />
+                                            <SelectValue>
+                                              {quickSelectedValues.locations ?? field.value}
+                                            </SelectValue>
                                           </SelectTrigger>
                                         </FormControl>
                                         <SelectContent>
@@ -1277,12 +1524,21 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                     <FormItem>
                                       <FormLabel>Employment Type</FormLabel>
                                       <Select
-                                        onValueChange={field.onChange}
-                                        defaultValue={field.value as string}
+                                        onValueChange={(value) => {
+                                          if (!value) return;
+                                          setQuickSelectedValues((current) => ({
+                                            ...current,
+                                            employmentTypes: undefined,
+                                          }));
+                                          field.onChange(value);
+                                        }}
+                                        value={quickSelectedValues.employmentTypes ?? field.value}
                                       >
                                         <FormControl>
                                           <SelectTrigger>
-                                            <SelectValue />
+                                            <SelectValue>
+                                              {quickSelectedValues.employmentTypes ?? field.value}
+                                            </SelectValue>
                                           </SelectTrigger>
                                         </FormControl>
                                         <SelectContent>

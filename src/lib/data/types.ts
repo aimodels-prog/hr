@@ -133,6 +133,7 @@ export interface Employee extends BaseRecord {
         employmentTypeId: string;
         lineManagerId: string | null;
         lineManagerEmail: string;
+        visaRequired: boolean;
       }
     | undefined;
   proposedLineManagerEmail?: string | undefined;
@@ -272,6 +273,8 @@ export interface Vacancy extends BaseRecord {
   mandatoryCriteria?: string[] | undefined;
   notes: string;
   screeningQuestions: string[];
+  acceptsInternalApplications?: boolean | undefined;
+  acceptsEmployeeReferrals?: boolean | undefined;
 }
 
 export type CandidateStage =
@@ -385,7 +388,8 @@ export type CandidateCvSource =
   | "Agency"
   | "Walk-in"
   | "HR Upload"
-  | "Other";
+  | "Other"
+  | "Internal Application";
 
 export type CandidateCvProcessingStatus =
   "Uploaded" | "Extracting" | "Awaiting HR Review" | "Ready" | "Processing Failed";
@@ -403,6 +407,16 @@ export interface CandidateCvExtractedFields {
   education?: string[] | undefined;
   certifications?: string[] | undefined;
   languages?: string[] | undefined;
+  workEligibility?: string | undefined;
+  employmentHistory?:
+    | Array<{
+        title: string;
+        employer?: string | undefined;
+        startDate?: string | undefined;
+        endDate?: string | undefined;
+        summary?: string | undefined;
+      }>
+    | undefined;
 }
 
 export interface CandidateCvRecord extends BaseRecord {
@@ -415,6 +429,13 @@ export interface CandidateCvRecord extends BaseRecord {
   receivedAt: string;
   processingStatus: CandidateCvProcessingStatus;
   extractionMethod: "Candidate Provided" | "Local Preview" | "Python Service";
+  documentRoute:
+    | "Direct Text"
+    | "Searchable PDF"
+    | "Word Document"
+    | "OCR Required"
+    | "Reuse Prepared CV"
+    | "Unknown";
   extractedFields: CandidateCvExtractedFields;
   fieldConfidence: Partial<Record<keyof CandidateCvExtractedFields, number>>;
   extractionWarnings: string[];
@@ -460,6 +481,7 @@ export interface CandidatePreparationRun extends BaseRecord {
     | "Reuse Prepared CV"
     | "Unknown";
   preparationMethod: "Local Preparation" | "Python Service";
+  rankingModel?: string | undefined;
   extractedProfile: CandidateCvExtractedFields;
   fieldConfidence: Partial<Record<keyof CandidateCvExtractedFields, number>>;
   preliminaryScore?: number | undefined;
@@ -563,6 +585,9 @@ export interface CandidateRecommendation extends BaseRecord {
   commercialTerms?: string | undefined;
   sourceOutcome: string; // e.g. "Hired", "Rejected", "In Progress"
   employeeId?: RecordId | undefined;
+  recommenderEmployeeId?: RecordId | undefined;
+  candidateAware?: boolean | undefined;
+  yearsKnown?: number | undefined;
 }
 
 export interface CandidateApplication extends BaseRecord {
@@ -586,6 +611,8 @@ export interface CandidateApplication extends BaseRecord {
   preparationStatus?: CandidatePreparationStatus | undefined;
   /** Retained only so older browser records remain readable after migration. */
   screeningDecision?: CandidateInterviewRecommendation["screeningDecision"] | undefined;
+  internalApplicantEmployeeId?: RecordId | undefined;
+  submittedByEmployeeId?: RecordId | undefined;
 }
 
 export interface Notification extends BaseRecord {

@@ -340,7 +340,7 @@ const EmploymentChangesInput = z
     location: z.string().trim().min(1).optional(),
     employmentType: z.string().trim().min(1).optional(),
     staffEntryType: z.enum(["New Employee", "Existing Employee"]).optional(),
-    lineManagerId: z.string().uuid().optional(),
+    lineManagerId: z.string().uuid().nullable().optional(),
     projectId: z.string().uuid().or(z.literal("")).optional(),
     costCentreId: z.string().uuid().or(z.literal("")).optional(),
     startDate: z

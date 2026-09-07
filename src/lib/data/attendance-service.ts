@@ -492,9 +492,10 @@ export class AttendanceService {
     explanation: string,
     context: ActorContext,
     localEvidenceFileId?: string,
+    missingRecord?: { employeeId: string; date: string },
   ): Promise<AttendanceCorrection> {
     const record = this.recordRepo.getById(recordId);
-    if (!record) throw new Error("Attendance record was not found.");
+    if (!record && !missingRecord) throw new Error("Attendance record was not found.");
     const {
       deleteUnattachedAttendanceEvidenceFn,
       requestAttendanceCorrectionFn,
@@ -528,7 +529,14 @@ export class AttendanceService {
       const databaseCorrectionId = await requestAttendanceCorrectionFn({
         data: {
           actor: this.serverActor(context),
-          attendanceRecordId: this.localAttendanceDatabaseId("attendanceRecords", recordId),
+          ...(record
+            ? {
+                attendanceRecordId: this.localAttendanceDatabaseId("attendanceRecords", recordId),
+              }
+            : {
+                employeeId: this.databaseId("employees", missingRecord!.employeeId),
+                date: missingRecord!.date,
+              }),
           ...(proposedIn ? { proposedClockIn: proposedIn } : {}),
           ...(proposedOut ? { proposedClockOut: proposedOut } : {}),
           explanation,

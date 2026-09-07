@@ -100,6 +100,15 @@ export async function decideEmployeeDocumentInDatabase(
   decision: "verify" | "reject",
   reason: string | undefined,
   actor: AuditActorContext,
+  verifiedDetails?: {
+    documentNumber?: string;
+    issueDate?: string;
+    expiryDate?: string;
+    issuingAuthority?: string;
+    issuingCountry?: string;
+    notes?: string;
+    visibility?: "Public" | "Restricted";
+  },
 ): Promise<void> {
   if (actor.activeRole !== "HR" && actor.activeRole !== "Super Admin") {
     throw new Error("Only HR or a Super Admin can review employee documents.");
@@ -126,11 +135,47 @@ export async function decideEmployeeDocumentInDatabase(
     if (document.employeeId === actor.employeeId) {
       throw new Error("You cannot review your own employee document.");
     }
+    const documentNumber = verifiedDetails?.documentNumber?.trim();
+    const issuingAuthority = verifiedDetails?.issuingAuthority?.trim();
+    const issueDate = verifiedDetails?.issueDate;
+    const expiryDate = verifiedDetails?.expiryDate;
+    if (
+      decision === "verify" &&
+      identityDocumentTypes.has(document.type) &&
+      (!(documentNumber || document.documentNumberEncrypted) ||
+        !(issuingAuthority || document.issuingAuthority) ||
+        !(issueDate || document.issueDate) ||
+        !(expiryDate || document.expiryDate))
+    ) {
+      throw new Error(
+        "HR must complete the document number, issuing authority, issue date and expiry date before verification.",
+      );
+    }
+    const finalIssueDate = issueDate ?? document.issueDate;
+    const finalExpiryDate = expiryDate ?? document.expiryDate;
+    if (finalIssueDate && finalExpiryDate && finalExpiryDate < finalIssueDate) {
+      throw new Error("Expiry date cannot be before issue date.");
+    }
     await tx
       .update(employeeDocuments)
       .set({
         status: decision === "verify" ? "Valid" : "Rejected",
         rejectionReason: decision === "reject" ? reason!.trim() : null,
+        ...(decision === "verify" && documentNumber
+          ? { documentNumberEncrypted: encryptSensitiveJson(documentNumber) }
+          : {}),
+        ...(decision === "verify" && issueDate ? { issueDate } : {}),
+        ...(decision === "verify" && expiryDate ? { expiryDate } : {}),
+        ...(decision === "verify" && issuingAuthority ? { issuingAuthority } : {}),
+        ...(decision === "verify" && verifiedDetails?.issuingCountry?.trim()
+          ? { issuingCountry: verifiedDetails.issuingCountry.trim() }
+          : {}),
+        ...(decision === "verify" && verifiedDetails?.notes?.trim()
+          ? { notes: verifiedDetails.notes.trim() }
+          : {}),
+        ...(decision === "verify" && verifiedDetails?.visibility
+          ? { visibility: verifiedDetails.visibility }
+          : {}),
         updatedAt: new Date(),
         updatedBy: actor.userId,
         recordVersion: sql`${employeeDocuments.recordVersion} + 1`,
@@ -148,7 +193,10 @@ export async function decideEmployeeDocumentInDatabase(
       entityType: "employee-document",
       entityId: documentId,
       beforeSummary: { status: document.status },
-      afterSummary: { status: decision === "verify" ? "Valid" : "Rejected" },
+      afterSummary: {
+        status: decision === "verify" ? "Valid" : "Rejected",
+        ...(decision === "verify" ? { officialDetailsConfirmedByHr: true } : {}),
+      },
       reason: decision === "reject" ? reason!.trim() : "Verified employee document",
       riskLevel: "High",
     } as typeof auditEvents.$inferInsert);
@@ -312,6 +360,10 @@ export async function uploadEmployeeDocumentToDatabase(
     throw new Error("Employee documents must be PDF, JPG or PNG files.");
   if (
     identityDocumentTypes.has(input.type) &&
+    !(
+      actor.employeeId === input.employeeId &&
+      (input.type === "visa" || input.type === "work_permit")
+    ) &&
     (!input.documentNumber?.trim() ||
       !input.issueDate ||
       !input.expiryDate ||

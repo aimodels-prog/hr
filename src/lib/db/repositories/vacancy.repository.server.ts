@@ -122,6 +122,8 @@ export async function listVacanciesForOrganisation(
       ...(row.mandatoryCriteria ? { mandatoryCriteria: row.mandatoryCriteria } : {}),
       notes: row.notes,
       screeningQuestions: row.screeningQuestions,
+      acceptsInternalApplications: row.acceptsInternalApplications,
+      acceptsEmployeeReferrals: row.acceptsEmployeeReferrals,
     } satisfies Vacancy;
   });
 }
@@ -233,6 +235,8 @@ export async function saveVacancyDraftInDatabase(
       mandatoryCriteria,
       notes: input.notes,
       screeningQuestions: input.screeningQuestions,
+      acceptsInternalApplications: input.acceptsInternalApplications ?? true,
+      acceptsEmployeeReferrals: input.acceptsEmployeeReferrals ?? true,
       updatedAt: new Date(),
       updatedBy: actor.userId!,
     };
@@ -299,6 +303,81 @@ export async function saveVacancyDraftInDatabase(
       riskLevel: "High",
     });
     return vacancyId;
+  });
+}
+
+export async function updateVacancyOpportunitySettingsInDatabase(
+  organisationId: string,
+  input: {
+    vacancyId: string;
+    expectedVersion: number;
+    acceptsInternalApplications: boolean;
+    acceptsEmployeeReferrals: boolean;
+    reason: string;
+  },
+  actor: AuditActorContext,
+): Promise<number> {
+  if (actor.activeRole !== "HR" && actor.activeRole !== "Super Admin") {
+    throw new Error("Only HR or a Super Admin can manage vacancy access.");
+  }
+  const db = getDatabaseClient();
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({
+        recordVersion: vacancies.recordVersion,
+        acceptsInternalApplications: vacancies.acceptsInternalApplications,
+        acceptsEmployeeReferrals: vacancies.acceptsEmployeeReferrals,
+      })
+      .from(vacancies)
+      .where(
+        and(
+          eq(vacancies.organisationId, organisationId),
+          eq(vacancies.id, input.vacancyId),
+          sql`${vacancies.archivedAt} IS NULL`,
+        ),
+      )
+      .limit(1);
+    if (!existing) throw new Error("Vacancy not found.");
+    const [updated] = await tx
+      .update(vacancies)
+      .set({
+        acceptsInternalApplications: input.acceptsInternalApplications,
+        acceptsEmployeeReferrals: input.acceptsEmployeeReferrals,
+        updatedAt: new Date(),
+        updatedBy: actor.userId!,
+        recordVersion: sql`${vacancies.recordVersion} + 1`,
+      })
+      .where(
+        and(
+          eq(vacancies.organisationId, organisationId),
+          eq(vacancies.id, input.vacancyId),
+          eq(vacancies.recordVersion, input.expectedVersion),
+        ),
+      )
+      .returning({ recordVersion: vacancies.recordVersion });
+    if (!updated) {
+      throw new Error("This vacancy changed while you were editing it. Refresh and try again.");
+    }
+    await tx.insert(auditEvents).values({
+      organisationId,
+      actorUserId: actor.userId!,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [actor.activeRole],
+      action: "update",
+      module: "recruitment",
+      entityType: "vacancy",
+      entityId: input.vacancyId,
+      beforeSummary: existing,
+      afterSummary: {
+        acceptsInternalApplications: input.acceptsInternalApplications,
+        acceptsEmployeeReferrals: input.acceptsEmployeeReferrals,
+      },
+      reason: input.reason,
+      riskLevel: "Medium",
+    });
+    return updated.recordVersion;
   });
 }
 

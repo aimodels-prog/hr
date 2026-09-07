@@ -4,23 +4,33 @@ import { randomUUID } from "node:crypto";
 
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 
+import {
+  CV_PROCESSOR_VERSION,
+  calculateCvSemanticSimilarity,
+} from "../../integrations/cv-processing.server.ts";
 import { getDatabaseClient } from "../client.ts";
+import { decryptSensitiveJson } from "../encryption.server.ts";
 import { locations } from "../schema/master-data.ts";
 import {
   candidateApplications,
   candidateAssessmentBatches,
   candidateAssessmentInclusions,
+  candidateCvExtractions,
   candidateCvRecords,
   candidateInterviewRecommendations,
   candidatePreparationRuns,
   candidateRecommendations,
   candidateScoreRuns,
   candidates,
+  recruitmentDocuments,
   shortlistSnapshots,
   vacancies,
 } from "../schema/recruitment.ts";
 import { auditEvents } from "../schema/system.ts";
-import { buildCandidatePreliminaryAssessment } from "./candidate-cv-intake.repository.server.ts";
+import {
+  buildCandidatePreliminaryAssessment,
+  buildCvSemanticTexts,
+} from "./candidate-cv-intake.repository.server.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 
 function recruiter(actor: AuditActorContext): void {
@@ -140,10 +150,46 @@ export async function includeCandidateInAssessmentInDatabase(
       .orderBy(desc(candidatePreparationRuns.createdAt))
       .limit(1);
     if (!preparation || !["Ready", "Needs Review"].includes(preparation.status)) {
+      const semanticTexts = buildCvSemanticTexts(
+        candidate,
+        vacancy,
+        cv.extractedFields as Record<string, unknown>,
+      );
+      const [document] = await tx
+        .select({ checksum: recruitmentDocuments.checksum })
+        .from(recruitmentDocuments)
+        .where(
+          and(
+            eq(recruitmentDocuments.organisationId, organisationId),
+            eq(recruitmentDocuments.id, cv.fileId),
+          ),
+        )
+        .limit(1);
+      const documentChecksum = document?.checksum;
+      const [cached] = documentChecksum
+        ? await tx
+            .select({ semanticTextEncrypted: candidateCvExtractions.semanticTextEncrypted })
+            .from(candidateCvExtractions)
+            .where(
+              and(
+                eq(candidateCvExtractions.organisationId, organisationId),
+                eq(candidateCvExtractions.checksum, documentChecksum),
+                eq(candidateCvExtractions.processorVersion, CV_PROCESSOR_VERSION),
+              ),
+            )
+            .limit(1)
+        : [];
+      const semanticMatch = await calculateCvSemanticSimilarity({
+        ...semanticTexts,
+        ...(cached?.semanticTextEncrypted
+          ? { candidateText: decryptSensitiveJson<string>(cached.semanticTextEncrypted) }
+          : {}),
+      });
       const result = buildCandidatePreliminaryAssessment(
         candidate,
         vacancy,
         cv.extractedFields as Record<string, unknown>,
+        semanticMatch,
       );
       const preparationId = randomUUID();
       await tx.insert(candidatePreparationRuns).values({
@@ -156,10 +202,9 @@ export async function includeCandidateInAssessmentInDatabase(
         cvRecordId: cv.id,
         cvFileId: cv.fileId,
         status: result.status,
-        documentRoute: cv.originalFileName.toLowerCase().endsWith(".docx")
-          ? "Word Document"
-          : "Searchable PDF",
+        documentRoute: cv.documentRoute,
         preparationMethod: "Python Service",
+        rankingModel: result.rankingModel,
         extractedProfile: result.extractedProfile,
         fieldConfidence: cv.fieldConfidence,
         preliminaryScore: String(result.preliminaryScore),
@@ -255,8 +300,8 @@ export async function createAssessmentBatchInDatabase(
   actor: AuditActorContext,
 ): Promise<string> {
   recruiter(actor);
-  if (!Number.isInteger(targetSize) || targetSize < 1 || targetSize > 10)
-    throw new Error("Choose between 1 and 10 candidates.");
+  if (!Number.isInteger(targetSize) || targetSize < 1)
+    throw new Error("Choose at least one candidate.");
   const db = getDatabaseClient();
   return db.transaction(async (tx) => {
     const [vacancy] = await tx
@@ -304,13 +349,12 @@ export async function createAssessmentBatchInDatabase(
     const hrAdded = unique(
       inclusions.filter((item) => item.source === "HR Added").map((item) => item.candidateId),
     ).filter((id) => latest.has(id));
-    const pinned = unique([...recommended, ...hrAdded]);
-    if (pinned.length > targetSize)
-      throw new Error(`${pinned.length} pinned candidates require a larger assessment group.`);
-    const selected = [
-      ...pinned,
-      ...ranked.map((run) => run.candidateId).filter((id) => !pinned.includes(id)),
-    ].slice(0, targetSize);
+    const { pinned, selected } = selectCandidateAssessmentGroup(
+      ranked.map((run) => run.candidateId),
+      recommended,
+      hrAdded,
+      targetSize,
+    );
     const [draft] = await tx
       .select()
       .from(candidateAssessmentBatches)
@@ -367,6 +411,29 @@ export async function createAssessmentBatchInDatabase(
     });
     return id;
   });
+}
+
+export function selectCandidateAssessmentGroup(
+  rankedCandidateIds: string[],
+  recommendedCandidateIds: string[],
+  hrAddedCandidateIds: string[],
+  targetSize: number,
+): { pinned: string[]; selected: string[] } {
+  if (!Number.isInteger(targetSize) || targetSize < 1)
+    throw new Error("Choose at least one candidate.");
+  const ranked = unique(rankedCandidateIds);
+  if (ranked.length < targetSize)
+    throw new Error(`Only ${ranked.length} prepared candidates are available.`);
+  const available = new Set(ranked);
+  const pinned = unique([...recommendedCandidateIds, ...hrAddedCandidateIds]).filter((id) =>
+    available.has(id),
+  );
+  if (pinned.length > targetSize)
+    throw new Error(`${pinned.length} pinned candidates require a larger assessment group.`);
+  return {
+    pinned,
+    selected: [...pinned, ...ranked.filter((id) => !pinned.includes(id))].slice(0, targetSize),
+  };
 }
 
 export async function updateAssessmentSelectionInDatabase(
@@ -688,13 +755,10 @@ export async function saveShortlistDraftInDatabase(
 ): Promise<string> {
   recruiter(actor);
   const selected = unique(input.selectedCandidateIds);
-  if (
-    !Number.isInteger(input.targetSize) ||
-    input.targetSize < 1 ||
-    input.targetSize > 10 ||
-    selected.length !== input.targetSize
-  )
-    throw new Error("Choose exactly the approved shortlist size between 1 and 10.");
+  if (!Number.isInteger(input.targetSize) || input.targetSize < 1)
+    throw new Error("Choose at least one candidate.");
+  if (selected.length !== input.targetSize)
+    throw new Error(`Choose exactly ${input.targetSize} candidates.`);
   const db = getDatabaseClient();
   return db.transaction(async (tx) => {
     const [batch] = await tx

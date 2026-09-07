@@ -180,6 +180,7 @@ test(
       assert.equal(pendingManager?.profile_setup_status, "In Progress");
       assert.equal(pendingManager?.employment_confirmation_status, "Pending HR Review");
       assert.equal(pendingManager?.proposed_employment_details?.staffEntryType, "New Employee");
+      assert.equal(pendingManager?.proposed_employment_details?.visaRequired, false);
       assert.equal(pendingManager?.proposed_line_manager_email, managerEmail);
       assert.equal(pendingManager?.probation_end_date, null);
 

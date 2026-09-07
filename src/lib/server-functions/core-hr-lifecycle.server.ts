@@ -893,6 +893,13 @@ const DecideEmployeeDocument = z
     documentId: z.string().uuid(),
     decision: z.enum(["verify", "reject"]),
     reason: z.string().trim().min(3).max(1000).optional(),
+    documentNumber: z.string().trim().max(255).optional(),
+    issueDate: IsoDate.optional(),
+    expiryDate: IsoDate.optional(),
+    issuingAuthority: z.string().trim().max(255).optional(),
+    issuingCountry: z.string().trim().max(255).optional(),
+    notes: z.string().trim().max(2000).optional(),
+    visibility: z.enum(["Public", "Restricted"]).optional(),
   })
   .strict();
 export const decideEmployeeDocumentFn = createServerFn({ method: "POST" })
@@ -905,6 +912,15 @@ export const decideEmployeeDocumentFn = createServerFn({ method: "POST" })
       data.decision,
       data.reason,
       verified.actor,
+      {
+        ...(data.documentNumber ? { documentNumber: data.documentNumber } : {}),
+        ...(data.issueDate ? { issueDate: data.issueDate } : {}),
+        ...(data.expiryDate ? { expiryDate: data.expiryDate } : {}),
+        ...(data.issuingAuthority ? { issuingAuthority: data.issuingAuthority } : {}),
+        ...(data.issuingCountry ? { issuingCountry: data.issuingCountry } : {}),
+        ...(data.notes ? { notes: data.notes } : {}),
+        ...(data.visibility ? { visibility: data.visibility } : {}),
+      },
     );
   });
 

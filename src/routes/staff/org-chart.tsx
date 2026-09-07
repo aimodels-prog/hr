@@ -1,16 +1,25 @@
 import { useMemo, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
-import { getScopedEmployeesWithAncestors } from "@/lib/auth/record-scope";
-import { redactEmployee } from "@/lib/auth/redaction";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { cn } from "@/lib/utils";
-import { ChevronDown, ChevronRight, Search, Users } from "lucide-react";
+import { ChevronDown, ChevronRight, Network, Search, Users } from "lucide-react";
+import { toast } from "sonner";
 import type { Employee } from "@/lib/data/types";
 
 export const Route = createFileRoute("/staff/org-chart")({
@@ -45,18 +54,11 @@ const MAX_ANCESTOR_HOPS = 100;
 function OrgChartRoute() {
   const currentUser = useCurrentUser();
   const employeeService = useMemo(() => new EmployeeService(), []);
-  // Redacted immediately after fetching - this page is visible to every role (org chart is
-  // company-wide directory info), so no full, unredacted record (salary, bank details, etc.)
-  // for anyone outside the viewer's own management chain may sit in this component's memory,
-  // even briefly, even if the tree/count UI never renders those fields directly.
-  const allEmployees = employeeService
-    .getEmployeesWithReportingLine(currentUser.getActorContext(), { includeArchived: false })
-    .map((e) => redactEmployee(e, currentUser));
-
-  const visibleList = useMemo(
-    () => getScopedEmployeesWithAncestors(allEmployees, currentUser),
-    [allEmployees, currentUser],
-  );
+  const [, setRefreshVersion] = useState(0);
+  const allEmployees = employeeService.getDirectoryEmployees(currentUser.getActorContext(), {
+    includeArchived: false,
+  });
+  const visibleList = allEmployees;
   const visible = useMemo(() => new Map(visibleList.map((e) => [e.id, e])), [visibleList]);
 
   const childrenByManager = useMemo(() => {
@@ -93,6 +95,40 @@ function OrgChartRoute() {
   );
 
   const [query, setQuery] = useState("");
+  const [employeeId, setEmployeeId] = useState("");
+  const [supervisorId, setSupervisorId] = useState("");
+  const [reason, setReason] = useState("Reporting line updated by HR");
+  const [saving, setSaving] = useState(false);
+  const canManageReportingLines = currentUser.permissions.has("employee:manage_all");
+
+  const selectEmployee = (id: string) => {
+    setEmployeeId(id);
+    setSupervisorId(allEmployees.find((employee) => employee.id === id)?.lineManagerId ?? "top");
+  };
+
+  const saveReportingLine = async () => {
+    if (!employeeId || !supervisorId || reason.trim().length < 5) {
+      toast.error("Select an employee and supervisor, and give a short reason.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await employeeService.updateEmploymentRecordAsync(
+        employeeId,
+        { lineManagerId: supervisorId === "top" ? null : supervisorId },
+        new Date().toISOString().slice(0, 10),
+        reason.trim(),
+        currentUser.getActorContext(),
+      );
+      currentUser.refreshRecords();
+      setRefreshVersion((value) => value + 1);
+      toast.success("Reporting line updated.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to update the reporting line.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // While searching, prune the tree to matches plus the path down to them (ancestors) and
   // their own team (descendants), instead of flattening the whole chart into a plain list.
@@ -120,7 +156,6 @@ function OrgChartRoute() {
   }, [query, visible, childrenByManager]);
 
   const totalVisible = visible.size;
-  const totalCompany = allEmployees.length;
   const visibleRoots = roots.filter((root) => !keepIds || keepIds.has(root.id));
   const noSearchMatches = query.trim().length > 0 && keepIds?.size === 0;
 
@@ -129,9 +164,73 @@ function OrgChartRoute() {
       <div className="flex flex-col gap-6 max-w-[1400px] mx-auto pb-10">
         <PageHeader
           title="Organisation Chart"
-          description="Reporting lines across VIA, built from each employee's line manager."
+          description="See how VIA teams and country leadership connect from the top of the organisation."
           breadcrumbs={[{ label: "Core HR" }, { label: "Organisation Chart" }]}
         />
+
+        {canManageReportingLines && (
+          <Card className="space-y-4 p-5">
+            <div className="flex items-start gap-3">
+              <div className="rounded-lg bg-primary/10 p-2 text-primary">
+                <Network className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="font-semibold">Arrange reporting lines</h2>
+                <p className="text-sm text-muted-foreground">
+                  Choose a colleague and who they report to. Select top of organisation for the CEO
+                  or highest country leader.
+                </p>
+              </div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Employee</Label>
+                <Select value={employeeId} onValueChange={selectEmployee}>
+                  <SelectTrigger aria-label="Employee to arrange">
+                    <SelectValue placeholder="Choose an employee" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {allEmployees.map((employee) => (
+                      <SelectItem key={employee.id} value={employee.id}>
+                        {employee.preferredName} · {employee.position} · {employee.location}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Reports to</Label>
+                <Select value={supervisorId} onValueChange={setSupervisorId} disabled={!employeeId}>
+                  <SelectTrigger aria-label="Reports to">
+                    <SelectValue placeholder="Choose a supervisor" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="top">Top of organisation</SelectItem>
+                    {allEmployees
+                      .filter((employee) => employee.id !== employeeId)
+                      .map((employee) => (
+                        <SelectItem key={employee.id} value={employee.id}>
+                          {employee.preferredName} · {employee.position} · {employee.location}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reporting-line-reason">Reason</Label>
+              <Textarea
+                id="reporting-line-reason"
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                placeholder="Why is this reporting line changing?"
+              />
+            </div>
+            <Button onClick={() => void saveReportingLine()} disabled={saving || !employeeId}>
+              {saving ? "Saving..." : "Save reporting line"}
+            </Button>
+          </Card>
+        )}
 
         <div className="flex flex-wrap items-center gap-4 rounded-xl border bg-card p-4 shadow-sm">
           <div className="relative flex-1 min-w-[250px]">
@@ -143,12 +242,9 @@ function OrgChartRoute() {
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
-          {totalVisible < totalCompany && (
-            <p className="text-xs text-muted-foreground max-w-md">
-              Showing your reporting line ({totalVisible} of {totalCompany} employees). HR and Super
-              Admin see the full company chart.
-            </p>
-          )}
+          <p className="text-xs text-muted-foreground">
+            {totalVisible} colleague{totalVisible === 1 ? "" : "s"} in the organisation chart
+          </p>
         </div>
 
         <Card className="p-6 overflow-x-auto">
@@ -169,6 +265,7 @@ function OrgChartRoute() {
                   keepIds={keepIds}
                   query={query}
                   currentEmployeeId={currentUser?.employeeId}
+                  canOpenHrRecord={canManageReportingLines}
                   depth={0}
                 />
               ))}
@@ -187,6 +284,7 @@ function OrgChartNode({
   keepIds,
   query,
   currentEmployeeId,
+  canOpenHrRecord,
   depth,
 }: {
   employee: Employee;
@@ -195,6 +293,7 @@ function OrgChartNode({
   keepIds: Set<string> | null;
   query: string;
   currentEmployeeId: string | undefined;
+  canOpenHrRecord: boolean;
   depth: number;
 }) {
   const allScopedChildren = childrenByManager.get(employee.id) ?? [];
@@ -232,13 +331,17 @@ function OrgChartNode({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <Link
-              to="/staff/employees/$employeeId"
-              params={{ employeeId: employee.id }}
-              className="font-medium hover:underline"
-            >
-              {employee.preferredName}
-            </Link>
+            {canOpenHrRecord ? (
+              <Link
+                to="/staff/employees/$employeeId"
+                params={{ employeeId: employee.id }}
+                className="font-medium hover:underline"
+              >
+                {employee.preferredName}
+              </Link>
+            ) : (
+              <span className="font-medium">{employee.preferredName}</span>
+            )}
             {isSelf && <span className="text-xs text-primary">(You)</span>}
             <StatusBadge status={employee.status} />
           </div>
@@ -262,6 +365,7 @@ function OrgChartNode({
               keepIds={keepIds}
               query={query}
               currentEmployeeId={currentEmployeeId}
+              canOpenHrRecord={canOpenHrRecord}
               depth={depth + 1}
             />
           ))}

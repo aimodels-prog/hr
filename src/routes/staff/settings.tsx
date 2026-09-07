@@ -1,10 +1,25 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { Building, Settings2, FileDigit, Database, Download } from "lucide-react";
+import {
+  Building2,
+  CalendarClock,
+  ChevronRight,
+  ClipboardCheck,
+  Landmark,
+  ShieldCheck,
+} from "lucide-react";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { MasterDataService, type MasterDataCollection } from "@/lib/data/master-data";
 import type { MasterRecord } from "@/lib/data/types";
 import { MasterDataTable } from "@/components/settings/master-data-table";
@@ -21,6 +36,7 @@ import {
   NumberingSettingsPanel,
 } from "@/components/settings/organisation-settings-panel";
 import { ProjectsPanel } from "@/components/settings/projects-panel";
+import { cn } from "@/lib/utils";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,12 +50,112 @@ import {
 
 type HolidayMasterRecord = MasterRecord & { date?: string };
 
+const SETTINGS_GROUPS = [
+  {
+    label: "Organisation",
+    icon: Building2,
+    items: [
+      {
+        key: "org",
+        label: "Company information",
+        description: "Company identity and working week",
+      },
+      { key: "numbering", label: "Employee numbering", description: "Employee number sequences" },
+      { key: "departments", label: "Departments", description: "Organisation departments" },
+      { key: "locations", label: "Locations", description: "Offices and work locations" },
+      { key: "positions", label: "Positions", description: "Job positions used across VIA" },
+      { key: "grades", label: "Grades", description: "Employee grades and levels" },
+      {
+        key: "employmentTypes",
+        label: "Employment types",
+        description: "Permanent, temporary and other arrangements",
+      },
+    ],
+  },
+  {
+    label: "Time, leave and attendance",
+    icon: CalendarClock,
+    items: [
+      { key: "workingTimes", label: "Working times", description: "Schedules and standard hours" },
+      { key: "publicHolidays", label: "Public holidays", description: "Company holiday calendar" },
+      {
+        key: "leavePolicies",
+        label: "Leave policies",
+        description: "Entitlements and request rules",
+      },
+    ],
+  },
+  {
+    label: "Recruitment and lifecycle",
+    icon: ClipboardCheck,
+    items: [
+      {
+        key: "interviewTemplates",
+        label: "Interview scorecards",
+        description: "Interview stages and scoring criteria",
+      },
+      {
+        key: "onboardingTemplates",
+        label: "Onboarding checklists",
+        description: "New-joiner tasks and responsibilities",
+      },
+      {
+        key: "offboardingTemplates",
+        label: "Offboarding checklists",
+        description: "Handover and clearance requirements",
+      },
+      {
+        key: "performanceTemplates",
+        label: "Performance templates",
+        description: "Objectives and review criteria",
+      },
+    ],
+  },
+  {
+    label: "Finance references",
+    icon: Landmark,
+    items: [
+      { key: "projects", label: "Projects", description: "Active projects and assignments" },
+      { key: "costCentres", label: "Cost centres", description: "Finance reporting codes" },
+      { key: "activityCodes", label: "Activity codes", description: "Timesheet activity choices" },
+      { key: "currencies", label: "Currencies", description: "Supported payment currencies" },
+    ],
+  },
+  {
+    label: "Administration",
+    icon: ShieldCheck,
+    items: [
+      {
+        key: "data",
+        label: "Data management",
+        description: "Protected backups, recovery and retention",
+      },
+    ],
+  },
+] as const;
+
+type SettingsSection = (typeof SETTINGS_GROUPS)[number]["items"][number]["key"];
+type SettingsItem = { key: SettingsSection; label: string; description: string };
+const SETTINGS_ITEMS: SettingsItem[] = SETTINGS_GROUPS.reduce<SettingsItem[]>(
+  (items, group) => [...items, ...group.items],
+  [],
+);
+
+function isSettingsSection(value: unknown): value is SettingsSection {
+  return SETTINGS_ITEMS.some((item) => item.key === value);
+}
+
 export const Route = createFileRoute("/staff/settings")({
   component: SettingsRoute,
+  validateSearch: (search: Record<string, unknown>) => ({
+    section: isSettingsSection(search["section"]) ? search["section"] : "org",
+  }),
 });
 
 function SettingsRoute() {
   const currentUser = useCurrentUser();
+  const navigate = Route.useNavigate();
+  const { section } = Route.useSearch();
   if (!currentUser.can("system:settings_manage")) {
     return (
       <RequirePermission permission="leave:admin_all" resourceName="Leave Policies">
@@ -63,150 +179,130 @@ function SettingsRoute() {
           breadcrumbs={[{ label: "System" }, { label: "Company Setup" }]}
         />
 
-        <Tabs defaultValue="org" className="w-full">
-          <div className="overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0">
-            <TabsList className="inline-flex h-auto p-1 flex-wrap items-center justify-start gap-1 w-full sm:w-auto">
-              <TabsTrigger value="org" className="gap-2">
-                <Building className="h-4 w-4" /> Organisation
-              </TabsTrigger>
-              <TabsTrigger value="numbering" className="gap-2">
-                <FileDigit className="h-4 w-4" /> Numbering
-              </TabsTrigger>
-              <TabsTrigger value="departments" className="gap-2">
-                <Database className="h-4 w-4" /> Departments
-              </TabsTrigger>
-              <TabsTrigger value="locations" className="gap-2">
-                Locations
-              </TabsTrigger>
-              <TabsTrigger value="projects" className="gap-2">
-                Projects
-              </TabsTrigger>
-              <TabsTrigger value="costCentres" className="gap-2">
-                Cost Centres
-              </TabsTrigger>
-              <TabsTrigger value="activityCodes" className="gap-2">
-                Activity Codes
-              </TabsTrigger>
-              <TabsTrigger value="positions" className="gap-2">
-                Positions
-              </TabsTrigger>
-              <TabsTrigger value="grades" className="gap-2">
-                Grades
-              </TabsTrigger>
-              <TabsTrigger value="employmentTypes" className="gap-2">
-                Employment Types
-              </TabsTrigger>
-              <TabsTrigger value="workingTimes" className="gap-2">
-                Working Times
-              </TabsTrigger>
-              <TabsTrigger value="currencies" className="gap-2">
-                Currencies
-              </TabsTrigger>
-              <TabsTrigger value="publicHolidays" className="gap-2">
-                Public Holidays
-              </TabsTrigger>
-              <TabsTrigger value="leavePolicies" className="gap-2">
-                Leave Policies
-              </TabsTrigger>
-              <TabsTrigger value="onboardingTemplates" className="gap-2">
-                Onboarding Templates
-              </TabsTrigger>
-              <TabsTrigger value="offboardingTemplates" className="gap-2">
-                Offboarding Templates
-              </TabsTrigger>
-              <TabsTrigger value="interviewTemplates" className="gap-2">
-                Interview Scorecards
-              </TabsTrigger>
-              <TabsTrigger value="performanceTemplates" className="gap-2">
-                Performance Templates
-              </TabsTrigger>
-              <TabsTrigger value="data" className="gap-2">
-                <Download className="h-4 w-4" /> Data Management
-              </TabsTrigger>
-            </TabsList>
-          </div>
+        <div className="lg:hidden">
+          <label className="mb-2 block text-sm font-medium" htmlFor="settings-section">
+            Settings section
+          </label>
+          <Select
+            value={section}
+            onValueChange={(value) =>
+              void navigate({ search: { section: value as SettingsSection }, replace: true })
+            }
+          >
+            <SelectTrigger id="settings-section" className="w-full bg-card">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SETTINGS_GROUPS.map((group) => (
+                <SelectGroup key={group.label}>
+                  <SelectLabel>{group.label}</SelectLabel>
+                  {group.items.map((item) => (
+                    <SelectItem key={item.key} value={item.key}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
 
-          <div className="mt-6">
-            <TabsContent value="org">
-              <OrganisationSettingsPanel />
-            </TabsContent>
+        <div className="items-start gap-6 lg:grid lg:grid-cols-[250px_minmax(0,1fr)]">
+          <aside className="sticky top-20 hidden max-h-[calc(100vh-6rem)] overflow-y-auto rounded-2xl border border-border/80 bg-card p-3 shadow-sm lg:block">
+            <nav aria-label="Company setup sections" className="space-y-5">
+              {SETTINGS_GROUPS.map((group) => {
+                const GroupIcon = group.icon;
+                return (
+                  <section key={group.label}>
+                    <div className="mb-1.5 flex items-center gap-2 px-2 text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                      <GroupIcon className="h-3.5 w-3.5" />
+                      {group.label}
+                    </div>
+                    <div className="space-y-0.5">
+                      {group.items.map((item) => (
+                        <button
+                          key={item.key}
+                          type="button"
+                          onClick={() =>
+                            void navigate({ search: { section: item.key }, replace: true })
+                          }
+                          className={cn(
+                            "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors",
+                            section === item.key
+                              ? "bg-primary/10 font-semibold text-primary"
+                              : "text-foreground/80 hover:bg-muted hover:text-foreground",
+                          )}
+                          aria-current={section === item.key ? "page" : undefined}
+                        >
+                          <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                          {section === item.key ? <ChevronRight className="h-4 w-4" /> : null}
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                );
+              })}
+            </nav>
+          </aside>
 
-            <TabsContent value="numbering">
-              <NumberingSettingsPanel />
-            </TabsContent>
-
-            <TabsContent value="departments">
-              <MasterDataSection collection="departments" title="Departments" />
-            </TabsContent>
-
-            <TabsContent value="locations">
-              <MasterDataSection collection="locations" title="Locations" />
-            </TabsContent>
-
-            <TabsContent value="projects">
-              <ProjectsPanel />
-            </TabsContent>
-
-            <TabsContent value="costCentres">
-              <MasterDataSection collection="costCentres" title="Cost Centres" />
-            </TabsContent>
-
-            <TabsContent value="activityCodes">
-              <MasterDataSection collection="activityCodes" title="Activity Codes" />
-            </TabsContent>
-
-            <TabsContent value="positions">
-              <MasterDataSection collection="positions" title="Positions" />
-            </TabsContent>
-
-            <TabsContent value="grades">
-              <MasterDataSection collection="grades" title="Grades" />
-            </TabsContent>
-
-            <TabsContent value="employmentTypes">
-              <MasterDataSection collection="employmentTypes" title="Employment Types" />
-            </TabsContent>
-
-            <TabsContent value="workingTimes">
-              <MasterDataSection collection="workingTimes" title="Working Times" />
-            </TabsContent>
-
-            <TabsContent value="currencies">
-              <MasterDataSection collection="currencies" title="Currencies" />
-            </TabsContent>
-
-            <TabsContent value="publicHolidays">
-              <MasterDataSection collection="publicHolidays" title="Public Holidays" />
-            </TabsContent>
-
-            <TabsContent value="leavePolicies">
-              <LeavePolicyConfig />
-            </TabsContent>
-
-            <TabsContent value="onboardingTemplates">
-              <OnboardingTemplatesPanel />
-            </TabsContent>
-
-            <TabsContent value="offboardingTemplates">
-              <OffboardingTemplatesPanel />
-            </TabsContent>
-
-            <TabsContent value="interviewTemplates">
-              <InterviewTemplatesPanel />
-            </TabsContent>
-
-            <TabsContent value="performanceTemplates">
-              <PerformanceTemplatesPanel />
-            </TabsContent>
-
-            <TabsContent value="data">
-              <DataManagement />
-            </TabsContent>
-          </div>
-        </Tabs>
+          <main className="mt-5 min-w-0 lg:mt-0">
+            <div className="mb-5 border-b border-border/70 pb-4">
+              <h2 className="text-xl font-bold tracking-tight">
+                {SETTINGS_ITEMS.find((item) => item.key === section)?.label}
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {SETTINGS_ITEMS.find((item) => item.key === section)?.description}
+              </p>
+            </div>
+            <SettingsSectionContent section={section} />
+          </main>
+        </div>
       </div>
     </RequirePermission>
   );
+}
+
+function SettingsSectionContent({ section }: { section: SettingsSection }) {
+  switch (section) {
+    case "org":
+      return <OrganisationSettingsPanel />;
+    case "numbering":
+      return <NumberingSettingsPanel />;
+    case "departments":
+      return <MasterDataSection collection="departments" title="Departments" />;
+    case "locations":
+      return <MasterDataSection collection="locations" title="Locations" />;
+    case "projects":
+      return <ProjectsPanel />;
+    case "costCentres":
+      return <MasterDataSection collection="costCentres" title="Cost Centres" />;
+    case "activityCodes":
+      return <MasterDataSection collection="activityCodes" title="Activity Codes" />;
+    case "positions":
+      return <MasterDataSection collection="positions" title="Positions" />;
+    case "grades":
+      return <MasterDataSection collection="grades" title="Grades" />;
+    case "employmentTypes":
+      return <MasterDataSection collection="employmentTypes" title="Employment Types" />;
+    case "workingTimes":
+      return <MasterDataSection collection="workingTimes" title="Working Times" />;
+    case "currencies":
+      return <MasterDataSection collection="currencies" title="Currencies" />;
+    case "publicHolidays":
+      return <MasterDataSection collection="publicHolidays" title="Public Holidays" />;
+    case "leavePolicies":
+      return <LeavePolicyConfig />;
+    case "onboardingTemplates":
+      return <OnboardingTemplatesPanel />;
+    case "offboardingTemplates":
+      return <OffboardingTemplatesPanel />;
+    case "interviewTemplates":
+      return <InterviewTemplatesPanel />;
+    case "performanceTemplates":
+      return <PerformanceTemplatesPanel />;
+    case "data":
+      return <DataManagement />;
+  }
 }
 
 function MasterDataSection({

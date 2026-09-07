@@ -740,7 +740,7 @@ test("shortlist size and ranking overrides are enforced by the service", () => {
       shortlists.saveDraft(
         {
           vacancyId: "vacancy-shortlist-limit",
-          targetSize: 11,
+          targetSize: 3,
           rankedCandidateIds: [first.id, second.id],
           selectedCandidateIds: [first.id],
           unselectedAction: null,
@@ -749,7 +749,7 @@ test("shortlist size and ranking overrides are enforced by the service", () => {
         },
         hr,
       ),
-    /between 1 and 10/,
+    /Only 2 ranked candidates are available/,
   );
 
   let draft = shortlists.saveDraft(

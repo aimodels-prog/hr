@@ -12,7 +12,6 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { initializeApplicationData } from "../lib/data/application-data";
-import { CandidatePreparationService } from "../lib/data/candidate-preparation-service";
 import { CurrentUserProvider } from "../lib/auth";
 import { ApplicationBootScreen } from "../components/layout/application-boot-screen";
 import { Toaster } from "../components/ui/sonner";
@@ -132,19 +131,6 @@ function RootComponent() {
   useEffect(() => {
     try {
       initializeApplicationData();
-      void new CandidatePreparationService()
-        .resumePendingRuns({
-          actor: {
-            userId: "system",
-            displayName: "VIA HR System",
-            roles: ["Super Admin"],
-            activeRole: "Super Admin",
-          },
-          reason: "Resumed interrupted CV preparation when VIA HR System opened",
-        })
-        .catch((error) => {
-          console.error("VIA HR System could not resume CV preparation.", error);
-        });
     } catch (error) {
       console.error("VIA HR System data initialisation failed.", error);
     } finally {

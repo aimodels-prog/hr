@@ -460,16 +460,30 @@ function EmploymentDetailsSection({
   const form = useForm<z.infer<typeof employmentSchema>>({
     resolver: zodResolver(employmentSchema),
     defaultValues: {
-      staffEntryType: employee.staffEntryType ?? "Existing Employee",
-      legalName: employee.legalName,
-      preferredName: employee.preferredName,
-      startDate: employee.startDate,
-      departmentId: selectedMasterId(departments, employee.department),
-      positionId: selectedMasterId(positions, employee.position),
-      locationId: selectedMasterId(locations, employee.location),
-      employmentTypeId: selectedMasterId(employmentTypes, employee.employmentType),
-      lineManagerEmail: employee.proposedLineManagerEmail ?? "",
-      visaRequired: true,
+      staffEntryType:
+        employee.proposedEmploymentDetails?.staffEntryType ??
+        employee.staffEntryType ??
+        "Existing Employee",
+      legalName: employee.proposedEmploymentDetails?.legalName ?? employee.legalName,
+      preferredName: employee.proposedEmploymentDetails?.preferredName ?? employee.preferredName,
+      startDate: employee.proposedEmploymentDetails?.startDate ?? employee.startDate,
+      departmentId:
+        employee.proposedEmploymentDetails?.departmentId ??
+        selectedMasterId(departments, employee.department),
+      positionId:
+        employee.proposedEmploymentDetails?.positionId ??
+        selectedMasterId(positions, employee.position),
+      locationId:
+        employee.proposedEmploymentDetails?.locationId ??
+        selectedMasterId(locations, employee.location),
+      employmentTypeId:
+        employee.proposedEmploymentDetails?.employmentTypeId ??
+        selectedMasterId(employmentTypes, employee.employmentType),
+      lineManagerEmail:
+        employee.proposedEmploymentDetails?.lineManagerEmail ??
+        employee.proposedLineManagerEmail ??
+        "",
+      visaRequired: employee.proposedEmploymentDetails?.visaRequired ?? true,
     },
   });
   const entryType = form.watch("staffEntryType");
@@ -585,7 +599,7 @@ function EmploymentDetailsSection({
               name="lineManagerEmail"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Supervisor's VIA email *</FormLabel>
+                  <FormLabel>My supervisor's VIA email *</FormLabel>
                   <FormControl>
                     <Input
                       type="email"
@@ -1109,9 +1123,9 @@ function DocumentUploadSection({
   const [issuingAuthority, setIssuingAuthority] = useState("");
   const [busy, setBusy] = useState(false);
   const documentType: DocumentType = task.documentType || "other";
-  const requiresIdentityMetadata = ["passport", "visa", "national_id", "work_permit"].includes(
-    documentType,
-  );
+  const hrCompletesOfficialDetails = documentType === "visa" || documentType === "work_permit";
+  const requiresIdentityMetadata =
+    !hrCompletesOfficialDetails && ["passport", "national_id"].includes(documentType);
 
   if (done) {
     return (
@@ -1132,7 +1146,11 @@ function DocumentUploadSection({
     <SectionShell
       icon={<FileUp className="w-4 h-4" />}
       title={task.title}
-      description="Accepted formats: PDF, JPG and PNG, up to 10 MB. HR will verify the document before your start date."
+      description={
+        hrCompletesOfficialDetails
+          ? "Upload the PDF or image you received. HR will enter and confirm all official visa or work-permit details."
+          : "Accepted formats: PDF, JPG and PNG, up to 10 MB. HR will verify the document before your start date."
+      }
       done={done}
     >
       <div className="space-y-4">

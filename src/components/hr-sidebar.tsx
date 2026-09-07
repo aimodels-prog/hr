@@ -25,6 +25,7 @@ import {
   FileSearch,
   Network,
   PartyPopper,
+  BriefcaseBusiness,
 } from "lucide-react";
 
 import { BrandLogo } from "@/components/brand-logo";
@@ -71,6 +72,7 @@ const navGroups: NavGroup[] = [
         requiredPermission: "employee:view_self",
       },
       { title: "My Tasks", url: "/staff/my-tasks", icon: ClipboardCheck },
+      { title: "Opportunities", url: "/staff/opportunities", icon: BriefcaseBusiness },
       {
         title: "My Employee Setup",
         url: "/staff/me/onboarding",

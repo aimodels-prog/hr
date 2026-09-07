@@ -43,6 +43,10 @@ const EMPLOYMENT_EDIT_FIELDS = new Set<keyof Employee>([
   "salary",
 ]);
 
+type EmployeeEmploymentChanges = Omit<Partial<Employee>, "lineManagerId"> & {
+  lineManagerId?: string | null | undefined;
+};
+
 function hasOnlyPersonalProfileFields(changes: Partial<Employee>): boolean {
   const keys = Object.keys(changes) as Array<keyof Employee>;
   return keys.length > 0 && keys.every((key) => PERSONAL_PROFILE_FIELDS.has(key));
@@ -402,7 +406,6 @@ export class EmployeeService {
         performanceRating: _performanceRating,
         performanceNotes: _performanceNotes,
         personalEmail: _personalEmail,
-        phone: _phone,
         address: _address,
         emergencyContacts: _emergencyContacts,
         dependants: _dependants,
@@ -973,7 +976,7 @@ export class EmployeeService {
 
   updateEmploymentRecord(
     employeeId: string,
-    changes: Partial<Employee>,
+    changes: EmployeeEmploymentChanges,
     effectiveDate: string,
     reason: string,
     actorContext: ActorContext,
@@ -1029,9 +1032,6 @@ export class EmployeeService {
       }
     }
 
-    if ("lineManagerId" in changes && !changes.lineManagerId) {
-      throw new Error("Every employee must have an assigned supervisor.");
-    }
     if (changes.lineManagerId) {
       const manager = this.employeeRepo.getById(changes.lineManagerId);
       if (!manager || manager.status === "Archived") {
@@ -1050,7 +1050,15 @@ export class EmployeeService {
       }
     }
 
-    const updated = this.employeeRepo.update(employeeId, changes, {
+    const { lineManagerId: changedLineManagerId, ...otherChanges } = changes;
+    const compatibleChanges: Partial<Employee> =
+      changedLineManagerId === null
+        ? { ...otherChanges, lineManagerId: undefined }
+        : {
+            ...otherChanges,
+            ...(changedLineManagerId ? { lineManagerId: changedLineManagerId } : {}),
+          };
+    const updated = this.employeeRepo.update(employeeId, compatibleChanges, {
       actor: actorContext.actor,
       reason,
     });
@@ -1115,7 +1123,7 @@ export class EmployeeService {
 
   async updateEmploymentRecordAsync(
     employeeId: string,
-    changes: Partial<Employee>,
+    changes: EmployeeEmploymentChanges,
     effectiveDate: string,
     reason: string,
     actorContext: ActorContext,
@@ -1127,7 +1135,8 @@ export class EmployeeService {
     if (!employee?.databaseId) {
       throw new Error("This employee has not yet been linked to the PostgreSQL employee register.");
     }
-    const resolveEmployeeDatabaseId = (id: string | undefined) => {
+    const resolveEmployeeDatabaseId = (id: string | null | undefined) => {
+      if (id === null) return null;
       if (!id) return undefined;
       const record = this.employeeRepo.getById(id, { includeArchived: true });
       return record?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);

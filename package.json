@@ -27,6 +27,7 @@
     "worker:background": "node --experimental-transform-types scripts/recruitment-worker.ts",
     "worker:recruitment": "npm run worker:background",
     "worker:health": "node --experimental-transform-types scripts/worker-health.ts",
+    "cv-processor:smoke": "node scripts/smoke-cv-processor.mjs",
     "production:preflight": "node --experimental-transform-types scripts/production-preflight.ts --env-file .env.production",
     "security:audit": "npm audit --audit-level=moderate",
     "lint": "eslint .",

@@ -1,0 +1,1 @@
+ALTER TABLE "candidate_cv_records" ADD COLUMN "document_route" text DEFAULT 'Unknown' NOT NULL;

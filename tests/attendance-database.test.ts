@@ -368,8 +368,37 @@ test(
         ],
         ["Approved", "Corrected", 8, false, false],
       );
+
+      const missingDay = new Date();
+      do missingDay.setUTCDate(missingDay.getUTCDate() - 1);
+      while (
+        ![1, 2, 3, 4, 5].includes(missingDay.getUTCDay()) ||
+        missingDay.toISOString().slice(0, 10) === correctionDate
+      );
+      const missingDate = missingDay.toISOString().slice(0, 10);
+      const missingCorrectionId = await requestAttendanceCorrectionInDatabase(
+        organisationId,
+        {
+          employeeId,
+          date: missingDate,
+          proposedClockIn: "08:00",
+          proposedClockOut: "16:00",
+          explanation: "No daily attendance record was created for this working day.",
+        },
+        employeeActor,
+      );
+      const [missingRecord] = await sql`
+        SELECT r.source, r.status, c.status AS correction_status
+        FROM attendance_records r
+        JOIN attendance_corrections c ON c.attendance_record_id = r.id
+        WHERE c.id = ${missingCorrectionId}
+      `;
+      assert.deepEqual(
+        [missingRecord.source, missingRecord.status, missingRecord.correction_status],
+        ["Manual Entry", "Absent", "Pending Manager"],
+      );
       const employeeView = await listAttendanceForActor(organisationId, employeeActor);
-      assert.equal(employeeView.records.length, 1);
+      assert.equal(employeeView.records.length, 2);
       assert.ok(employeeView.records.every((record) => record.employeeId === employeeId));
 
       await sql`

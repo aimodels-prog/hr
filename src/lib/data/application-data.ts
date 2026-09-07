@@ -39,5 +39,9 @@ export function getApplicationDataServices(): ApplicationDataServices {
 
 export function initializeApplicationData(): SeedResult | null {
   if (typeof window === "undefined") return null;
+  // Production business data is loaded only through PostgreSQL-backed server functions.
+  // Demo seed records remain available to local development and isolated unit tests, but must
+  // never appear while a production database is unavailable or still loading.
+  if (import.meta.env.PROD) return null;
   return initializeSeedData(getApplicationDataServices().storage);
 }

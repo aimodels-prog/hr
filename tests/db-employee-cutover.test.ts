@@ -223,6 +223,35 @@ test(
         employeeDocuments.find((document) => document.id === documentId)?.status,
         "Valid",
       );
+      const visaId = await uploadEmployeeDocumentToDatabase(
+        organisationId,
+        {
+          employeeId: created.employeeId,
+          type: "visa",
+          fileName: "visa.pdf",
+          mimeType: "application/pdf",
+          bytes: new TextEncoder().encode("%PDF-1.4 employee supplied visa"),
+          visibility: "Restricted",
+        },
+        { ...actor, employeeId: created.employeeId, activeRole: "Employee" },
+      );
+      await assert.rejects(
+        decideEmployeeDocumentInDatabase(organisationId, visaId, "verify", undefined, actor),
+        /HR must complete the document number/,
+      );
+      await decideEmployeeDocumentInDatabase(organisationId, visaId, "verify", undefined, actor, {
+        documentNumber: "VISA-100",
+        issuingAuthority: "UAE Authority",
+        issuingCountry: "United Arab Emirates",
+        issueDate: "2026-01-01",
+        expiryDate: "2027-01-01",
+        visibility: "Restricted",
+      });
+      employeeDocuments = await listEmployeeDocumentsForActor(organisationId, actor);
+      const verifiedVisa = employeeDocuments.find((document) => document.id === visaId);
+      assert.equal(verifiedVisa?.status, "Valid");
+      assert.equal(verifiedVisa?.documentNumber, "VISA-100");
+      assert.equal(verifiedVisa?.issuingAuthority, "UAE Authority");
       const readPassport = await readEmployeeDocumentInDatabase(
         organisationId,
         passport!.fileId,
@@ -298,6 +327,32 @@ test(
         WHERE employee_id = ${created.employeeId} AND effective_to IS NULL
       `;
       assert.equal(reportingLine?.supervisor_id, managerEmployeeId);
+
+      await updateEmploymentRecordInDatabase(
+        organisationId,
+        created.employeeId,
+        { lineManagerId: null },
+        "2026-08-31",
+        "Temporarily placed at the top of the organisation",
+        actor,
+      );
+      const [topLevelEmployee] = await sql`
+        SELECT line_manager_id FROM employees WHERE id = ${created.employeeId}
+      `;
+      assert.equal(topLevelEmployee?.line_manager_id, null);
+      const [closedReportingLine] = await sql`
+        SELECT count(*)::int AS count FROM employee_reporting_lines
+        WHERE employee_id = ${created.employeeId} AND effective_to IS NULL
+      `;
+      assert.equal(Number(closedReportingLine?.count), 0);
+      await updateEmploymentRecordInDatabase(
+        organisationId,
+        created.employeeId,
+        { lineManagerId: managerEmployeeId },
+        "2026-09-01",
+        "Reporting line restored after organisation-chart review",
+        actor,
+      );
 
       await updateEmploymentRecordInDatabase(
         organisationId,

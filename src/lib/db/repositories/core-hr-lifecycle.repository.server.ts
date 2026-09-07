@@ -1547,6 +1547,7 @@ export async function saveOnboardingSelfServiceInDatabase(
             employmentTypeId: employmentType.id,
             lineManagerId: manager?.id ?? null,
             lineManagerEmail: managerEmail,
+            visaRequired: details.visaRequired,
           },
           proposedLineManagerEmail: manager ? null : managerEmail,
           employmentConfirmationStatus: "Pending HR Review",
