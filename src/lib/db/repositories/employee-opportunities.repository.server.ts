@@ -10,7 +10,6 @@ import { employees, roles, userRoles, users } from "../schema/employee.ts";
 import { departments, locations, positions } from "../schema/master-data.ts";
 import {
   candidateApplications,
-  candidateAssessmentInclusions,
   candidateCvRecords,
   candidatePreparationRuns,
   candidateRecommendations,
@@ -493,15 +492,6 @@ export async function submitInternalApplicationInDatabase(
         createdBy: actor.userId,
         updatedBy: actor.userId,
       });
-      await tx
-        .update(vacancies)
-        .set({
-          applicantCount: sql`${vacancies.applicantCount} + 1`,
-          updatedAt: new Date(),
-          updatedBy: actor.userId,
-          recordVersion: sql`${vacancies.recordVersion} + 1`,
-        })
-        .where(eq(vacancies.id, vacancy.id));
       for (const recipient of recipients) {
         await tx.insert(notifications).values({
           organisationId,
@@ -618,25 +608,9 @@ export async function submitEmployeeReferralInDatabase(
   if (input.vacancyId && !vacancy)
     throw new Error("This position is not accepting employee referrals.");
 
-  const [existingApplication] = vacancy
-    ? await db
-        .select({ id: candidateApplications.id })
-        .from(candidateApplications)
-        .where(
-          and(
-            eq(candidateApplications.organisationId, organisationId),
-            eq(candidateApplications.candidateId, candidateId),
-            eq(candidateApplications.vacancyId, vacancy.id),
-            sql`${candidateApplications.archivedAt} IS NULL`,
-          ),
-        )
-        .limit(1)
-    : [];
   const recommendationId = randomUUID();
-  const applicationId = existingApplication?.id ?? (vacancy ? randomUUID() : undefined);
   const cvRecordId = randomUUID();
   const documentId = randomUUID();
-  const preparationRunId = vacancy && applicationId ? randomUUID() : undefined;
   const jobId = randomUUID();
   const metadata = await saveObjectFile({
     id: documentId,
@@ -690,7 +664,7 @@ export async function submitEmployeeReferralInDatabase(
           location: input.candidate.location.trim(),
           currentCompany: input.candidate.currentCompany?.trim() || null,
           currentTitle: input.candidate.currentTitle?.trim() || null,
-          stage: vacancy ? "Applied" : "Sourced",
+          stage: "Sourced",
           source: "Employee Referral",
           recommender: person.employee.legalName,
           hrOwnerId: ownerEmployeeId,
@@ -699,35 +673,6 @@ export async function submitEmployeeReferralInDatabase(
           createdBy: actor.userId,
           updatedBy: actor.userId,
         });
-      }
-      if (vacancy && applicationId && !existingApplication) {
-        await tx.insert(candidateApplications).values({
-          id: applicationId,
-          organisationId,
-          referenceId: applicationReference("REF"),
-          candidateId,
-          vacancyId: vacancy.id,
-          status: "New",
-          cvFileId: documentId,
-          noticePeriod: "To be confirmed",
-          screeningAnswers: [],
-          source: "Employee Referral",
-          consentGiven: true,
-          consentedAt: now,
-          preparationStatus: "Queued",
-          submittedByEmployeeId: actor.employeeId,
-          createdBy: actor.userId,
-          updatedBy: actor.userId,
-        });
-        await tx
-          .update(vacancies)
-          .set({
-            applicantCount: sql`${vacancies.applicantCount} + 1`,
-            updatedAt: new Date(),
-            updatedBy: actor.userId,
-            recordVersion: sql`${vacancies.recordVersion} + 1`,
-          })
-          .where(eq(vacancies.id, vacancy.id));
       }
       await tx.insert(candidateRecommendations).values({
         id: recommendationId,
@@ -745,6 +690,7 @@ export async function submitEmployeeReferralInDatabase(
         notes: input.notes.trim(),
         hrOwnerId: ownerEmployeeId,
         sourceOutcome: "Submitted",
+        reviewStatus: "Pending HR Review",
         recommenderEmployeeId: actor.employeeId,
         candidateAware: true,
         yearsKnown: input.yearsKnown,
@@ -755,7 +701,6 @@ export async function submitEmployeeReferralInDatabase(
         id: cvRecordId,
         organisationId,
         candidateId,
-        ...(applicationId ? { applicationId } : {}),
         ...(vacancy ? { vacancyId: vacancy.id } : {}),
         fileId: documentId,
         originalFileName: input.cv.fileName,
@@ -769,36 +714,6 @@ export async function submitEmployeeReferralInDatabase(
         createdBy: actor.userId,
         updatedBy: actor.userId,
       });
-      if (vacancy && applicationId && preparationRunId) {
-        await tx.insert(candidatePreparationRuns).values({
-          id: preparationRunId,
-          organisationId,
-          vacancyId: vacancy.id,
-          vacancyRecordVersion: vacancy.recordVersion,
-          candidateId,
-          applicationId,
-          cvRecordId,
-          cvFileId: documentId,
-          cvChecksum: metadata.checksum,
-          status: "Queued",
-          documentRoute: "Unknown",
-          preparationMethod: "Python Service",
-          createdBy: actor.userId,
-          updatedBy: actor.userId,
-        });
-        await tx
-          .update(candidateApplications)
-          .set({
-            cvFileId: documentId,
-            submittedByEmployeeId: actor.employeeId,
-            preparationRunId,
-            preparationStatus: "Queued",
-            updatedAt: new Date(),
-            updatedBy: actor.userId,
-            recordVersion: sql`${candidateApplications.recordVersion} + 1`,
-          })
-          .where(eq(candidateApplications.id, applicationId));
-      }
       await tx
         .update(candidates)
         .set({
@@ -809,45 +724,6 @@ export async function submitEmployeeReferralInDatabase(
           recordVersion: sql`${candidates.recordVersion} + 1`,
         })
         .where(eq(candidates.id, candidateId));
-      if (vacancy) {
-        const [existingInclusion] = await tx
-          .select({ id: candidateAssessmentInclusions.id })
-          .from(candidateAssessmentInclusions)
-          .where(
-            and(
-              eq(candidateAssessmentInclusions.organisationId, organisationId),
-              eq(candidateAssessmentInclusions.vacancyId, vacancy.id),
-              eq(candidateAssessmentInclusions.candidateId, candidateId),
-              eq(candidateAssessmentInclusions.active, true),
-            ),
-          )
-          .limit(1);
-        if (existingInclusion) {
-          await tx
-            .update(candidateAssessmentInclusions)
-            .set({
-              source: "Recommended",
-              cvRecordId,
-              reason: input.notes.trim(),
-              updatedAt: new Date(),
-              updatedBy: actor.userId,
-              recordVersion: sql`${candidateAssessmentInclusions.recordVersion} + 1`,
-            })
-            .where(eq(candidateAssessmentInclusions.id, existingInclusion.id));
-        } else {
-          await tx.insert(candidateAssessmentInclusions).values({
-            organisationId,
-            vacancyId: vacancy.id,
-            candidateId,
-            cvRecordId,
-            source: "Recommended",
-            reason: input.notes.trim(),
-            active: true,
-            createdBy: actor.userId,
-            updatedBy: actor.userId,
-          });
-        }
-      }
       await tx.insert(backgroundJobs).values({
         id: jobId,
         organisationId,
@@ -856,7 +732,7 @@ export async function submitEmployeeReferralInDatabase(
         entityType: "candidate-cv",
         entityId: cvRecordId,
         status: "Queued",
-        payload: { cvRecordId, documentId, applicationId, preparationRunId },
+        payload: { cvRecordId, documentId, recommendationId },
         maxAttempts: 5,
         createdBy: actor.userId,
         updatedBy: actor.userId,
@@ -927,7 +803,6 @@ export async function submitEmployeeReferralInDatabase(
   return {
     recommendationId,
     candidateId,
-    ...(applicationId ? { applicationId } : {}),
     jobId,
   };
 }

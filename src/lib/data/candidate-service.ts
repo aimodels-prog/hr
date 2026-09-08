@@ -1309,6 +1309,14 @@ export class CandidateService {
       .map((recommendation) => this.redactRecommendation(recommendation, context));
   }
 
+  getRecommendations(context: ActorContext) {
+    this.requireCandidateView(context, "candidate_recommendations_view_denied", "all");
+    return this.recommendationRepo
+      .list()
+      .map((recommendation) => this.redactRecommendation(recommendation, context))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
   private redactRecommendation(recommendation: CandidateRecommendation, context?: ActorContext) {
     const role = context?.actor.activeRole ?? context?.actor.roles[0];
     const canViewCommercial = role === "HR" || role === "Accounts" || role === "Super Admin";

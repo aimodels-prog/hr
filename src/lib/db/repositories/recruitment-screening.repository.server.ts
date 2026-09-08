@@ -21,6 +21,7 @@ import {
   candidatePreparationRuns,
   candidateRecommendations,
   candidateScoreRuns,
+  candidateVacancyMatches,
   candidates,
   recruitmentDocuments,
   shortlistSnapshots,
@@ -124,15 +125,6 @@ export async function includeCandidateInAssessmentInDatabase(
         .from(candidateApplications)
         .where(eq(candidateApplications.id, applicationId))
         .limit(1);
-      await tx
-        .update(vacancies)
-        .set({
-          applicantCount: sql`${vacancies.applicantCount} + 1`,
-          updatedAt: new Date(),
-          updatedBy: actor.userId,
-          recordVersion: sql`${vacancies.recordVersion} + 1`,
-        })
-        .where(eq(vacancies.id, input.vacancyId));
     }
     if (!application) throw new Error("The vacancy application could not be created.");
     let [preparation] = await tx
@@ -150,47 +142,87 @@ export async function includeCandidateInAssessmentInDatabase(
       .orderBy(desc(candidatePreparationRuns.createdAt))
       .limit(1);
     if (!preparation || !["Ready", "Needs Review"].includes(preparation.status)) {
-      const semanticTexts = buildCvSemanticTexts(
-        candidate,
-        vacancy,
-        cv.extractedFields as Record<string, unknown>,
-      );
-      const [document] = await tx
-        .select({ checksum: recruitmentDocuments.checksum })
-        .from(recruitmentDocuments)
+      const [savedMatch] = await tx
+        .select()
+        .from(candidateVacancyMatches)
         .where(
           and(
-            eq(recruitmentDocuments.organisationId, organisationId),
-            eq(recruitmentDocuments.id, cv.fileId),
+            eq(candidateVacancyMatches.organisationId, organisationId),
+            eq(candidateVacancyMatches.vacancyId, input.vacancyId),
+            eq(candidateVacancyMatches.vacancyRecordVersion, vacancy.recordVersion),
+            eq(candidateVacancyMatches.candidateId, input.candidateId),
+            eq(candidateVacancyMatches.cvRecordId, input.cvRecordId),
           ),
         )
         .limit(1);
-      const documentChecksum = document?.checksum;
-      const [cached] = documentChecksum
-        ? await tx
-            .select({ semanticTextEncrypted: candidateCvExtractions.semanticTextEncrypted })
-            .from(candidateCvExtractions)
-            .where(
-              and(
-                eq(candidateCvExtractions.organisationId, organisationId),
-                eq(candidateCvExtractions.checksum, documentChecksum),
-                eq(candidateCvExtractions.processorVersion, CV_PROCESSOR_VERSION),
-              ),
-            )
-            .limit(1)
-        : [];
-      const semanticMatch = await calculateCvSemanticSimilarity({
-        ...semanticTexts,
-        ...(cached?.semanticTextEncrypted
-          ? { candidateText: decryptSensitiveJson<string>(cached.semanticTextEncrypted) }
-          : {}),
-      });
-      const result = buildCandidatePreliminaryAssessment(
-        candidate,
-        vacancy,
-        cv.extractedFields as Record<string, unknown>,
-        semanticMatch,
-      );
+      let result: ReturnType<typeof buildCandidatePreliminaryAssessment>;
+      if (savedMatch) {
+        const extractedFields = cv.extractedFields as Record<string, unknown>;
+        const extractedSkills = Array.isArray(extractedFields["skills"])
+          ? extractedFields["skills"].filter((item): item is string => typeof item === "string")
+          : [];
+        result = {
+          extractedProfile: {
+            ...extractedFields,
+            skills: [...new Set([...(candidate.skills ?? []), ...extractedSkills])],
+          },
+          rankingModel: savedMatch.rankingModel,
+          preliminaryScore: Number(savedMatch.preliminaryScore),
+          band: savedMatch.band,
+          compulsoryChecks: savedMatch.compulsoryChecks as ReturnType<
+            typeof buildCandidatePreliminaryAssessment
+          >["compulsoryChecks"],
+          matchedSkills: savedMatch.matchedSkills,
+          missingRequiredSkills: savedMatch.missingRequiredSkills,
+          evidence: savedMatch.evidence,
+          status:
+            savedMatch.band === "Strong Match" || savedMatch.band === "Potential Match"
+              ? "Ready"
+              : "Needs Review",
+        };
+      } else {
+        const semanticTexts = buildCvSemanticTexts(
+          candidate,
+          vacancy,
+          cv.extractedFields as Record<string, unknown>,
+        );
+        const [document] = await tx
+          .select({ checksum: recruitmentDocuments.checksum })
+          .from(recruitmentDocuments)
+          .where(
+            and(
+              eq(recruitmentDocuments.organisationId, organisationId),
+              eq(recruitmentDocuments.id, cv.fileId),
+            ),
+          )
+          .limit(1);
+        const documentChecksum = document?.checksum;
+        const [cached] = documentChecksum
+          ? await tx
+              .select({ semanticTextEncrypted: candidateCvExtractions.semanticTextEncrypted })
+              .from(candidateCvExtractions)
+              .where(
+                and(
+                  eq(candidateCvExtractions.organisationId, organisationId),
+                  eq(candidateCvExtractions.checksum, documentChecksum),
+                  eq(candidateCvExtractions.processorVersion, CV_PROCESSOR_VERSION),
+                ),
+              )
+              .limit(1)
+          : [];
+        const semanticMatch = await calculateCvSemanticSimilarity({
+          ...semanticTexts,
+          ...(cached?.semanticTextEncrypted
+            ? { candidateText: decryptSensitiveJson<string>(cached.semanticTextEncrypted) }
+            : {}),
+        });
+        result = buildCandidatePreliminaryAssessment(
+          candidate,
+          vacancy,
+          cv.extractedFields as Record<string, unknown>,
+          semanticMatch,
+        );
+      }
       const preparationId = randomUUID();
       await tx.insert(candidatePreparationRuns).values({
         id: preparationId,
@@ -274,6 +306,24 @@ export async function includeCandidateInAssessmentInDatabase(
         createdBy: actor.userId!,
         updatedBy: actor.userId!,
       });
+    await tx
+      .update(candidateVacancyMatches)
+      .set({
+        status: "Added to Screening",
+        addedAt: new Date().toISOString(),
+        addedByUserId: actor.userId,
+        updatedAt: new Date(),
+        updatedBy: actor.userId,
+        recordVersion: sql`${candidateVacancyMatches.recordVersion} + 1`,
+      })
+      .where(
+        and(
+          eq(candidateVacancyMatches.organisationId, organisationId),
+          eq(candidateVacancyMatches.vacancyId, input.vacancyId),
+          eq(candidateVacancyMatches.candidateId, input.candidateId),
+          eq(candidateVacancyMatches.status, "Suggested"),
+        ),
+      );
     await tx.insert(auditEvents).values({
       organisationId,
       actorUserId: actor.userId,

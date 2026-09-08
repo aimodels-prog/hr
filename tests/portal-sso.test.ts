@@ -260,6 +260,33 @@ test("logout revokes only the local session, clears its cookie and returns to VI
   assert.equal(response?.headers.get("set-cookie"), clearedPortalSessionCookie());
 });
 
+test("logout still clears the browser session when database revocation fails", async () => {
+  const originalError = console.error;
+  const diagnostics: unknown[][] = [];
+  console.error = (...values: unknown[]) => diagnostics.push(values);
+  try {
+    const response = await resolvePortalAuthenticationRequest(
+      new Request("https://hr.via-int.com/auth/logout", {
+        method: "POST",
+        headers: { cookie: "__Host-via_hr_session=local-session-token" },
+      }),
+      {
+        ...dependencies({}),
+        revokeSession: async () => {
+          throw new Error("database unavailable");
+        },
+      },
+    );
+    assert.equal(response?.status, 303);
+    assert.equal(response?.headers.get("location"), "https://portal.via-int.com/");
+    assert.equal(response?.headers.get("set-cookie"), clearedPortalSessionCookie());
+    assert.equal(diagnostics.length, 1);
+    assert.doesNotMatch(String(diagnostics[0]), /local-session-token/);
+  } finally {
+    console.error = originalError;
+  }
+});
+
 test("an authenticated dashboard request enters the clean staff dashboard", async () => {
   const response = await resolvePortalAuthenticationRequest(
     new Request("https://hr.via-int.com/dashboard", {

@@ -584,10 +584,38 @@ export interface CandidateRecommendation extends BaseRecord {
   hrOwnerId: RecordId;
   commercialTerms?: string | undefined;
   sourceOutcome: string; // e.g. "Hired", "Rejected", "In Progress"
+  reviewStatus?: "Pending HR Review" | "Approved for Interview" | "Declined" | undefined;
+  reviewedAt?: string | undefined;
+  reviewedByUserId?: RecordId | undefined;
+  reviewReason?: string | undefined;
   employeeId?: RecordId | undefined;
   recommenderEmployeeId?: RecordId | undefined;
   candidateAware?: boolean | undefined;
   yearsKnown?: number | undefined;
+}
+
+export interface CandidateVacancyMatch extends BaseRecord {
+  vacancyId: RecordId;
+  vacancyRecordVersion: number;
+  candidateId: RecordId;
+  cvRecordId: RecordId;
+  preliminaryScore: number;
+  band: string;
+  compulsoryChecks: Array<{
+    criterion: string;
+    status: "Confirmed" | "Needs Review";
+    evidence?: string | undefined;
+  }>;
+  matchedSkills: string[];
+  missingRequiredSkills: string[];
+  evidence: string[];
+  warnings: string[];
+  rankingModel: string;
+  status: "Suggested" | "Added to Screening" | "Dismissed";
+  generatedAt: string;
+  addedAt?: string | undefined;
+  addedByUserId?: RecordId | undefined;
+  dismissalReason?: string | undefined;
 }
 
 export interface CandidateApplication extends BaseRecord {

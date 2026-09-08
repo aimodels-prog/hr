@@ -38,6 +38,7 @@ import {
 } from "../src/lib/db/repositories/recruitment-offer.repository.server.ts";
 import { listPanelInterviewReadSnapshot } from "../src/lib/db/repositories/recruitment-read.repository.server.ts";
 import { parseCandidateSpreadsheetInDatabase } from "../src/lib/db/repositories/candidate-spreadsheet.repository.server.ts";
+import { listVacanciesForOrganisation } from "../src/lib/db/repositories/vacancy.repository.server.ts";
 
 const testDatabaseUrl = process.env["VIA_HR_TEST_DATABASE_URL"]?.trim();
 const hasObjectStorage = Boolean(process.env["VIA_HR_OBJECT_STORAGE_ENDPOINT"]?.trim());
@@ -137,7 +138,8 @@ test(
           (SELECT count(*)::int FROM candidate_applications WHERE id = ${result.applicationId} AND preparation_status = 'Queued') AS application_count,
           (SELECT count(*)::int FROM candidate_cv_records WHERE application_id = ${result.applicationId}) AS cv_count,
           (SELECT count(*)::int FROM candidate_preparation_runs WHERE application_id = ${result.applicationId} AND status = 'Queued') AS queue_count,
-          (SELECT count(*)::int FROM audit_events WHERE entity_id = ${result.applicationId} AND action = 'submit') AS audit_count
+          (SELECT count(*)::int FROM audit_events WHERE entity_id = ${result.applicationId} AND action = 'submit') AS audit_count,
+          (SELECT record_version FROM vacancies WHERE id = ${vacancyId}) AS vacancy_record_version
       `;
       assert.deepEqual(
         [
@@ -146,9 +148,14 @@ test(
           records.cv_count,
           records.queue_count,
           records.audit_count,
+          records.vacancy_record_version,
         ],
-        [1, 1, 1, 1, 1],
+        [1, 1, 1, 1, 1, 1],
       );
+      const listedVacancy = (
+        await listVacanciesForOrganisation(String(vacancy.organisation_id), true)
+      ).find((item) => item.id === vacancyId);
+      assert.equal(listedVacancy?.applicantCount, 1);
       const [file] = await sql`
         SELECT fm.id FROM file_metadata fm
         JOIN candidate_applications ca ON ca.cv_file_id = fm.id

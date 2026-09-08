@@ -237,6 +237,14 @@ export class CandidatePoolService {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
+  getAllInterviewRecommendations(context: ActorContext): CandidateInterviewRecommendation[] {
+    assertHr(context, "interview_recommendation_view_denied", "all");
+    return this.recommendationRepo
+      .list()
+      .filter((record) => record.status !== "Withdrawn")
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
   async uploadDirectCv(
     input: {
       file: Blob;

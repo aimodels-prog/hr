@@ -268,15 +268,6 @@ export async function submitPublicApplicationToDatabase(
         .update(candidateApplications)
         .set({ preparationRunId })
         .where(eq(candidateApplications.id, applicationId));
-      await tx
-        .update(vacancies)
-        .set({
-          applicantCount: sql`${vacancies.applicantCount} + 1`,
-          updatedAt: new Date(),
-          updatedBy: createdBy,
-        })
-        .where(eq(vacancies.id, vacancy.id));
-
       const recipientEmployeeId = vacancy.assignedOwnerId ?? vacancy.hiringManagerId;
       if (recipientEmployeeId) {
         const [recipient] = await tx

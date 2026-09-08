@@ -115,3 +115,41 @@ export async function calculateCvSemanticSimilarity(input: {
     throw error;
   }
 }
+
+export async function calculateCvSemanticSimilarities(input: {
+  vacancyText: string;
+  candidates: Array<{ candidateId: string; candidateText: string }>;
+}): Promise<{ model: string; results: Array<{ candidateId: string; score: number }> }> {
+  if (input.candidates.length < 1 || input.candidates.length > 500)
+    throw new Error("A Candidate Pool matching batch must contain between 1 and 500 candidates.");
+  try {
+    const response = await postProcessor(
+      "/v1/similarities",
+      input,
+      Number(process.env["VIA_HR_CV_SEMANTIC_TIMEOUT_MS"] || 30_000),
+    );
+    if (!response.ok)
+      throw new Error(`Candidate Pool matching failed with status ${response.status}.`);
+    const result: unknown = await response.json();
+    if (!result || typeof result !== "object")
+      throw new Error("Candidate Pool matching returned no result.");
+    const data = result as Record<string, unknown>;
+    if (typeof data["model"] !== "string" || !Array.isArray(data["results"]))
+      throw new Error("Candidate Pool matching returned an invalid result.");
+    const results = data["results"].map((item) => {
+      if (!item || typeof item !== "object") throw new Error("A pool match is invalid.");
+      const row = item as Record<string, unknown>;
+      if (typeof row["candidateId"] !== "string" || typeof row["score"] !== "number")
+        throw new Error("A pool match is invalid.");
+      return {
+        candidateId: row["candidateId"],
+        score: Math.max(0, Math.min(100, row["score"])),
+      };
+    });
+    return { model: data["model"], results };
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError")
+      throw new Error("Candidate Pool semantic matching timed out.");
+    throw error;
+  }
+}

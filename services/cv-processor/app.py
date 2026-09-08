@@ -49,6 +49,16 @@ class SimilarityRequest(BaseModel):
     candidateText: str = Field(min_length=1, max_length=30_000)
 
 
+class SimilarityBatchCandidate(BaseModel):
+    candidateId: str = Field(min_length=1, max_length=100)
+    candidateText: str = Field(min_length=1, max_length=30_000)
+
+
+class SimilaritiesRequest(BaseModel):
+    vacancyText: str = Field(min_length=1, max_length=20_000)
+    candidates: list[SimilarityBatchCandidate] = Field(min_length=1, max_length=500)
+
+
 def clean_text(value: str) -> str:
     value = value.replace("\x00", " ")
     return re.sub(r"[ \t]+", " ", re.sub(r"\r\n?", "\n", value)).strip()
@@ -219,6 +229,27 @@ def similarity(request: SimilarityRequest) -> dict[str, Any]:
         "model": MODEL_NAME,
         "local": True,
     }
+
+
+@app.post("/v1/similarities")
+def similarities(request: SimilaritiesRequest) -> dict[str, Any]:
+    """Embed a vacancy and a pool batch once so large Candidate Pool scans stay fast."""
+    texts = [" ".join(request.vacancyText.split())] + [
+        " ".join(candidate.candidateText.split()) for candidate in request.candidates
+    ]
+    with embedding_lock:
+        vectors = list(embedding_model.embed(texts, batch_size=min(64, len(texts))))
+    vacancy_vector = vectors[0]
+    vacancy_length = math.sqrt(float(vacancy_vector @ vacancy_vector))
+    results = []
+    for candidate, vector in zip(request.candidates, vectors[1:]):
+        denominator = vacancy_length * math.sqrt(float(vector @ vector))
+        cosine = float(vacancy_vector @ vector) / denominator if denominator else 0.0
+        results.append({
+            "candidateId": candidate.candidateId,
+            "score": round(max(0.0, min(1.0, cosine)) * 100, 2),
+        })
+    return {"model": MODEL_NAME, "local": True, "results": results}
 
 
 @app.post("/v1/extract")

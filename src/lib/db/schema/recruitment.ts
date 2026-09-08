@@ -416,6 +416,12 @@ export const candidateRecommendations = pgTable(
       .references(() => employees.id, { onDelete: "restrict" }),
     commercialTerms: text("commercial_terms"),
     sourceOutcome: text("source_outcome").notNull(),
+    reviewStatus: text("review_status").notNull().default("Pending HR Review"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true, mode: "string" }),
+    reviewedByUserId: uuid("reviewed_by_user_id").references(() => users.id, {
+      onDelete: "restrict",
+    }),
+    reviewReason: text("review_reason"),
     employeeId: uuid("employee_id").references(() => employees.id, { onDelete: "restrict" }),
     recommenderEmployeeId: uuid("recommender_employee_id").references(() => employees.id, {
       onDelete: "restrict",
@@ -432,6 +438,10 @@ export const candidateRecommendations = pgTable(
     check(
       "candidate_recommendations_years_known_non_negative",
       sql`${table.yearsKnown} IS NULL OR ${table.yearsKnown} >= 0`,
+    ),
+    check(
+      "candidate_recommendations_review_status_valid",
+      sql`${table.reviewStatus} IN ('Pending HR Review', 'Approved for Interview', 'Declined')`,
     ),
   ],
 );
@@ -619,6 +629,66 @@ export const candidateAssessmentInclusions = pgTable(
     active: boolean("active").notNull().default(true),
   },
   (table) => [index("candidate_assessment_inclusions_org_idx").on(table.organisationId)],
+);
+
+/**
+ * A role-specific, reproducible match between an existing Candidate Pool profile and a vacancy.
+ * Creating a match does not create an application or silently move the candidate into screening.
+ */
+export const candidateVacancyMatches = pgTable(
+  "candidate_vacancy_matches",
+  {
+    ...mutableRecordColumns,
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "restrict" }),
+    vacancyId: uuid("vacancy_id")
+      .notNull()
+      .references(() => vacancies.id, { onDelete: "restrict" }),
+    vacancyRecordVersion: integer("vacancy_record_version").notNull(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => candidates.id, { onDelete: "restrict" }),
+    cvRecordId: uuid("cv_record_id")
+      .notNull()
+      .references(() => candidateCvRecords.id, { onDelete: "restrict" }),
+    preliminaryScore: numeric("preliminary_score").notNull(),
+    band: text("band").notNull(),
+    compulsoryChecks: jsonb("compulsory_checks").notNull().default([]),
+    matchedSkills: jsonb("matched_skills").$type<string[]>().notNull().default([]),
+    missingRequiredSkills: jsonb("missing_required_skills").$type<string[]>().notNull().default([]),
+    evidence: jsonb("evidence").$type<string[]>().notNull().default([]),
+    warnings: jsonb("warnings").$type<string[]>().notNull().default([]),
+    rankingModel: text("ranking_model").notNull(),
+    status: text("status").notNull().default("Suggested"),
+    generatedAt: timestamp("generated_at", { withTimezone: true, mode: "string" }).notNull(),
+    addedAt: timestamp("added_at", { withTimezone: true, mode: "string" }),
+    addedByUserId: uuid("added_by_user_id").references(() => users.id, {
+      onDelete: "restrict",
+    }),
+    dismissalReason: text("dismissal_reason"),
+  },
+  (table) => [
+    uniqueIndex("candidate_vacancy_matches_version_unique").on(
+      table.organisationId,
+      table.vacancyId,
+      table.vacancyRecordVersion,
+      table.candidateId,
+    ),
+    index("candidate_vacancy_matches_vacancy_score_idx").on(
+      table.organisationId,
+      table.vacancyId,
+      table.preliminaryScore,
+    ),
+    check(
+      "candidate_vacancy_matches_score_range",
+      sql`${table.preliminaryScore} >= 0 AND ${table.preliminaryScore} <= 100`,
+    ),
+    check(
+      "candidate_vacancy_matches_status_valid",
+      sql`${table.status} IN ('Suggested', 'Added to Screening', 'Dismissed')`,
+    ),
+  ],
 );
 
 export const candidateScoreRuns = pgTable(

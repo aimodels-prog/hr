@@ -44,6 +44,11 @@ import {
 } from "../db/repositories/recruitment-screening.repository.server.ts";
 import { importCandidatesInDatabase } from "../db/repositories/candidate-import.repository.server.ts";
 import { parseCandidateSpreadsheetInDatabase } from "../db/repositories/candidate-spreadsheet.repository.server.ts";
+import {
+  listCandidatePoolMatchesInDatabase,
+  reviewEmployeeReferralInDatabase,
+  scanCandidatePoolForVacancyInDatabase,
+} from "../db/repositories/recruitment-referral.repository.server.ts";
 
 const RecruitmentActor = z.object({
   actorId: z.string().min(1),
@@ -292,6 +297,57 @@ export const addCandidateRecommendationFn = createServerFn({ method: "POST" })
     );
   });
 
+export const reviewEmployeeReferralFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: RecruitmentActor,
+        recommendationId: z.string().uuid(),
+        decision: z.enum(["Approve", "Decline"]),
+        reason: z.string().trim().min(5).max(1000),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await verifyRecruitmentActor(data.actor);
+    return reviewEmployeeReferralInDatabase(
+      verified.organisationId,
+      {
+        recommendationId: data.recommendationId,
+        decision: data.decision,
+        reason: data.reason,
+      },
+      verified.actor,
+    );
+  });
+
+export const getCandidatePoolMatchesFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z.object({ actor: RecruitmentActor, vacancyId: z.string().uuid() }).strict().parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await verifyRecruitmentActor(data.actor);
+    return listCandidatePoolMatchesInDatabase(
+      verified.organisationId,
+      data.vacancyId,
+      verified.actor,
+    );
+  });
+
+export const scanCandidatePoolMatchesFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z.object({ actor: RecruitmentActor, vacancyId: z.string().uuid() }).strict().parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await verifyRecruitmentActor(data.actor);
+    return scanCandidatePoolForVacancyInDatabase(
+      verified.organisationId,
+      data.vacancyId,
+      verified.actor,
+    );
+  });
+
 const CandidateExport = z.object({
   actor: RecruitmentActor,
   candidateIds: z.array(z.string().uuid()).min(1).max(5000),
@@ -530,7 +586,7 @@ export const updateAssessmentSelectionFn = createServerFn({ method: "POST" })
       .object({
         actor: RecruitmentActor,
         batchId: z.string().uuid(),
-        candidateIds: z.array(z.string().uuid()).min(1).max(10),
+        candidateIds: z.array(z.string().uuid()).min(1),
         reason: z.string().trim().min(5).max(1000),
       })
       .strict()

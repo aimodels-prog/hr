@@ -298,7 +298,20 @@ export async function resolvePortalAuthenticationRequest(
       );
     }
     const token = cookieValue(request, PORTAL_SESSION_COOKIE_NAME);
-    if (token) await dependencies.revokeSession(token);
+    // Clearing the browser cookie must not depend on PostgreSQL being available. If revocation or
+    // its audit write fails, keeping the cookie would trap the user in a session they explicitly
+    // tried to leave. The server-side session remains short-lived and can be recovered by the
+    // normal session cleanup worker, while the raw token is never included in the diagnostic.
+    if (token) {
+      try {
+        await dependencies.revokeSession(token);
+      } catch (error) {
+        console.error(
+          "VIA HR local session revocation failed during logout; the browser session was cleared.",
+          error instanceof Error ? error.message : "Unknown revocation failure",
+        );
+      }
+    }
     return new Response(null, {
       status: 303,
       headers: {

@@ -824,14 +824,6 @@ export async function finaliseCandidateCvIntakeInDatabase(
           createdBy: actor.userId,
           updatedBy: actor.userId,
         } as typeof candidateApplications.$inferInsert);
-        await tx
-          .update(vacancies)
-          .set({
-            applicantCount: sql`${vacancies.applicantCount} + 1`,
-            updatedAt: new Date(),
-            updatedBy: actor.userId,
-          })
-          .where(eq(vacancies.id, vacancyId));
       }
     }
     if (vacancyId && applicationId) {

@@ -1,5 +1,5 @@
 import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { VacancyService } from "@/lib/data/vacancy-service";
 import { CandidateService } from "@/lib/data/candidate-service";
@@ -9,6 +9,7 @@ import type {
   CandidateAssessmentInclusion,
   CandidatePreparationRun,
   CandidateScoreRun,
+  CandidateVacancyMatch,
   ShortlistOverride,
   ShortlistSnapshot,
   VacancyStatus,
@@ -22,6 +23,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { updateVacancyOpportunitySettingsFn } from "@/lib/server-functions/vacancy.server";
+import {
+  getCandidatePoolMatchesFn,
+  scanCandidatePoolMatchesFn,
+} from "@/lib/server-functions/candidate.server";
 import {
   Dialog,
   DialogContent,
@@ -61,6 +66,7 @@ import {
   XCircle,
   Archive,
   Globe,
+  SearchCheck,
 } from "lucide-react";
 import { AuditViewer } from "@/components/audit-viewer";
 import { DecisionPanel } from "@/components/offers/decision-panel";
@@ -142,11 +148,83 @@ function VacancyDetailRoute() {
   const [poolCvRecordId, setPoolCvRecordId] = useState("");
   const [poolReason, setPoolReason] = useState("");
   const [addingFromPool, setAddingFromPool] = useState(false);
+  const [poolMatches, setPoolMatches] = useState<CandidateVacancyMatch[]>([]);
+  const [scanningPool, setScanningPool] = useState(false);
   const [editingAssessmentGroup, setEditingAssessmentGroup] = useState(false);
   const [assessmentSelection, setAssessmentSelection] = useState<Set<string>>(
     () => new Set(assessmentBatch?.selectedCandidateIds || []),
   );
   const [assessmentChangeReason, setAssessmentChangeReason] = useState("");
+
+  const serverActor = useMemo(
+    () => ({
+      actorId: currentUser.userId,
+      ...(currentUser.workspaceEmail ? { actorEmail: currentUser.workspaceEmail } : {}),
+      activeRole: currentUser.activeRole,
+    }),
+    [currentUser.activeRole, currentUser.userId, currentUser.workspaceEmail],
+  );
+  const databaseVacancyId = vacancy.databaseId ?? vacancy.id;
+
+  useEffect(() => {
+    let cancelled = false;
+    void getCandidatePoolMatchesFn({
+      data: { actor: serverActor, vacancyId: databaseVacancyId },
+    })
+      .then((matches) => {
+        if (!cancelled) setPoolMatches(matches as CandidateVacancyMatch[]);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [databaseVacancyId, serverActor]);
+
+  const scanCandidatePool = async () => {
+    setScanningPool(true);
+    try {
+      const result = await scanCandidatePoolMatchesFn({
+        data: { actor: serverActor, vacancyId: databaseVacancyId },
+      });
+      setPoolMatches(result.matches as CandidateVacancyMatch[]);
+      toast.success(
+        result.eligibleCount > 0
+          ? `${result.eligibleCount} eligible Candidate Pool profile${result.eligibleCount === 1 ? "" : "s"} ranked for this role.`
+          : "No additional eligible Candidate Pool profiles were found.",
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Candidate Pool matching failed.");
+    } finally {
+      setScanningPool(false);
+    }
+  };
+
+  const addMatchedCandidate = async (match: CandidateVacancyMatch) => {
+    setAddingFromPool(true);
+    try {
+      await preparationService.includeCandidateAsync(
+        {
+          vacancyId: vacancy.id,
+          candidateId: match.candidateId,
+          cvRecordId: match.cvRecordId,
+          source: "HR Added",
+          reason: `Candidate Pool match: ${match.band}, ${match.preliminaryScore}/100`,
+        },
+        getActorContext("Added a role-specific Candidate Pool match to vacancy screening"),
+      );
+      refreshScreening();
+      setPoolMatches((current) =>
+        current.map((item) =>
+          item.id === match.id ? { ...item, status: "Added to Screening" } : item,
+        ),
+      );
+      toast.success("Candidate added to this vacancy's screening group.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Candidate could not be added.");
+    } finally {
+      setAddingFromPool(false);
+    }
+  };
 
   const saveOpportunitySettings = async () => {
     const databaseId = vacancy.databaseId ?? vacancy.id;
@@ -878,6 +956,10 @@ function VacancyDetailRoute() {
                   <Button variant="outline" onClick={() => setPoolDialogOpen(true)}>
                     Add from Candidate Pool
                   </Button>
+                  <Button variant="outline" onClick={scanCandidatePool} disabled={scanningPool}>
+                    <SearchCheck className="mr-2 h-4 w-4" />
+                    {scanningPool ? "Matching Pool..." : "Find Pool Matches"}
+                  </Button>
                   <Button
                     onClick={handlePrepareCandidates}
                     disabled={isPreparing || isShortlistMode}
@@ -907,6 +989,81 @@ function VacancyDetailRoute() {
                     </div>
                   ))}
                 </div>
+
+                {poolMatches.filter((match) => match.status !== "Dismissed").length > 0 && (
+                  <div className="rounded-lg border border-sky-200 bg-sky-50/40">
+                    <div className="border-b border-sky-200 p-4">
+                      <h3 className="font-semibold">Candidate Pool Matches</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Existing candidates ranked specifically against this vacancy. Nobody is
+                        added to the recruitment process until HR confirms it here.
+                      </p>
+                    </div>
+                    <div className="divide-y divide-sky-100">
+                      {poolMatches
+                        .filter((match) => match.status !== "Dismissed")
+                        .map((match, index) => {
+                          const candidate = candidates.find(
+                            (item) => item.id === match.candidateId,
+                          );
+                          const missingCompulsory = match.compulsoryChecks.filter(
+                            (check) => check.status !== "Confirmed",
+                          ).length;
+                          return (
+                            <div
+                              key={match.id}
+                              className="grid gap-3 p-4 md:grid-cols-[3rem_1fr_auto_auto] md:items-center"
+                            >
+                              <span className="font-semibold text-muted-foreground">
+                                #{index + 1}
+                              </span>
+                              <div>
+                                <Link
+                                  to="/staff/candidates/$candidateId"
+                                  params={{ candidateId: match.candidateId }}
+                                  className="font-medium hover:underline"
+                                >
+                                  {candidate
+                                    ? `${candidate.firstName} ${candidate.lastName}`
+                                    : "Candidate"}
+                                </Link>
+                                <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                  <Badge variant="outline">{match.band}</Badge>
+                                  {match.matchedSkills.slice(0, 4).map((skill) => (
+                                    <span key={skill}>{skill}</span>
+                                  ))}
+                                  {missingCompulsory > 0 && (
+                                    <span className="text-amber-700">
+                                      {missingCompulsory} compulsory item
+                                      {missingCompulsory === 1 ? "" : "s"} to verify
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-xs text-muted-foreground">Match score</div>
+                                <div className="text-lg font-semibold">
+                                  {match.preliminaryScore}/100
+                                </div>
+                              </div>
+                              {match.status === "Added to Screening" ? (
+                                <Badge>Added to Screening</Badge>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={addingFromPool}
+                                  onClick={() => addMatchedCandidate(match)}
+                                >
+                                  Add to Screening
+                                </Button>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
 
                 <div className="rounded-lg border">
                   <div className="flex flex-col gap-4 border-b p-4 lg:flex-row lg:items-end lg:justify-between">
@@ -1170,7 +1327,7 @@ function VacancyDetailRoute() {
                       const isSelected = selectedCandidateIds.has(candidate.id);
 
                       // Only show outside top N if in Shortlist Builder or if selected
-                      if (!isShortlistMode && idx >= 10 && !isSelected) return null;
+                      if (!isShortlistMode && idx >= targetSize && !isSelected) return null;
 
                       return (
                         <div

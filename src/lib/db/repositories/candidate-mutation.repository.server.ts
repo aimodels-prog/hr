@@ -582,6 +582,10 @@ export async function addCandidateRecommendationInDatabase(
         hrOwnerId: owner.id,
         ...(input.commercialTerms ? { commercialTerms: input.commercialTerms } : {}),
         sourceOutcome: "In Progress",
+        reviewStatus: "Approved for Interview",
+        reviewedAt: new Date().toISOString(),
+        reviewedByUserId: actorUserId,
+        reviewReason: "Recommendation recorded directly by HR",
         createdBy: actorUserId,
         updatedBy: actorUserId,
       })

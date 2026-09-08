@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { CalendarClock, Users, ClipboardCheck, AlertTriangle, CheckCircle2 } from "lucide-react";
+import {
+  CalendarClock,
+  Users,
+  ClipboardCheck,
+  AlertTriangle,
+  CheckCircle2,
+  UserCheck,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +24,7 @@ import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { InterviewService } from "@/lib/data/interview-service";
 import { ScorecardService } from "@/lib/data/scorecard-service";
 import { CandidateService } from "@/lib/data/candidate-service";
+import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
 import { VacancyService } from "@/lib/data/vacancy-service";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { ScorecardForm } from "@/components/interviews/scorecard-form";
@@ -64,6 +72,7 @@ function Interviews() {
   const [interviewService] = useState(() => new InterviewService());
   const [scorecardService] = useState(() => new ScorecardService());
   const [candidateService] = useState(() => new CandidateService());
+  const [candidatePoolService] = useState(() => new CandidatePoolService());
   const [vacancyService] = useState(() => new VacancyService());
   const [empService] = useState(() => new EmployeeService());
   const [refreshKey, setRefreshKey] = useState(0);
@@ -170,6 +179,13 @@ function Interviews() {
     () => allInterviews.filter((i) => i.panelUserIds.includes(userId)).sort(sortByTime),
     [allInterviews, userId],
   );
+  const awaitingScheduling = useMemo(() => {
+    if (!canManage) return [];
+    void refreshKey;
+    return candidatePoolService
+      .getAllInterviewRecommendations(getActorContext())
+      .filter((recommendation) => recommendation.status === "Ready to Schedule");
+  }, [canManage, candidatePoolService, getActorContext, refreshKey]);
 
   const refresh = () => setRefreshKey((k) => k + 1);
 
@@ -367,6 +383,68 @@ function Interviews() {
           </div>
         )}
       </div>
+
+      {canManage && (
+        <div className="space-y-3">
+          <h2 className="flex items-center gap-2 text-base font-semibold">
+            <UserCheck className="h-4 w-4 text-primary" /> Candidates Awaiting Interview Scheduling
+          </h2>
+          <Card>
+            <CardHeader>
+              <CardDescription>
+                HR-approved referrals and other approved interview recommendations appear here until
+                an interview is scheduled.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Candidate</TableHead>
+                    <TableHead>Vacancy</TableHead>
+                    <TableHead>Reason</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {awaitingScheduling.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
+                        No candidates are waiting for interview scheduling.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    awaitingScheduling.map((recommendation) => (
+                      <TableRow key={recommendation.id}>
+                        <TableCell className="font-medium">
+                          {candidateName(recommendation.candidateId)}
+                        </TableCell>
+                        <TableCell>
+                          {vacancyById.get(recommendation.vacancyId)?.title || "Vacancy"}
+                        </TableCell>
+                        <TableCell className="max-w-md text-sm text-muted-foreground">
+                          {recommendation.reason}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button asChild size="sm">
+                            <Link
+                              to="/staff/candidates/$candidateId"
+                              params={{ candidateId: recommendation.candidateId }}
+                              hash="interviews"
+                            >
+                              Review & Schedule
+                            </Link>
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {canViewAll && (
         <div className="space-y-3">

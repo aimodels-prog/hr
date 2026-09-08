@@ -18,7 +18,7 @@ import {
   positions,
   projects,
 } from "../schema/master-data.ts";
-import { vacancies, vacancyVersions } from "../schema/recruitment.ts";
+import { candidateApplications, vacancies, vacancyVersions } from "../schema/recruitment.ts";
 import { auditEvents } from "../schema/system.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 
@@ -59,19 +59,39 @@ export async function listVacanciesForOrganisation(
   includeInternalSalary: boolean,
 ): Promise<Vacancy[]> {
   const db = getDatabaseClient();
-  const [rows, departmentRows, locationRows, positionRows, gradeRows, employmentTypeRows] =
-    await Promise.all([
-      db
-        .select()
-        .from(vacancies)
-        .where(eq(vacancies.organisationId, organisationId))
-        .orderBy(asc(vacancies.createdAt)),
-      db.select().from(departments).where(eq(departments.organisationId, organisationId)),
-      db.select().from(locations).where(eq(locations.organisationId, organisationId)),
-      db.select().from(positions).where(eq(positions.organisationId, organisationId)),
-      db.select().from(grades).where(eq(grades.organisationId, organisationId)),
-      db.select().from(employmentTypes).where(eq(employmentTypes.organisationId, organisationId)),
-    ]);
+  const [
+    rows,
+    applicantCountRows,
+    departmentRows,
+    locationRows,
+    positionRows,
+    gradeRows,
+    employmentTypeRows,
+  ] = await Promise.all([
+    db
+      .select()
+      .from(vacancies)
+      .where(eq(vacancies.organisationId, organisationId))
+      .orderBy(asc(vacancies.createdAt)),
+    db
+      .select({
+        vacancyId: candidateApplications.vacancyId,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(candidateApplications)
+      .where(
+        and(
+          eq(candidateApplications.organisationId, organisationId),
+          isNull(candidateApplications.archivedAt),
+        ),
+      )
+      .groupBy(candidateApplications.vacancyId),
+    db.select().from(departments).where(eq(departments.organisationId, organisationId)),
+    db.select().from(locations).where(eq(locations.organisationId, organisationId)),
+    db.select().from(positions).where(eq(positions.organisationId, organisationId)),
+    db.select().from(grades).where(eq(grades.organisationId, organisationId)),
+    db.select().from(employmentTypes).where(eq(employmentTypes.organisationId, organisationId)),
+  ]);
   const names = (values: Array<{ id: string; name: string }>) =>
     new Map(values.map((value) => [value.id, value.name]));
   const departmentNames = names(departmentRows);
@@ -79,6 +99,9 @@ export async function listVacanciesForOrganisation(
   const positionNames = names(positionRows);
   const gradeNames = names(gradeRows);
   const employmentTypeNames = names(employmentTypeRows);
+  const applicantCounts = new Map(
+    applicantCountRows.map((row) => [row.vacancyId, Number(row.count)]),
+  );
   return rows.map((row) => {
     const salary = row.salaryRangeEncrypted
       ? decryptSensitiveJson<{ min: number; max: number; currency: string }>(
@@ -108,7 +131,7 @@ export async function listVacanciesForOrganisation(
       summary: row.summary,
       responsibilities: row.responsibilities,
       requirements: row.requirements,
-      applicantCount: row.applicantCount,
+      applicantCount: applicantCounts.get(row.id) ?? 0,
       headcount: row.headcount,
       ...(salary && (includeInternalSalary || row.salaryVisibleToPublic)
         ? { salaryRange: { ...salary, visibleToPublic: row.salaryVisibleToPublic } }

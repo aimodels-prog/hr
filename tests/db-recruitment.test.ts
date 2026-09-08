@@ -176,7 +176,7 @@ test(
         );
         await assert.rejects(
           tx.savepoint(async (savepoint) => {
-            await savepoint`INSERT INTO candidate_assessment_batches (created_by, updated_by, organisation_id, vacancy_id, vacancy_record_version, target_size, status) VALUES (${ids.actor}, ${ids.actor}, ${ids.org}, ${ids.vacancy}, 1, 11, 'Draft')`;
+            await savepoint`INSERT INTO candidate_assessment_batches (created_by, updated_by, organisation_id, vacancy_id, vacancy_record_version, target_size, status) VALUES (${ids.actor}, ${ids.actor}, ${ids.org}, ${ids.vacancy}, 1, 0, 'Draft')`;
           }),
           /candidate_assessment_batches_target_size/,
         );
