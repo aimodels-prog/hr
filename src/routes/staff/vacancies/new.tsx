@@ -19,7 +19,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { VacancyService } from "@/lib/data/vacancy-service";
 import { EmployeeService } from "@/lib/data/employee-service";
-import { generateDraftJobDescription } from "@/lib/data/ai-provider";
+import { generateJobDescriptionFn } from "@/lib/server-functions/vacancy.server";
 import {
   cleanMandatoryCriteria,
   findMissingMandatoryCriteria,
@@ -186,39 +186,38 @@ function NewVacancy() {
 
     setGenerating(true);
     try {
-      const draft = await generateDraftJobDescription(
-        {
-          title: values.title,
-          department: values.department,
-          location: values.location,
-          employmentType: values.employmentType,
-          education: values.education,
-          minimumExperience: values.minimumExperience,
-          skills: {
-            required: values.skillsRequired
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean),
-            preferred: values.skillsPreferred
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean),
+      const draft = await generateJobDescriptionFn({
+        data: {
+          actor: {
+            actorId: currentUser!.userId,
+            ...(currentUser!.workspaceEmail ? { actorEmail: currentUser!.workspaceEmail } : {}),
+            activeRole: currentUser!.activeRole,
           },
-          languages: values.languages
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean),
-          mandatoryCriteria,
+          facts: {
+            title: values.title,
+            department: values.department,
+            location: values.location,
+            employmentType: values.employmentType,
+            education: values.education,
+            minimumExperience: values.minimumExperience,
+            skills: {
+              required: values.skillsRequired
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean),
+              preferred: values.skillsPreferred
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean),
+            },
+            languages: values.languages
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean),
+            mandatoryCriteria,
+          },
         },
-        {
-          context: getActorContext("Generated a job-description draft"),
-          relatedEntityType: "vacancy-draft",
-          relatedEntityId: `new-${values.title
-            .trim()
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")}`,
-        },
-      );
+      });
 
       form.setValue("summary", draft.summary);
       form.setValue("responsibilities", draft.responsibilities.join("\n"));

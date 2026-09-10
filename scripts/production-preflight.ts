@@ -342,6 +342,22 @@ export function validateProductionEnvironment(values: Record<string, string>): P
     !integer(values, "VIA_HR_READ_RATE_LIMIT", 1, 100_000)
   )
     errors.push("Read and mutation rate limits must be positive integers no greater than 100000.");
+  const aiProvider = values["VIA_HR_AI_PROVIDER"]?.trim().toLowerCase() || "local";
+  if (aiProvider !== "local" && aiProvider !== "gemini")
+    errors.push("VIA_HR_AI_PROVIDER must be either local or gemini.");
+  if (aiProvider === "gemini") {
+    const geminiKey = values["GEMINI_API_KEY"]?.trim() || "";
+    if (geminiKey.length < 20 || PLACEHOLDER.test(geminiKey))
+      errors.push("GEMINI_API_KEY is missing or still contains a placeholder.");
+    if (!/^[A-Za-z0-9._:-]{3,100}$/.test(values["VIA_HR_GEMINI_MODEL"] ?? ""))
+      errors.push("VIA_HR_GEMINI_MODEL is invalid.");
+    if (!integer(values, "VIA_HR_GEMINI_TIMEOUT_MS", 5_000, 120_000))
+      errors.push("VIA_HR_GEMINI_TIMEOUT_MS must be between 5000 and 120000.");
+    if (integer(values, "VIA_HR_GEMINI_MAX_RETRIES", 0, 5) === undefined)
+      errors.push("VIA_HR_GEMINI_MAX_RETRIES must be between 0 and 5.");
+  }
+  if (Object.keys(values).some((name) => /^VITE_.*(GEMINI|AI).*KEY/i.test(name)))
+    errors.push("AI secrets must not use a VITE_ prefix because that exposes them to browsers.");
   if (!integer(values, "VIA_HR_BACKUP_RETENTION_DAYS", 7, 3650))
     errors.push("VIA_HR_BACKUP_RETENTION_DAYS must be between 7 and 3650.");
   if (!errors.some((error) => /BYTES|POOL|rate limits|RETENTION/.test(error)))

@@ -28,6 +28,7 @@
     "worker:recruitment": "npm run worker:background",
     "worker:health": "node --experimental-transform-types scripts/worker-health.ts",
     "cv-processor:smoke": "node scripts/smoke-cv-processor.mjs",
+    "ai:smoke": "node --experimental-transform-types scripts/gemini-smoke.ts",
     "production:preflight": "node --experimental-transform-types scripts/production-preflight.ts --env-file .env.production",
     "security:audit": "npm audit --audit-level=moderate",
     "lint": "eslint .",
@@ -35,6 +36,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1121.0",
+    "@google/genai": "2.21.0",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
@@ -116,6 +118,7 @@
     "vite": "^8.2.0"
   },
   "overrides": {
+    "js-yaml": "4.3.2",
     "@esbuild-kit/core-utils": {
       "esbuild": "0.25.12"
     }

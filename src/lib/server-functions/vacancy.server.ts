@@ -1,8 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import * as z from "zod";
 
-import { cleanMandatoryCriteria } from "../data/job-description-criteria.ts";
+import {
+  cleanMandatoryCriteria,
+  ensureMandatoryCriteria,
+} from "../data/job-description-criteria.ts";
 import { ROLE_VALUES, type Role, type Vacancy } from "../data/types.ts";
+import { generateConfiguredJobDescription } from "../integrations/gemini-ai.server.ts";
 import {
   listVacanciesForOrganisation,
   saveVacancyDraftInDatabase,
@@ -64,6 +68,49 @@ export const getRecruitmentVacanciesFn = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<Vacancy[]> => {
     const verified = await verifyRecruitmentActor(data);
     return listVacanciesForOrganisation(verified.organisationId, true);
+  });
+
+const JobDescriptionFacts = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    department: z.string().trim().min(1).max(200),
+    location: z.string().trim().min(1).max(200),
+    employmentType: z.string().trim().min(1).max(100),
+    education: z.string().trim().max(2_000),
+    minimumExperience: z.string().trim().max(1_000),
+    skills: z
+      .object({
+        required: z.array(z.string().trim().min(1).max(500)).max(100),
+        preferred: z.array(z.string().trim().min(1).max(500)).max(100),
+      })
+      .strict(),
+    languages: z.array(z.string().trim().min(1).max(200)).max(100),
+    mandatoryCriteria: z.array(z.string().trim().min(1).max(1_000)).min(1).max(100),
+  })
+  .strict()
+  .transform((value) => ({
+    ...value,
+    mandatoryCriteria: cleanMandatoryCriteria(value.mandatoryCriteria),
+  }));
+
+const GenerateJobDescriptionRequest = z
+  .object({ actor: ActorInput, facts: JobDescriptionFacts })
+  .strict();
+
+export const generateJobDescriptionFn = createServerFn({ method: "POST" })
+  .validator((input: z.input<typeof GenerateJobDescriptionRequest>) =>
+    GenerateJobDescriptionRequest.parse(input),
+  )
+  .handler(async ({ data }) => {
+    await verifyRecruitmentActor(data.actor);
+    if (data.facts.mandatoryCriteria.length === 0) {
+      throw new Error("Add at least one compulsory criterion before generating the description.");
+    }
+    const draft = await generateConfiguredJobDescription(data.facts);
+    return {
+      ...draft,
+      requirements: ensureMandatoryCriteria(draft.requirements, data.facts.mandatoryCriteria),
+    };
   });
 
 const SalaryRange = z

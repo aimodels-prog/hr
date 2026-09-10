@@ -8,6 +8,11 @@ import {
   CV_PROCESSOR_VERSION,
   calculateCvSemanticSimilarity,
 } from "../../integrations/cv-processing.server.ts";
+import {
+  assessCandidateWithConfiguredAi,
+  configuredAiMode,
+  type DetailedCandidateAssessmentResult,
+} from "../../integrations/gemini-ai.server.ts";
 import { getDatabaseClient } from "../client.ts";
 import { decryptSensitiveJson } from "../encryption.server.ts";
 import { locations } from "../schema/master-data.ts";
@@ -42,6 +47,148 @@ function recruiter(actor: AuditActorContext): void {
 
 function unique(ids: string[]): string[] {
   return [...new Set(ids)];
+}
+
+interface PreparedAiAssessment {
+  candidateRecordVersion: number;
+  applicationRecordVersion: number;
+  preparationRecordVersion: number;
+  result: DetailedCandidateAssessmentResult;
+}
+
+async function prepareGeminiAssessments(
+  organisationId: string,
+  batchId: string,
+): Promise<Map<string, PreparedAiAssessment> | null> {
+  if (configuredAiMode() === "local") return null;
+  const db = getDatabaseClient();
+  const [batch] = await db
+    .select()
+    .from(candidateAssessmentBatches)
+    .where(
+      and(
+        eq(candidateAssessmentBatches.organisationId, organisationId),
+        eq(candidateAssessmentBatches.id, batchId),
+      ),
+    )
+    .limit(1);
+  if (!batch || batch.status !== "Draft") throw new Error("Assessment group is not available.");
+  if (assessmentGroupIncomplete(batch.selectedCandidateIds, batch.targetSize)) {
+    throw new Error("The assessment group is incomplete.");
+  }
+  const [vacancyResult, candidateRows, applicationRows, runRows] = await Promise.all([
+    db
+      .select({ vacancy: vacancies, locationName: locations.name })
+      .from(vacancies)
+      .innerJoin(locations, eq(locations.id, vacancies.locationId))
+      .where(and(eq(vacancies.organisationId, organisationId), eq(vacancies.id, batch.vacancyId)))
+      .limit(1),
+    db
+      .select()
+      .from(candidates)
+      .where(
+        and(
+          eq(candidates.organisationId, organisationId),
+          inArray(candidates.id, batch.selectedCandidateIds),
+        ),
+      ),
+    db
+      .select()
+      .from(candidateApplications)
+      .where(
+        and(
+          eq(candidateApplications.organisationId, organisationId),
+          eq(candidateApplications.vacancyId, batch.vacancyId),
+          inArray(candidateApplications.candidateId, batch.selectedCandidateIds),
+        ),
+      ),
+    db
+      .select()
+      .from(candidatePreparationRuns)
+      .where(
+        and(
+          eq(candidatePreparationRuns.organisationId, organisationId),
+          eq(candidatePreparationRuns.vacancyId, batch.vacancyId),
+          inArray(candidatePreparationRuns.id, batch.preparationRunIds),
+          inArray(candidatePreparationRuns.candidateId, batch.selectedCandidateIds),
+        ),
+      ),
+  ]);
+  const vacancy = vacancyResult[0];
+  if (!vacancy || vacancy.vacancy.recordVersion !== batch.vacancyRecordVersion) {
+    throw new Error("The vacancy changed. Create a new assessment group.");
+  }
+  const candidateById = new Map(candidateRows.map((row) => [row.id, row]));
+  const applicationByCandidate = new Map(applicationRows.map((row) => [row.candidateId, row]));
+  const runByCandidate = new Map(runRows.map((row) => [row.candidateId, row]));
+  const prepared = new Map<string, PreparedAiAssessment>();
+  const concurrency = 3;
+  for (let offset = 0; offset < batch.selectedCandidateIds.length; offset += concurrency) {
+    const candidateIds = batch.selectedCandidateIds.slice(offset, offset + concurrency);
+    const results = await Promise.all(
+      candidateIds.map(async (candidateId) => {
+        const candidate = candidateById.get(candidateId);
+        const application = applicationByCandidate.get(candidateId);
+        const run = runByCandidate.get(candidateId);
+        if (!candidate || !application || !run || !["Ready", "Needs Review"].includes(run.status)) {
+          throw new Error("A selected candidate is no longer ready for assessment.");
+        }
+        const result = await assessCandidateWithConfiguredAi({
+          vacancy: {
+            title: vacancy.vacancy.title,
+            location: vacancy.locationName,
+            education: vacancy.vacancy.education,
+            minimumExperience: vacancy.vacancy.minimumExperience,
+            requiredSkills: vacancy.vacancy.skills.required,
+            preferredSkills: vacancy.vacancy.skills.preferred,
+            certifications: vacancy.vacancy.certifications,
+            languages: vacancy.vacancy.languages,
+            mandatoryCriteria: vacancy.vacancy.mandatoryCriteria ?? [],
+          },
+          candidate: {
+            currentTitle: candidate.currentTitle,
+            location: candidate.location,
+            yearsOfExperience: candidate.yearsOfExperience,
+            skills: candidate.skills ?? [],
+            education: candidate.education ?? [],
+            certifications: candidate.certifications ?? [],
+            languages: candidate.languages ?? [],
+            workEligibility: candidate.workEligibility,
+          },
+          application: { screeningAnswers: application.screeningAnswers },
+          preparation: {
+            preliminaryScore: Number(run.preliminaryScore ?? 0),
+            band: run.band ?? "Needs HR Review",
+            compulsoryChecks: run.compulsoryChecks as Array<{
+              criterion: string;
+              status: string;
+              evidence?: string;
+            }>,
+            matchedSkills: run.matchedSkills,
+            missingRequiredSkills: run.missingRequiredSkills,
+            evidence: run.evidence,
+            warnings: run.warnings,
+          },
+        });
+        if (!result) throw new Error("The configured AI provider did not return an assessment.");
+        return {
+          candidateId,
+          assessment: {
+            candidateRecordVersion: candidate.recordVersion,
+            applicationRecordVersion: application.recordVersion,
+            preparationRecordVersion: run.recordVersion,
+            result,
+          },
+        };
+      }),
+    );
+    for (const item of results) prepared.set(item.candidateId, item.assessment);
+  }
+  return prepared;
+}
+
+function assessmentGroupIncomplete(selectedCandidateIds: string[], targetSize: number): boolean {
+  return selectedCandidateIds.length !== targetSize;
 }
 
 export async function includeCandidateInAssessmentInDatabase(
@@ -585,6 +732,10 @@ export async function runDetailedAssessmentInDatabase(
 ): Promise<string> {
   recruiter(actor);
   const db = getDatabaseClient();
+  // External assessment happens before the transaction. This avoids holding row locks while
+  // waiting for a network provider. The transaction below rechecks every relevant version before
+  // committing the immutable score snapshots.
+  const preparedAiAssessments = await prepareGeminiAssessments(organisationId, batchId);
   return db.transaction(async (tx) => {
     const [batch] = await tx
       .select()
@@ -656,19 +807,51 @@ export async function runDetailedAssessmentInDatabase(
       ]);
       if (!candidate || !application || !run || !["Ready", "Needs Review"].includes(run.status))
         throw new Error("A selected candidate is no longer ready for assessment.");
+      const aiAssessment = preparedAiAssessments?.get(candidateId);
+      if (
+        preparedAiAssessments &&
+        (!aiAssessment ||
+          candidate.recordVersion !== aiAssessment.candidateRecordVersion ||
+          application.recordVersion !== aiAssessment.applicationRecordVersion ||
+          run.recordVersion !== aiAssessment.preparationRecordVersion)
+      ) {
+        throw new Error(
+          "Candidate information changed during assessment. Run the detailed assessment again.",
+        );
+      }
       const preliminary = Number(run.preliminaryScore ?? 0);
-      const experience = Math.min(100, Math.max(0, preliminary));
-      const locationScore = candidate.location
-        .toLowerCase()
-        .includes(vacancy.locationName.toLowerCase())
-        ? 100
-        : 60;
       const confirmed = (run.compulsoryChecks as Array<{ status?: string }>).filter(
         (item) => item.status === "Confirmed",
       ).length;
       const totalCriteria = (run.compulsoryChecks as unknown[]).length;
-      const profile = totalCriteria ? Math.round((confirmed / totalCriteria) * 100) : preliminary;
-      const overall = Math.round(experience * 0.55 + profile * 0.35 + locationScore * 0.1);
+      const deterministicExperience = Math.min(100, Math.max(0, preliminary));
+      const deterministicLocation = candidate.location
+        .toLowerCase()
+        .includes(vacancy.locationName.toLowerCase())
+        ? 100
+        : 60;
+      const deterministicProfile = totalCriteria
+        ? Math.round((confirmed / totalCriteria) * 100)
+        : preliminary;
+      const deterministicOverall = Math.round(
+        deterministicExperience * 0.55 + deterministicProfile * 0.35 + deterministicLocation * 0.1,
+      );
+      const overall = aiAssessment?.result.overallScore ?? deterministicOverall;
+      const categoryScores = aiAssessment?.result.categoryScores ?? {
+        Experience: deterministicExperience,
+        Location: deterministicLocation,
+        Profile: deterministicProfile,
+      };
+      const confirmedCriteria = (
+        run.compulsoryChecks as Array<{ criterion: string; status: string }>
+      )
+        .filter((item) => item.status === "Confirmed")
+        .map((item) => `Confirmed: ${item.criterion}.`);
+      const unconfirmedCriteria = (
+        run.compulsoryChecks as Array<{ criterion: string; status: string }>
+      )
+        .filter((item) => item.status !== "Confirmed")
+        .map((item) => `Compulsory criterion needs review: ${item.criterion}.`);
       const scoreId = randomUUID();
       scoreIds.push(scoreId);
       ranked.push({ candidateId, score: overall });
@@ -683,25 +866,23 @@ export async function runDetailedAssessmentInDatabase(
         vacancyRecordVersion: batch.vacancyRecordVersion,
         assessmentBatchId: batch.id,
         timestamp: new Date().toISOString(),
-        modelRulesVersion: "VIA-DETERMINISTIC-1",
+        modelRulesVersion: aiAssessment?.result.modelRulesVersion ?? "VIA-DETERMINISTIC-1",
         vacancyVersion: String(batch.vacancyRecordVersion),
         overallScore: String(overall),
-        categoryScores: { Experience: experience, Location: locationScore, Profile: profile },
+        categoryScores,
         strengths: [
+          ...(aiAssessment?.result.strengths ?? []),
           ...(run.matchedSkills.length ? [`Matched skills: ${run.matchedSkills.join(", ")}.`] : []),
-          ...(run.compulsoryChecks as Array<{ criterion: string; status: string }>)
-            .filter((item) => item.status === "Confirmed")
-            .map((item) => `Confirmed: ${item.criterion}.`),
+          ...confirmedCriteria,
         ],
         risks: [
+          ...(aiAssessment?.result.risks ?? []),
           ...run.missingRequiredSkills.map((skill) => `Required skill not confirmed: ${skill}.`),
-          ...(run.compulsoryChecks as Array<{ criterion: string; status: string }>)
-            .filter((item) => item.status !== "Confirmed")
-            .map((item) => `Compulsory criterion needs review: ${item.criterion}.`),
+          ...unconfirmedCriteria,
         ],
-        missingData: run.warnings,
+        missingData: [...(aiAssessment?.result.missingData ?? []), ...run.warnings],
         evidence:
-          run.evidence.join(" ") ||
+          [aiAssessment?.result.evidence, ...run.evidence].filter(Boolean).join(" ") ||
           "Assessment is based on the confirmed application and prepared CV profile.",
         createdBy: actor.userId!,
         updatedBy: actor.userId!,
@@ -785,8 +966,11 @@ export async function runDetailedAssessmentInDatabase(
         scoreIds,
         rankedCandidateIds: ranked.map((item) => item.candidateId),
         shortlistId,
+        assessmentProvider: preparedAiAssessments ? "Gemini" : "VIA deterministic",
       },
-      reason: "Completed deterministic assessment for the HR-selected group",
+      reason: preparedAiAssessments
+        ? "Completed Gemini assessment for the HR-selected group"
+        : "Completed deterministic assessment for the HR-selected group",
       riskLevel: "High",
     });
     return shortlistId;

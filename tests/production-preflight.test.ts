@@ -50,6 +50,11 @@ function validEnvironment(): Record<string, string> {
     VIA_HR_MAX_REQUEST_BYTES: "16777216",
     VIA_HR_MUTATION_RATE_LIMIT: "1200",
     VIA_HR_READ_RATE_LIMIT: "3000",
+    VIA_HR_AI_PROVIDER: "gemini",
+    GEMINI_API_KEY: "test-gemini-key-1234567890-abcdefgh",
+    VIA_HR_GEMINI_MODEL: "gemini-3.6-flash",
+    VIA_HR_GEMINI_TIMEOUT_MS: "45000",
+    VIA_HR_GEMINI_MAX_RETRIES: "2",
     VIA_HR_BACKUP_S3_ENDPOINT: "https://s3.backups.via-international.com",
     VIA_HR_BACKUP_S3_BUCKET: "via-hr-offsite-backups",
     VIA_HR_BACKUP_S3_ACCESS_KEY_ID: "backup-access-key",
@@ -97,4 +102,13 @@ test("environment parser handles comments and reports duplicate assignments", ()
 
 test("environment parser rejects malformed lines", () => {
   assert.throws(() => parseEnvironmentFile("VIA_HR_IMAGE_TAG release"), /line 1/i);
+});
+
+test("production preflight rejects missing or browser-exposed Gemini credentials", () => {
+  const values = validEnvironment();
+  values["GEMINI_API_KEY"] = "replace-with-key";
+  values["VITE_GEMINI_API_KEY"] = "browser-visible-secret";
+  const result = validateProductionEnvironment(values);
+  assert.match(result.errors.join("\n"), /GEMINI_API_KEY.*placeholder/i);
+  assert.match(result.errors.join("\n"), /VITE_ prefix/i);
 });
