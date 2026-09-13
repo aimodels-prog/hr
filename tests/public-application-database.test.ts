@@ -169,7 +169,7 @@ test(
         { displayName: "Application integration test", activeRole: "Super Admin" },
         "Verified the public application CV",
       );
-      assert.deepEqual(new Uint8Array(downloaded.bytes), cv);
+      assert.deepEqual(new Uint8Array(downloaded.bytes), new Uint8Array(cv));
       const [ciphertext] = await sql`
         SELECT salary_expectation_encrypted FROM candidate_applications WHERE id = ${result.applicationId}
       `;
