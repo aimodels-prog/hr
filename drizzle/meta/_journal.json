@@ -253,6 +253,13 @@
       "when": 1789274524242,
       "tag": "0035_shallow_cassandra_nova",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1789278542739,
+      "tag": "0036_protect_cv_preparation_records",
+      "breakpoints": true
     }
   ]
 }

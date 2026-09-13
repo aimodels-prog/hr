@@ -69,6 +69,8 @@ test(
     });
     try {
       await sql`INSERT INTO organisations (id,name,slug,is_active,created_by,updated_by) VALUES (${ids.organisation},'Overtime Test',${`overtime-${ids.organisation}`},true,${ids.hrUser},${ids.hrUser})`;
+      await sql`INSERT INTO app_settings (organisation_id,timezone,base_currency,working_days,standard_daily_hours,standard_weekly_hours,leave_year_start,leave_year_end,document_reminder_days,employee_number_format,candidate_reference_format,created_by,updated_by)
+        VALUES (${ids.organisation},'Asia/Dubai','AED',ARRAY[1,2,3,4,5],8,40,'04-01','03-31',ARRAY[30,14,7],'EMP-{0000}','CAN-{0000}',${ids.hrUser},${ids.hrUser})`;
       for (const [table, key, name, code] of [
         ["departments", "department", "Operations", "OPS"],
         ["positions", "position", "Coordinator", "COORD"],
@@ -282,8 +284,11 @@ test(
         hrActor,
       );
       const [credited] =
-        await sql`SELECT balance_days FROM leave_balances WHERE employee_id=${ids.employee} AND policy_id=${ids.policy}`;
+        await sql`SELECT balance_days, leave_year FROM leave_balances WHERE employee_id=${ids.employee} AND policy_id=${ids.policy}`;
       assert.equal(Number(credited?.balance_days), 0.25);
+      const expectedLeaveYear =
+        Number(toilDate.slice(0, 4)) - (toilDate.slice(5) < "04-01" ? 1 : 0);
+      assert.equal(Number(credited?.leave_year), expectedLeaveYear);
       const correctionId = await correctOvertimeClaimInDatabase(
         ids.organisation!,
         toilId,
