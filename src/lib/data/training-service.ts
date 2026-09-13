@@ -636,7 +636,6 @@ export class TrainingService {
   withdrawRequest(requestId: string, reason: string, context: ActorContext): TrainingRequest {
     const request = this.requireRequest(requestId);
     if (
-      context.actor.activeRole !== "Employee" ||
       context.actor.employeeId !== request.employeeId ||
       !["Pending Supervisor", "Pending HR"].includes(request.status)
     ) {

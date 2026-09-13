@@ -409,13 +409,13 @@ test("a departing employee holding HR, Accounts or Super Admin cannot approve th
   offboardingService.grantFinancialClearance(c.id, accounts);
   offboardingService.grantLegalClearance(c.id, hr);
 
-  const selfAsSuperAdmin = actor("user-self-dual", employee.id, "Super Admin");
   assert.throws(
-    () => offboardingService.finalizeCase(c.id, selfAsSuperAdmin),
+    () => offboardingService.finalizeCase(c.id, selfAsHr),
     /cannot finalise your own offboarding case/i,
   );
 
-  const finalised = offboardingService.finalizeCase(c.id, superAdmin);
+  assert.throws(() => offboardingService.finalizeCase(c.id, superAdmin), /Only HR/);
+  const finalised = offboardingService.finalizeCase(c.id, hr);
   assert.equal(finalised.status, "Completed");
 });
 
@@ -439,7 +439,7 @@ test("finalizeCase rejects finalising before the employee's last working date", 
   offboardingService.grantLegalClearance(c.id, hr);
 
   assert.throws(
-    () => offboardingService.finalizeCase(c.id, superAdmin),
+    () => offboardingService.finalizeCase(c.id, hr),
     /Cannot finalise before the employee's last working date/i,
   );
 });
@@ -818,7 +818,7 @@ test("full lifecycle: start, complete every mandatory task, clear both sides, fi
   await completeAllMandatoryTasks(offboardingService, employeeService, c.id, employee.id);
   offboardingService.grantFinancialClearance(c.id, accounts);
   offboardingService.grantLegalClearance(c.id, hr);
-  const finalised = offboardingService.finalizeCase(c.id, superAdmin);
+  const finalised = offboardingService.finalizeCase(c.id, hr);
   assert.equal(finalised.status, "Completed");
   assert.equal(employeeService.getById(employee.id, SYSTEM_CONTEXT)?.status, "Inactive");
 

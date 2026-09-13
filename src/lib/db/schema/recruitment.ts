@@ -1066,6 +1066,11 @@ export const jobOffers = pgTable(
     conditions: text("conditions").notNull(),
     sentDate: timestamp("sent_date", { withTimezone: true, mode: "string" }),
     deliveryReference: text("delivery_reference"),
+    approverUserId: uuid("approver_user_id").references(() => users.id, { onDelete: "restrict" }),
+    approvalRequestedBy: uuid("approval_requested_by").references(() => users.id, {
+      onDelete: "restrict",
+    }),
+    approvedBy: uuid("approved_by").references(() => users.id, { onDelete: "restrict" }),
     responseDeadline: timestamp("response_deadline", { withTimezone: true, mode: "string" }),
     declineReason: text("decline_reason"),
     history: jsonb("history").notNull().default([]),

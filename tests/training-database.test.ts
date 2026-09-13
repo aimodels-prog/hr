@@ -16,6 +16,7 @@ import {
   saveTrainingCourseInDatabase,
   saveTrainingSessionInDatabase,
   scheduleTrainingAssignmentInDatabase,
+  withdrawTrainingRequestInDatabase,
 } from "../src/lib/db/repositories/training.repository.server.ts";
 
 const testDatabaseUrl = process.env["VIA_HR_TEST_DATABASE_URL"]?.trim();
@@ -125,16 +126,66 @@ test(
         },
         hrActor,
       );
-      const requestId = await createTrainingRequestInDatabase(
+      const hrSelfRequest = await createTrainingRequestInDatabase(
         ids.org!,
         {
-          employeeId: ids.employee!,
+          employeeId: ids.hr!,
           courseId,
-          reason: "Build practical safety knowledge for site operations.",
+          reason: "Develop my own operational safety skills.",
           origin: "Employee Request",
         },
-        employeeActor,
+        hrActor,
       );
+      await assert.rejects(
+        () =>
+          decideTrainingRequestInDatabase(
+            ids.org!,
+            hrSelfRequest,
+            "HR",
+            "Approve",
+            "Own approval",
+            hrActor,
+          ),
+        /own training/,
+      );
+      await withdrawTrainingRequestInDatabase(
+        ids.org!,
+        hrSelfRequest,
+        "Scheduling conflict with my own work.",
+        hrActor,
+      );
+      await assert.rejects(
+        () =>
+          createTrainingRequestInDatabase(
+            ids.org!,
+            {
+              employeeId: ids.employee!,
+              courseId,
+              reason: "Cannot impersonate another employee.",
+              origin: "Employee Request",
+            },
+            hrActor,
+          ),
+        /only for themselves/,
+      );
+      const submitRequest = () =>
+        createTrainingRequestInDatabase(
+          ids.org!,
+          {
+            employeeId: ids.employee!,
+            courseId,
+            reason: "Build practical safety knowledge for site operations.",
+            origin: "Employee Request",
+          },
+          employeeActor,
+        );
+      const submissions = await Promise.allSettled([submitRequest(), submitRequest()]);
+      const successful = submissions.filter((result) => result.status === "fulfilled");
+      assert.equal(successful.length, 1);
+      const rejected = submissions.find((result) => result.status === "rejected");
+      assert.ok(rejected?.status === "rejected");
+      assert.match(String(rejected.reason), /already submitted/i);
+      const requestId = successful[0]!.value;
       await assert.rejects(
         () =>
           decideTrainingRequestInDatabase(

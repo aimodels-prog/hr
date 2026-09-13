@@ -283,12 +283,12 @@ function PayrollWorkbenchContent() {
               {period.status}
             </Badge>
 
-            {isEditable && (
+            {(isEditable || (period.status === "Prepared" && !period.preparedBy)) && (
               <Button onClick={() => void handleCollect()} variant="outline">
                 <Play className="w-4 h-4 mr-2" /> Collect Inputs
               </Button>
             )}
-            {period.status === "Prepared" && currentUser.activeRole === "Super Admin" && (
+            {period.status === "Prepared" && currentUser.activeRole === "Accounts" && (
               <Button onClick={() => void handleApprove()}>
                 <CheckCircle className="w-4 h-4 mr-2" /> Approve Payroll
               </Button>

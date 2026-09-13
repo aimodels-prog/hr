@@ -35,6 +35,20 @@ import type { Employee, EmployeeDocument, Role } from "../src/lib/data/types.ts"
 import type { Candidate } from "../src/lib/hr-data.ts";
 
 const seeds = createSeedCollections();
+test("every operational role retains employee self-service without gaining other specialist roles", () => {
+  for (const role of Object.keys(ROLE_PERMISSIONS) as Role[]) {
+    const permissions = getRolePermissions(role);
+    for (const permission of ROLE_PERMISSIONS.Employee) {
+      assert.ok(permissions.has(permission), `${role} must retain ${permission}`);
+    }
+  }
+  assert.equal(getRolePermissions("Accounts").has("recruitment:manage_candidates"), false);
+  assert.equal(getRolePermissions("HR").has("payroll:prepare"), false);
+  assert.equal(getRolePermissions("IT").has("employee:manage_all"), false);
+  assert.equal(getRolePermissions("Line Manager").has("system:users_manage"), false);
+  assert.equal(getEffectivePermissions([]).size, 0);
+});
+
 const employees: Employee[] = seeds.employees;
 
 function createTestUserContext(

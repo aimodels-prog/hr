@@ -580,6 +580,7 @@ export async function listRecruitmentReadSnapshot(
       conditions: row.conditions,
       ...(row.sentDate ? { sentDate: row.sentDate } : {}),
       ...(row.deliveryReference ? { deliveryReference: row.deliveryReference } : {}),
+      ...(row.approverUserId ? { approverUserId: row.approverUserId } : {}),
       ...(row.responseDeadline ? { responseDeadline: row.responseDeadline } : {}),
       ...(row.declineReason ? { declineReason: row.declineReason } : {}),
       history: row.history as JobOffer["history"],

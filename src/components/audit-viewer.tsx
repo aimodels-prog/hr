@@ -348,6 +348,15 @@ export function AuditViewer({ entityId, entityType, global }: AuditViewerProps) 
 
   return (
     <>
+      {events.length >= 5000 && (
+        <Alert className="mb-4">
+          <AlertTitle>Display limit reached</AlertTitle>
+          <AlertDescription>
+            Showing the latest 5,000 matching events. Narrow the filters to view older records.
+            Audit CSV exports include all matching events, without this display limit.
+          </AlertDescription>
+        </Alert>
+      )}
       {loadError && (
         <Alert variant="destructive" className="mb-4">
           <AlertTriangle className="h-4 w-4" />

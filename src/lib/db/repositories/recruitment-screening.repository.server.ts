@@ -1,6 +1,7 @@
 import "@tanstack/react-start/server-only";
 
 import { randomUUID } from "node:crypto";
+import { latestPreparationPerCandidate } from "../../data/current-preparation.ts";
 
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 
@@ -38,6 +39,23 @@ import {
   buildCvSemanticTexts,
 } from "./candidate-cv-intake.repository.server.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
+
+/** Never fall back to an old successful run while the current CV is pending or failed. */
+function currentPreparationPredicate() {
+  return sql`${candidatePreparationRuns.archivedAt} IS NULL
+    AND EXISTS (SELECT 1 FROM candidate_applications a JOIN candidate_cv_records cv
+      ON cv.id=${candidatePreparationRuns.cvRecordId} AND cv.organisation_id=a.organisation_id
+      WHERE a.id=${candidatePreparationRuns.applicationId} AND a.organisation_id=${candidatePreparationRuns.organisationId}
+      AND a.candidate_id=${candidatePreparationRuns.candidateId} AND a.vacancy_id=${candidatePreparationRuns.vacancyId}
+      AND a.cv_file_id=${candidatePreparationRuns.cvFileId} AND cv.file_id=a.cv_file_id
+      AND cv.archived_at IS NULL AND cv.processing_status='Ready' AND a.archived_at IS NULL)
+    AND NOT EXISTS (SELECT 1 FROM candidate_preparation_runs newer
+      WHERE newer.organisation_id=${candidatePreparationRuns.organisationId}
+      AND newer.application_id=${candidatePreparationRuns.applicationId}
+      AND newer.vacancy_record_version=${candidatePreparationRuns.vacancyRecordVersion}
+      AND newer.cv_file_id=${candidatePreparationRuns.cvFileId} AND newer.archived_at IS NULL
+      AND (newer.created_at, newer.id) > (${candidatePreparationRuns.createdAt}, ${candidatePreparationRuns.id}))`;
+}
 
 function recruiter(actor: AuditActorContext): void {
   if (actor.activeRole !== "HR" && actor.activeRole !== "Super Admin")
@@ -110,6 +128,7 @@ async function prepareGeminiAssessments(
           eq(candidatePreparationRuns.organisationId, organisationId),
           eq(candidatePreparationRuns.vacancyId, batch.vacancyId),
           inArray(candidatePreparationRuns.id, batch.preparationRunIds),
+          currentPreparationPredicate(),
           inArray(candidatePreparationRuns.candidateId, batch.selectedCandidateIds),
         ),
       ),
@@ -274,6 +293,25 @@ export async function includeCandidateInAssessmentInDatabase(
         .limit(1);
     }
     if (!application) throw new Error("The vacancy application could not be created.");
+    if (application.cvFileId !== cv.fileId) {
+      await tx
+        .update(candidateApplications)
+        .set({
+          cvFileId: cv.fileId,
+          preparationRunId: null,
+          assessmentScoreId: null,
+          preparationStatus: "Pending",
+          updatedAt: new Date(),
+          updatedBy: actor.userId,
+          recordVersion: sql`${candidateApplications.recordVersion}+1`,
+        })
+        .where(
+          and(
+            eq(candidateApplications.id, application.id),
+            eq(candidateApplications.organisationId, organisationId),
+          ),
+        );
+    }
     let [preparation] = await tx
       .select()
       .from(candidatePreparationRuns)
@@ -517,14 +555,11 @@ export async function createAssessmentBatchInDatabase(
           eq(candidatePreparationRuns.vacancyId, vacancyId),
           eq(candidatePreparationRuns.vacancyRecordVersion, vacancy.recordVersion),
           inArray(candidatePreparationRuns.status, ["Ready", "Needs Review"]),
+          currentPreparationPredicate(),
         ),
       )
-      .orderBy(
-        desc(candidatePreparationRuns.preliminaryScore),
-        desc(candidatePreparationRuns.createdAt),
-      );
-    const latest = new Map<string, (typeof runs)[number]>();
-    for (const run of runs) if (!latest.has(run.candidateId)) latest.set(run.candidateId, run);
+      .orderBy(desc(candidatePreparationRuns.createdAt), desc(candidatePreparationRuns.id));
+    const latest = latestPreparationPerCandidate(runs);
     const ranked = [...latest.values()].sort(
       (a, b) => Number(b.preliminaryScore ?? -1) - Number(a.preliminaryScore ?? -1),
     );
@@ -684,6 +719,7 @@ export async function updateAssessmentSelectionInDatabase(
           eq(candidatePreparationRuns.vacancyRecordVersion, batch.vacancyRecordVersion),
           inArray(candidatePreparationRuns.candidateId, selected),
           inArray(candidatePreparationRuns.status, ["Ready", "Needs Review"]),
+          currentPreparationPredicate(),
         ),
       )
       .orderBy(desc(candidatePreparationRuns.createdAt));
@@ -801,6 +837,7 @@ export async function runDetailedAssessmentInDatabase(
               eq(candidatePreparationRuns.vacancyId, batch.vacancyId),
               eq(candidatePreparationRuns.candidateId, candidateId),
               inArray(candidatePreparationRuns.id, batch.preparationRunIds),
+              currentPreparationPredicate(),
             ),
           )
           .limit(1),

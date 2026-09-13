@@ -24,6 +24,7 @@ import { OfferService } from "@/lib/data/offer-service";
 import { CandidateService } from "@/lib/data/candidate-service";
 import { VacancyService } from "@/lib/data/vacancy-service";
 import type { JobOfferStatus } from "@/lib/data/types";
+import { AssignedOfferReviews } from "@/components/offers/assigned-offer-reviews";
 
 export const Route = createFileRoute("/staff/offers")({
   component: OffersRoute,
@@ -42,6 +43,16 @@ const STATUS_ORDER: JobOfferStatus[] = [
 ];
 
 function OffersRoute() {
+  const user = useCurrentUser();
+  return (
+    <>
+      <AssignedOfferReviews key={`${user.id}-${user.activeRole}`} />
+      {(user.activeRole === "HR" || user.activeRole === "Super Admin") && <HrOffers />}
+    </>
+  );
+}
+
+function HrOffers() {
   const currentUser = useCurrentUser();
   const { can } = currentUser;
   const canViewComp = can("payroll:view") || can("employee:manage_all");

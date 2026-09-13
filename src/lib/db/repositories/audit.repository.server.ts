@@ -420,7 +420,14 @@ export async function exportAuditCsvInDatabase(
   filters: DatabaseAuditFilters,
   actor: AuditActorContext,
 ) {
-  const events = await listAuditEventsInDatabase(organisationId, filters, actor);
+  // The interactive viewer is capped; an export must include every matching event.
+  await assertReadAccess(organisationId, filters, actor);
+  const rows = await getDatabaseClient()
+    .select()
+    .from(auditEvents)
+    .where(and(...whereConditions(organisationId, filters)))
+    .orderBy(desc(auditEvents.occurredAt), desc(auditEvents.id));
+  const events = rows.map((row) => toAuditEvent(row, actor));
   const headers = [
     "Reference",
     "Timestamp",

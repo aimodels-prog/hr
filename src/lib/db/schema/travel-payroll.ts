@@ -260,6 +260,7 @@ export const payrollPeriods = pgTable(
     status: payrollPeriodStatus("status").notNull().default("Draft"),
     notes: text("notes"),
     compiledInputs: jsonb("compiled_inputs").notNull().default([]),
+    preparedBy: uuid("prepared_by").references(() => users.id, { onDelete: "restrict" }),
   },
   (table) => [
     uniqueIndex("payroll_periods_org_dates_unique").on(

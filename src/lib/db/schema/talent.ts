@@ -315,6 +315,11 @@ export const trainingRequests = pgTable(
       table.employeeId,
       table.status,
     ),
+    uniqueIndex("training_requests_open_employee_course_unique")
+      .on(table.organisationId, table.employeeId, table.courseId)
+      .where(
+        sql`${table.archivedAt} IS NULL AND ${table.status} IN ('Pending Supervisor', 'Pending HR', 'Approved')`,
+      ),
     check(
       "training_requests_origin",
       sql`${table.origin} IN ('Employee Request', 'Supervisor Assignment', 'HR Assignment')`,

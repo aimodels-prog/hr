@@ -204,6 +204,30 @@ test(
         },
         employeeActor,
       );
+      for (const activeRole of ["Accounts", "IT"] as const) {
+        const selfRows = await listOvertimeClaimsForActor(ids.organisation!, {
+          ...employeeActor,
+          activeRole,
+          roles: ["Employee", activeRole],
+        });
+        assert.ok(
+          selfRows.some((row) => row.id === plannedId),
+          `${activeRole} must see their own pending claim`,
+        );
+        assert.ok(
+          selfRows.every(
+            (row) =>
+              row.employeeId === employeeActor.employeeId ||
+              (activeRole === "Accounts" && row.status === "Approved"),
+          ),
+        );
+      }
+      assert.ok(
+        !(await listOvertimeClaimsForActor(ids.organisation!, accountsActor)).some(
+          (row) => row.id === plannedId,
+        ),
+        "Finance must not see another employee's pending claim",
+      );
       await decideOvertimeClaimInDatabase(
         ids.organisation!,
         plannedId,

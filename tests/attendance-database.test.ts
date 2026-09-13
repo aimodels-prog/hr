@@ -400,6 +400,16 @@ test(
       const employeeView = await listAttendanceForActor(organisationId, employeeActor);
       assert.equal(employeeView.records.length, 2);
       assert.ok(employeeView.records.every((record) => record.employeeId === employeeId));
+      for (const activeRole of ["Accounts", "IT"] as const) {
+        const selfView = await listAttendanceForActor(organisationId, {
+          ...employeeActor,
+          activeRole,
+          roles: ["Employee", activeRole],
+        });
+        assert.deepEqual(selfView.employeeIds, [employeeId]);
+        assert.equal(selfView.records.length, employeeView.records.length);
+        assert.ok(selfView.records.every((record) => record.employeeId === employeeId));
+      }
 
       await sql`
         INSERT INTO attendance_records (

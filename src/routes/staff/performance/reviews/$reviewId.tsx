@@ -66,11 +66,13 @@ function PerformanceReviewPage() {
       </div>
     );
 
-  const isEmployee =
-    currentUser.activeRole === "Employee" && currentUser.employeeId === review.employeeId;
+  const isEmployee = currentUser.employeeId === review.employeeId;
   const isManager =
-    currentUser.activeRole === "Line Manager" && currentUser.employeeId === employee.lineManagerId;
-  const isHr = currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
+    !isEmployee &&
+    currentUser.activeRole === "Line Manager" &&
+    currentUser.employeeId === employee.lineManagerId;
+  const isHr =
+    !isEmployee && (currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin");
   const showManagerAssessment =
     !isEmployee ||
     template.employeeCanSeeManagerRatings ||

@@ -166,7 +166,7 @@ function OffboardingCaseRoute() {
   const canFinance =
     currentUser.activeRole === "Accounts" || currentUser.activeRole === "Super Admin";
   const canLegal = currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
-  const canFinalize = currentUser.activeRole === "Super Admin";
+  const canFinalize = currentUser.activeRole === "HR";
   const canSeeConfidential =
     currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
   const canSeeAudit = currentUser.can("system:audit_view");

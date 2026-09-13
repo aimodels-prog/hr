@@ -35,6 +35,8 @@ import {
   prepareManualInterviewHireInDatabase,
   saveJobOfferInDatabase,
   transitionJobOfferInDatabase,
+  reviewAssignedOfferInDatabase,
+  listAssignedOfferReviewsInDatabase,
 } from "../src/lib/db/repositories/recruitment-offer.repository.server.ts";
 import { listPanelInterviewReadSnapshot } from "../src/lib/db/repositories/recruitment-read.repository.server.ts";
 import { parseCandidateSpreadsheetInDatabase } from "../src/lib/db/repositories/candidate-spreadsheet.repository.server.ts";
@@ -299,11 +301,25 @@ test(
       const assessmentTarget = Math.max(1, Number(pinnedAvailability.pinned_count));
       assert.ok(assessmentTarget <= 10);
       assert.ok(Number(assessmentAvailability.prepared_count) >= assessmentTarget);
+      const obsoleteRunId = randomUUID();
+      await sql`INSERT INTO candidate_preparation_runs
+        SELECT (jsonb_populate_record(NULL::candidate_preparation_runs,
+          to_jsonb(r) || jsonb_build_object('id', ${obsoleteRunId}::text, 'preliminary_score', '100',
+            'created_at', r.created_at - interval '1 day'))).*
+        FROM candidate_preparation_runs r
+        WHERE r.vacancy_id=${vacancy.id} AND r.candidate_id=${result.candidateId}
+        ORDER BY r.created_at DESC LIMIT 1`;
       const assessmentBatchId = await createAssessmentBatchInDatabase(
         String(vacancy.organisation_id),
         String(vacancy.id),
         assessmentTarget,
         actor,
+      );
+      const [currentBatch] =
+        await sql`SELECT preparation_run_ids FROM candidate_assessment_batches WHERE id=${assessmentBatchId}`;
+      assert.ok(
+        !(currentBatch!.preparation_run_ids as string[]).includes(obsoleteRunId),
+        "An older high score must never replace the current preparation",
       );
       const shortlistId = await runDetailedAssessmentInDatabase(
         String(vacancy.organisation_id),
@@ -574,6 +590,21 @@ test(
         { vacancyId: String(vacancy.id), selectedCandidateId: result.candidateId },
         actor,
       );
+      const [approvalManager] = await sql`
+        SELECT u.id, u.employee_id, u.display_name FROM users u
+        JOIN employees e ON e.id=u.employee_id AND e.status='Active'
+        JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id
+        WHERE u.organisation_id=${vacancy.organisation_id} AND u.id<>${actor.userId}
+        AND u.status='Active' AND r.code='Line Manager' LIMIT 1
+      `;
+      assert.ok(approvalManager, "Seed an independent active Line Manager.");
+      const managerActor = {
+        userId: String(approvalManager.id),
+        employeeId: String(approvalManager.employee_id),
+        displayName: String(approvalManager.display_name),
+        activeRole: "Line Manager" as const,
+        roles: ["Employee", "Line Manager"] as const,
+      };
       const offerId = await saveJobOfferInDatabase(
         String(vacancy.organisation_id),
         {
@@ -583,6 +614,7 @@ test(
           position: "Logistics Specialist",
           grade: "G6",
           salary: 19_500,
+          approverUserId: managerActor.userId,
           currency: "AED",
           allowances: "As stated in VIA policy",
           benefits: "Medical insurance and annual leave",
@@ -594,13 +626,131 @@ test(
         },
         actor,
       );
-      for (const status of ["Pending Approval", "Approved", "Ready to Send", "Sent"] as const) {
+      const version = async () => {
+        const [row] = await sql`SELECT record_version FROM job_offers WHERE id=${offerId}`;
+        return Number(row!.record_version);
+      };
+      await transitionJobOfferInDatabase(
+        String(vacancy.organisation_id),
+        offerId,
+        "Pending Approval",
+        undefined,
+        actor,
+        await version(),
+      );
+      await assert.rejects(
+        () =>
+          reviewAssignedOfferInDatabase(
+            String(vacancy.organisation_id),
+            offerId,
+            2,
+            "approve",
+            "Self approval denied",
+            actor,
+          ),
+        /assigned independent/,
+      );
+      const assigned = await listAssignedOfferReviewsInDatabase(
+        String(vacancy.organisation_id),
+        managerActor,
+      );
+      assert.ok(assigned.some((row) => row.id === offerId));
+      assert.deepEqual(
+        await listAssignedOfferReviewsInDatabase(String(vacancy.organisation_id), actor),
+        [],
+      );
+      const expected = await version();
+      const decisions = await Promise.allSettled(
+        [1, 2].map(() =>
+          reviewAssignedOfferInDatabase(
+            String(vacancy.organisation_id),
+            offerId,
+            expected,
+            "approve",
+            "Approved proposed employment terms",
+            managerActor,
+          ),
+        ),
+      );
+      assert.equal(decisions.filter((result) => result.status === "fulfilled").length, 1);
+      await transitionJobOfferInDatabase(
+        String(vacancy.organisation_id),
+        offerId,
+        "Draft",
+        "Revise approved terms",
+        actor,
+        await version(),
+      );
+      const [reset] = await sql`SELECT approved_by FROM job_offers WHERE id=${offerId}`;
+      assert.equal(reset!.approved_by, null);
+      await transitionJobOfferInDatabase(
+        String(vacancy.organisation_id),
+        offerId,
+        "Pending Approval",
+        undefined,
+        actor,
+        await version(),
+      );
+      await reviewAssignedOfferInDatabase(
+        String(vacancy.organisation_id),
+        offerId,
+        await version(),
+        "return",
+        "Please review the proposed terms",
+        managerActor,
+      );
+      await transitionJobOfferInDatabase(
+        String(vacancy.organisation_id),
+        offerId,
+        "Pending Approval",
+        undefined,
+        actor,
+        await version(),
+      );
+      await reviewAssignedOfferInDatabase(
+        String(vacancy.organisation_id),
+        offerId,
+        await version(),
+        "approve",
+        "Terms reviewed and approved",
+        managerActor,
+      );
+      for (const status of ["Ready to Send", "Sent"] as const) {
+        if (status === "Sent") {
+          const currentVersion = await version();
+          await assert.rejects(
+            () =>
+              transitionJobOfferInDatabase(
+                String(vacancy.organisation_id),
+                offerId,
+                "Sent",
+                undefined,
+                actor,
+                currentVersion,
+              ),
+            /delivery evidence/,
+          );
+          assert.equal(
+            await version(),
+            currentVersion,
+            "Missing dispatch evidence must not mutate the offer",
+          );
+        }
         await transitionJobOfferInDatabase(
           String(vacancy.organisation_id),
           offerId,
           status,
           `Integration test moved the offer to ${status}`,
           actor,
+          await version(),
+          status === "Sent"
+            ? {
+                recipientEmail: `database.applicant.${unique}@example.test`,
+                sentAt: new Date().toISOString(),
+                evidenceReference: `<integration-${offerId}@example.test>`,
+                confirmed: true,
+              }
+            : undefined,
         );
       }
       const conversion = await transitionJobOfferInDatabase(
@@ -609,6 +759,7 @@ test(
         "Accepted",
         "Candidate accepted the database-backed offer",
         actor,
+        await version(),
       );
       assert.ok(conversion.employeeId && conversion.userId && conversion.onboardingCaseId);
       const offerDocument = await generateJobOfferDocumentInDatabase(

@@ -289,7 +289,7 @@ export async function listPerformanceForActor(
   }));
   const safeReviews = reviews.map((review) => {
     if (
-      role(actor) !== "Employee" ||
+      review.employeeId !== actor.employeeId ||
       ["Acknowledgement Pending", "Acknowledged", "Locked", "Corrected"].includes(review.status)
     )
       return review;
@@ -868,6 +868,9 @@ export async function actOnPerformanceReviewInDatabase(
       .limit(1);
     if (!template || !cycle || !employee) throw new Error("The review setup is incomplete.");
     const self = actor.employeeId === review.employeeId;
+    if (self && !["self", "acknowledge"].includes(action.type)) {
+      throw new Error("You cannot approve, finalise or correct your own performance review.");
+    }
     const manager =
       role(actor) === "Line Manager" && actor.employeeId === employee.managerId && !self;
     const updates: Record<string, unknown> = {
@@ -876,7 +879,7 @@ export async function actOnPerformanceReviewInDatabase(
       recordVersion: sql`${performanceReviews.recordVersion} + 1`,
     };
     if (action.type === "self") {
-      if (!self || role(actor) !== "Employee" || review.status !== "Self Assessment Pending")
+      if (!self || review.status !== "Self Assessment Pending")
         throw new Error("Only the employee can submit this self-assessment now.");
       const sections = mergeReviewAssessment(
         review.sections as PerformanceReview["sections"],
@@ -941,7 +944,6 @@ export async function actOnPerformanceReviewInDatabase(
     } else if (action.type === "acknowledge") {
       if (
         !self ||
-        role(actor) !== "Employee" ||
         review.status !== "Acknowledgement Pending" ||
         (!action.agrees && (action.comment?.trim().length ?? 0) < 5)
       )

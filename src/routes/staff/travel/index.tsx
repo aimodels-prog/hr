@@ -123,7 +123,7 @@ function MyTravelRoute() {
                                 : "outline"
                         }
                       >
-                        {req.status}
+                        {travelStatusLabel(req)}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right whitespace-nowrap">
@@ -163,3 +163,4 @@ function MyTravelRoute() {
     </RequirePermission>
   );
 }
+import { travelStatusLabel } from "@/lib/data/travel-status";

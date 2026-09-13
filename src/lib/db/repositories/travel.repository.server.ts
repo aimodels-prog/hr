@@ -1073,48 +1073,93 @@ export async function processTravelWorker(now = new Date()) {
       ),
     );
   let reminders = 0;
-  for (const request of pending) {
+  for (const pendingRequest of pending) {
     await db.transaction(async (tx) => {
-      const roleCodes =
-        request.status === "Pending Super Admin Closure"
-          ? ["Super Admin"]
-          : [
-              request.hrApprovalStatus === "Pending" ? "HR" : "",
-              request.accountsApprovalStatus === "Pending" ? "Accounts" : "",
-            ].filter(Boolean);
-      const recipients = await usersForRoles(tx, request.organisationId, roleCodes);
-      const key = `travel-worker-${request.id}-${request.status}-${request.recordVersion}`;
-      const existing = await tx
-        .select({ id: notifications.id })
-        .from(notifications)
+      const [request] = await tx
+        .select()
+        .from(travelRequests)
         .where(
           and(
-            eq(notifications.organisationId, request.organisationId),
-            eq(notifications.deduplicationKey, key),
+            eq(travelRequests.organisationId, pendingRequest.organisationId),
+            eq(travelRequests.id, pendingRequest.id),
+            isNull(travelRequests.archivedAt),
           ),
         )
+        .for("update")
         .limit(1);
-      await notify(
-        tx,
-        request.organisationId,
-        recipients,
-        request.id,
-        {
-          title: "Travel action overdue",
-          message:
-            request.status === "Pending Super Admin Closure"
-              ? `The ${request.destination} reimbursement is awaiting closure.`
-              : `The ${request.destination} travel request is awaiting approval.`,
-          key,
-          path:
-            request.status === "Pending Super Admin Closure"
-              ? "/staff/travel-closures"
-              : "/staff/travel-hr-approvals",
-          priority: "High",
-        },
-        request.updatedBy,
-      );
-      if (!existing.length) reminders += recipients.length;
+      if (!request || request.recordVersion !== pendingRequest.recordVersion) return;
+      const stages: { name: string; recipients: string[]; path: string }[] = [];
+      if (request.status === "Pending Super Admin Closure") {
+        stages.push({
+          name: "reimbursement closure",
+          recipients: await usersForRoles(tx, request.organisationId, ["Accounts", "Super Admin"]),
+          path: "/staff/travel-closures",
+        });
+      } else if (request.status === "Pending HR and Accounts") {
+        if (request.managerApprovalStatus === "Pending") {
+          const [employee] = await tx
+            .select({ manager: employees.lineManagerId })
+            .from(employees)
+            .where(
+              and(
+                eq(employees.organisationId, request.organisationId),
+                eq(employees.id, request.employeeId),
+              ),
+            )
+            .limit(1);
+          const manager = employee?.manager
+            ? await userForEmployee(tx, request.organisationId, employee.manager)
+            : undefined;
+          if (manager)
+            stages.push({
+              name: "manager approval",
+              recipients: [manager],
+              path: "/staff/travel-approvals",
+            });
+        }
+        if (request.hrApprovalStatus === "Pending")
+          stages.push({
+            name: "HR approval",
+            recipients: await usersForRoles(tx, request.organisationId, ["HR"]),
+            path: "/staff/travel-hr-approvals",
+          });
+        if (request.accountsApprovalStatus === "Pending")
+          stages.push({
+            name: "Finance approval",
+            recipients: await usersForRoles(tx, request.organisationId, ["Accounts"]),
+            path: "/staff/travel-accounts-approvals",
+          });
+      }
+      const traveller = await userForEmployee(tx, request.organisationId, request.employeeId);
+      for (const stage of stages) {
+        const recipients = [...new Set(stage.recipients)].filter((id) => id !== traveller);
+        const key = `travel-worker-${request.id}-${stage.name}-${request.recordVersion}`;
+        const existing = await tx
+          .select({ id: notifications.id })
+          .from(notifications)
+          .where(
+            and(
+              eq(notifications.organisationId, request.organisationId),
+              eq(notifications.deduplicationKey, key),
+            ),
+          )
+          .limit(1);
+        await notify(
+          tx,
+          request.organisationId,
+          recipients,
+          request.id,
+          {
+            title: "Travel action overdue",
+            message: `The ${request.destination} travel request is awaiting ${stage.name}.`,
+            key,
+            path: stage.path,
+            priority: "High",
+          },
+          request.updatedBy,
+        );
+        if (!existing.length) reminders += recipients.length;
+      }
     });
   }
   const completedTrips = await db

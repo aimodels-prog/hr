@@ -9,6 +9,7 @@ import {
   createProfileChangeRequestInDatabase,
   decideProfileChangeRequestInDatabase,
   listEmployeesForOrganisation,
+  listEmploymentHistoryForOrganisation,
   listProfileChangeRequestsForOrganisation,
   updateEmploymentRecordInDatabase,
   updateUserAccessInDatabase,
@@ -149,6 +150,41 @@ test(
         actor,
       );
 
+      await sql`INSERT INTO employment_changes (organisation_id,employee_id,effective_date,field,old_value,new_value,reason,created_by,updated_by)
+        VALUES (${organisationId},${created.employeeId},'2026-09-01','salary','100','200','Private salary reason',${managerUserId},${managerUserId})`;
+      const selfActor = {
+        ...actor,
+        userId: created.userId,
+        employeeId: created.employeeId,
+        roles: ["Employee"] as const,
+        activeRole: "Employee" as const,
+      };
+      const selfHistory = await listEmploymentHistoryForOrganisation(organisationId, selfActor);
+      assert.ok(selfHistory.length > 0);
+      assert.ok(selfHistory.every((entry) => entry.employeeId === created.employeeId));
+      for (const role of [
+        "Employee",
+        "IT",
+        "Accounts",
+        "Line Manager",
+        "HR",
+        "Super Admin",
+      ] as const) {
+        const records = await listEmploymentHistoryForOrganisation(organisationId, {
+          ...actor,
+          activeRole: role,
+          roles: [role],
+        });
+        const target = records.filter((entry) => entry.employeeId === created.employeeId);
+        if (role === "Employee" || role === "IT") assert.equal(target.length, 0);
+        if (role === "Accounts")
+          assert.ok(target.length > 0 && target.every((entry) => entry.field === "salary"));
+        if (role === "Line Manager" || role === "HR")
+          assert.ok(target.length > 0 && target.every((entry) => entry.field !== "salary"));
+        if (role === "Super Admin") assert.ok(target.some((entry) => entry.field === "salary"));
+      }
+      const outside = await listEmploymentHistoryForOrganisation(randomUUID(), actor);
+      assert.deepEqual(outside, []);
       const templates = await ensureCoreHrLifecycleTemplates(organisationId, actor);
       const onboardingCaseId = await createOnboardingCaseInDatabase(
         organisationId,
@@ -504,7 +540,7 @@ test(
       await finaliseOffboardingCaseInDatabase(
         organisationId,
         offboardingCaseId,
-        actor,
+        { ...actor, activeRole: "HR", roles: ["HR"] },
         "2026-09-05",
       );
       const [closedEmployee] =

@@ -155,12 +155,19 @@ test(
           accounts,
         );
       }
-      await approvePayrollPeriodInDatabase(
-        ids.org!,
-        periodId,
-        "Independent approval completed",
-        admin,
+      await assert.rejects(
+        () => approvePayrollPeriodInDatabase(ids.org!, periodId, "Self approval", accounts),
+        /different Finance/,
       );
+      await assert.rejects(
+        () => approvePayrollPeriodInDatabase(ids.org!, periodId, "Admin approval", admin),
+        /Only Finance/,
+      );
+      await approvePayrollPeriodInDatabase(ids.org!, periodId, "Independent approval completed", {
+        ...admin,
+        activeRole: "Accounts",
+        roles: ["Accounts"],
+      });
       await lockPayrollPeriodInDatabase(ids.org!, periodId, accounts);
       assert.match(
         await exportPayrollPeriodInDatabase(ids.org!, periodId, accounts),

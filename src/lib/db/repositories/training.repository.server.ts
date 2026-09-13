@@ -630,7 +630,7 @@ export async function createTrainingRequestInDatabase(
   if (input.reason.trim().length < 5) throw new Error("Explain why this training is needed.");
   const self = actor.employeeId === input.employeeId;
   const manager = activeRole(actor) === "Line Manager";
-  if (input.origin === "Employee Request" && (!self || activeRole(actor) !== "Employee"))
+  if (input.origin === "Employee Request" && !self)
     throw new Error("Employees can request training only for themselves.");
   if (input.origin === "HR Assignment") requireHr(actor);
   const db = getDatabaseClient();
@@ -666,6 +666,10 @@ export async function createTrainingRequestInDatabase(
     if (!employee || ["Inactive", "Archived"].includes(employee.status))
       throw new Error("Select an active employee.");
     if (!course) throw new Error("Select an active training course.");
+    // Serialize matching submissions before the duplicate check.
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`${org}:${input.employeeId}:${input.courseId}`}, 0))`,
+    );
     const [duplicate] = await tx
       .select({ id: trainingRequests.id })
       .from(trainingRequests)
@@ -679,7 +683,8 @@ export async function createTrainingRequestInDatabase(
         ),
       )
       .limit(1);
-    if (duplicate) throw new Error("This course is already in the employee's training plan.");
+    if (duplicate)
+      throw new Error("Already submitted: this course is already in the employee's training plan.");
     requestId = randomUUID();
     const status: TrainingRequest["status"] =
       input.origin === "HR Assignment" ||
@@ -874,7 +879,6 @@ export async function withdrawTrainingRequestInDatabase(
     if (
       !request ||
       actor.employeeId !== request.employeeId ||
-      activeRole(actor) !== "Employee" ||
       !["Pending Supervisor", "Pending HR"].includes(request.status)
     )
       throw new Error("Only the employee can withdraw their pending request.");

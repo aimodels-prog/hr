@@ -332,7 +332,27 @@ export async function listTasksForActorInDatabase(
       FROM payroll_periods p
       WHERE p.organisation_id=${organisationId} AND p.archived_at IS NULL AND
         ((${role}='Accounts' AND p.status IN ('Draft','Collecting Inputs','Exceptions','Corrected','Approved')) OR
-         (${role}='Super Admin' AND p.status IN ('Prepared','Approved')))
+         (${role}='Accounts' AND p.status='Prepared' AND p.prepared_by IS NOT NULL AND p.prepared_by<>${actor.userId} AND p.updated_by<>${actor.userId}
+           AND NOT EXISTS (SELECT 1 FROM payroll_exceptions x WHERE x.organisation_id=${organisationId} AND x.period_id=p.id AND x.acknowledged_by=${actor.userId})) OR
+         (${role} IN ('Accounts','Super Admin') AND p.status='Approved'))
+
+      UNION ALL
+      SELECT 'offer-approval-' || o.id, 'Recruitment', 'Review assigned offer',
+        'Review the proposed employment terms and approve or return them to HR.', 'High',
+        NULL::text, NULL::text, 'Review offer', '/staff/offers', 'offer', o.id::text, NULL::text, NULL::text
+      FROM job_offers o
+      JOIN users u ON u.id=o.approver_user_id AND u.organisation_id=o.organisation_id
+      JOIN employees e ON e.id=u.employee_id AND e.organisation_id=o.organisation_id
+      JOIN candidates c ON c.id=o.candidate_id AND c.organisation_id=o.organisation_id
+      WHERE o.organisation_id=${organisationId} AND o.archived_at IS NULL AND o.status='Pending Approval'
+        AND o.approver_user_id=${actor.userId}::uuid AND o.created_by<>${actor.userId}::uuid
+        AND o.approval_requested_by<>${actor.userId}::uuid
+        AND u.status='Active' AND e.status='Active' AND u.archived_at IS NULL AND e.archived_at IS NULL
+        AND lower(c.email)<>lower(u.workspace_email) AND c.converted_to_employee_id IS DISTINCT FROM e.id
+        AND EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id
+          WHERE ur.organisation_id=${organisationId} AND ur.user_id=u.id AND r.code='Line Manager')
+        AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(o.history) entry
+          WHERE entry->>'preparedBy'=${actor.userId})
     ) SELECT * FROM task_rows
   `);
   const rows = [...result] as unknown as TaskRow[];

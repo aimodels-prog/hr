@@ -8,6 +8,9 @@ import {
   prepareManualInterviewHireInDatabase,
   saveJobOfferInDatabase,
   transitionJobOfferInDatabase,
+  listOfferManagersInDatabase,
+  listAssignedOfferReviewsInDatabase,
+  reviewAssignedOfferInDatabase,
 } from "../db/repositories/recruitment-offer.repository.server.ts";
 import { resolveOrganisationIdForActor, verifyServerActorRole } from "../db/utils.server.ts";
 import { ROLE_VALUES } from "../data/types.ts";
@@ -18,7 +21,7 @@ const Actor = z.object({
   activeRole: z.enum(ROLE_VALUES),
 });
 
-async function recruiter(data: z.infer<typeof Actor>) {
+async function authenticated(data: z.infer<typeof Actor>) {
   const organisationId = await resolveOrganisationIdForActor(data.actorId, data.actorEmail);
   const verified = await verifyServerActorRole(
     organisationId,
@@ -26,14 +29,54 @@ async function recruiter(data: z.infer<typeof Actor>) {
     undefined,
     data.actorEmail,
   );
-  if (
-    !verified.verified ||
-    !verified.actor?.roles.includes(data.activeRole) ||
-    !["HR", "Super Admin"].includes(data.activeRole)
-  )
+  if (!verified.verified || !verified.actor?.roles.includes(data.activeRole))
     throw new Error("Only HR or a Super Admin can manage hiring decisions and offers.");
   return { organisationId, actor: { ...verified.actor, activeRole: data.activeRole } };
 }
+async function recruiter(data: z.infer<typeof Actor>) {
+  const result = await authenticated(data);
+  if (!["HR", "Super Admin"].includes(data.activeRole))
+    throw new Error("Only HR can manage offers.");
+  return result;
+}
+
+export const listOfferManagersFn = createServerFn({ method: "POST" })
+  .validator((input) => z.object({ actor: Actor }).strict().parse(input))
+  .handler(async ({ data }) => {
+    const v = await recruiter(data.actor);
+    return listOfferManagersInDatabase(v.organisationId, v.actor);
+  });
+export const listAssignedOfferReviewsFn = createServerFn({ method: "POST" })
+  .validator((input) => z.object({ actor: Actor }).strict().parse(input))
+  .handler(async ({ data }) => {
+    const v = await authenticated(data.actor);
+    return listAssignedOfferReviewsInDatabase(v.organisationId, v.actor);
+  });
+export const reviewAssignedOfferFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: Actor,
+        offerId: z.string().uuid(),
+        expectedVersion: z.number().int().positive(),
+        decision: z.enum(["approve", "return"]),
+        comment: z.string().trim().min(5).max(2000),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const v = await authenticated(data.actor);
+    await reviewAssignedOfferInDatabase(
+      v.organisationId,
+      data.offerId,
+      data.expectedVersion,
+      data.decision,
+      data.comment,
+      v.actor,
+    );
+    return { success: true };
+  });
 
 export const finaliseHiringDecisionFn = createServerFn({ method: "POST" })
   .validator((input) =>
@@ -80,6 +123,7 @@ const Offer = z.object({
   conditions: z.string().trim().max(5000),
   responseDeadline: z.string().datetime().optional(),
   expectedRecordVersion: z.number().int().positive().optional(),
+  approverUserId: z.string().uuid().optional(),
 });
 
 export const saveJobOfferFn = createServerFn({ method: "POST" })
@@ -112,6 +156,16 @@ export const transitionJobOfferFn = createServerFn({ method: "POST" })
           "Withdrawn",
         ]),
         reason: z.string().trim().max(2000).optional(),
+        expectedRecordVersion: z.number().int().positive(),
+        manualDelivery: z
+          .object({
+            recipientEmail: z.string().email(),
+            sentAt: z.string().datetime(),
+            evidenceReference: z.string().max(2000),
+            confirmed: z.literal(true),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .parse(input),
@@ -124,6 +178,8 @@ export const transitionJobOfferFn = createServerFn({ method: "POST" })
       data.status,
       data.reason,
       verified.actor,
+      data.expectedRecordVersion,
+      data.manualDelivery,
     );
   });
 

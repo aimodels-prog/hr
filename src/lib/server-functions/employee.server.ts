@@ -75,7 +75,10 @@ export const getCoreHrSnapshotFn = createServerFn({ method: "POST" })
     const [employees, allUsers, employmentHistory, allProfileChangeRequests] = await Promise.all([
       listEmployeesForOrganisation(organisationId),
       listUsersForOrganisation(organisationId),
-      listEmploymentHistoryForOrganisation(organisationId),
+      listEmploymentHistoryForOrganisation(organisationId, {
+        ...actor,
+        activeRole: data.activeRole,
+      }),
       listProfileChangeRequestsForOrganisation(organisationId),
     ]);
 
@@ -85,16 +88,7 @@ export const getCoreHrSnapshotFn = createServerFn({ method: "POST" })
         data.activeRole === "HR" || data.activeRole === "Super Admin"
           ? allUsers
           : allUsers.filter((user) => user.id === actor.userId),
-      employmentHistory: employmentHistory.filter((entry) => {
-        const employee = employees.find((item) => item.id === entry.employeeId);
-        if (!employee) return false;
-        if (entry.field !== "salary") return true;
-        return (
-          actor.employeeId === entry.employeeId ||
-          data.activeRole === "Accounts" ||
-          data.activeRole === "Super Admin"
-        );
-      }),
+      employmentHistory,
       profileChangeRequests:
         data.activeRole === "HR" || data.activeRole === "Super Admin"
           ? allProfileChangeRequests

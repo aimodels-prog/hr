@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { organisationLeaveYear } from "./leave-year.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
@@ -409,7 +410,7 @@ export async function decideOvertimeClaimInDatabase(
       })
       .where(eq(overtimeClaims.id, claimId));
     if (next === "Approved" && claim.compensationType === "TOIL" && toilPolicy) {
-      const year = new Date(claim.date).getUTCFullYear();
+      const year = await organisationLeaveYear(organisationId, claim.date, tx);
       await tx
         .insert(leaveBalances)
         .values({
@@ -674,7 +675,7 @@ export async function listOvertimeClaimsForActor(organisationId: string, actor: 
   const db = getDatabaseClient();
   const role = activeRole(actor);
   let employeeIds: string[] | undefined;
-  if (role === "Employee") {
+  if (role === "Employee" || role === "IT") {
     if (!actor.employeeId) throw new Error("A verified employee is required.");
     employeeIds = [actor.employeeId];
   } else if (role === "Line Manager") {
@@ -700,7 +701,11 @@ export async function listOvertimeClaimsForActor(organisationId: string, actor: 
         eq(overtimeClaims.organisationId, organisationId),
         sql`${overtimeClaims.archivedAt} IS NULL`,
         ...(employeeIds ? [inArray(overtimeClaims.employeeId, employeeIds)] : []),
-        ...(role === "Accounts" ? [eq(overtimeClaims.status, "Approved")] : []),
+        ...(role === "Accounts"
+          ? [
+              sql`(${overtimeClaims.status} = 'Approved' OR ${overtimeClaims.employeeId} = ${actor.employeeId ?? null}::uuid)`,
+            ]
+          : []),
       ),
     )
     .orderBy(desc(overtimeClaims.date), desc(overtimeClaims.createdAt));
@@ -817,7 +822,10 @@ export async function correctOvertimeClaimInDatabase(
           and(
             eq(leaveBalances.employeeId, original.employeeId),
             eq(leaveBalances.policyId, transaction.policyId),
-            eq(leaveBalances.leaveYear, new Date(original.date).getUTCFullYear()),
+            eq(
+              leaveBalances.leaveYear,
+              await organisationLeaveYear(organisationId, original.date, tx),
+            ),
           ),
         );
       await tx.insert(leaveTransactions).values({

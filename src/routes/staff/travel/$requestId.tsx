@@ -247,7 +247,7 @@ function TravelDetailRoute() {
                     : "secondary"
               }
             >
-              {request.status}
+              {travelStatusLabel(request)}
             </Badge>
           }
         />
@@ -553,3 +553,4 @@ function TravelDetailRoute() {
     </RequirePermission>
   );
 }
+import { travelStatusLabel } from "@/lib/data/travel-status";

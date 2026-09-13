@@ -1,6 +1,11 @@
 import "@tanstack/react-start/server-only";
 
 import { randomUUID } from "node:crypto";
+import { assertIndependentOfferApprover } from "../../auth/offer-approval.ts";
+import {
+  validateManualOfferDelivery,
+  type ManualOfferDelivery,
+} from "../../auth/offer-delivery.ts";
 
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
@@ -27,6 +32,7 @@ import {
   candidates,
   hiringDecisions,
   interviewPanelists,
+  interviewDispositions,
   interviewScorecards,
   interviews,
   interviewTemplates,
@@ -46,6 +52,225 @@ function recruiter(actor: AuditActorContext): void {
   if (actor.activeRole !== "HR" && actor.activeRole !== "Super Admin")
     throw new Error("Only HR or a Super Admin can manage hiring decisions and offers.");
   if (!actor.userId || !actor.employeeId) throw new Error("A verified VIA employee is required.");
+}
+
+async function requireOfferManager(
+  tx: Transaction | Database,
+  org: string,
+  userId: string,
+  candidateId: string,
+) {
+  const [manager] = await tx
+    .select({ id: users.id })
+    .from(users)
+    .innerJoin(
+      employees,
+      and(eq(employees.id, users.employeeId), eq(employees.organisationId, org)),
+    )
+    .where(
+      and(
+        eq(users.organisationId, org),
+        eq(users.id, userId),
+        eq(users.status, "Active"),
+        eq(employees.status, "Active"),
+        sql`${users.archivedAt} IS NULL`,
+        sql`${employees.archivedAt} IS NULL`,
+        sql`EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id
+        WHERE ur.organisation_id=${org} AND ur.user_id=${users.id} AND r.code='Line Manager')`,
+        sql`NOT EXISTS (SELECT 1 FROM candidates c WHERE c.organisation_id=${org} AND c.id=${candidateId}
+        AND (c.converted_to_employee_id=${employees.id} OR lower(c.email)=lower(${users.workspaceEmail})))`,
+      ),
+    )
+    .limit(1);
+  if (!manager) throw new Error("Select an active Line Manager who is not the candidate.");
+}
+
+async function notifyOfferReview(
+  tx: Transaction,
+  org: string,
+  offerId: string,
+  recipient: string,
+  actor: AuditActorContext,
+  title: string,
+  version: number,
+) {
+  await tx
+    .insert(notifications)
+    .values({
+      organisationId: org,
+      recipientUserId: recipient,
+      type: "offer-approval",
+      title,
+      message: "Open Offers to review the current offer and decision.",
+      priority: "High",
+      status: "Unread",
+      deduplicationKey: `offer-${offerId}-${version}-${recipient}`,
+      link: { entityType: "offer", entityId: offerId, path: "/staff/offers" },
+      createdBy: actor.userId!,
+      updatedBy: actor.userId!,
+    })
+    .onConflictDoNothing();
+}
+
+export async function listOfferManagersInDatabase(org: string, actor: AuditActorContext) {
+  recruiter(actor);
+  return getDatabaseClient()
+    .select({ id: users.id, name: users.displayName, email: users.workspaceEmail })
+    .from(users)
+    .innerJoin(
+      employees,
+      and(eq(employees.id, users.employeeId), eq(employees.organisationId, org)),
+    )
+    .where(
+      and(
+        eq(users.organisationId, org),
+        eq(users.status, "Active"),
+        eq(employees.status, "Active"),
+        sql`${users.archivedAt} IS NULL AND ${employees.archivedAt} IS NULL`,
+        sql`${users.id} <> ${actor.userId}`,
+        sql`EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id
+        WHERE ur.organisation_id=${org} AND ur.user_id=${users.id} AND r.code='Line Manager')`,
+      ),
+    );
+}
+
+export async function listAssignedOfferReviewsInDatabase(org: string, actor: AuditActorContext) {
+  if (!actor.userId || !actor.employeeId) throw new Error("A verified employee is required.");
+  const rows = await getDatabaseClient()
+    .select({ offer: jobOffers, firstName: candidates.firstName, lastName: candidates.lastName })
+    .from(jobOffers)
+    .innerJoin(
+      candidates,
+      and(eq(candidates.id, jobOffers.candidateId), eq(candidates.organisationId, org)),
+    )
+    .where(
+      and(
+        eq(jobOffers.organisationId, org),
+        eq(jobOffers.approverUserId, actor.userId),
+        eq(jobOffers.status, "Pending Approval"),
+        sql`${jobOffers.archivedAt} IS NULL`,
+        sql`${jobOffers.createdBy} <> ${actor.userId}`,
+        sql`${jobOffers.approvalRequestedBy} <> ${actor.userId}`,
+      ),
+    );
+  const result = [];
+  for (const { offer, firstName, lastName } of rows) {
+    try {
+      assertIndependentOfferApprover(offer, actor.userId);
+      await requireOfferManager(getDatabaseClient(), org, actor.userId, offer.candidateId);
+    } catch {
+      continue;
+    }
+    const interviewSummary = await getDatabaseClient()
+      .select({
+        stage: interviews.stageName,
+        status: interviews.status,
+        outcome: interviewDispositions.outcome,
+        recommendation: interviewDispositions.reason,
+      })
+      .from(interviews)
+      .leftJoin(
+        interviewDispositions,
+        and(
+          eq(interviewDispositions.interviewId, interviews.id),
+          eq(interviewDispositions.organisationId, org),
+          sql`${interviewDispositions.archivedAt} IS NULL`,
+        ),
+      )
+      .where(
+        and(
+          eq(interviews.organisationId, org),
+          eq(interviews.candidateId, offer.candidateId),
+          eq(interviews.vacancyId, offer.vacancyId),
+          sql`${interviews.archivedAt} IS NULL`,
+        ),
+      );
+    result.push({
+      id: offer.id,
+      recordVersion: offer.recordVersion,
+      candidateName: `${firstName} ${lastName}`,
+      interviewSummary,
+      position: offer.position,
+      grade: offer.grade,
+      startDate: offer.startDate,
+      location: offer.location,
+      salary: decryptSensitiveJson<number>(offer.salaryEncrypted),
+      currency: decryptSensitiveJson<string>(offer.currencyEncrypted),
+      allowances: decryptSensitiveJson<string>(offer.allowancesEncrypted),
+      benefits: decryptSensitiveJson<string>(offer.benefitsEncrypted),
+      probation: offer.probation,
+      conditions: offer.conditions,
+    });
+  }
+  return result;
+}
+
+export async function reviewAssignedOfferInDatabase(
+  org: string,
+  offerId: string,
+  expectedVersion: number,
+  decision: "approve" | "return",
+  comment: string,
+  actor: AuditActorContext,
+) {
+  if (!actor.userId || !actor.employeeId) throw new Error("A verified employee is required.");
+  const cleanReason = reason(comment);
+  await getDatabaseClient().transaction(async (tx) => {
+    const [offer] = await tx
+      .select()
+      .from(jobOffers)
+      .where(
+        and(
+          eq(jobOffers.organisationId, org),
+          eq(jobOffers.id, offerId),
+          sql`${jobOffers.archivedAt} IS NULL`,
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!offer || offer.status !== "Pending Approval" || offer.recordVersion !== expectedVersion)
+      throw new Error("This offer changed or has already been reviewed. Refresh and try again.");
+    assertIndependentOfferApprover(offer, actor.userId!);
+    await requireOfferManager(tx, org, actor.userId!, offer.candidateId);
+    const status = decision === "approve" ? "Approved" : "Draft";
+    await tx
+      .update(jobOffers)
+      .set({
+        status,
+        approvedBy: decision === "approve" ? actor.userId : null,
+        history: [
+          ...(offer.history as unknown[]),
+          {
+            date: new Date().toISOString(),
+            actor: actor.displayName,
+            action: decision === "approve" ? "Manager approved offer" : "Manager returned offer",
+            details: cleanReason,
+          },
+        ],
+        updatedBy: actor.userId,
+        updatedAt: new Date(),
+        recordVersion: sql`${jobOffers.recordVersion}+1`,
+      })
+      .where(eq(jobOffers.id, offer.id));
+    await audit(tx, org, actor, {
+      action: `manager-${decision}`,
+      entityType: "offer",
+      entityId: offer.id,
+      reason: cleanReason,
+      before: { status: offer.status, recordVersion: offer.recordVersion },
+      after: { status },
+      risk: "Critical",
+    });
+    await notifyOfferReview(
+      tx,
+      org,
+      offer.id,
+      offer.approvalRequestedBy ?? offer.createdBy,
+      actor,
+      decision === "approve" ? "Offer approved by manager" : "Offer returned for changes",
+      offer.recordVersion + 1,
+    );
+  });
 }
 
 function reason(value: string | undefined, minimum = 5): string {
@@ -565,6 +790,7 @@ export async function saveJobOfferInDatabase(
     conditions: string;
     responseDeadline?: string;
     expectedRecordVersion?: number;
+    approverUserId?: string;
   },
   actor: AuditActorContext,
 ): Promise<string> {
@@ -598,6 +824,11 @@ export async function saveJobOfferInDatabase(
       )
       .limit(1);
     if (!decision) throw new Error("Finalise the hiring decision before creating an offer.");
+    if (input.approverUserId) {
+      await requireOfferManager(tx, organisationId, input.approverUserId, input.candidateId);
+      if (input.approverUserId === actor.userId)
+        throw new Error("Select a different manager to approve your offer.");
+    }
     const id = input.id ?? randomUUID();
     if (input.id) {
       const [before] = await tx
@@ -608,15 +839,17 @@ export async function saveJobOfferInDatabase(
         .limit(1);
       if (!before || before.status !== "Draft")
         throw new Error("Only a draft offer can be edited.");
-      if (
-        input.expectedRecordVersion !== undefined &&
-        before.recordVersion !== input.expectedRecordVersion
-      )
+      if (before.candidateId !== input.candidateId || before.vacancyId !== input.vacancyId)
+        throw new Error("An offer's candidate and vacancy cannot be changed.");
+      if (before.recordVersion !== input.expectedRecordVersion)
         throw new Error("This offer changed. Refresh and try again.");
       await tx
         .update(jobOffers)
         .set({
           template: input.template.trim(),
+          approverUserId: input.approverUserId || null,
+          approvedBy: null,
+          approvalRequestedBy: null,
           position: input.position.trim(),
           grade: input.grade.trim(),
           salaryEncrypted: encryptSensitiveJson(input.salary),
@@ -634,6 +867,7 @@ export async function saveJobOfferInDatabase(
               date: new Date().toISOString(),
               actor: actor.displayName,
               action: "Draft updated",
+              preparedBy: actor.userId,
               details: "Offer terms updated.",
             },
           ],
@@ -678,6 +912,7 @@ export async function saveJobOfferInDatabase(
         candidateId: input.candidateId,
         vacancyId: input.vacancyId,
         status: "Draft",
+        approverUserId: input.approverUserId || null,
         template: input.template.trim(),
         position: input.position.trim(),
         grade: input.grade.trim(),
@@ -695,6 +930,7 @@ export async function saveJobOfferInDatabase(
             date: new Date().toISOString(),
             actor: actor.displayName,
             action: "Created",
+            preparedBy: actor.userId,
             details: "Draft offer created.",
           },
         ],
@@ -723,8 +959,8 @@ export async function saveJobOfferInDatabase(
 const OFFER_TRANSITIONS: Record<JobOfferStatus, JobOfferStatus[]> = {
   Draft: ["Pending Approval", "Withdrawn"],
   "Pending Approval": ["Approved", "Draft", "Withdrawn"],
-  Approved: ["Ready to Send", "Withdrawn"],
-  "Ready to Send": ["Sent", "Withdrawn"],
+  Approved: ["Draft", "Ready to Send", "Withdrawn"],
+  "Ready to Send": ["Draft", "Sent", "Withdrawn"],
   Sent: ["Accepted", "Declined", "Expired", "Withdrawn"],
   Accepted: [],
   Declined: [],
@@ -976,6 +1212,8 @@ export async function transitionJobOfferInDatabase(
   status: JobOfferStatus,
   transitionReason: string | undefined,
   actor: AuditActorContext,
+  expectedRecordVersion?: number,
+  manualDelivery?: ManualOfferDelivery,
 ): Promise<{ employeeId?: string; userId?: string; onboardingCaseId?: string }> {
   recruiter(actor);
   if (status === "Accepted") {
@@ -990,6 +1228,40 @@ export async function transitionJobOfferInDatabase(
       .for("update")
       .limit(1);
     if (!offer) throw new Error("Offer not found.");
+    let dispatch: ReturnType<typeof validateManualOfferDelivery> | undefined;
+    if (status === "Sent") {
+      const [candidate] = await tx
+        .select({ email: candidates.email })
+        .from(candidates)
+        .where(
+          and(eq(candidates.organisationId, organisationId), eq(candidates.id, offer.candidateId)),
+        )
+        .limit(1);
+      if (!candidate) throw new Error("Candidate not found.");
+      dispatch = validateManualOfferDelivery(manualDelivery, candidate.email);
+      if (Date.parse(dispatch.sentAt) < offer.createdAt.getTime())
+        throw new Error("The sending time cannot be before this offer was created.");
+    }
+    if (status === "Approved")
+      throw new Error("The assigned manager must approve this offer from Offer approvals.");
+    if (expectedRecordVersion !== offer.recordVersion)
+      throw new Error("This offer changed. Refresh and try again.");
+    if (status === "Pending Approval") {
+      if (!offer.approverUserId) throw new Error("Select and save an approval manager first.");
+      await requireOfferManager(tx, organisationId, offer.approverUserId, offer.candidateId);
+      assertIndependentOfferApprover(
+        { ...offer, approvalRequestedBy: actor.userId! },
+        offer.approverUserId,
+      );
+    }
+    if (
+      ["Ready to Send", "Sent"].includes(status) &&
+      (!offer.approvedBy || offer.approvedBy !== offer.approverUserId)
+    )
+      throw new Error(
+        "An independent manager must approve this offer before it can be sent. Return it to draft for approval.",
+      );
+    if (status === "Draft") reason(transitionReason);
     if (!OFFER_TRANSITIONS[offer.status].includes(status))
       throw new Error(`Offer cannot move from ${offer.status} to ${status}.`);
     const cleanReason = ["Declined", "Withdrawn"].includes(status)
@@ -1000,10 +1272,18 @@ export async function transitionJobOfferInDatabase(
       .update(jobOffers)
       .set({
         status,
-        sentDate: status === "Sent" ? now : offer.sentDate,
+        approvalRequestedBy:
+          status === "Pending Approval"
+            ? actor.userId
+            : status === "Draft"
+              ? null
+              : offer.approvalRequestedBy,
+        approvedBy: status === "Draft" ? null : offer.approvedBy,
+        sentDate: dispatch?.sentAt ?? offer.sentDate,
         declineReason: status === "Declined" ? cleanReason : offer.declineReason,
-        deliveryReference:
-          status === "Sent" ? `pending-google-workspace:${offer.id}` : offer.deliveryReference,
+        deliveryReference: dispatch
+          ? `manual:${dispatch.evidenceReference}`
+          : offer.deliveryReference,
         history: [
           ...(offer.history as unknown[]),
           {
@@ -1011,6 +1291,7 @@ export async function transitionJobOfferInDatabase(
             actor: actor.displayName,
             action: `Status changed to ${status}`,
             details: cleanReason,
+            ...(dispatch ? { deliveryMethod: "Manual sending attested by HR", ...dispatch } : {}),
           },
         ],
         updatedAt: new Date(),
@@ -1020,6 +1301,16 @@ export async function transitionJobOfferInDatabase(
       .where(eq(jobOffers.id, offer.id));
     const conversion =
       status === "Accepted" ? await convertAcceptedOffer(tx, organisationId, offer, actor) : {};
+    if (status === "Pending Approval" && offer.approverUserId)
+      await notifyOfferReview(
+        tx,
+        organisationId,
+        offer.id,
+        offer.approverUserId,
+        actor,
+        "Offer awaiting your approval",
+        offer.recordVersion + 1,
+      );
     await audit(tx, organisationId, actor, {
       action: `status-${status.toLowerCase().replaceAll(" ", "-")}`,
       entityType: "offer",

@@ -26,6 +26,7 @@ import { useCurrentUser } from "@/lib/auth";
 import { toast } from "sonner";
 import { FileText, Send, CheckCircle, XCircle } from "lucide-react";
 import { VacancyService } from "@/lib/data/vacancy-service";
+import { listOfferManagersFn } from "@/lib/server-functions/offer.server";
 
 interface OfferDialogProps {
   open: boolean;
@@ -46,6 +47,9 @@ export function OfferDialog({
   const offerService = useMemo(() => new OfferService(), []);
 
   const [offer, setOffer] = useState<JobOffer | null>(null);
+  const [approverUserId, setApproverUserId] = useState("");
+  const [managers, setManagers] = useState<{ id: string; name: string; email: string }[]>([]);
+  const [revisionReason, setRevisionReason] = useState("");
 
   // Form State
   const [template, setTemplate] = useState("Standard Employment Contract");
@@ -67,6 +71,10 @@ export function OfferDialog({
   const [isWithdrawing, setIsWithdrawing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [deliveryEmail, setDeliveryEmail] = useState("");
+  const [deliveryTime, setDeliveryTime] = useState("");
+  const [deliveryEvidence, setDeliveryEvidence] = useState("");
+  const [deliveryConfirmed, setDeliveryConfirmed] = useState(false);
 
   const canViewComp = currentUser.activeRole === "Super Admin" || currentUser.activeRole === "HR";
 
@@ -77,6 +85,7 @@ export function OfferDialog({
         .find((o) => o.vacancyId === vacancyId);
       if (existing) {
         setOffer(existing);
+        setApproverUserId(existing.approverUserId ?? "");
         setTemplate(existing.template);
         setPosition(existing.position);
         setGrade(existing.grade);
@@ -92,6 +101,7 @@ export function OfferDialog({
       } else {
         const vacancy = new VacancyService().getVacancyRepository().getById(vacancyId);
         setOffer(null);
+        setApproverUserId("");
         setPosition(vacancy?.position || vacancy?.title || "");
         setGrade(vacancy?.grade || "");
         setLocation(vacancy?.location || "");
@@ -102,7 +112,31 @@ export function OfferDialog({
     }
   }, [open, candidateId, vacancyId, currentUser, offerService]);
 
-  const handleSaveDraft = async () => {
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void listOfferManagersFn({
+      data: {
+        actor: {
+          actorId: currentUser.id,
+          actorEmail: currentUser.workspaceEmail,
+          activeRole: currentUser.activeRole,
+        },
+      },
+    })
+      .then((rows) => {
+        if (!cancelled) setManagers(rows);
+      })
+      .catch(() => {
+        if (!cancelled) toast.error("Could not load approval managers.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, currentUser.id, currentUser.workspaceEmail, currentUser.activeRole]);
+
+  const handleSaveDraft = async (requestApproval = false) => {
+    setIsSaving(true);
     try {
       const payload = {
         candidateId,
@@ -119,6 +153,7 @@ export function OfferDialog({
         location,
         conditions,
         responseDeadline,
+        ...(approverUserId ? { approverUserId } : {}),
       };
 
       const saved = await offerService.saveOfferAsync(
@@ -129,11 +164,23 @@ export function OfferDialog({
         },
         offer ?? undefined,
       );
-      setOffer(saved);
-      toast.success(offer ? "Draft offer updated" : "Draft offer created");
+      const updated = requestApproval
+        ? await offerService.transitionOfferAsync(
+            saved.id,
+            "Pending Approval",
+            undefined,
+            currentUser.getActorContext(),
+          )
+        : saved;
+      setOffer(updated);
+      toast.success(
+        requestApproval ? "Offer sent to the assigned manager for approval" : "Draft offer saved",
+      );
       onSuccess?.();
     } catch (error: unknown) {
       toast.error(error instanceof Error ? error.message : "Could not save the offer");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -166,10 +213,23 @@ export function OfferDialog({
     if (!offer) return;
     setIsSaving(true);
     try {
-      const updated = await offerService.transitionOfferAsync(offer.id, newStatus, reason, {
-        ...currentUser.getActorContext(),
-        reason: reason || `Offer moved to ${newStatus}`,
-      });
+      const updated = await offerService.transitionOfferAsync(
+        offer.id,
+        newStatus,
+        reason,
+        {
+          ...currentUser.getActorContext(),
+          reason: reason || `Offer moved to ${newStatus}`,
+        },
+        newStatus === "Sent"
+          ? {
+              recipientEmail: deliveryEmail,
+              sentAt: new Date(deliveryTime).toISOString(),
+              evidenceReference: deliveryEvidence,
+              confirmed: deliveryConfirmed,
+            }
+          : undefined,
+      );
       setOffer(updated);
       setIsDeclining(false);
       setDeclineReason("");
@@ -212,6 +272,44 @@ export function OfferDialog({
           )}
         </DialogHeader>
 
+        <div className="space-y-2">
+          <Label htmlFor="offer-approver">Approval manager</Label>
+          <select
+            id="offer-approver"
+            className="w-full rounded border p-2"
+            disabled={isReadOnly || isSaving}
+            value={approverUserId}
+            onChange={(event) => setApproverUserId(event.target.value)}
+          >
+            <option value="">Select an independent Line Manager</option>
+            {managers.map((manager) => (
+              <option key={manager.id} value={manager.id}>
+                {manager.name} — {manager.email}
+              </option>
+            ))}
+          </select>
+          <p className="text-sm text-muted-foreground">
+            HR prepares the offer. The assigned manager approves or returns it from Offer approvals.
+            HR then sends it.
+          </p>
+          {offer && ["Pending Approval", "Approved", "Ready to Send"].includes(offer.status) && (
+            <>
+              <Input
+                aria-label="Reason for revising approved offer"
+                value={revisionReason}
+                onChange={(event) => setRevisionReason(event.target.value)}
+                placeholder="Reason for changing approved terms"
+              />
+              <Button
+                variant="outline"
+                disabled={isSaving || revisionReason.trim().length < 5}
+                onClick={() => void handleStatusChange("Draft", revisionReason)}
+              >
+                Revise terms — requires new approval
+              </Button>
+            </>
+          )}
+        </div>
         <Tabs defaultValue="details" className="mt-4">
           <TabsList>
             <TabsTrigger value="details">Role & Logistics</TabsTrigger>
@@ -375,26 +473,17 @@ export function OfferDialog({
             {offer?.status === "Draft" && (
               <Button
                 variant="outline"
-                disabled={isSaving}
-                onClick={() => void handleStatusChange("Pending Approval")}
+                disabled={isSaving || !approverUserId}
+                onClick={() => void handleSaveDraft(true)}
               >
                 Request Approval
               </Button>
             )}
-            {offer?.status === "Pending Approval" && canViewComp && (
-              <Button
-                variant="outline"
-                disabled={isSaving}
-                className="text-emerald-600"
-                onClick={() => void handleStatusChange("Approved")}
-              >
-                Approve Offer
-              </Button>
-            )}
+            {offer?.status === "Pending Approval" && <p>Awaiting the assigned manager’s review.</p>}
           </div>
           <div className="flex gap-2">
             {(!offer || offer.status === "Draft") && (
-              <Button disabled={isSaving} onClick={handleSaveDraft}>
+              <Button disabled={isSaving} onClick={() => void handleSaveDraft()}>
                 {offer ? "Save Draft" : "Create Draft"}
               </Button>
             )}
@@ -408,13 +497,54 @@ export function OfferDialog({
               </Button>
             )}
             {offer?.status === "Ready to Send" && (
-              <Button
-                disabled={isSaving}
-                onClick={() => void handleStatusChange("Sent")}
-                className="gap-2"
-              >
-                <Send className="h-4 w-4" /> Send Offer
-              </Button>
+              <fieldset className="space-y-2 rounded border p-3">
+                <legend>Record manual sending</legend>
+                <p className="text-sm">
+                  This does not send an email. Send the approved offer yourself, then record the
+                  recipient, time and evidence here.
+                </p>
+                <Input
+                  aria-label="Offer recipient email"
+                  type="email"
+                  value={deliveryEmail}
+                  onChange={(e) => setDeliveryEmail(e.target.value)}
+                  placeholder="Candidate email"
+                />
+                <Input
+                  aria-label="Actual offer sending time"
+                  type="datetime-local"
+                  step="1"
+                  value={deliveryTime}
+                  onChange={(e) => setDeliveryTime(e.target.value)}
+                />
+                <Input
+                  aria-label="Offer sending evidence"
+                  value={deliveryEvidence}
+                  onChange={(e) => setDeliveryEvidence(e.target.value)}
+                  placeholder="Sent-message HTTPS link or <Message-ID@example.com>"
+                />
+                <label className="flex gap-2">
+                  <input
+                    type="checkbox"
+                    checked={deliveryConfirmed}
+                    onChange={(e) => setDeliveryConfirmed(e.target.checked)}
+                  />
+                  I confirm I sent these approved terms and the evidence identifies that message.
+                </label>
+                <Button
+                  disabled={
+                    isSaving ||
+                    !deliveryConfirmed ||
+                    !deliveryEmail ||
+                    !deliveryTime ||
+                    !deliveryEvidence
+                  }
+                  onClick={() => void handleStatusChange("Sent")}
+                  className="gap-2"
+                >
+                  <Send className="h-4 w-4" /> Record as manually sent
+                </Button>
+              </fieldset>
             )}
             {offer?.status === "Sent" && !isDeclining && (
               <>

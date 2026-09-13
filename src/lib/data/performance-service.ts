@@ -550,7 +550,7 @@ export class PerformanceService {
     context: ActorContext,
   ): PerformanceReview {
     const review = this.requireReview(reviewId);
-    if (context.actor.activeRole !== "Employee" || context.actor.employeeId !== review.employeeId) {
+    if (context.actor.employeeId !== review.employeeId) {
       this.deny(context, "submit this self-assessment", "performance-review", review.id);
     }
     if (review.status !== "Self Assessment Pending") {
@@ -626,6 +626,8 @@ export class PerformanceService {
   ): PerformanceReview {
     this.requireManageAll(context, "moderate performance reviews", reviewId);
     const review = this.requireReview(reviewId);
+    if (context.actor.employeeId === review.employeeId)
+      throw new Error("You cannot moderate your own performance review.");
     if (review.status !== "Moderation Pending")
       throw new Error("This review is not awaiting moderation.");
     if (moderationComment.trim().length < 5) throw new Error("Record the moderation outcome.");
@@ -684,7 +686,7 @@ export class PerformanceService {
     context: ActorContext,
   ): PerformanceReview {
     const review = this.requireReview(reviewId);
-    if (context.actor.activeRole !== "Employee" || context.actor.employeeId !== review.employeeId) {
+    if (context.actor.employeeId !== review.employeeId) {
       this.deny(context, "acknowledge this review", "performance-review", review.id);
     }
     if (review.status !== "Acknowledgement Pending") {
@@ -711,6 +713,8 @@ export class PerformanceService {
   lockReview(reviewId: string, context: ActorContext): PerformanceReview {
     this.requireManageAll(context, "lock performance reviews", reviewId);
     const review = this.requireReview(reviewId);
+    if (context.actor.employeeId === review.employeeId)
+      throw new Error("You cannot finalise your own performance review.");
     if (review.status !== "Acknowledged") {
       throw new Error("Only an acknowledged review can be locked.");
     }
@@ -739,6 +743,8 @@ export class PerformanceService {
   ): PerformanceReview {
     this.requireManageAll(context, "correct locked performance reviews", reviewId);
     const original = this.requireReview(reviewId);
+    if (context.actor.employeeId === original.employeeId)
+      throw new Error("You cannot correct your own performance review.");
     if (original.status !== "Locked") throw new Error("Only a locked review can be corrected.");
     if (reason.trim().length < 10) throw new Error("Enter a detailed reason for the correction.");
     const template = this.requireTemplate(original.templateId);

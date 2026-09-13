@@ -90,7 +90,9 @@ async function lifecycleSnapshotAfterChange(
   if (completedOwnCase && actor.employeeId) {
     await rolloverLeaveBalancesInDatabase(
       organisationId,
-      new Date().getUTCFullYear(),
+      await (
+        await import("../db/repositories/leave-year.repository.server.ts")
+      ).organisationLeaveYear(organisationId),
       actor,
       actor.employeeId,
     );

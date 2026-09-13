@@ -232,6 +232,27 @@
       "when": 1788782410341,
       "tag": "0032_last_morgan_stark",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1789272827992,
+      "tag": "0033_curved_obadiah_stane",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1789273876098,
+      "tag": "0034_truthful_offer_delivery",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1789274524242,
+      "tag": "0035_shallow_cassandra_nova",
+      "breakpoints": true
     }
   ]
 }

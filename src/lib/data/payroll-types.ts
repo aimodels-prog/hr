@@ -58,6 +58,7 @@ export interface PayrollInputReport {
 }
 
 export interface PayrollPeriod extends BaseRecord {
+  preparedBy?: string;
   /** Authoritative PostgreSQL UUID while the compatibility cache remains during cutover. */
   databaseId?: string;
   name: string;

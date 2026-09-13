@@ -1,4 +1,5 @@
 import { getApplicationDataServices } from "./application-data.ts";
+import { canReadEmploymentHistory } from "../auth/employment-history.ts";
 import { getMasterDataRepository, getProjectRepository } from "./master-data.ts";
 import { LocalRepository } from "./repository.ts";
 import type {
@@ -494,18 +495,16 @@ export class EmployeeService {
   }
 
   getEmploymentHistory(employeeId: string, context: ActorContext): EmploymentHistory[] {
-    this.getById(employeeId, context, { includeArchived: true });
+    const employee = this.getById(employeeId, context, { includeArchived: true });
     const activeRole = context.actor.activeRole ?? context.actor.roles[0] ?? "Employee";
-    const canViewCompensation = getRolePermissions(activeRole).has("payroll:view");
-    return this.historyRepo
-      .list()
-      .filter(
-        (record) =>
-          record.employeeId === employeeId &&
-          (record.field !== "salary" ||
-            canViewCompensation ||
-            context.actor.employeeId === employeeId),
-      );
+    return this.historyRepo.list().filter(
+      (record) =>
+        record.employeeId === employeeId &&
+        canReadEmploymentHistory(record.field, employeeId, employee?.lineManagerId, {
+          employeeId: context.actor.employeeId,
+          activeRole,
+        }),
+    );
   }
 
   /** Trusted workflow-only repository access. User-facing code must use getProfileChangeRequests. */

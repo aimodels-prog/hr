@@ -227,11 +227,34 @@ export async function listUsersForOrganisation(organisationId: string): Promise<
 
 export async function listEmploymentHistoryForOrganisation(
   organisationId: string,
+  actor: AuditActorContext,
 ): Promise<EmploymentHistory[]> {
+  if (!actor?.userId || !actor.activeRole || !actor.roles?.includes(actor.activeRole))
+    throw new Error("Verified employee-history access is required.");
+  const role = actor.activeRole;
+  const self = actor.employeeId ?? null;
   const rows = await getDatabaseClient()
     .select()
     .from(employmentChanges)
-    .where(eq(employmentChanges.organisationId, organisationId))
+    .where(
+      and(
+        eq(employmentChanges.organisationId, organisationId),
+        isNull(employmentChanges.archivedAt),
+        sql`(
+        ${employmentChanges.employeeId} = ${self}::uuid
+        OR ${role} = 'Super Admin'
+        OR (${employmentChanges.field} = 'salary' AND ${role} = 'Accounts')
+        OR (${employmentChanges.field} <> 'salary' AND (
+          ${role} = 'HR'
+          OR (${role} = 'Line Manager' AND EXISTS (
+            SELECT 1 FROM employees e WHERE e.id = ${employmentChanges.employeeId}
+            AND e.organisation_id = ${organisationId} AND e.line_manager_id = ${self}::uuid
+            AND e.archived_at IS NULL
+          ))
+        ))
+      )`,
+      ),
+    )
     .orderBy(asc(employmentChanges.effectiveDate));
   return rows.map((row) => ({
     id: row.id,

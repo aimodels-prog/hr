@@ -174,6 +174,7 @@ export class OfferService {
     status: JobOfferStatus,
     transitionReason: string | undefined,
     context: ActorContext,
+    manualDelivery?: import("../auth/offer-delivery.ts").ManualOfferDelivery,
   ): Promise<JobOffer> {
     const { transitionJobOfferFn } = await import("../server-functions/offer.server.ts");
     await transitionJobOfferFn({
@@ -181,6 +182,10 @@ export class OfferService {
         actor: this.serverActor(context),
         offerId: id,
         status,
+        expectedRecordVersion: this.getOfferById(id, context)!.recordVersion,
+        ...(manualDelivery
+          ? { manualDelivery: { ...manualDelivery, confirmed: manualDelivery.confirmed as true } }
+          : {}),
         ...(transitionReason ? { reason: transitionReason } : {}),
       },
     });

@@ -190,6 +190,15 @@ test(
       const employeeView = await listTimesheetSnapshotForActor(organisationId, employeeActor);
       assert.equal(employeeView.timesheets.length, 1);
       assert.equal(employeeView.timesheets[0]?.id, correctionId);
+      const itSelfView = await listTimesheetSnapshotForActor(organisationId, {
+        ...employeeActor,
+        activeRole: "IT",
+        roles: ["Employee", "IT"],
+      });
+      assert.deepEqual(
+        itSelfView.timesheets.map((sheet) => sheet.id),
+        [correctionId],
+      );
       const workerAt = new Date(`${endDate}T12:00:00.000Z`);
       workerAt.setUTCDate(workerAt.getUTCDate() + 3);
       const firstWorkerRun = await processTimesheetWorker(workerAt);

@@ -1238,7 +1238,7 @@ export class OffboardingService {
   finalizeCase(caseId: string, context: ActorContext): OffboardingCase {
     const c = this.casesRepo.getById(caseId);
     if (!c) throw new Error("Case not found");
-    this.requireRole(context, ["Super Admin"], "complete offboarding", caseId);
+    this.requireRole(context, ["HR"], "complete offboarding", caseId);
     // A departing employee who also happens to hold Super Admin must never be able to
     // finalise their own departure, independent of the role check above.
     if (context.actor.employeeId === c.employeeId) {

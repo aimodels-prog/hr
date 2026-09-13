@@ -246,6 +246,18 @@ test("public application progresses through shortlist, interview, offer and onbo
       );
       const offers = new OfferService();
       await offers.finalizeDecisionAsync("log-ops-lead", candidate.id, undefined, undefined, actor);
+      const { listOfferManagersFn } = await import("/src/lib/server-functions/offer.server.ts");
+      const approvalManagers = await listOfferManagersFn({
+        data: {
+          actor: {
+            actorId: actor.actor.userId,
+            actorEmail: actor.actor.workspaceEmail,
+            activeRole: "HR",
+          },
+        },
+      });
+      const approvalManager = approvalManagers[0];
+      if (!approvalManager) throw new Error("Seed an independent Line Manager for offer approval.");
       const offer = await offers.saveOfferAsync(
         {
           candidateId: candidate.id,
@@ -254,6 +266,7 @@ test("public application progresses through shortlist, interview, offer and onbo
           position: "Operations Lead",
           grade: "G6",
           salary: 18000,
+          approverUserId: approvalManager.id,
           currency: "AED",
           allowances: "As per VIA policy",
           benefits: "Medical insurance and annual travel allowance",
@@ -266,16 +279,65 @@ test("public application progresses through shortlist, interview, offer and onbo
         actor,
       );
       await offers.transitionOfferAsync(offer.id, "Pending Approval", undefined, actor);
-      await offers.transitionOfferAsync(offer.id, "Approved", undefined, actor);
-      await offers.transitionOfferAsync(offer.id, "Ready to Send", undefined, actor);
-      await offers.transitionOfferAsync(offer.id, "Sent", undefined, actor);
-      await offers.transitionOfferAsync(offer.id, "Accepted", "Accepted in browser journey", actor);
-      return { candidateId: candidate.id, offerId: offer.id };
+      return {
+        candidateId: candidate.id,
+        offerId: offer.id,
+        approvalManagerId: approvalManager.id,
+      };
     },
     { email: candidateEmail },
   );
 
   expect(completion.candidateId).toBeTruthy();
+  await page.evaluate(
+    (userId) =>
+      localStorage.setItem(
+        "via_hr:dev_preview_state",
+        JSON.stringify({ userId, activeRole: "Line Manager" }),
+      ),
+    completion.approvalManagerId,
+  );
+  await page.goto("/staff/offers");
+  const assignedOffer = page.locator("article").filter({ hasText: "Browser Candidate" });
+  await expect(assignedOffer).toBeVisible();
+  await assignedOffer.getByRole("textbox").fill("Reviewed and approved the proposed offer terms.");
+  await assignedOffer.getByRole("button", { name: "Approve offer", exact: true }).click();
+  await expect(assignedOffer).toHaveCount(0);
+  await page.evaluate(() =>
+    localStorage.setItem(
+      "via_hr:dev_preview_state",
+      JSON.stringify({ userId: "user-rana", activeRole: "HR" }),
+    ),
+  );
+  await page.goto("/staff/offers");
+  await page.evaluate(
+    async ({ offerId, email }) => {
+      const { OfferService } = await import("/src/lib/data/offer-service.ts");
+      const { CandidateService } = await import("/src/lib/data/candidate-service.ts");
+      const actor = {
+        actor: {
+          userId: "user-rana",
+          employeeId: "employee-rana",
+          displayName: "Rana Nair",
+          workspaceEmail: "rana.nair@via-int.com",
+          activeRole: "HR",
+          roles: ["Employee", "HR"],
+        },
+      };
+      await new CandidateService().hydrateCompatibilityCache(actor);
+      const service = new OfferService();
+      await service.transitionOfferAsync(offerId, "Ready to Send", undefined, actor);
+      await service.transitionOfferAsync(offerId, "Sent", undefined, actor, {
+        recipientEmail: email,
+        sentAt: new Date().toISOString(),
+        evidenceReference: `<browser-${offerId}@example.test>`,
+        confirmed: true,
+      });
+      await service.transitionOfferAsync(offerId, "Accepted", "Accepted in browser journey", actor);
+    },
+    { offerId: completion.offerId, email: candidateEmail },
+  );
+  await page.reload();
   await page.getByRole("link", { name: "Offers", exact: true }).click();
   await expect(page.getByText("Browser Candidate", { exact: true })).toBeVisible();
   await expect(page.getByText("Accepted", { exact: true })).toBeVisible();

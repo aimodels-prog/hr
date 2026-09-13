@@ -561,7 +561,7 @@ export async function listTimesheetSnapshotForActor(
   const db = getDatabaseClient();
   const activeRole = role(actor);
   let employeeIds: string[] | undefined;
-  if (activeRole === "Employee") {
+  if (activeRole === "Employee" || activeRole === "IT") {
     if (!actor.employeeId) throw new Error("A verified employee is required.");
     employeeIds = [actor.employeeId];
   } else if (activeRole === "Line Manager") {

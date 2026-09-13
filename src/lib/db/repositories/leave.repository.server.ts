@@ -1,6 +1,8 @@
 import "@tanstack/react-start/server-only";
 
 import { randomUUID } from "node:crypto";
+import { organisationLeaveYear } from "./leave-year.repository.server.ts";
+import { leaveYearForDate } from "../../data/leave-year.ts";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 
 import type {
@@ -495,7 +497,9 @@ export async function createLeaveRequestInDatabase(
         if (days > limit)
           throw new Error(`${policy.name} is limited to ${limit} day(s) per request.`);
       } else {
-        const leaveYear = Number(input.startDate.slice(0, 4));
+        const leaveYear = await organisationLeaveYear(organisationId, input.startDate, tx);
+        if (leaveYear !== (await organisationLeaveYear(organisationId, input.endDate, tx)))
+          throw new Error("Submit separate leave requests for each entitlement year.");
         const [balance] = await tx
           .select({ days: leaveBalances.balanceDays })
           .from(leaveBalances)
@@ -751,6 +755,16 @@ export async function approveLeaveRequestInDatabase(
       }
     } else {
       nextStatus = cancellation ? "Cancellation Approved" : "Approved";
+      if (!cancellation && policy.consumesBalance && ["Annual", "Ledger"].includes(policy.scope)) {
+        const entitlementYear = await organisationLeaveYear(organisationId, request.startDate, tx);
+        const approvedStart = pendingAmendment?.proposedStartDate ?? request.startDate;
+        const approvedEnd = pendingAmendment?.proposedEndDate ?? request.endDate;
+        if (
+          entitlementYear !== (await organisationLeaveYear(organisationId, approvedStart, tx)) ||
+          entitlementYear !== (await organisationLeaveYear(organisationId, approvedEnd, tx))
+        )
+          throw new Error("Split this request into separate entitlement years before approval.");
+      }
       const balanceChange = cancellation
         ? Number(request.workingDaysRequested)
         : amendment && pendingAmendment
@@ -775,7 +789,10 @@ export async function approveLeaveRequestInDatabase(
               eq(leaveBalances.organisationId, organisationId),
               eq(leaveBalances.employeeId, request.employeeId),
               eq(leaveBalances.policyId, request.policyId),
-              eq(leaveBalances.leaveYear, Number(request.startDate.slice(0, 4))),
+              eq(
+                leaveBalances.leaveYear,
+                await organisationLeaveYear(organisationId, request.startDate, tx),
+              ),
               sql`${leaveBalances.balanceDays} + ${balanceChange} >= ${minimum}`,
             ),
           )
@@ -1063,7 +1080,7 @@ export async function updateLeavePolicyInDatabase(
         and(eq(leavePolicies.id, policyId), eq(leavePolicies.recordVersion, updates.recordVersion)),
       );
     if (delta !== 0 && current.scope === "Annual") {
-      const year = new Date().getUTCFullYear();
+      const year = await organisationLeaveYear(organisationId, undefined, tx);
       const balances = await tx
         .update(leaveBalances)
         .set({
@@ -1131,6 +1148,10 @@ export async function setEmployeeLeaveBalanceInDatabase(
     throw new Error("Only HR or a Super Admin can edit leave balances.");
   if (!actor.userId) throw new Error("A verified user is required.");
   if (!Number.isFinite(input.newValue)) throw new Error("Enter a valid leave balance.");
+  if (actor.employeeId === input.employeeId)
+    throw new Error(
+      "Another authorised HR or Super Admin must review and adjust your leave balance.",
+    );
   if (input.reason.trim().length < 5) throw new Error("Explain why the leave balance is changing.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
@@ -1165,7 +1186,7 @@ export async function setEmployeeLeaveBalanceInDatabase(
         updatedBy: actor.userId,
       } as typeof employeeLeaveEntitlementOverrides.$inferInsert);
     } else {
-      const year = new Date().getUTCFullYear();
+      const year = await organisationLeaveYear(organisationId, undefined, tx);
       const [balance] = await tx
         .select()
         .from(leaveBalances)
@@ -1274,6 +1295,14 @@ export async function requestLeaveChangeInDatabase(
       if (row.request.status !== "Approved")
         throw new Error("Only approved future leave can be changed.");
       if (action.reason.trim().length < 5) throw new Error("Explain why the dates are changing.");
+      const originalYear = await organisationLeaveYear(organisationId, row.request.startDate, tx);
+      if (
+        originalYear !== (await organisationLeaveYear(organisationId, action.startDate, tx)) ||
+        originalYear !== (await organisationLeaveYear(organisationId, action.endDate, tx))
+      )
+        throw new Error(
+          "Cancel and submit a separate request to move leave to another entitlement year.",
+        );
       if (
         action.endDate < action.startDate ||
         action.startDate < new Date().toISOString().slice(0, 10)
@@ -1718,7 +1747,7 @@ export async function processScheduledLeaveRollover(now = new Date()): Promise<{
       month: "2-digit",
       day: "2-digit",
     }).format(now);
-    const leaveYear = Number(localDate.slice(0, 4));
+    const leaveYear = leaveYearForDate(localDate, row.settings.leaveYearStart);
     const taken = await db
       .update(leaveRequests)
       .set({

@@ -2712,14 +2712,13 @@ export class LeaveService {
     this.requireEmployeeRead(employeeId, context, "view this employee's leave balance");
     const settings = new SettingsService().getAppSettingsSync();
     const today = new Date();
-    const currentYear = today.getFullYear();
-    const todayKey = [
-      currentYear,
-      String(today.getMonth() + 1).padStart(2, "0"),
-      String(today.getDate()).padStart(2, "0"),
-    ].join("-");
-    const candidateStartKey = `${currentYear}-${settings.leaveYearStart}`;
-    const leaveYear = todayKey >= candidateStartKey ? currentYear : currentYear - 1;
+    const todayKey = new Intl.DateTimeFormat("en-CA", {
+      timeZone: settings.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(today);
+    const leaveYear = leaveYearForDate(todayKey, settings.leaveYearStart);
     const leaveYearStartKey = `${leaveYear}-${settings.leaveYearStart}`;
     const nextLeaveYearStartKey = `${leaveYear + 1}-${settings.leaveYearStart}`;
     const txs = this.getTransactionsForEmployee(employeeId, policyId, context).filter((item) => {
@@ -3023,3 +3022,4 @@ export class LeaveService {
     return result;
   }
 }
+import { leaveYearForDate } from "./leave-year.ts";

@@ -798,11 +798,7 @@ export class GoalService {
     action: string,
     entityId = employeeId,
   ): void {
-    if (
-      context.actor.activeRole === "Employee" &&
-      context.actor.employeeId &&
-      context.actor.employeeId === employeeId
-    ) {
+    if (context.actor.employeeId && context.actor.employeeId === employeeId) {
       return;
     }
     this.deny(context, action, entityId, "Employees can manage only their own objectives.");

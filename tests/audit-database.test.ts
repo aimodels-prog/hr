@@ -142,6 +142,17 @@ test(
         { count: number }[]
       >`select count(*)::integer as count from audit_events where organisation_id=${organisation.id} and actor_user_id=${admin.userId} and action='export' and module='audit'`;
       assert.ok(exportAudit!.count >= 1);
+      const exportMarker = `Bulk audit ${randomUUID()}`;
+      await query`insert into audit_events (organisation_id,actor_user_id,actor_display_name,active_role,actor_roles,action,module,entity_type,entity_id,reason,risk_level)
+        select ${organisation.id},${admin.userId},${admin.displayName},'Super Admin',array['Super Admin'],'update','audit','audit-history',${admin.userId},${exportMarker},'Low' from generate_series(1,5001)`;
+      const bulkFilters = { global: true, search: exportMarker };
+      assert.equal(
+        (await listAuditEventsInDatabase(organisation.id, bulkFilters, admin)).length,
+        5000,
+      );
+      const fullExport = await exportAuditCsvInDatabase(organisation.id, bulkFilters, admin);
+      assert.equal(fullExport.rowCount, 5001);
+      assert.equal(fullExport.csv.split("\r\n").length, 5002);
     } finally {
       await query.end();
     }

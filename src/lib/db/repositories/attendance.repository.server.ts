@@ -1615,7 +1615,9 @@ export async function listAttendanceForActor(organisationId: string, actor: Audi
           ),
         )
     ).map((row) => row.id);
-  } else if (actor.activeRole !== "Employee") throw new Error("You do not have attendance access.");
+  } else if (!["Employee", "Accounts", "IT"].includes(actor.activeRole ?? "")) {
+    throw new Error("You do not have attendance access.");
+  }
   if (!employeeIds.length)
     return {
       timezone,

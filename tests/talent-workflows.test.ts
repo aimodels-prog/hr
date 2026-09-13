@@ -235,96 +235,106 @@ test("objectives require self-service, 100% weighting and the assigned superviso
   );
 });
 
-test("performance review follows self assessment through HR lock", () => {
-  setup();
-  const service = new PerformanceService();
-  const template = service.getTemplates(hr)[0]!;
-  const cycle = service.createCycle(
-    {
-      name: "2027 Midyear Review",
-      templateId: template.id,
-      status: "Active",
-      departments: ["Operations"],
-      employmentTypes: [],
-      objectiveSettingDeadline: "2027-01-31",
-      selfAssessmentDeadline: "2027-02-28",
-      managerReviewDeadline: "2027-03-31",
-      discussionDeadline: "2027-04-30",
-      requiresModeration: true,
-      employeeCanSeeManagerRatings: true,
-    },
-    hr,
-  );
-  const goals = new GoalService();
-  const goal = goals.createGoal(
-    {
-      employeeId: "employee-omar",
-      cycleId: cycle.id,
-      title: "Deliver operations improvement",
-      description: "Complete an evidence-based improvement in shipment operations.",
-      successMeasure: "Signed-off improvement result",
-      targetValue: "One improvement delivered",
-      startDate: "2026-09-01",
-      dueDate: "2027-01-31",
-      weight: 100,
-    },
-    employee,
-  );
-  goals.submitCycleGoalsForApproval("employee-omar", cycle.id, employee);
-  goals.approveGoal(goal.id, manager);
-  let review = service
-    .getReviewsForEmployee("employee-omar", employee)
-    .find((item) => item.cycleId === cycle.id)!;
-  const selfSections = structuredClone(review.sections);
-  selfSections.forEach((section) =>
-    section.items.forEach((item) => {
-      item.selfRating = 4;
-      item.selfComment = "Delivered the expected result with documented evidence.";
-    }),
-  );
-  review = service.submitSelfAssessment(review.id, selfSections, employee);
-  assert.equal(review.status, "Manager Review Pending");
-  assert.throws(
-    () => service.getReviewById(review.id, unrelatedEmployee),
-    /authorised|permission/i,
-  );
-  const managerSections = structuredClone(review.sections);
-  managerSections.forEach((section) =>
-    section.items.forEach((item) => {
-      item.managerRating = 4;
-      item.managerComment = "Consistent delivery supported by specific work results.";
-    }),
-  );
-  review = service.submitManagerReview(
-    review.id,
-    managerSections,
-    "Omar delivered consistently and supported team priorities.",
-    "Complete advanced operations training and lead one improvement project.",
-    manager,
-  );
-  assert.equal(review.status, "Moderation Pending");
-  review = service.approveModeration(
-    review.id,
-    "Ratings are consistent with the evidence presented.",
-    hr,
-  );
-  review = service.recordDiscussion(
-    review.id,
-    "2026-08-29",
-    "Discussed achievements, expectations and the agreed development plan.",
-    manager,
-  );
-  review = service.acknowledgeReview(
-    review.id,
-    false,
-    "I acknowledge receipt but would like one rating reconsidered.",
-    employee,
-  );
-  review = service.lockReview(review.id, hr);
-  assert.equal(review.status, "Locked");
-  assert.equal(review.employeeAgreesWithReview, false);
-  assert.match(review.developmentPlan ?? "", /advanced operations/i);
-});
+for (const role of ["Employee", "Line Manager", "HR", "Accounts", "IT", "Super Admin"] as const)
+  test(`performance self-service and independent HR lock work for ${role}`, () => {
+    setup();
+    const selfActor: ActorContext = {
+      actor: { ...employee.actor, activeRole: role, roles: ["Employee", role] },
+    };
+    const service = new PerformanceService();
+    const template = service.getTemplates(hr)[0]!;
+    const cycle = service.createCycle(
+      {
+        name: "2027 Midyear Review",
+        templateId: template.id,
+        status: "Active",
+        departments: ["Operations"],
+        employmentTypes: [],
+        objectiveSettingDeadline: "2027-01-31",
+        selfAssessmentDeadline: "2027-02-28",
+        managerReviewDeadline: "2027-03-31",
+        discussionDeadline: "2027-04-30",
+        requiresModeration: true,
+        employeeCanSeeManagerRatings: true,
+      },
+      hr,
+    );
+    const goals = new GoalService();
+    const goal = goals.createGoal(
+      {
+        employeeId: "employee-omar",
+        cycleId: cycle.id,
+        title: "Deliver operations improvement",
+        description: "Complete an evidence-based improvement in shipment operations.",
+        successMeasure: "Signed-off improvement result",
+        targetValue: "One improvement delivered",
+        startDate: "2026-09-01",
+        dueDate: "2027-01-31",
+        weight: 100,
+      },
+      employee,
+    );
+    goals.submitCycleGoalsForApproval("employee-omar", cycle.id, employee);
+    goals.approveGoal(goal.id, manager);
+    let review = service
+      .getReviewsForEmployee("employee-omar", employee)
+      .find((item) => item.cycleId === cycle.id)!;
+    const selfSections = structuredClone(review.sections);
+    selfSections.forEach((section) =>
+      section.items.forEach((item) => {
+        item.selfRating = 4;
+        item.selfComment = "Delivered the expected result with documented evidence.";
+      }),
+    );
+    review = service.submitSelfAssessment(review.id, selfSections, selfActor);
+    assert.equal(review.status, "Manager Review Pending");
+    assert.throws(
+      () => service.getReviewById(review.id, unrelatedEmployee),
+      /authorised|permission/i,
+    );
+    const managerSections = structuredClone(review.sections);
+    managerSections.forEach((section) =>
+      section.items.forEach((item) => {
+        item.managerRating = 4;
+        item.managerComment = "Consistent delivery supported by specific work results.";
+      }),
+    );
+    review = service.submitManagerReview(
+      review.id,
+      managerSections,
+      "Omar delivered consistently and supported team priorities.",
+      "Complete advanced operations training and lead one improvement project.",
+      manager,
+    );
+    assert.equal(review.status, "Moderation Pending");
+    if (role === "HR" || role === "Super Admin") {
+      assert.throws(
+        () => service.approveModeration(review.id, "My own moderation.", selfActor),
+        /own performance/,
+      );
+    }
+    review = service.approveModeration(
+      review.id,
+      "Ratings are consistent with the evidence presented.",
+      hr,
+    );
+    review = service.recordDiscussion(
+      review.id,
+      "2026-08-29",
+      "Discussed achievements, expectations and the agreed development plan.",
+      manager,
+    );
+    review = service.acknowledgeReview(
+      review.id,
+      false,
+      "I acknowledge receipt but would like one rating reconsidered.",
+      selfActor,
+    );
+    review = service.lockReview(review.id, hr);
+    assert.equal(review.status, "Locked");
+    assert.equal(review.employeeAgreesWithReview, false);
+    assert.match(review.developmentPlan ?? "", /advanced operations/i);
+  });
 
 test("certificates are securely uploaded, scoped, viewed and verified", async () => {
   const { audit } = setup();

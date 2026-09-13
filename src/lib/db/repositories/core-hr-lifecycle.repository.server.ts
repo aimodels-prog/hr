@@ -2640,8 +2640,7 @@ export async function finaliseOffboardingCaseInDatabase(
   actor: AuditActorContext,
   today = new Date().toISOString().slice(0, 10),
 ): Promise<void> {
-  if (actor.activeRole !== "Super Admin")
-    throw new Error("Only a Super Admin can complete offboarding.");
+  if (actor.activeRole !== "HR") throw new Error("Only HR can complete offboarding.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
     const [lifecycle] = await tx

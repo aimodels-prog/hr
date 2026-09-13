@@ -853,6 +853,7 @@ export interface JobOffer extends BaseRecord {
   conditions: string;
   sentDate?: string;
   deliveryReference?: string | undefined;
+  approverUserId?: string | undefined;
   responseDeadline?: string;
   declineReason?: string;
   history: Array<{

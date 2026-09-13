@@ -101,6 +101,7 @@ async function periodSnapshot(org: string, periodId?: string): Promise<PayrollPe
     cutoffDate: period.cutoffDate,
     paymentDate: period.paymentDate,
     status: period.status,
+    ...(period.preparedBy ? { preparedBy: period.preparedBy } : {}),
     ...(period.notes ? { notes: period.notes } : {}),
     compiledInputs: inputs
       .filter((item) => item.periodId === period.id)
@@ -392,7 +393,8 @@ export async function collectPayrollInputsInDatabase(
       !period ||
       !["Draft", "Collecting Inputs", "Exceptions", "Corrected"].includes(period.status)
     )
-      throw new Error("This payroll period cannot collect inputs.");
+      if (!period || period.status !== "Prepared" || period.preparedBy)
+        throw new Error("This payroll period cannot collect inputs.");
     const staff = await tx
       .select({
         id: employees.id,
@@ -746,6 +748,7 @@ export async function collectPayrollInputsInDatabase(
       .set({
         status,
         compiledInputs: [],
+        preparedBy: actor.userId,
         updatedAt: new Date(),
         updatedBy: actor.userId,
         recordVersion: sql`${payrollPeriods.recordVersion} + 1`,
@@ -870,7 +873,9 @@ export async function lockPayrollPeriodInDatabase(
       .where(and(eq(payrollPeriods.organisationId, org), eq(payrollPeriods.id, periodId)))
       .limit(1);
     if (!period || period.status !== "Approved")
-      throw new Error("Super Admin must approve the prepared period before it can be locked.");
+      throw new Error(
+        "An independent Finance colleague must approve the prepared period before it can be locked.",
+      );
     const [remaining] = await tx
       .select({ count: sql<number>`count(*)` })
       .from(payrollExceptions)
@@ -914,8 +919,8 @@ export async function approvePayrollPeriodInDatabase(
   actor: AuditActorContext,
 ) {
   requirePayroll(actor);
-  if (role(actor) !== "Super Admin")
-    throw new Error("Only Super Admin can approve a prepared payroll period.");
+  if (role(actor) !== "Accounts")
+    throw new Error("Only Finance (Accounts) can approve a prepared payroll period.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
     await tx.execute(
@@ -928,6 +933,23 @@ export async function approvePayrollPeriodInDatabase(
       .limit(1);
     if (!period || period.status !== "Prepared")
       throw new Error("Only a prepared payroll period can be approved.");
+    if (!period.preparedBy)
+      throw new Error("Recollect payroll inputs to identify the preparer before approval.");
+    const [ownException] = await tx
+      .select({ id: payrollExceptions.id })
+      .from(payrollExceptions)
+      .where(
+        and(
+          eq(payrollExceptions.organisationId, org),
+          eq(payrollExceptions.periodId, periodId),
+          eq(payrollExceptions.acknowledgedBy, actor.userId!),
+        ),
+      )
+      .limit(1);
+    if (period.preparedBy === actor.userId || period.updatedBy === actor.userId || ownException)
+      throw new Error(
+        "A different Finance colleague must approve payroll; preparers and exception reviewers cannot approve their own work.",
+      );
     await tx
       .update(payrollPeriods)
       .set({
