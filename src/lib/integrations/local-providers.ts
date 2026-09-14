@@ -64,7 +64,32 @@ export class LocalAiProvider implements AiProvider {
       "Clear communication and stakeholder-management skills",
     ];
 
-    return { summary, responsibilities, requirements };
+    return {
+      summary,
+      responsibilities,
+      requirements,
+      vacancyDetails: {
+        education: facts.education || "Relevant qualification or equivalent practical experience",
+        requiredSkills: facts.skills.required,
+        preferredSkills: facts.skills.preferred,
+        certifications: facts.certifications ?? [],
+        languages: facts.languages,
+        mandatoryCriteria: facts.mandatoryCriteria.length
+          ? facts.mandatoryCriteria
+          : [
+              `${facts.minimumExperience || "Relevant professional"} experience in a similar capacity`,
+            ],
+        screeningQuestions: [
+          `Describe your experience relevant to the ${facts.title} role.`,
+          "Describe a relevant project, your contribution and the results achieved.",
+          ...facts.mandatoryCriteria.map(
+            (criterion) => `What evidence can you provide for: ${criterion}?`,
+          ),
+        ],
+        compensationWording:
+          "Compensation will be discussed based on the role scope and experience.",
+      },
+    };
   }
 
   scoreCandidate(

@@ -18,6 +18,62 @@ const facts = {
   mandatoryCriteria: ["Valid UAE driving licence"],
 };
 
+const vacancyDetails = {
+  education: facts.education,
+  requiredSkills: facts.skills.required,
+  preferredSkills: facts.skills.preferred,
+  certifications: [],
+  languages: facts.languages,
+  mandatoryCriteria: facts.mandatoryCriteria,
+  screeningQuestions: ["Describe your relevant freight experience."],
+  compensationWording: "Compensation will be discussed based on role scope and experience.",
+};
+
+test("Full vacancy generation accepts an empty criteria brief and returns editable structured suggestions", async () => {
+  const details = {
+    education: "Relevant qualification or equivalent experience",
+    requiredSkills: ["Freight planning"],
+    preferredSkills: ["CargoWise"],
+    certifications: [],
+    languages: [],
+    mandatoryCriteria: ["Five years of relevant experience"],
+    screeningQuestions: ["Describe a freight operation you managed."],
+    compensationWording: "Compensation will be discussed based on role scope and experience.",
+  };
+  const service = new GeminiAiService({
+    apiKey: "test-key",
+    generate: async (request) => {
+      assert.match(request.contents, /Oman/);
+      assert.match(request.config.systemInstruction, /Never invent a statutory licence/);
+      assert.match(request.config.systemInstruction, /Do not add HR-verification flags/);
+      return {
+        text: JSON.stringify({
+          summary: "Lead freight operations and deliver reliable customer outcomes in Oman.",
+          responsibilities: [
+            "Plan freight operations.",
+            "Coordinate delivery partners.",
+            "Measure service quality.",
+          ],
+          requirements: [
+            "Five years of relevant experience",
+            "Freight planning capability",
+            "Clear stakeholder communication",
+          ],
+          vacancyDetails: details,
+        }),
+      };
+    },
+  });
+  const result = await service.generateJobDescription({
+    ...facts,
+    location: "Oman",
+    mandatoryCriteria: [],
+    education: "",
+  });
+  assert.deepEqual(result.vacancyDetails, details);
+  assert.equal("salaryMin" in (result.vacancyDetails ?? {}), false);
+});
+
 test("Gemini job generation uses server-side structured output and bounded settings", async () => {
   let captured: GeminiGenerationRequest | undefined;
   const service = new GeminiAiService({
@@ -28,6 +84,7 @@ test("Gemini job generation uses server-side structured output and bounded setti
       return {
         text: JSON.stringify({
           summary: "Lead VIA International logistics operations and deliver reliable outcomes.",
+          vacancyDetails,
           responsibilities: [
             "Lead daily freight operations.",
             "Coordinate internal stakeholders.",
@@ -120,6 +177,7 @@ test("Gemini retries transient failures but rejects invalid structured output", 
       return {
         text: JSON.stringify({
           summary: "Lead VIA International logistics operations and deliver reliable outcomes.",
+          vacancyDetails,
           responsibilities: ["Lead operations.", "Coordinate teams.", "Monitor outcomes."],
           requirements: ["Five years experience.", "Freight capability.", "Driving licence."],
         }),

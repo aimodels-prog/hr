@@ -42,6 +42,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
+import { GoogleCalendarConnection } from "@/components/interviews/google-calendar-connection";
 
 export const Route = createFileRoute("/staff/interviews")({
   head: () => ({
@@ -275,6 +276,7 @@ function Interviews() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-8 pb-10">
+      {canManage && <GoogleCalendarConnection />}
       <div>
         <h1 className="text-2xl font-semibold">Interviews</h1>
         <p className="mt-1 text-sm text-muted-foreground">

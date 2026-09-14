@@ -56,12 +56,25 @@ export interface JobFacts {
   skills: { required: string[]; preferred: string[] };
   languages: string[];
   mandatoryCriteria: string[];
+  certifications?: string[] | undefined;
 }
 
 export interface GeneratedJobDescription {
   summary: string;
   responsibilities: string[];
   requirements: string[];
+  vacancyDetails?:
+    | {
+        education: string;
+        requiredSkills: string[];
+        preferredSkills: string[];
+        certifications: string[];
+        languages: string[];
+        mandatoryCriteria: string[];
+        screeningQuestions: string[];
+        compensationWording: string;
+      }
+    | undefined;
 }
 
 export type CandidateScorePayload = Omit<

@@ -85,7 +85,8 @@ const JobDescriptionFacts = z
       })
       .strict(),
     languages: z.array(z.string().trim().min(1).max(200)).max(100),
-    mandatoryCriteria: z.array(z.string().trim().min(1).max(1_000)).min(1).max(100),
+    mandatoryCriteria: z.array(z.string().trim().min(1).max(1_000)).max(100),
+    certifications: z.array(z.string().trim().min(1).max(500)).max(100).optional(),
   })
   .strict()
   .transform((value) => ({
@@ -103,13 +104,16 @@ export const generateJobDescriptionFn = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     await verifyRecruitmentActor(data.actor);
-    if (data.facts.mandatoryCriteria.length === 0) {
-      throw new Error("Add at least one compulsory criterion before generating the description.");
-    }
     const draft = await generateConfiguredJobDescription(data.facts);
     return {
       ...draft,
-      requirements: ensureMandatoryCriteria(draft.requirements, data.facts.mandatoryCriteria),
+      requirements: ensureMandatoryCriteria(
+        draft.requirements,
+        cleanMandatoryCriteria([
+          ...data.facts.mandatoryCriteria,
+          ...(draft.vacancyDetails?.mandatoryCriteria ?? []),
+        ]),
+      ),
     };
   });
 

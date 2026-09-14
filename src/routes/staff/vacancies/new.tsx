@@ -172,17 +172,13 @@ function NewVacancy() {
 
   const handleGenerate = async () => {
     const values = form.getValues();
-    if (!values.title || !values.department) {
-      toast.error("Missing fields", { description: "Please fill out title and department first." });
-      return;
-    }
-    const mandatoryCriteria = cleanMandatoryCriteria(values.mandatoryCriteria.split("\n"));
-    if (mandatoryCriteria.length === 0) {
-      toast.error("Add the compulsory criteria", {
-        description: "Enter each requirement the generated description must include.",
+    if (!values.title || !values.department || !values.location || !values.minimumExperience) {
+      toast.error("Missing role brief", {
+        description: "Enter the title, department, country/location and required experience first.",
       });
       return;
     }
+    const mandatoryCriteria = cleanMandatoryCriteria(values.mandatoryCriteria.split("\n"));
 
     setGenerating(true);
     try {
@@ -215,15 +211,63 @@ function NewVacancy() {
               .map((s) => s.trim())
               .filter(Boolean),
             mandatoryCriteria,
+            certifications: values.certifications
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean),
           },
         },
       });
 
-      form.setValue("summary", draft.summary);
+      const details = draft.vacancyDetails;
+      const merge = (existing: string[], proposed: string[]) =>
+        cleanMandatoryCriteria([...existing, ...proposed]);
+      if (details) {
+        form.setValue("education", values.education || details.education, { shouldDirty: true });
+        form.setValue(
+          "skillsRequired",
+          merge(values.skillsRequired.split(","), details.requiredSkills).join(", "),
+          { shouldDirty: true },
+        );
+        form.setValue(
+          "skillsPreferred",
+          merge(values.skillsPreferred.split(","), details.preferredSkills).join(", "),
+          { shouldDirty: true },
+        );
+        form.setValue(
+          "certifications",
+          merge(values.certifications.split(","), details.certifications).join(", "),
+          { shouldDirty: true },
+        );
+        form.setValue(
+          "languages",
+          merge(values.languages.split(","), details.languages).join(", "),
+          { shouldDirty: true },
+        );
+        form.setValue(
+          "mandatoryCriteria",
+          merge(mandatoryCriteria, details.mandatoryCriteria).join("\n"),
+          { shouldDirty: true },
+        );
+        form.setValue(
+          "screeningQuestions",
+          merge(
+            values.screeningQuestions.map((item) => item.question),
+            details.screeningQuestions,
+          ).map((question) => ({ question })),
+          { shouldDirty: true },
+        );
+      }
+      form.setValue(
+        "summary",
+        [draft.summary, details?.compensationWording].filter(Boolean).join("\n\n"),
+        { shouldDirty: true },
+      );
       form.setValue("responsibilities", draft.responsibilities.join("\n"));
       form.setValue("requirementsText", draft.requirements.join("\n"));
       toast.success("AI Draft generated", {
-        description: "Review and edit the generated description below.",
+        description:
+          "Review all requirements, compulsory criteria, questions and description before publishing. Salary and visibility remain under your control.",
       });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "The description could not be generated.");
@@ -758,7 +802,9 @@ function NewVacancy() {
                     6. Job Description Editor <Sparkles className="h-4 w-4 text-primary" />
                   </CardTitle>
                   <CardDescription>
-                    Generate a draft using the facts above, then edit manually.
+                    Enter the role, country/location and experience above. Generate the full
+                    vacancy, then add or remove anything before publishing. Regenerating replaces
+                    the description and adds suggestions to your existing criteria.
                   </CardDescription>
                 </div>
                 <Button type="button" onClick={handleGenerate} disabled={generating}>
@@ -767,7 +813,7 @@ function NewVacancy() {
                   ) : (
                     <Sparkles className="mr-2 h-4 w-4" />
                   )}
-                  Generate AI Draft
+                  Generate full vacancy
                 </Button>
               </div>
             </CardHeader>
@@ -787,7 +833,7 @@ function NewVacancy() {
                 <div>
                   <p className="font-medium">
                     {compulsoryCriteria.length === 0
-                      ? "Add the compulsory criteria before generating"
+                      ? "Compulsory criteria will be suggested when you generate"
                       : missingCompulsoryCriteria.length === 0
                         ? `All ${compulsoryCriteria.length} compulsory ${
                             compulsoryCriteria.length === 1 ? "criterion is" : "criteria are"

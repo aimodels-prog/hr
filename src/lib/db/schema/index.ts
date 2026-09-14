@@ -10,3 +10,4 @@ export * from "./system.ts";
 export * from "./talent.ts";
 export * from "./time.ts";
 export * from "./travel-payroll.ts";
+export * from "./google-calendar.ts";
