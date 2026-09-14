@@ -94,6 +94,7 @@ jobs:
       VIA_HR_OBJECT_STORAGE_AUTO_CREATE_BUCKET: "true"
       VIA_HR_OBJECT_STORAGE_ALLOW_PRIVATE_HTTP: "true"
       VIA_HR_MALWARE_SCAN_REQUIRED: "false"
+      VIA_HR_CV_PROCESSOR_URL: http://127.0.0.1:8080
     steps:
       - name: Check out approved source
         uses: actions/checkout@v4
@@ -107,21 +108,8 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Start isolated MinIO
-        run: |
-          docker run --detach --name via-hr-ci-minio \
-            --publish 9000:9000 \
-            --env MINIO_ROOT_USER=via_hr_ci_access \
-            --env MINIO_ROOT_PASSWORD=ci-object-storage-secret-1234567890 \
-            minio/minio:RELEASE.2025-07-23T15-54-02Z server /data
-          for attempt in {1..30}; do
-            if curl --fail --silent http://127.0.0.1:9000/minio/health/ready >/dev/null; then
-              exit 0
-            fi
-            sleep 2
-          done
-          docker logs via-hr-ci-minio
-          exit 1
+      - name: Start isolated MinIO and CV processor
+        run: bash scripts/start-ci-services.sh 2>&1 | tee ci-services.log
 
       - name: Apply the complete migration history
         run: npm run db:migrate
@@ -142,7 +130,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: authoritative-store-test-evidence-${{ github.sha }}
-          path: live-tests.tap
+          path: |
+            live-tests.tap
+            ci-services.log
           if-no-files-found: error
           retention-days: 30
 
@@ -214,6 +204,7 @@ jobs:
       VIA_HR_SESSION_LIFETIME_SECONDS: 28800
       VIA_HR_ALLOW_PASSWORD_LOGIN: "false"
       VIA_HR_ALLOW_INSECURE_LOOPBACK: "true"
+      VIA_HR_CV_PROCESSOR_URL: http://127.0.0.1:8080
     steps:
       - name: Check out approved source
         uses: actions/checkout@v4
@@ -229,21 +220,8 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
 
-      - name: Start isolated MinIO
-        run: |
-          docker run --detach --name via-hr-browser-minio \
-            --publish 9000:9000 \
-            --env MINIO_ROOT_USER=via_hr_browser_access \
-            --env MINIO_ROOT_PASSWORD=ci-browser-object-secret-123456789 \
-            minio/minio:RELEASE.2025-07-23T15-54-02Z server /data
-          for attempt in {1..30}; do
-            if curl --fail --silent http://127.0.0.1:9000/minio/health/ready >/dev/null; then
-              exit 0
-            fi
-            sleep 2
-          done
-          docker logs via-hr-browser-minio
-          exit 1
+      - name: Start isolated MinIO and CV processor
+        run: bash scripts/start-ci-services.sh 2>&1 | tee ci-services.log
 
       - name: Prepare the browser-test database
         run: |
@@ -271,6 +249,7 @@ jobs:
         with:
           name: browser-test-evidence-${{ github.sha }}
           path: |
+            ci-services.log
             browser-tests.txt
             production-smoke.txt
             worker.log
