@@ -20,4 +20,8 @@ test("Both database quality gates provision pinned MinIO and the required CV pro
   assert.match(script, /wait_ready via-hr-ci-cv-processor/);
   assert.match(workflow, /grep --quiet '\^# skipped 0\$' live-tests\.tap/);
   assert.equal((workflow.match(/ci-services\.log/g) ?? []).length, 4);
+  assert.match(
+    workflow,
+    /Install locked dependencies and Chromium\s+run: \|\s+npm ci --include=dev/,
+  );
 });

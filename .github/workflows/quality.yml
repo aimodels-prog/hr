@@ -217,7 +217,7 @@ jobs:
 
       - name: Install locked dependencies and Chromium
         run: |
-          npm ci
+          npm ci --include=dev
           npx playwright install --with-deps chromium
 
       - name: Start isolated MinIO and CV processor
