@@ -141,6 +141,21 @@ test(
       let period = (await listPayrollPeriodsInDatabase(ids.org!, accounts)).find(
         (item) => item.id === periodId,
       )!;
+      const [viewAudit] = await sql`
+        SELECT risk_level, actor_user_id FROM audit_events
+        WHERE organisation_id = ${ids.org} AND module = 'payroll' AND action = 'view'
+        ORDER BY occurred_at DESC LIMIT 1
+      `;
+      assert.equal(
+        viewAudit.risk_level,
+        "Medium",
+        "An authorised payroll read is not a high-risk incident",
+      );
+      assert.equal(
+        viewAudit.actor_user_id,
+        ids.accountsUser,
+        "Keep payroll access accountable in Audit History",
+      );
       assert.equal(period.compiledInputs?.[0]?.approvedOvertimeHours, 4);
       assert.equal(period.compiledInputs?.[0]?.unpaidLeaveDays, 2);
       assert.equal(period.compiledInputs?.[0]?.reimbursementsTotal, 90);

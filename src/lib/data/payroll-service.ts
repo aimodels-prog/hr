@@ -283,7 +283,7 @@ export class PayrollService {
       entityType: "payroll-period",
       entityId,
       reason: description,
-      riskLevel: "High",
+      riskLevel: "Medium",
     });
   }
 

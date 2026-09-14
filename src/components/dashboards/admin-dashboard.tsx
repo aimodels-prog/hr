@@ -1,9 +1,8 @@
 import { useMemo } from "react";
-import { ShieldAlert, AlertTriangle, CalendarCheck, Wallet } from "lucide-react";
+import { AlertTriangle, CalendarCheck, Wallet } from "lucide-react";
 import { LeaveService } from "@/lib/data/leave-service";
 import { DocumentService } from "@/lib/data/document-service";
 import { PayrollService } from "@/lib/data/payroll-service";
-import { getApplicationDataServices } from "@/lib/data/application-data";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { RecruitmentService } from "@/lib/data/recruitment-service";
 import { OnboardingService } from "@/lib/data/onboarding-service";
@@ -24,7 +23,6 @@ export function AdminDashboard() {
   const leaveService = useMemo(() => new LeaveService(), []);
   const docService = useMemo(() => new DocumentService(), []);
   const payrollService = useMemo(() => new PayrollService(), []);
-  const auditService = useMemo(() => getApplicationDataServices().audit, []);
   const employeeService = useMemo(() => new EmployeeService(), []);
   const recruitmentService = useMemo(() => new RecruitmentService(), []);
   const onboardingService = useMemo(() => new OnboardingService(), []);
@@ -60,14 +58,6 @@ export function AdminDashboard() {
     }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 6);
-
-  // Get recent high risk audit events
-  const auditEvents = auditService
-    .list()
-    .filter((e) => e.riskLevel === "High" || e.riskLevel === "Critical");
-  const recentAlerts = auditEvents
-    .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
-    .slice(0, 5);
 
   const attentionItems: AttentionItem[] = [];
 
@@ -107,18 +97,6 @@ export function AdminDashboard() {
     });
   }
 
-  if (recentAlerts.length > 0) {
-    attentionItems.push({
-      id: "audit-alerts",
-      severity: "critical",
-      icon: ShieldAlert,
-      title: `${auditEvents.length} high or critical risk audit event${auditEvents.length === 1 ? "" : "s"}`,
-      meta: "Recorded in Audit History for review",
-      actionLabel: "View Audit Log",
-      actionTo: "/staff/audit",
-    });
-  }
-
   const pulseMetrics: PulseMetric[] = [
     {
       label: "Current Headcount",
@@ -143,11 +121,6 @@ export function AdminDashboard() {
       value: String(pendingPayroll.length),
     },
     {
-      label: "High-risk Audit Events",
-      value: String(auditEvents.length),
-      note: "High or critical risk",
-    },
-    {
       label: "Reimbursements to Close",
       value: String(reimbursementClosures.length),
     },
@@ -158,41 +131,7 @@ export function AdminDashboard() {
       <AttentionQueue items={attentionItems} />
       <PulseStrip metrics={pulseMetrics} />
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <DashboardPanel
-          title="High-risk Audit Activity"
-          description="Recent sensitive changes and denied actions"
-          {...(recentAlerts.length > 0
-            ? { viewAllLabel: "View Full Audit Log", viewAllTo: "/staff/audit" }
-            : {})}
-        >
-          {recentAlerts.length > 0 ? (
-            <div className="flex flex-col divide-y divide-border">
-              {recentAlerts.map((a) => (
-                <div
-                  key={a.id}
-                  className="flex items-start justify-between gap-3 py-2 first:pt-0 last:pb-0"
-                >
-                  <div className="min-w-0">
-                    <span className="block truncate text-sm font-medium text-destructive">
-                      {a.action}
-                    </span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {a.actor.displayName} ({a.actor.roles.join(", ")})
-                    </span>
-                  </div>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {new Date(a.occurredAt).toLocaleString()}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="py-4 text-center text-sm text-muted-foreground">
-              No high-risk audit activity recorded.
-            </div>
-          )}
-        </DashboardPanel>
+      <div className="grid gap-4">
         <DashboardPanel
           title="Workforce Distribution"
           description="Current employees by department"
@@ -206,7 +145,6 @@ export function AdminDashboard() {
           description="Cross-functional items requiring final control"
           viewAllLabel="Reports Centre"
           viewAllTo="/staff/reports"
-          className="lg:col-span-2"
         >
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[

@@ -163,7 +163,7 @@ export async function listPayrollPeriodsInDatabase(org: string, actor: AuditActo
         entityId: org,
         afterSummary: { periodCount: rows.length },
         reason: "Viewed payroll periods",
-        riskLevel: "High",
+        riskLevel: "Medium",
       } as typeof auditEvents.$inferInsert);
   return rows;
 }
