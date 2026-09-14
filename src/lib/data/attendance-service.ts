@@ -467,6 +467,7 @@ export class AttendanceService {
     direction: "in" | "out",
     reading: GeoReading,
     context: ActorContext,
+    returnFromSiteVisit = false,
   ): Promise<AttendanceRecord> {
     const { captureAttendancePunchFn } = await import("../server-functions/attendance.server.ts");
     const databaseRecordId = await captureAttendancePunchFn({
@@ -474,6 +475,7 @@ export class AttendanceService {
         actor: this.serverActor(context),
         employeeId: this.databaseId("employees", employeeId),
         direction,
+        returnFromSiteVisit,
         latitude: reading.latitude,
         longitude: reading.longitude,
         accuracyMeters: reading.accuracyMeters,

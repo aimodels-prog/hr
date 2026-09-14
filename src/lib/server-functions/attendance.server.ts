@@ -52,6 +52,7 @@ const Punch = z
     actor: Actor,
     employeeId: z.string().uuid(),
     direction: z.enum(["in", "out"]),
+    returnFromSiteVisit: z.boolean().optional(),
     latitude: z.number().min(-90).max(90),
     longitude: z.number().min(-180).max(180),
     accuracyMeters: z.number().nonnegative().max(10000),
@@ -67,6 +68,7 @@ export const captureAttendancePunchFn = createServerFn({ method: "POST" })
       {
         employeeId: data.employeeId,
         direction: data.direction,
+        ...(data.returnFromSiteVisit ? { returnFromSiteVisit: true } : {}),
         latitude: data.latitude,
         longitude: data.longitude,
         accuracyMeters: data.accuracyMeters,

@@ -477,6 +477,174 @@ test(
         SELECT status FROM attendance_exception_cases WHERE id = ${String(workerState.exception_id)}
       `;
       assert.equal(resolved.status, "Resolved");
+
+      const [homeAttendance] = await sql`
+        SELECT clock_in_at, clock_out_at FROM attendance_records WHERE site_visit_id = ${homeVisitId}
+      `;
+      assert.equal(
+        new Date(homeAttendance.clock_in_at).toISOString(),
+        `${scheduledDate}T08:00:00.000Z`,
+      );
+      assert.equal(
+        new Date(homeAttendance.clock_out_at).toISOString(),
+        `${scheduledDate}T10:00:00.000Z`,
+      );
+
+      // Office-local 17:00 is 13:00 UTC, independently of the organisation's UTC schedule.
+      await sql`UPDATE locations SET timezone = 'Asia/Muscat' WHERE id = ${locationId}`;
+      for (const [index, scenario] of [
+        "no-return",
+        "returned",
+        "manual-out",
+        "worker-catchup",
+        "pending",
+        "after-hours",
+      ].entries()) {
+        const visitDay = new Date(scheduledDay);
+        visitDay.setUTCDate(visitDay.getUTCDate() + index + 1);
+        const visitDate = visitDay.toISOString().slice(0, 10);
+        const visitId = await requestSiteVisitInDatabase(
+          organisationId,
+          {
+            employeeId: officeEmployeeId,
+            date: visitDate,
+            startTime: scenario === "after-hours" ? "18:00" : "08:00",
+            endTime: scenario === "after-hours" ? "20:00" : "10:00",
+            origin: "Office",
+            destination: "Client office",
+            purpose: `Regression: ${scenario}`,
+          },
+          actor(officeUserId, officeEmployeeId, "Office Visit Employee", "Employee"),
+        );
+        if (scenario !== "pending")
+          await decideSiteVisitInDatabase(
+            organisationId,
+            visitId,
+            "approve",
+            "Approved operational duty",
+            hrActor,
+          );
+        const attendanceId = randomUUID();
+        const manualOut = scenario === "manual-out" ? `${visitDate}T11:00:00.000Z` : null;
+        await sql`
+          INSERT INTO attendance_records (id, organisation_id, employee_id, date, clock_in_at,
+            clock_out_at, break_minutes, source, status, created_by, updated_by)
+          VALUES (${attendanceId}, ${organisationId}, ${officeEmployeeId}, ${visitDate},
+            ${`${visitDate}T04:00:00.000Z`}, ${manualOut}, 30, 'Web', 'Present', ${officeUserId}, ${officeUserId})
+        `;
+        if (scenario === "returned")
+          await sql`
+          INSERT INTO attendance_punch_events (organisation_id, attendance_record_id, employee_id,
+            direction, occurred_at, source, location_id, latitude, longitude, accuracy_meters,
+            client_ip, network_verified, created_by)
+          VALUES (${organisationId}, ${attendanceId}, ${officeEmployeeId}, 'in',
+            ${`${visitDate}T12:00:00.000Z`}, 'Web', ${locationId}, 25.2048, 55.2708, 5,
+            '10.20.1.5', true, ${officeUserId})
+        `;
+        await processAttendanceScheduledWork(new Date(`${visitDate}T12:59:00.000Z`));
+        const [beforeFive] =
+          await sql`SELECT clock_out_at FROM attendance_records WHERE id = ${attendanceId}`;
+        assert.equal(
+          beforeFive.clock_out_at ? new Date(beforeFive.clock_out_at).toISOString() : null,
+          manualOut,
+          `${scenario}: no clock-out before 5 PM`,
+        );
+        if (scenario === "no-return" || scenario === "worker-catchup") {
+          const [waiting] = await sql`SELECT status FROM site_visit_requests WHERE id = ${visitId}`;
+          assert.equal(
+            waiting.status,
+            "Approved",
+            "Keep the visit eligible until automatic closure",
+          );
+        }
+        const closureRun = new Date(`${visitDate}T13:00:00.000Z`);
+        if (scenario === "worker-catchup") closureRun.setUTCDate(closureRun.getUTCDate() + 1);
+        await Promise.all([
+          processAttendanceScheduledWork(closureRun),
+          processAttendanceScheduledWork(closureRun),
+        ]);
+        await processAttendanceScheduledWork(closureRun);
+        const [afterFive] = await sql`
+          SELECT clock_out_at, calculated_hours FROM attendance_records WHERE id = ${attendanceId}
+        `;
+        const automatic = scenario === "no-return" || scenario === "worker-catchup";
+        assert.equal(
+          afterFive.clock_out_at ? new Date(afterFive.clock_out_at).toISOString() : null,
+          automatic ? `${visitDate}T13:00:00.000Z` : manualOut,
+          scenario,
+        );
+        if (automatic)
+          assert.equal(Number(afterFive.calculated_hours), 8.5, "Deduct the recorded break");
+        const [audit] = await sql`
+          SELECT count(*)::int AS count FROM audit_events
+          WHERE entity_id = ${attendanceId} AND action = 'site-visit-auto-clock-out'
+        `;
+        assert.equal(
+          audit.count,
+          automatic ? 1 : 0,
+          `${scenario}: repeated worker runs are idempotent`,
+        );
+      }
+
+      // The return action uses the same server-side office/network checks as normal punching.
+      const today = new Date().toISOString().slice(0, 10);
+      const returnRecordId = randomUUID();
+      await sql`
+        INSERT INTO attendance_records (id, organisation_id, employee_id, date, clock_in_at,
+          source, status, created_by, updated_by)
+        VALUES (${returnRecordId}, ${organisationId}, ${officeEmployeeId}, ${today},
+          ${`${today}T00:00:00.000Z`}, 'Web', 'Present', ${officeUserId}, ${officeUserId})
+      `;
+      await sql`
+        INSERT INTO site_visit_requests (organisation_id, employee_id, date, start_time, end_time,
+          origin, destination, purpose, status, requested_at, created_by, updated_by)
+        VALUES (${organisationId}, ${officeEmployeeId}, ${today}, '00:00', '23:59', 'Office',
+          'Client office', 'Return action test', 'Approved', now(), ${hrUserId}, ${hrUserId})
+      `;
+      const returnInput = {
+        employeeId: officeEmployeeId,
+        direction: "in" as const,
+        returnFromSiteVisit: true,
+        latitude: 25.2048,
+        longitude: 55.2708,
+        accuracyMeters: 5,
+        clientIp: "10.20.1.5",
+      };
+      const officeActor = actor(
+        officeUserId,
+        officeEmployeeId,
+        "Office Visit Employee",
+        "Employee",
+      );
+      await assert.rejects(
+        captureAttendancePunchInDatabase(
+          organisationId,
+          { ...returnInput, latitude: 26, longitude: 56 },
+          officeActor,
+        ),
+        /configured office location/,
+      );
+      await assert.rejects(
+        captureAttendancePunchInDatabase(
+          organisationId,
+          { ...returnInput, employeeId: homeEmployeeId },
+          officeActor,
+        ),
+        /only record your own attendance/,
+      );
+      assert.equal(
+        await captureAttendancePunchInDatabase(organisationId, returnInput, officeActor),
+        returnRecordId,
+      );
+      const [returned] =
+        await sql`SELECT clock_in_at, clock_out_at FROM attendance_records WHERE id = ${returnRecordId}`;
+      assert.equal(new Date(returned.clock_in_at).toISOString(), `${today}T00:00:00.000Z`);
+      assert.equal(returned.clock_out_at, null);
+      const [returnEvidence] = await sql`
+        SELECT count(*)::int AS count FROM attendance_punch_events
+        WHERE attendance_record_id = ${returnRecordId} AND direction = 'in' AND network_verified = true
+      `;
+      assert.equal(returnEvidence.count, 1);
     } finally {
       delete process.env["VIA_HR_ATTENDANCE_NETWORK_ENFORCEMENT"];
       await sql.end();

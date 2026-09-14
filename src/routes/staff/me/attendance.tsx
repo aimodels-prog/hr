@@ -202,14 +202,24 @@ function MyAttendanceRoute() {
     })
     .reverse();
 
-  const performClockAction = async (action: "in" | "out") => {
+  const performClockAction = async (action: "in" | "out", returning = false) => {
     setLocating(true);
     try {
       const reading = await getBrowserLocation();
-      const record = await attendanceService.clockAsync(employeeId, action, reading, actorContext);
+      const record = await attendanceService.clockAsync(
+        employeeId,
+        action,
+        reading,
+        actorContext,
+        returning,
+      );
       setRevision((value) => value + 1);
       toast.success(
-        action === "in" ? `Clocked in at ${record.clockIn}.` : `Clocked out at ${record.clockOut}.`,
+        returning
+          ? "Return to office recorded. Clock out normally when you finish."
+          : action === "in"
+            ? `Clocked in at ${record.clockIn}.`
+            : `Clocked out at ${record.clockOut}.`,
       );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Attendance action failed.");
@@ -384,6 +394,28 @@ function MyAttendanceRoute() {
               )}
             </div>
             <div className="flex flex-col gap-2 sm:min-w-52">
+              {todayOpenRecord &&
+                siteVisits.some(
+                  (visit) =>
+                    visit.date === todayKey &&
+                    visit.origin === "Office" &&
+                    visit.status === "Approved",
+                ) && (
+                  <>
+                    <Button
+                      variant="outline"
+                      disabled={locating}
+                      onClick={() => void performClockAction("in", true)}
+                    >
+                      Back at office
+                    </Button>
+                    <p className="max-w-64 text-xs text-muted-foreground">
+                      If you do not return from approved office-origin duty, you will be clocked out
+                      automatically at 5:00 PM in your office timezone. Record your return here to
+                      keep attendance open.
+                    </p>
+                  </>
+                )}
               {!todayOpenRecord ? (
                 <Button
                   size="lg"
