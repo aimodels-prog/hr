@@ -12,13 +12,18 @@ import { generateDeterministicUuid, IMPORT_SEED_VERSION } from "../scripts/impor
 
 const testDatabaseUrl = process.env["VIA_HR_TEST_DATABASE_URL"]?.trim();
 const testKey = Buffer.alloc(32, 7).toString("base64");
+// Other repository tests reuse this seed. Keep its encryption compatible with
+// the configured test environment instead of leaving an unreadable fixture.
+const activeKey = process.env["VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID"] ?? "import-test";
+const keyring =
+  process.env["VIA_HR_FIELD_ENCRYPTION_KEYS"] ?? JSON.stringify({ [activeKey]: testKey });
 const childEnvironment = testDatabaseUrl
   ? {
       ...process.env,
       DATABASE_URL: testDatabaseUrl,
       NODE_ENV: "test",
-      VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID: "import-test",
-      VIA_HR_FIELD_ENCRYPTION_KEYS: JSON.stringify({ "import-test": testKey }),
+      VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID: activeKey,
+      VIA_HR_FIELD_ENCRYPTION_KEYS: keyring,
     }
   : undefined;
 
@@ -49,10 +54,8 @@ describe(
       assert.ok(testDatabaseUrl);
       assertDedicatedTestDatabase(testDatabaseUrl);
       process.env["DATABASE_URL"] = testDatabaseUrl;
-      process.env["VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID"] = "import-test";
-      process.env["VIA_HR_FIELD_ENCRYPTION_KEYS"] = JSON.stringify({
-        "import-test": testKey,
-      });
+      process.env["VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID"] = activeKey;
+      process.env["VIA_HR_FIELD_ENCRYPTION_KEYS"] = keyring;
       const db = getDatabaseClient();
       await db.execute(sql`TRUNCATE TABLE organisations CASCADE`);
       await closeDatabaseConnection();

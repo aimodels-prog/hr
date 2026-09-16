@@ -135,8 +135,17 @@ test(
         FROM onboarding_tasks
         WHERE assigned_user_id = ${firstLogin.user.id}
       `;
-      assert.equal(Number(checklist?.task_count), 6);
-      assert.equal(Number(checklist?.employment_count), 1);
+      assert.equal(Number(checklist?.task_count), 4);
+      assert.equal(Number(checklist?.employment_count), 0);
+      const [hrChecklist] = await sql`
+        SELECT count(*)::int AS task_count
+        FROM onboarding_tasks t JOIN onboarding_cases c ON c.id = t.case_id
+        WHERE c.employee_id = ${firstLogin.employee.id}
+          AND c.organisation_id = ${organisationId}
+          AND t.owner_role = 'HR' AND t.assigned_user_id IS NULL
+          AND (t.self_service_form_key = 'employment_details' OR t.document_type = 'visa')
+      `;
+      assert.equal(Number(hrChecklist?.task_count), 2);
       const [selfRegistrationAudit] = await sql`
         SELECT count(*)::int AS count FROM audit_events
         WHERE organisation_id = ${organisationId}

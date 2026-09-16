@@ -89,7 +89,9 @@ test(
     try {
       const [seedVacancy] = await sql`
         SELECT id, organisation_id FROM vacancies
-        WHERE status = 'Open' AND archived_at IS NULL ORDER BY created_at LIMIT 1
+        WHERE status = 'Open' AND archived_at IS NULL
+          AND organisation_id = ${process.env["VIA_HR_ORGANISATION_ID"] ?? "aa98aa96-b498-5ca8-8d0d-da19cd34c176"}
+        ORDER BY created_at LIMIT 1
       `;
       assert.ok(seedVacancy, "The test seed must contain an open vacancy.");
       const unique = randomUUID().slice(0, 8);

@@ -316,6 +316,13 @@
       "when": 1789500000000,
       "tag": "0044_hr_owned_employment_setup",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1789510000000,
+      "tag": "0045_document_record_guards",
+      "breakpoints": true
     }
   ]
 }
