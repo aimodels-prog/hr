@@ -14,7 +14,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  PageSections as Tabs,
+  SectionPanel as TabsContent,
+  SectionNavigation as TabsList,
+  SectionLink as TabsTrigger,
+} from "@/components/ui/page-sections";
 import {
   Table,
   TableBody,

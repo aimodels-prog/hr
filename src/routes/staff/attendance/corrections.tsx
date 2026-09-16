@@ -19,7 +19,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/ui/page-header";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  PageSections as Tabs,
+  SectionPanel as TabsContent,
+  SectionNavigation as TabsList,
+  SectionLink as TabsTrigger,
+} from "@/components/ui/page-sections";
 import {
   Table,
   TableBody,

@@ -348,6 +348,34 @@ export const payrollExceptions = pgTable(
   ],
 );
 
+export const employeePayslips = pgTable(
+  "employee_payslips",
+  {
+    ...mutableRecordColumns,
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id),
+    employeeId: uuid("employee_id")
+      .notNull()
+      .references(() => employees.id),
+    payMonth: text("pay_month").notNull(),
+    fileId: uuid("file_id")
+      .notNull()
+      .references(() => fileMetadata.id),
+  },
+  (table) => [
+    index("employee_payslips_org_employee_month_idx").on(
+      table.organisationId,
+      table.employeeId,
+      table.payMonth,
+    ),
+    check("employee_payslips_month_valid", sql`${table.payMonth} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`),
+    uniqueIndex("employee_payslips_active_month_unique")
+      .on(table.organisationId, table.employeeId, table.payMonth)
+      .where(sql`${table.archivedAt} IS NULL`),
+  ],
+);
+
 export const payrollManualAdjustments = pgTable(
   "payroll_manual_adjustments",
   {

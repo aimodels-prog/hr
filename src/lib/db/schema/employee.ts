@@ -112,6 +112,7 @@ export const employees = pgTable(
     startDate: date("start_date", { mode: "string" }).notNull(),
     probationEndDate: date("probation_end_date", { mode: "string" }),
     staffEntryType: staffEntryType("staff_entry_type"),
+    visaRequired: boolean("visa_required"),
     profileSetupStatus: profileSetupStatus("profile_setup_status").notNull().default("Completed"),
     profileSetupCompletedAt: timestamp("profile_setup_completed_at", {
       withTimezone: true,

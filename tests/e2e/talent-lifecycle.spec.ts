@@ -163,7 +163,7 @@ test("objectives, appraisal, acknowledgement and certification complete across r
   await expect(page.getByText("Manager Review Pending", { exact: true })).toBeVisible();
 
   await previewAs(page, "user-layla", "Line Manager", "/staff/performance/team");
-  await page.getByRole("tab", { name: "Performance reviews" }).click();
+  await page.getByRole("link", { name: "Performance reviews" }).click();
   await page
     .getByRole("row")
     .filter({ hasText: "Omar" })
@@ -240,7 +240,7 @@ test("objectives, appraisal, acknowledgement and certification complete across r
   await expect(page.getByText(certificateTitle, { exact: true })).toBeVisible();
 
   await previewAs(page, "user-rana", "HR", "/staff/training");
-  await page.getByRole("tab", { name: "Certificates" }).click();
+  await page.getByRole("link", { name: "Certificates" }).click();
   await expect(page.getByText(certificateTitle, { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Verify", exact: true }).click();
   await expect(page.getByText("Verified", { exact: true })).toBeVisible();

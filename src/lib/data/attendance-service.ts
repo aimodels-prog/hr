@@ -1,4 +1,5 @@
 import { SYSTEM_CONTEXT } from "./types.ts";
+import { validateSiteVisitPlan } from "./site-visit.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { LeaveService } from "./leave-service.ts";
@@ -361,6 +362,7 @@ export class AttendanceService {
         date: row.date,
         startTime: row.startTime,
         endTime: row.endTime,
+        details: row.details,
         origin: row.origin as SiteVisitOrigin,
         destination: row.destination,
         purpose: row.purpose,
@@ -580,6 +582,10 @@ export class AttendanceService {
         origin: input.origin,
         destination: input.destination,
         purpose: input.purpose,
+        ...(input.details?.returnPlan ? { returnPlan: input.details.returnPlan } : {}),
+        ...(input.details?.expectedReturnTime
+          ? { expectedReturnTime: input.details.expectedReturnTime }
+          : {}),
         ...(input.projectId ? { projectId: this.databaseId("projects", input.projectId) } : {}),
       },
     });
@@ -587,6 +593,26 @@ export class AttendanceService {
     const visit = this.siteVisitRepo.list().find((item) => item.databaseId === databaseId);
     if (!visit) throw new Error("The site visit could not be refreshed.");
     return visit;
+  }
+
+  async updateSiteVisitProgressAsync(
+    visitId: string,
+    action: "finish" | "extend",
+    context: ActorContext,
+    endTime?: string,
+    reason?: string,
+  ): Promise<void> {
+    const { updateSiteVisitProgressFn } = await import("../server-functions/attendance.server.ts");
+    await updateSiteVisitProgressFn({
+      data: {
+        actor: this.serverActor(context),
+        visitId: this.localAttendanceDatabaseId("attendanceSiteVisits", visitId),
+        action,
+        ...(endTime ? { endTime } : {}),
+        ...(reason ? { reason } : {}),
+      },
+    });
+    await this.hydrateFromDatabase(context);
   }
 
   async reviewSiteVisitAsync(
@@ -1609,10 +1635,12 @@ export class AttendanceService {
     input: Pick<
       SiteVisitRequest,
       "employeeId" | "date" | "startTime" | "endTime" | "origin" | "destination" | "purpose"
-    > & { projectId?: string | undefined },
+    > & { projectId?: string | undefined; details?: import("./site-visit.ts").SiteVisitDetails },
     context: ActorContext,
   ): SiteVisitRequest {
     this.requireSelf(input.employeeId, context, "request this site visit");
+    validateSiteVisitPlan(input.startTime, input.details ?? {});
+    if (input.details?.returnPlan) input = { ...input, endTime: "17:00" };
     if (input.destination.trim().length < 2 || input.purpose.trim().length < 5) {
       throw new Error("Destination and a detailed business purpose are required.");
     }
@@ -1731,7 +1759,10 @@ export class AttendanceService {
     };
     for (const visit of this.siteVisitRepo.list().filter((item) => item.status === "Approved")) {
       const start = localDateTime(visit.date, visit.startTime);
-      const end = localDateTime(visit.date, visit.endTime);
+      const scheduledEnd = localDateTime(visit.date, visit.endTime);
+      const end = visit.details?.finishedAt
+        ? new Date(Math.min(new Date(visit.details.finishedAt).getTime(), scheduledEnd.getTime()))
+        : scheduledEnd;
       if (at < start) continue;
       let record = visit.attendanceRecordId
         ? this.recordRepo.getById(visit.attendanceRecordId)
@@ -1772,12 +1803,12 @@ export class AttendanceService {
         this.siteVisitRepo.update(visit.id, { attendanceRecordId: record.id }, systemContext);
       }
 
-      if (at >= end) {
+      if (at >= end || visit.details?.returnedAt) {
         if (record?.clockIn) {
-          if (!record.clockOut) {
+          if (!record.clockOut && !visit.details?.returnedAt) {
             record = this.updateRecordInternal(
               record.id,
-              { clockOut: visit.endTime, clockOutAt: end.toISOString() },
+              { clockOut: timeKey(end), clockOutAt: end.toISOString() },
               systemContext,
             );
           }

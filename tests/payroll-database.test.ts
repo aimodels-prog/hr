@@ -6,6 +6,24 @@ import postgres from "postgres";
 
 import { encryptSensitiveJson } from "../src/lib/db/encryption.server.ts";
 import {
+  uploadEmployeeDocumentToDatabase,
+  listEmployeeDocumentsForActor,
+  readEmployeeDocumentInDatabase,
+} from "../src/lib/db/repositories/employee-document.repository.server.ts";
+import {
+  libraryList,
+  libraryPublish,
+  libraryDownload,
+  libraryAsk,
+  processCompanyDocumentReminders,
+} from "../src/lib/db/repositories/company-library.repository.server.ts";
+import {
+  listPayslips,
+  publishPayslip,
+  readPayslip,
+  payslipEmployee,
+} from "../src/lib/db/repositories/payslip.repository.server.ts";
+import {
   acknowledgePayrollExceptionInDatabase,
   addPayrollAdjustmentInDatabase,
   approvePayrollPeriodInDatabase,
@@ -217,6 +235,116 @@ test(
       assert.equal(counts?.inputs, 1);
       assert.equal(counts?.overtime, 1);
       assert.equal(counts?.travel, 1);
+      const slipFile = randomUUID();
+      await sql`INSERT INTO file_metadata (id,organisation_id,name,mime_type,size,checksum,storage_key,storage_status,owner_entity_type,owner_entity_id,created_by,updated_by) VALUES (${slipFile},${ids.org},'payslip.pdf','application/pdf',4,'test-checksum',${`tests/payslip/${slipFile}`},'Available','employee-payslip',${ids.employee},${ids.accountsUser},${ids.accountsUser})`;
+      const upload = { employeeId: ids.employee!, payMonth: "2026-09", fileId: slipFile };
+      await assert.rejects(publishPayslip(ids.org!, upload, admin), /Finance role/);
+      await assert.rejects(payslipEmployee(ids.org!, randomUUID(), accounts), /organisation/);
+      await assert.rejects(
+        publishPayslip(ids.org!, { ...upload, employeeId: ids.accountsEmployee! }, accounts),
+        /someone else/,
+      );
+      const results = await Promise.allSettled([
+        publishPayslip(ids.org!, upload, accounts),
+        publishPayslip(ids.org!, upload, accounts),
+      ]);
+      assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+      const selfActor = {
+        ...accounts,
+        employeeId: ids.employee!,
+        userId: ids.employeeUser!,
+        activeRole: "Employee" as const,
+      };
+      const personal = await listPayslips(ids.org!, selfActor, "self");
+      assert.equal(personal.slips.length, 1);
+      assert.equal(personal.employees.length, 0);
+      assert.equal((await listPayslips(ids.org!, accounts, "self")).slips.length, 0);
+      assert.equal((await listPayslips(ids.org!, accounts, "finance")).slips.length, 1);
+      await assert.rejects(listPayslips(ids.org!, selfActor, "finance"), /Finance role/);
+      await assert.rejects(readPayslip(ids.org!, personal.slips[0]!.id, admin), /cannot access/);
+      await assert.rejects(
+        readPayslip(randomUUID(), personal.slips[0]!.id, selfActor),
+        /cannot access/,
+      );
+      const family = randomUUID();
+      const policyDoc = randomUUID();
+      const replacement = randomUUID();
+      const companyDoc = randomUUID();
+      for (const [id, version, kind] of [
+        [policyDoc, 1, "Library"],
+        [replacement, 2, "Library"],
+        [companyDoc, 1, "Company"],
+      ] as const)
+        await sql`INSERT INTO company_library(id,organisation_id,family_id,version,title,category,kind,audience,file_id,expiry_date,created_by,updated_by) VALUES (${id},${ids.org},${kind === "Library" ? family : companyDoc},${version},${kind === "Library" ? "Office policy" : "Registration secret"},'Test',${kind},${kind === "Library" ? "All staff" : "HR only"},${slipFile},${kind === "Company" ? new Date().toISOString().slice(0, 10) : null},${ids.adminUser},${ids.adminUser})`;
+      assert.equal((await libraryList(ids.org!, selfActor)).length, 0);
+      await assert.rejects(
+        libraryPublish(ids.org!, policyDoc, selfActor, [
+          { page: 1, text: "A policy text that is long enough to publish." },
+        ]),
+        /Only HR/,
+      );
+      const pages = [
+        { page: 1, text: "Employees must notify their supervisor about unexpected sickness." },
+      ];
+      await libraryPublish(ids.org!, policyDoc, admin, pages);
+      assert.equal((await libraryList(ids.org!, selfActor)).length, 1);
+      await libraryPublish(ids.org!, replacement, admin, pages);
+      assert.deepEqual(
+        (await libraryList(ids.org!, selfActor)).map((doc) => doc.id),
+        [replacement],
+      );
+      await assert.rejects(libraryDownload(ids.org!, policyDoc, selfActor), /not available/);
+      await libraryPublish(ids.org!, companyDoc, admin);
+      await assert.rejects(libraryDownload(ids.org!, companyDoc, selfActor), /not available/);
+      await assert.rejects(libraryDownload(randomUUID(), replacement, admin), /not available/);
+      assert.deepEqual((await libraryAsk(ids.org!, "Registration secret", selfActor)).answers, []);
+      await processCompanyDocumentReminders();
+      await processCompanyDocumentReminders();
+      const [reminder] =
+        await sql`SELECT count(*)::int AS count FROM notifications WHERE organisation_id=${ids.org} AND type='company_document_expiry' AND recipient_user_id=${ids.adminUser}`;
+      assert.equal(reminder.count, 1);
+      if (process.env["VIA_HR_OBJECT_STORAGE_ENDPOINT"]) {
+        for (const type of ["insurance_card", "insurance_benefits"] as const) {
+          const insuranceId = await uploadEmployeeDocumentToDatabase(
+            ids.org!,
+            {
+              employeeId: ids.employee!,
+              type,
+              fileName: `${type}.pdf`,
+              mimeType: "application/pdf",
+              bytes: Buffer.from("%PDF-1.4\n%%EOF"),
+              expiryDate: "2028-12-31",
+              visibility: "Public",
+            },
+            admin,
+          );
+          const own = (await listEmployeeDocumentsForActor(ids.org!, selfActor)).find(
+            (doc) => doc.id === insuranceId,
+          )!;
+          assert.equal(own.visibility, "Restricted");
+          assert.equal(own.expiryDate, "2028-12-31");
+          assert.ok(
+            !(await listEmployeeDocumentsForActor(ids.org!, accounts)).some(
+              (doc) => doc.id === insuranceId,
+            ),
+          );
+          await assert.rejects(
+            readEmployeeDocumentInDatabase(ids.org!, own.fileId, accounts, "Test denied access"),
+            /permission/,
+          );
+          await assert.rejects(
+            sql`UPDATE employee_documents SET visibility='Public' WHERE id=${insuranceId}`,
+            /insurance_documents_private/,
+          );
+          const downloaded = await readEmployeeDocumentInDatabase(
+            ids.org!,
+            own.fileId,
+            selfActor,
+            "Downloaded own insurance document",
+          );
+          assert.equal(Buffer.from(downloaded.bytes).toString(), "%PDF-1.4\n%%EOF");
+        }
+      }
     } finally {
       await sql.end({ timeout: 5 });
     }

@@ -1,8 +1,11 @@
 import "@tanstack/react-start/server-only";
 
 import { randomUUID } from "node:crypto";
+import { sickLeaveBackdatePermissions } from "../schema/leave.ts";
+import { siteVisitLocalNow } from "../../data/site-visit.ts";
 import { organisationLeaveYear } from "./leave-year.repository.server.ts";
 import { leaveYearForDate } from "../../data/leave-year.ts";
+import { getLeaveEligibility, isOmaniNationality } from "../../data/leave-eligibility.ts";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 
 import type {
@@ -91,9 +94,7 @@ function mapPolicy(row: typeof leavePolicies.$inferSelect): LeavePolicy {
     requiresAttachment: row.requiresAttachment,
     requiresHandoverContact: row.requiresHandoverContact,
     countsTowardGratuity: row.countsTowardGratuity,
-    ...(row.eligibility
-      ? { eligibility: row.eligibility as NonNullable<LeavePolicy["eligibility"]> }
-      : {}),
+    eligibility: getLeaveEligibility(row),
     approvalChain: row.approvalChain,
     ...(row.noticeRules
       ? { noticeRules: row.noticeRules as NonNullable<LeavePolicy["noticeRules"]> }
@@ -308,6 +309,113 @@ export async function readLeaveAttachmentInDatabase(
   );
 }
 
+export async function grantSickLeaveBackdatePermission(
+  organisationId: string,
+  input: { employeeId: string; startDate: string; endDate: string; reason: string },
+  actor: AuditActorContext,
+) {
+  const grantedBy = actor.userId;
+  if (!grantedBy) throw new Error("Sign in before granting permission.");
+  if (!["HR", "Super Admin"].includes(actor.activeRole ?? ""))
+    throw new Error("Only HR can authorise backdated sick leave.");
+  if (actor.employeeId === input.employeeId)
+    throw new Error("Another HR colleague must authorise your own backdated sick leave.");
+  if (input.reason.trim().length < 5) throw new Error("Record the reason for this permission.");
+  const db = getDatabaseClient();
+  return db.transaction(async (tx) => {
+    const [employee] = await tx
+      .select()
+      .from(employees)
+      .where(
+        and(
+          eq(employees.organisationId, organisationId),
+          eq(employees.id, input.employeeId),
+          isNull(employees.archivedAt),
+        ),
+      )
+      .limit(1);
+    if (!employee || ["Inactive", "Archived"].includes(employee.status))
+      throw new Error("Select an active employee in this organisation.");
+    const [settings] = await tx
+      .select({ timezone: appSettings.timezone })
+      .from(appSettings)
+      .where(eq(appSettings.organisationId, organisationId))
+      .limit(1);
+    if (!settings) throw new Error("Configure the organisation timezone first.");
+    const today = siteVisitLocalNow(settings.timezone).date;
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(input.startDate) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(input.endDate) ||
+      input.startDate >= today ||
+      input.endDate > today ||
+      input.endDate < input.startDate ||
+      input.startDate < employee.startDate
+    )
+      throw new Error(
+        "Choose past sick-leave dates within the employee's service, ending no later than today.",
+      );
+    const id = randomUUID();
+    const expiresAt = new Date(Date.now() + 14 * 86_400_000);
+    await tx.insert(sickLeaveBackdatePermissions).values({
+      id,
+      organisationId,
+      ...input,
+      reason: input.reason.trim(),
+      grantedBy,
+      expiresAt,
+    });
+    await tx.insert(auditEvents).values({
+      organisationId,
+      actorUserId: actor.userId,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [],
+      action: "authorise-backdated-sick-leave",
+      module: "leave",
+      entityType: "sick-leave-backdate-permission",
+      entityId: id,
+      afterSummary: {
+        employeeId: input.employeeId,
+        startDate: input.startDate,
+        endDate: input.endDate,
+        expiresAt: expiresAt.toISOString(),
+      },
+      reason: input.reason.trim(),
+      riskLevel: "Medium",
+    });
+    const recipients = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(
+        and(
+          eq(users.organisationId, organisationId),
+          eq(users.employeeId, input.employeeId),
+          eq(users.status, "Active"),
+        ),
+      );
+    for (const recipient of recipients)
+      await tx.insert(notifications).values({
+        organisationId,
+        recipientUserId: recipient.id,
+        type: "leave_backdate_permission",
+        title: "HR has authorised a historical leave submission",
+        message: `You may submit sick leave for ${input.startDate} to ${input.endDate} within 14 days. Supporting evidence and normal approvals still apply.`,
+        priority: "Normal",
+        status: "Unread",
+        deduplicationKey: `sick-backdate-${id}-${recipient.id}`,
+        createdBy: grantedBy,
+        updatedBy: grantedBy,
+        link: {
+          path: "/staff/leave",
+          entityType: "sick-leave-backdate-permission",
+          entityId: id,
+        },
+      });
+    return { id, expiresAt: expiresAt.toISOString() };
+  });
+}
+
 export async function createLeaveRequestInDatabase(
   organisationId: string,
   input: {
@@ -332,6 +440,8 @@ export async function createLeaveRequestInDatabase(
         id: employees.id,
         lineManagerId: employees.lineManagerId,
         locationId: employees.locationId,
+        preferredName: employees.preferredName,
+        legalName: employees.legalName,
         gender: employees.gender,
         nationality: employees.nationality,
         startDate: employees.startDate,
@@ -407,12 +517,35 @@ export async function createLeaveRequestInDatabase(
         throw new Error("The attachment does not belong to this employee.");
     }
     const [settings] = await tx
-      .select({ workingDays: appSettings.workingDays })
+      .select({ workingDays: appSettings.workingDays, timezone: appSettings.timezone })
       .from(appSettings)
       .where(eq(appSettings.organisationId, organisationId))
       .limit(1);
     if (!settings?.workingDays.length)
       throw new Error("Organisation working days are not configured.");
+    let backdatePermission: typeof sickLeaveBackdatePermissions.$inferSelect | undefined;
+    if (policy.type === "Sick" && input.startDate < siteVisitLocalNow(settings.timezone).date) {
+      [backdatePermission] = await tx
+        .select()
+        .from(sickLeaveBackdatePermissions)
+        .where(
+          and(
+            eq(sickLeaveBackdatePermissions.organisationId, organisationId),
+            eq(sickLeaveBackdatePermissions.employeeId, employee.id),
+            eq(sickLeaveBackdatePermissions.startDate, input.startDate),
+            eq(sickLeaveBackdatePermissions.endDate, input.endDate),
+            isNull(sickLeaveBackdatePermissions.usedByRequestId),
+            sql`${sickLeaveBackdatePermissions.expiresAt} > now()`,
+          ),
+        )
+        .orderBy(asc(sickLeaveBackdatePermissions.createdAt))
+        .limit(1)
+        .for("update");
+      if (!backdatePermission)
+        throw new Error(
+          "Ask HR to authorise backdated sick leave for these exact dates before submitting.",
+        );
+    }
     const holidays = await tx
       .select({ date: publicHolidays.holidayDate })
       .from(publicHolidays)
@@ -431,14 +564,10 @@ export async function createLeaveRequestInDatabase(
       input.isHalfDay ?? false,
     );
     if (days <= 0) throw new Error("The selected dates contain no working days.");
-    const eligibility = (policy.eligibility ?? {}) as {
-      genderRestriction?: string;
-      omaniOnly?: boolean;
-      minimumServiceMonths?: number;
-    };
+    const eligibility = getLeaveEligibility(policy);
     if (eligibility.genderRestriction && employee.gender !== eligibility.genderRestriction)
       throw new Error(`${policy.name} is not available for this employee.`);
-    if (eligibility.omaniOnly && employee.nationality?.trim().toLowerCase() !== "omani")
+    if (eligibility.omaniOnly && !isOmaniNationality(employee.nationality))
       throw new Error(`${policy.name} is available only to Omani employees.`);
     if (eligibility.minimumServiceMonths !== undefined) {
       const eligibleFrom = new Date(`${employee.startDate}T00:00:00Z`);
@@ -545,7 +674,9 @@ export async function createLeaveRequestInDatabase(
         : Number(noticeRules.shortLeaveNoticeDays ?? 14)
       : 0;
     const status =
-      noticeRule > 0 && noticeDays < noticeRule ? "Automatically Refused" : "Pending Line Manager";
+      !backdatePermission && noticeRule > 0 && noticeDays < noticeRule
+        ? "Automatically Refused"
+        : "Pending Line Manager";
     const refusalReason =
       status === "Automatically Refused"
         ? `${policy.name} must be requested at least ${noticeRule} days in advance.`
@@ -569,6 +700,12 @@ export async function createLeaveRequestInDatabase(
         { role: "HR", status: "Pending" },
       ],
       policySnapshot: {
+        ...(backdatePermission
+          ? {
+              backdatePermissionId: backdatePermission.id,
+              backdateAuthorisedBy: backdatePermission.grantedBy,
+            }
+          : {}),
         name: policy.name,
         type: policy.type,
         isPaid: policy.isPaid,
@@ -578,6 +715,11 @@ export async function createLeaveRequestInDatabase(
       createdBy: actor.userId,
       updatedBy: actor.userId,
     } as typeof leaveRequests.$inferInsert);
+    if (backdatePermission)
+      await tx
+        .update(sickLeaveBackdatePermissions)
+        .set({ usedByRequestId: requestId })
+        .where(eq(sickLeaveBackdatePermissions.id, backdatePermission.id));
     await tx.insert(auditEvents).values({
       organisationId,
       actorUserId: actor.userId,
@@ -589,7 +731,11 @@ export async function createLeaveRequestInDatabase(
       module: "leave",
       entityType: "leave-request",
       entityId: requestId,
-      afterSummary: { status, days },
+      afterSummary: {
+        status,
+        days,
+        ...(backdatePermission ? { backdatePermissionId: backdatePermission.id } : {}),
+      },
       reason: refusalReason ?? "Submitted a leave request",
       riskLevel: "Medium",
     } as typeof auditEvents.$inferInsert);
@@ -636,6 +782,43 @@ export async function createLeaveRequestInDatabase(
         } as typeof notifications.$inferInsert)
         .onConflictDoNothing();
     }
+    if (status === "Pending Line Manager") {
+      const hrRecipients = await tx
+        .selectDistinct({ id: users.id })
+        .from(users)
+        .innerJoin(
+          userRoles,
+          and(eq(userRoles.userId, users.id), eq(userRoles.organisationId, organisationId)),
+        )
+        .innerJoin(roles, eq(roles.id, userRoles.roleId))
+        .where(
+          and(
+            eq(users.organisationId, organisationId),
+            eq(users.status, "Active"),
+            eq(roles.code, "HR"),
+          ),
+        );
+      for (const hrRecipient of hrRecipients) {
+        // An HR user who is also the assigned manager already has the actionable request.
+        if (hrRecipient.id === recipient?.id) continue;
+        await tx
+          .insert(notifications)
+          .values({
+            organisationId,
+            recipientUserId: hrRecipient.id,
+            type: "leave_submitted",
+            title: "New leave request — awaiting line manager",
+            message: `${employee.preferredName || employee.legalName} requested ${days} day(s) of ${policy.name}: ${input.startDate} to ${input.endDate}. Awaiting line manager approval; no HR action is required yet.`,
+            priority: "Normal",
+            status: "Unread",
+            deduplicationKey: `leave-submitted-hr-info-${requestId}-${hrRecipient.id}`,
+            link: { entityType: "leave-request", entityId: requestId, path: "/staff/leave-admin" },
+            createdBy: actor.userId,
+            updatedBy: actor.userId,
+          } as typeof notifications.$inferInsert)
+          .onConflictDoNothing();
+      }
+    }
     return requestId;
   });
 }
@@ -663,6 +846,7 @@ export async function approveLeaveRequestInDatabase(
         lineManagerId: employees.lineManagerId,
         locationId: employees.locationId,
         preferredName: employees.preferredName,
+        nationality: employees.nationality,
       })
       .from(employees)
       .where(
@@ -699,6 +883,15 @@ export async function approveLeaveRequestInDatabase(
       throw new Error("You are not the assigned approver for this leave request.");
     if (actor.employeeId === request.employeeId)
       throw new Error("You cannot make a decision on your own leave request.");
+    if (
+      decision === "approve" &&
+      !cancellation &&
+      getLeaveEligibility(policy).omaniOnly &&
+      !isOmaniNationality(employee.nationality)
+    )
+      throw new Error(
+        `${policy.name} is available only to Omani employees. Ask HR to confirm the employee's nationality.`,
+      );
     const pendingAmendment = request.pendingAmendment
       ? structuredClone(request.pendingAmendment as NonNullable<LeaveRequest["pendingAmendment"]>)
       : undefined;
@@ -1067,7 +1260,10 @@ export async function updateLeavePolicyInDatabase(
         requiresAttachment: updates.requiresAttachment,
         requiresHandoverContact: updates.requiresHandoverContact,
         countsTowardGratuity: updates.countsTowardGratuity,
-        eligibility: updates.eligibility ?? null,
+        eligibility: getLeaveEligibility({
+          ...current,
+          eligibility: updates.eligibility ?? current.eligibility,
+        }),
         approvalChain: updates.approvalChain,
         noticeRules: updates.noticeRules ?? null,
         isEnabled: updates.isEnabled,
@@ -1591,15 +1787,10 @@ export async function rolloverLeaveBalancesInDatabase(
       );
     for (const employee of staff)
       for (const policy of policies) {
-        const eligibility = (policy.eligibility ?? {}) as {
-          genderRestriction?: string;
-          omaniOnly?: boolean;
-          minimumServiceMonths?: number;
-        };
+        const eligibility = getLeaveEligibility(policy);
         if (eligibility.genderRestriction && employee.gender !== eligibility.genderRestriction)
           continue;
-        if (eligibility.omaniOnly && employee.nationality?.trim().toLowerCase() !== "omani")
-          continue;
+        if (eligibility.omaniOnly && !isOmaniNationality(employee.nationality)) continue;
         // Waiting periods control when leave can be taken, not whether the employee can see
         // the entitlement that will become available later in the leave year.
         const [existing] = await tx

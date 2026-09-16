@@ -22,6 +22,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { statutoryOmaniOnly, getLeaveEligibility } from "@/lib/data/leave-eligibility";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -402,9 +403,19 @@ export function LeavePolicyConfig() {
                   </div>
                 </div>
                 <div className="flex items-center justify-between rounded-md bg-muted/30 p-3">
-                  <Label>Omani Employees Only</Label>
+                  <div>
+                    <Label>Omani Employees Only</Label>
+                    {statutoryOmaniOnly(editingPolicy) !== undefined && (
+                      <p className="text-xs text-muted-foreground">
+                        {statutoryOmaniOnly(editingPolicy)
+                          ? "Required for this statutory leave under Oman Labour Law Article 84."
+                          : "Hajj leave is not restricted by nationality under Article 84."}
+                      </p>
+                    )}
+                  </div>
                   <Switch
-                    checked={editingPolicy.eligibility?.omaniOnly ?? false}
+                    checked={getLeaveEligibility(editingPolicy).omaniOnly ?? false}
+                    disabled={statutoryOmaniOnly(editingPolicy) !== undefined}
                     onCheckedChange={(omaniOnly) =>
                       setEditingPolicy({
                         ...editingPolicy,

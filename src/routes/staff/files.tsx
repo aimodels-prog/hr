@@ -42,6 +42,8 @@ const DOCUMENT_TYPES: DocumentType[] = [
   "education_certificate",
   "professional_certificate",
   "bank_evidence",
+  "insurance_card",
+  "insurance_benefits",
   "other",
 ];
 

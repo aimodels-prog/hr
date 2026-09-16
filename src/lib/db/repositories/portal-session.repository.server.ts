@@ -252,8 +252,12 @@ async function createFirstLoginChecklist(
       title,
       taskGroup,
       checkpoint: "Pre-Arrival",
-      ownerRole: "Employee" as const,
-      assignedUserId: userId,
+      ownerRole:
+        selfServiceFormKey === "employment_details" || documentType === "visa"
+          ? ("HR" as const)
+          : ("Employee" as const),
+      assignedUserId:
+        selfServiceFormKey === "employment_details" || documentType === "visa" ? null : userId,
       offsetDaysFromStart: 0,
       dueDate,
       isMandatory: true,

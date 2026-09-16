@@ -19,6 +19,7 @@ import { differenceInCalendarDays, parseISO, eachDayOfInterval, isValid } from "
 import { NotificationService } from "./notification-service.ts";
 import { getMasterDataRepository } from "./master-data.ts";
 import { SettingsService } from "./settings-service.ts";
+import { getLeaveEligibility, isOmaniNationality } from "./leave-eligibility.ts";
 
 // Recognises the different labels a policy's approvalChain might use for the line-manager
 // step, matching the same tolerance approveRequest already applies when locating that step.
@@ -243,7 +244,7 @@ export const POLICY_DEFINITIONS = [
     requiresAttachment: true,
     requiresHandoverContact: true,
     countsTowardGratuity: true,
-    eligibility: { omaniOnly: true, minimumServiceMonths: 12 },
+    eligibility: { minimumServiceMonths: 12 },
     approvalChain: ["Line Manager", "HR"],
     isEnabled: true,
     isStatutory: true,
@@ -746,16 +747,14 @@ export class LeaveService {
   }
 
   isEmployeeEligibleForPolicy(employee: Employee, policy: LeavePolicy): boolean {
-    const eligibility = policy.eligibility;
-    if (!eligibility) return true;
+    const eligibility = getLeaveEligibility(policy);
 
     if (eligibility.genderRestriction) {
       if (employee.gender !== eligibility.genderRestriction) return false;
     }
 
     if (eligibility.omaniOnly) {
-      const nationality = (employee.nationality ?? "").trim().toLowerCase();
-      if (nationality !== "omani") return false;
+      if (!isOmaniNationality(employee.nationality)) return false;
     }
 
     // Minimum-service rules affect the first permissible leave date. Keep the policy visible so
@@ -771,14 +770,16 @@ export class LeaveService {
     const policies = this.getPolicies();
 
     if (!employee) {
-      return policies.filter((p) => p.isEnabled && !p.eligibility);
+      return [];
     }
 
     return policies.filter((p) => p.isEnabled && this.isEmployeeEligibleForPolicy(employee, p));
   }
 
   getPolicies(): LeavePolicy[] {
-    return this.policyRepo.list();
+    return this.policyRepo
+      .list()
+      .map((policy) => ({ ...policy, eligibility: getLeaveEligibility(policy) }));
   }
 
   async updatePolicyAsync(policy: LeavePolicy, context: ActorContext): Promise<LeavePolicy> {
@@ -836,6 +837,7 @@ export class LeaveService {
     if (!current) throw new Error("Leave policy was not found.");
 
     const candidate = { ...current, ...updates };
+    candidate.eligibility = getLeaveEligibility(candidate);
     if (!candidate.name.trim() || !candidate.code.trim() || !candidate.description.trim()) {
       throw new Error("Policy name, code and explanation are required.");
     }
@@ -1213,6 +1215,20 @@ export class LeaveService {
   approveRequest(requestId: string, context: ActorContext): LeaveRequest {
     const req = this.requestRepo.getById(requestId);
     if (!req) throw new Error("Request not found");
+
+    if (req.status !== "Cancellation Pending") {
+      const policy = this.policyRepo.getById(req.policyId);
+      const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
+      if (
+        policy &&
+        getLeaveEligibility(policy).omaniOnly &&
+        !isOmaniNationality(employee?.nationality)
+      ) {
+        throw new Error(
+          `${policy.name} is available only to Omani employees. Ask HR to confirm the employee's nationality.`,
+        );
+      }
+    }
 
     if (req.status === "Amendment Pending Line Manager" || req.status === "Amendment Pending HR") {
       return this.approveAmendment(req, context);
@@ -1655,8 +1671,8 @@ export class LeaveService {
       SYSTEM_CONTEXT,
     );
 
-    if (policy.eligibility && employeeForEligibility) {
-      const eligibility = policy.eligibility;
+    if (employeeForEligibility) {
+      const eligibility = getLeaveEligibility(policy);
       const basis = policy.legalBasis ? ` (${policy.legalBasis})` : "";
 
       if (
@@ -1669,8 +1685,7 @@ export class LeaveService {
       }
 
       if (eligibility.omaniOnly) {
-        const nationality = (employeeForEligibility.nationality ?? "").trim().toLowerCase();
-        if (nationality !== "omani") {
+        if (!isOmaniNationality(employeeForEligibility.nationality)) {
           throw new Error(`${policy.name} is an Omani-national entitlement${basis}.`);
         }
       }
@@ -1839,9 +1854,7 @@ export class LeaveService {
     return created;
   }
 
-  // Whoever the request lands with first - the line manager for a manager-led chain, or HR
-  // directly for an HR-only policy - is notified the moment it's submitted, not left to notice
-  // it only when they happen to open the approvals screen.
+  // Notify the current approver, and keep HR informed of new manager-stage submissions.
   private notifySubmission(request: LeaveRequest, context: ActorContext): void {
     if (request.status === "Automatically Refused") return;
     const { storage, notifications } = getApplicationDataServices();
@@ -1859,12 +1872,14 @@ export class LeaveService {
       ? `${amendment.proposedStartDate} to ${amendment.proposedEndDate}`
       : `${request.startDate} to ${request.endDate}`;
     const actionLabel = amendment ? "requested a change to" : "requested";
+    let managerRecipientId: string | undefined;
 
     if (managerStage && requester?.lineManagerId) {
       const managerUser = storage
         .readCollection<User>("users")
         .find((user) => user.employeeId === requester.lineManagerId && user.status === "Active");
       if (managerUser) {
+        managerRecipientId = managerUser.id;
         notifications.create(
           {
             recipientUserId: managerUser.id,
@@ -1910,6 +1925,29 @@ export class LeaveService {
               entityId: request.id,
               path: "/staff/leave-approvals",
             },
+          },
+          context,
+        );
+      }
+    }
+    if (managerStage && !amendment) {
+      const hrUsers = storage
+        .readCollection<User>("users")
+        .filter(
+          (user) =>
+            user.status === "Active" && user.roles.includes("HR") && user.id !== managerRecipientId,
+        );
+      for (const hrUser of hrUsers) {
+        notifications.create(
+          {
+            recipientUserId: hrUser.id,
+            type: "leave_submitted",
+            title: "New leave request — awaiting line manager",
+            message: `${requesterName} requested ${request.workingDaysRequested} day(s) of ${request.policySnapshot.name}: ${dateSummary}. Awaiting line manager approval; no HR action is required yet.`,
+            priority: "Normal",
+            status: "Unread",
+            deduplicationKey: `leave-submitted-hr-info-${request.id}-${hrUser.id}`,
+            link: { entityType: "leave-request", entityId: request.id, path: "/staff/leave-admin" },
           },
           context,
         );

@@ -267,6 +267,55 @@
       "when": 1789373300994,
       "tag": "0037_google_calendar_connection",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1789444800000,
+      "tag": "0038_omani_leave_eligibility",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1789450000000,
+      "tag": "0039_flexible_site_visits",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1789460000000,
+      "tag": "0040_sick_leave_backdate_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1789470000000,
+      "tag": "0041_employee_payslips",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1789480000000,
+      "tag": "0042_company_library",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1789490000000,
+      "tag": "0043_insurance_documents",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1789500000000,
+      "tag": "0044_hr_owned_employment_setup",
+      "breakpoints": true
     }
   ]
 }

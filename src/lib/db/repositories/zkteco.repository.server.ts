@@ -2,7 +2,7 @@ import "@tanstack/react-start/server-only";
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
-import { and, asc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 
 import { getDatabaseClient, type ViaHrDatabase } from "../client.ts";
 import { decryptSensitiveJson, encryptSensitiveJson } from "../encryption.server.ts";
@@ -17,6 +17,7 @@ import {
   attendancePolicies,
   attendancePunchEvents,
   attendanceRecords,
+  siteVisitRequests,
 } from "../schema/time.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 
@@ -260,7 +261,7 @@ async function projectDailyAttendance(
   );
   const effectiveEvents = deduplicatePunchTimes(allEvents, deduplicationMs);
   const effectiveIndex = effectiveEvents.indexOf(eventDateMarker);
-  const direction =
+  let direction =
     effectiveIndex >= 0
       ? effectiveIndex % 2 === 0
         ? "in"
@@ -282,6 +283,36 @@ async function projectDailyAttendance(
     .for("update")
     .limit(1);
   const recordId = existing?.id ?? randomUUID();
+  const [siteVisit] = await tx
+    .select()
+    .from(siteVisitRequests)
+    .where(
+      and(
+        eq(siteVisitRequests.organisationId, input.organisationId),
+        eq(siteVisitRequests.employeeId, input.employeeId),
+        eq(siteVisitRequests.date, date),
+        inArray(siteVisitRequests.status, ["Pending HR", "Approved", "Completed"]),
+        sql`${siteVisitRequests.details}->>'returnPlan' IS NOT NULL AND ${siteVisitRequests.details}->>'finishedAt' IS NULL`,
+        sql`${siteVisitRequests.startTime} < ${zonedParts(eventDate, timezone).time}`,
+      ),
+    )
+    .orderBy(desc(siteVisitRequests.startTime))
+    .for("update")
+    .limit(1);
+  // During a flexible visit, respect a terminal's explicit IN/OUT marker instead of
+  // treating a return IN as the day's final OUT. Unknown device modes retain legacy handling.
+  const siteDirectionKnown = !!siteVisit && (input.status === 0 || input.status === 1);
+  if (siteDirectionKnown) direction = input.status === 0 ? "in" : "out";
+  if (siteVisit && siteDirectionKnown && direction === "in" && !siteVisit.details.returnedAt) {
+    await tx
+      .update(siteVisitRequests)
+      .set({
+        details: { ...siteVisit.details, returnedAt: input.occurredAt },
+        updatedAt: new Date(),
+        updatedBy: input.deviceId,
+      })
+      .where(eq(siteVisitRequests.id, siteVisit.id));
+  }
   if (!existing) {
     await tx.insert(attendanceRecords).values({
       id: recordId,
@@ -323,9 +354,14 @@ async function projectDailyAttendance(
     .returning({ id: attendancePunchEvents.id });
   if (!event) throw new Error("The terminal punch could not be recorded.");
 
-  const clockInAt = effectiveEvents[0]!.toISOString();
-  const clockOutAt =
+  const clockInAt =
+    siteVisit && existing?.clockInAt && new Date(existing.clockInAt) < effectiveEvents[0]!
+      ? existing.clockInAt
+      : effectiveEvents[0]!.toISOString();
+  let clockOutAt =
     effectiveEvents.length > 1 ? effectiveEvents[effectiveEvents.length - 1]!.toISOString() : null;
+  if (siteDirectionKnown && effectiveIndex === effectiveEvents.length - 1)
+    clockOutAt = direction === "out" ? input.occurredAt : null;
   const breakMinutes = existing?.breakMinutes ?? policy?.defaultBreakMinutes ?? 0;
   const hours = clockOutAt
     ? Math.max(
@@ -342,7 +378,9 @@ async function projectDailyAttendance(
   const isLate = minutes(localClockIn) > minutes(expectedIn) + (policy?.lateGraceMinutes ?? 0);
   const isEarlyDeparture = Boolean(localClockOut && minutes(localClockOut) < minutes(expectedOut));
   const automaticProjection =
-    !existing || ["Web", "Hardware Terminal", "Multiple Sources"].includes(existing.source);
+    !existing ||
+    ["Web", "Hardware Terminal", "Multiple Sources"].includes(existing.source) ||
+    (siteDirectionKnown && existing.source === "Site Visit Auto");
 
   if (
     automaticProjection &&

@@ -39,6 +39,7 @@ import { LifecycleTaskService } from "@/lib/data/lifecycle-task-service";
 import { MasterDataService } from "@/lib/data/master-data";
 import type { OnboardingTask } from "@/lib/data/onboarding-types";
 import type { DocumentType, Employee, MasterRecord } from "@/lib/data/types";
+import { isHrOwnedSetupTask } from "@/lib/data/hr-owned-fields";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
@@ -100,10 +101,17 @@ interface Props {
   employeeId: string;
   onAllComplete?: () => void;
   compact?: boolean;
+  hrEmploymentOnly?: boolean;
 }
 
-export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }: Props) {
-  const { getActorContext } = useCurrentUser();
+export function SelfServiceOnboardingForm({
+  employeeId,
+  onAllComplete,
+  compact,
+  hrEmploymentOnly,
+}: Props) {
+  const { getActorContext, activeRole, userId, workspaceEmail } = useCurrentUser();
+  const hrMode = !!hrEmploymentOnly && ["HR", "Super Admin"].includes(activeRole);
   const [empService] = useState(() => new EmployeeService());
   const [obService] = useState(() => new OnboardingService());
   const [taskActions] = useState(() => new LifecycleTaskService());
@@ -139,7 +147,11 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
 
   const employee = empService.getById(employeeId, getActorContext());
   const obCase = obService.getCaseByEmployeeId(employeeId, getActorContext());
-  const tasks = obService.getSelfServiceTasks(employeeId, getActorContext());
+  const tasks = hrMode
+    ? (obCase?.tasks ?? []).filter(isHrOwnedSetupTask)
+    : obService
+        .getSelfServiceTasks(employeeId, getActorContext())
+        .filter((task) => !isHrOwnedSetupTask(task));
   const isRecordCompletion = obCase?.kind === "Employee Record Completion";
   const processName = isRecordCompletion ? "employee record completion" : "onboarding";
 
@@ -267,20 +279,24 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
         <CardContent className="py-4 flex items-center justify-between gap-4">
           <div>
             <div className="font-medium">
-              {allDone
-                ? isRecordCompletion
-                  ? "All required employee details submitted"
-                  : "All required onboarding details submitted"
-                : isRecordCompletion
-                  ? "Complete your employee record"
-                  : "Complete your onboarding details"}
+              {hrMode
+                ? "HR employment and immigration setup"
+                : allDone
+                  ? isRecordCompletion
+                    ? "All required employee details submitted"
+                    : "All required onboarding details submitted"
+                  : isRecordCompletion
+                    ? "Complete your employee record"
+                    : "Complete your onboarding details"}
             </div>
             <div className="text-sm text-muted-foreground">
-              {allDone
-                ? "Thank you - HR and Finance have what they need to set up your record and payroll."
-                : isRecordCompletion
-                  ? "Complete the information below so VIA has an accurate and current employee record."
-                  : "HR and Finance need the information below before your first pay run and to activate your record."}
+              {hrMode
+                ? "Complete and confirm the employee's employment details here. Immigration documents are managed by HR only."
+                : allDone
+                  ? "Thank you - HR and Finance have what they need to set up your record and payroll."
+                  : isRecordCompletion
+                    ? "Complete the information below so VIA has an accurate and current employee record."
+                    : "HR and Finance need the information below before your first pay run and to activate your record."}
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -297,7 +313,13 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
         </CardContent>
       </Card>
 
-      {employmentTask && (
+      {!hrMode && (
+        <p className="text-sm text-muted-foreground">
+          HR will add your employment details. Once confirmed, they will appear read-only in My
+          Profile.
+        </p>
+      )}
+      {hrMode && employmentTask && (
         <EmploymentDetailsSection
           employee={employee}
           task={employmentTask}
@@ -314,6 +336,18 @@ export function SelfServiceOnboardingForm({ employeeId, onAllComplete, compact }
                 { kind: "employment_details", details },
                 getActorContext(),
               );
+              const { decideEmploymentDetailsFn } =
+                await import("@/lib/server-functions/core-hr-lifecycle.server");
+              await decideEmploymentDetailsFn({
+                data: {
+                  actor: { actorId: userId, actorEmail: workspaceEmail, activeRole },
+                  employeeId:
+                    (employee as Employee & { databaseId?: string }).databaseId ?? employee.id,
+                  decision: "Confirmed",
+                  note: "Employment details completed by HR",
+                },
+              });
+              await empService.hydrateCompatibilityCache(getActorContext());
               releaseIfEmployeeSetupComplete(updated.tasks);
               toast.success("Employment details saved");
               refresh();
@@ -483,7 +517,8 @@ function EmploymentDetailsSection({
         employee.proposedEmploymentDetails?.lineManagerEmail ??
         employee.proposedLineManagerEmail ??
         "",
-      visaRequired: employee.proposedEmploymentDetails?.visaRequired ?? true,
+      visaRequired:
+        employee.proposedEmploymentDetails?.visaRequired ?? employee.visaRequired ?? true,
     },
   });
   const entryType = form.watch("staffEntryType");

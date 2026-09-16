@@ -118,7 +118,7 @@ test("public application progresses through shortlist, interview, offer and onbo
 
   await page.goto("/staff/vacancies");
   await page.getByText("Logistics Operations Lead", { exact: true }).click();
-  await page.getByRole("tab", { name: "Scoring & Shortlist" }).click();
+  await page.getByRole("link", { name: "Scoring & Shortlist" }).click();
   await page
     .getByText("People to assess", { exact: true })
     .locator("..")
@@ -135,7 +135,7 @@ test("public application progresses through shortlist, interview, offer and onbo
 
   await page.getByText("Browser Candidate", { exact: true }).last().click();
   await expect(page.getByText("Canonical Details")).toBeVisible();
-  await page.getByRole("tab", { name: /^Interviews/ }).click();
+  await page.getByRole("link", { name: /^Interviews/ }).click();
   const templateName = await page.evaluate(async (suffix) => {
     const actor = {
       actor: {
@@ -175,7 +175,7 @@ test("public application progresses through shortlist, interview, offer and onbo
   }, unique);
   await page.reload();
   await expect(page.getByText("Canonical Details")).toBeVisible();
-  await page.getByRole("tab", { name: /^Interviews/ }).click();
+  await page.getByRole("link", { name: /^Interviews/ }).click();
   await page.getByRole("button", { name: "Schedule Interview" }).click();
   const dialog = page.getByRole("dialog", { name: "Schedule Interview" });
   const templateSelect = dialog
@@ -192,7 +192,7 @@ test("public application progresses through shortlist, interview, offer and onbo
     .first()
     .click();
   await dialog.getByRole("button", { name: "Schedule Interview" }).click();
-  await page.getByRole("tab", { name: /^Interviews/ }).click();
+  await page.getByRole("link", { name: /^Interviews/ }).click();
   await expect(page.getByText("Scheduled", { exact: true })).toBeVisible();
 
   const completion = await page.evaluate(

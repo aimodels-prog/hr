@@ -9,6 +9,7 @@ import { differenceInCalendarDays, parseISO } from "date-fns";
 import { CandidateService } from "@/lib/data/candidate-service";
 import { useCurrentUser } from "@/lib/auth";
 import { Link } from "@tanstack/react-router";
+import { canSeeEmploymentDetails } from "@/lib/data/hr-owned-fields";
 
 export function OverviewTab({
   employee,
@@ -103,6 +104,16 @@ export function OverviewTab({
     /* ignore */
   }
 
+  if (!canSeeEmploymentDetails(employee.employmentConfirmationStatus, currentUser.activeRole)) {
+    return (
+      <Card>
+        <CardContent className="py-6 text-sm text-muted-foreground">
+          HR will add your employment details. You can complete your personal information and
+          documents while you wait.
+        </CardContent>
+      </Card>
+    );
+  }
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

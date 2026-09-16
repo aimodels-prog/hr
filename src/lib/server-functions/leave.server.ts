@@ -3,6 +3,7 @@ import * as z from "zod";
 
 import {
   approveLeaveRequestInDatabase,
+  grantSickLeaveBackdatePermission,
   createLeaveRequestInDatabase,
   exportLeaveRequestsCsvInDatabase,
   listLeaveSnapshotForActor,
@@ -231,6 +232,33 @@ export const exportLeaveRequestsFn = createServerFn({ method: "POST" })
         ...(data.endDate ? { endDate: data.endDate } : {}),
         ...(data.status ? { status: data.status } : {}),
         ...(data.departmentId ? { departmentId: data.departmentId } : {}),
+      },
+      verified.actor,
+    );
+  });
+
+export const grantSickLeaveBackdatePermissionFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: Actor,
+        employeeId: z.string().uuid(),
+        startDate: z.string().date(),
+        endDate: z.string().date(),
+        reason: z.string().trim().min(5).max(2000),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await verify(data.actor);
+    return grantSickLeaveBackdatePermission(
+      verified.organisationId,
+      {
+        employeeId: data.employeeId,
+        startDate: data.startDate,
+        endDate: data.endDate,
+        reason: data.reason,
       },
       verified.actor,
     );

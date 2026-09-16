@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { isHrOwnedSetupTask } from "../../data/hr-owned-fields.ts";
 
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
@@ -181,10 +182,10 @@ function auditValues(
 const defaultOnboardingTasks: OnboardingTemplateTask[] = [
   {
     id: "employment-details",
-    title: "Confirm your employment details",
+    title: "HR: complete employment details",
     group: "Employment Setup",
     checkpoint: "Pre-Arrival",
-    ownerRole: "Employee",
+    ownerRole: "HR",
     offsetDaysFromStart: 0,
     isMandatory: true,
     requiresEvidence: false,
@@ -1079,8 +1080,8 @@ export async function createOnboardingCaseInDatabase(
           title: task.title,
           taskGroup: task.group,
           checkpoint: task.checkpoint,
-          ownerRole: task.ownerRole,
-          assignedUserId: task.assignedUserId,
+          ownerRole: isHrOwnedSetupTask(task) ? "HR" : task.ownerRole,
+          assignedUserId: isHrOwnedSetupTask(task) ? null : task.assignedUserId,
           offsetDaysFromStart: task.offsetDaysFromStart,
           dueDate: dateWithOffset(employee.startDate, task.offsetDaysFromStart),
           isMandatory: task.isMandatory,
@@ -1423,6 +1424,8 @@ export async function saveOnboardingSelfServiceInDatabase(
       },
   actor: AuditActorContext,
 ): Promise<void> {
+  if (input.kind === "employment_details" && !["HR", "Super Admin"].includes(actor.activeRole))
+    throw new Error("Only HR can complete employment details.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
     const [row] = await tx
@@ -1441,9 +1444,14 @@ export async function saveOnboardingSelfServiceInDatabase(
       .limit(1);
     if (!row || row.lifecycle.status !== "In Progress")
       throw new Error("Active onboarding could not be found.");
-    if (row.employee.id !== actor.employeeId)
+    if (input.kind === "employment_details" && row.employee.id === actor.employeeId)
+      throw new Error("Another HR colleague must complete your employment details.");
+    if (input.kind !== "employment_details" && row.employee.id !== actor.employeeId)
       throw new Error("You can submit onboarding information only for your own record.");
-    if (row.task.ownerRole !== "Employee" || row.task.selfServiceFormKey !== input.kind)
+    if (
+      (input.kind !== "employment_details" && row.task.ownerRole !== "Employee") ||
+      row.task.selfServiceFormKey !== input.kind
+    )
       throw new Error("This onboarding form is not assigned to the current task.");
     if (row.task.status === "Completed" || row.task.status === "Waived")
       throw new Error("This onboarding task has already been completed.");
@@ -1595,7 +1603,7 @@ export async function saveOnboardingSelfServiceInDatabase(
             recipientUserId: reviewer.userId,
             type: "employment_details.review_requested",
             title: "Employment details awaiting confirmation",
-            message: `${actor.displayName} submitted their employment details for confirmation.`,
+            message: `${actor.displayName} prepared employment details for ${row.employee.legalName}.`,
             priority: "High",
             status: "Unread",
             deduplicationKey: `employment-review-${row.employee.id}-${reviewer.userId}`,
@@ -1615,7 +1623,7 @@ export async function saveOnboardingSelfServiceInDatabase(
             ],
             set: {
               status: "Unread",
-              message: `${actor.displayName} resubmitted their employment details for confirmation.`,
+              message: `${actor.displayName} updated employment details for ${row.employee.legalName}.`,
               updatedAt: new Date(),
               updatedBy: actor.userId,
             },
@@ -1643,7 +1651,19 @@ export async function saveOnboardingSelfServiceInDatabase(
             taskGroup: "Contract & Payroll",
             checkpoint: "Pre-Arrival",
             ownerRole: "Employee",
-            assignedUserId: actor.userId,
+            assignedUserId:
+              (
+                await tx
+                  .select({ id: users.id })
+                  .from(users)
+                  .where(
+                    and(
+                      eq(users.organisationId, organisationId),
+                      eq(users.employeeId, row.employee.id),
+                    ),
+                  )
+                  .limit(1)
+              )[0]?.id ?? null,
             offsetDaysFromStart: 0,
             dueDate: details.startDate,
             isMandatory: true,
@@ -1659,7 +1679,7 @@ export async function saveOnboardingSelfServiceInDatabase(
           .update(onboardingTasks)
           .set({
             status: "Waived",
-            waiverReason: "Employee confirmed that a visa or work permit is not required",
+            waiverReason: "HR confirmed that a visa or work permit is not required",
             updatedAt: new Date(),
             updatedBy: actor.userId,
             recordVersion: sql`${onboardingTasks.recordVersion} + 1`,
@@ -1961,6 +1981,7 @@ export async function decideEmploymentDetailsInDatabase(
               legalName: proposed.legalName,
               preferredName: proposed.preferredName,
               staffEntryType: proposed.staffEntryType,
+              visaRequired: proposed.visaRequired,
               startDate: proposed.startDate,
               probationEndDate:
                 proposed.staffEntryType === "New Employee"
@@ -2017,7 +2038,7 @@ export async function decideEmploymentDetailsInDatabase(
       .from(users)
       .where(and(eq(users.organisationId, organisationId), eq(users.employeeId, employee.id)))
       .limit(1);
-    if (employeeUser) {
+    if (employeeUser && input.decision === "Confirmed") {
       await tx.insert(notifications).values({
         organisationId,
         recipientUserId: employeeUser.id,
@@ -2039,7 +2060,7 @@ export async function decideEmploymentDetailsInDatabase(
         link: {
           entityType: "employee",
           entityId: employee.id,
-          path: "/staff/me/onboarding",
+          path: "/staff/me/profile",
         },
         createdBy: actor.userId,
         updatedBy: actor.userId,

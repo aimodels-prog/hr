@@ -70,6 +70,8 @@ export const documentType = pgEnum("document_type", [
   "education_certificate",
   "professional_certificate",
   "bank_evidence",
+  "insurance_card",
+  "insurance_benefits",
   "other",
 ]);
 
@@ -129,6 +131,10 @@ export const employeeDocuments = pgTable(
     check(
       "employee_documents_date_order",
       sql`${table.issueDate} IS NULL OR ${table.expiryDate} IS NULL OR ${table.expiryDate} >= ${table.issueDate}`,
+    ),
+    check(
+      "insurance_documents_private",
+      sql`${table.type}::text NOT IN ('insurance_card','insurance_benefits') OR ${table.visibility} = 'Restricted'`,
     ),
     check(
       "employee_documents_replacement_not_self",

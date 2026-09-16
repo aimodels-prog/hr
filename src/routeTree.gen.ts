@@ -23,6 +23,7 @@ import { Route as StaffAnniversariesRouteImport } from './routes/staff/anniversa
 import { Route as StaffAttendanceRouteImport } from './routes/staff/attendance'
 import { Route as StaffAuditRouteImport } from './routes/staff/audit'
 import { Route as StaffCandidatesRouteImport } from './routes/staff/candidates'
+import { Route as StaffCompanyLibraryRouteImport } from './routes/staff/company-library'
 import { Route as StaffDocumentExpiryRouteImport } from './routes/staff/document-expiry'
 import { Route as StaffDocumentsRouteImport } from './routes/staff/documents'
 import { Route as StaffFilesRouteImport } from './routes/staff/files'
@@ -39,6 +40,7 @@ import { Route as StaffOpportunitiesRouteImport } from './routes/staff/opportuni
 import { Route as StaffOrgChartRouteImport } from './routes/staff/org-chart'
 import { Route as StaffOvertimeApprovalsRouteImport } from './routes/staff/overtime-approvals'
 import { Route as StaffPayrollRouteImport } from './routes/staff/payroll'
+import { Route as StaffPayslipsRouteImport } from './routes/staff/payslips'
 import { Route as StaffPerformanceRouteImport } from './routes/staff/performance'
 import { Route as StaffRecommendationsRouteImport } from './routes/staff/recommendations'
 import { Route as StaffReportsRouteImport } from './routes/staff/reports'
@@ -170,6 +172,11 @@ const StaffCandidatesRoute = StaffCandidatesRouteImport.update({
   path: '/candidates',
   getParentRoute: () => StaffRoute,
 } as any)
+const StaffCompanyLibraryRoute = StaffCompanyLibraryRouteImport.update({
+  id: '/company-library',
+  path: '/company-library',
+  getParentRoute: () => StaffRoute,
+} as any)
 const StaffDocumentExpiryRoute = StaffDocumentExpiryRouteImport.update({
   id: '/document-expiry',
   path: '/document-expiry',
@@ -248,6 +255,11 @@ const StaffOvertimeApprovalsRoute = StaffOvertimeApprovalsRouteImport.update({
 const StaffPayrollRoute = StaffPayrollRouteImport.update({
   id: '/payroll',
   path: '/payroll',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffPayslipsRoute = StaffPayslipsRouteImport.update({
+  id: '/payslips',
+  path: '/payslips',
   getParentRoute: () => StaffRoute,
 } as any)
 const StaffPerformanceRoute = StaffPerformanceRouteImport.update({
@@ -581,6 +593,7 @@ export interface FileRoutesByFullPath {
   '/staff/attendance': typeof StaffAttendanceRouteWithChildren
   '/staff/audit': typeof StaffAuditRoute
   '/staff/candidates': typeof StaffCandidatesRouteWithChildren
+  '/staff/company-library': typeof StaffCompanyLibraryRoute
   '/staff/document-expiry': typeof StaffDocumentExpiryRoute
   '/staff/documents': typeof StaffDocumentsRoute
   '/staff/files': typeof StaffFilesRoute
@@ -597,6 +610,7 @@ export interface FileRoutesByFullPath {
   '/staff/org-chart': typeof StaffOrgChartRoute
   '/staff/overtime-approvals': typeof StaffOvertimeApprovalsRoute
   '/staff/payroll': typeof StaffPayrollRouteWithChildren
+  '/staff/payslips': typeof StaffPayslipsRoute
   '/staff/performance': typeof StaffPerformanceRouteWithChildren
   '/staff/recommendations': typeof StaffRecommendationsRouteWithChildren
   '/staff/reports': typeof StaffReportsRoute
@@ -670,6 +684,7 @@ export interface FileRoutesByTo {
   '/jobs/applied': typeof JobsAppliedRoute
   '/staff/anniversaries': typeof StaffAnniversariesRoute
   '/staff/audit': typeof StaffAuditRoute
+  '/staff/company-library': typeof StaffCompanyLibraryRoute
   '/staff/document-expiry': typeof StaffDocumentExpiryRoute
   '/staff/documents': typeof StaffDocumentsRoute
   '/staff/files': typeof StaffFilesRoute
@@ -683,6 +698,7 @@ export interface FileRoutesByTo {
   '/staff/opportunities': typeof StaffOpportunitiesRoute
   '/staff/org-chart': typeof StaffOrgChartRoute
   '/staff/overtime-approvals': typeof StaffOvertimeApprovalsRoute
+  '/staff/payslips': typeof StaffPayslipsRoute
   '/staff/performance': typeof StaffPerformanceRouteWithChildren
   '/staff/reports': typeof StaffReportsRoute
   '/staff/settings': typeof StaffSettingsRoute
@@ -757,6 +773,7 @@ export interface FileRoutesById {
   '/staff/attendance': typeof StaffAttendanceRouteWithChildren
   '/staff/audit': typeof StaffAuditRoute
   '/staff/candidates': typeof StaffCandidatesRouteWithChildren
+  '/staff/company-library': typeof StaffCompanyLibraryRoute
   '/staff/document-expiry': typeof StaffDocumentExpiryRoute
   '/staff/documents': typeof StaffDocumentsRoute
   '/staff/files': typeof StaffFilesRoute
@@ -773,6 +790,7 @@ export interface FileRoutesById {
   '/staff/org-chart': typeof StaffOrgChartRoute
   '/staff/overtime-approvals': typeof StaffOvertimeApprovalsRoute
   '/staff/payroll': typeof StaffPayrollRouteWithChildren
+  '/staff/payslips': typeof StaffPayslipsRoute
   '/staff/performance': typeof StaffPerformanceRouteWithChildren
   '/staff/recommendations': typeof StaffRecommendationsRouteWithChildren
   '/staff/reports': typeof StaffReportsRoute
@@ -851,6 +869,7 @@ export interface FileRouteTypes {
     | '/staff/attendance'
     | '/staff/audit'
     | '/staff/candidates'
+    | '/staff/company-library'
     | '/staff/document-expiry'
     | '/staff/documents'
     | '/staff/files'
@@ -867,6 +886,7 @@ export interface FileRouteTypes {
     | '/staff/org-chart'
     | '/staff/overtime-approvals'
     | '/staff/payroll'
+    | '/staff/payslips'
     | '/staff/performance'
     | '/staff/recommendations'
     | '/staff/reports'
@@ -940,6 +960,7 @@ export interface FileRouteTypes {
     | '/jobs/applied'
     | '/staff/anniversaries'
     | '/staff/audit'
+    | '/staff/company-library'
     | '/staff/document-expiry'
     | '/staff/documents'
     | '/staff/files'
@@ -953,6 +974,7 @@ export interface FileRouteTypes {
     | '/staff/opportunities'
     | '/staff/org-chart'
     | '/staff/overtime-approvals'
+    | '/staff/payslips'
     | '/staff/performance'
     | '/staff/reports'
     | '/staff/settings'
@@ -1026,6 +1048,7 @@ export interface FileRouteTypes {
     | '/staff/attendance'
     | '/staff/audit'
     | '/staff/candidates'
+    | '/staff/company-library'
     | '/staff/document-expiry'
     | '/staff/documents'
     | '/staff/files'
@@ -1042,6 +1065,7 @@ export interface FileRouteTypes {
     | '/staff/org-chart'
     | '/staff/overtime-approvals'
     | '/staff/payroll'
+    | '/staff/payslips'
     | '/staff/performance'
     | '/staff/recommendations'
     | '/staff/reports'
@@ -1218,6 +1242,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StaffCandidatesRouteImport
       parentRoute: typeof StaffRoute
     }
+    '/staff/company-library': {
+      id: '/staff/company-library'
+      path: '/company-library'
+      fullPath: '/staff/company-library'
+      preLoaderRoute: typeof StaffCompanyLibraryRouteImport
+      parentRoute: typeof StaffRoute
+    }
     '/staff/document-expiry': {
       id: '/staff/document-expiry'
       path: '/document-expiry'
@@ -1328,6 +1359,13 @@ declare module '@tanstack/react-router' {
       path: '/payroll'
       fullPath: '/staff/payroll'
       preLoaderRoute: typeof StaffPayrollRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/payslips': {
+      id: '/staff/payslips'
+      path: '/payslips'
+      fullPath: '/staff/payslips'
+      preLoaderRoute: typeof StaffPayslipsRouteImport
       parentRoute: typeof StaffRoute
     }
     '/staff/performance': {
@@ -1914,6 +1952,7 @@ interface StaffRouteChildren {
   StaffAttendanceRoute: typeof StaffAttendanceRouteWithChildren
   StaffAuditRoute: typeof StaffAuditRoute
   StaffCandidatesRoute: typeof StaffCandidatesRouteWithChildren
+  StaffCompanyLibraryRoute: typeof StaffCompanyLibraryRoute
   StaffDocumentExpiryRoute: typeof StaffDocumentExpiryRoute
   StaffDocumentsRoute: typeof StaffDocumentsRoute
   StaffFilesRoute: typeof StaffFilesRoute
@@ -1930,6 +1969,7 @@ interface StaffRouteChildren {
   StaffOrgChartRoute: typeof StaffOrgChartRoute
   StaffOvertimeApprovalsRoute: typeof StaffOvertimeApprovalsRoute
   StaffPayrollRoute: typeof StaffPayrollRouteWithChildren
+  StaffPayslipsRoute: typeof StaffPayslipsRoute
   StaffPerformanceRoute: typeof StaffPerformanceRouteWithChildren
   StaffRecommendationsRoute: typeof StaffRecommendationsRouteWithChildren
   StaffReportsRoute: typeof StaffReportsRoute
@@ -1970,6 +2010,7 @@ const StaffRouteChildren: StaffRouteChildren = {
   StaffAttendanceRoute: StaffAttendanceRouteWithChildren,
   StaffAuditRoute: StaffAuditRoute,
   StaffCandidatesRoute: StaffCandidatesRouteWithChildren,
+  StaffCompanyLibraryRoute: StaffCompanyLibraryRoute,
   StaffDocumentExpiryRoute: StaffDocumentExpiryRoute,
   StaffDocumentsRoute: StaffDocumentsRoute,
   StaffFilesRoute: StaffFilesRoute,
@@ -1986,6 +2027,7 @@ const StaffRouteChildren: StaffRouteChildren = {
   StaffOrgChartRoute: StaffOrgChartRoute,
   StaffOvertimeApprovalsRoute: StaffOvertimeApprovalsRoute,
   StaffPayrollRoute: StaffPayrollRouteWithChildren,
+  StaffPayslipsRoute: StaffPayslipsRoute,
   StaffPerformanceRoute: StaffPerformanceRouteWithChildren,
   StaffRecommendationsRoute: StaffRecommendationsRouteWithChildren,
   StaffReportsRoute: StaffReportsRoute,

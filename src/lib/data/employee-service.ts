@@ -30,6 +30,8 @@ const PERSONAL_PROFILE_FIELDS = new Set<keyof Employee>([
 ]);
 
 const EMPLOYMENT_EDIT_FIELDS = new Set<keyof Employee>([
+  "staffEntryType",
+  "visaRequired",
   "department",
   "position",
   "grade",
@@ -1179,6 +1181,8 @@ export class EmployeeService {
         grade: changes.grade,
         location: changes.location,
         employmentType: changes.employmentType,
+        staffEntryType: changes.staffEntryType,
+        visaRequired: changes.visaRequired,
         lineManagerId,
         projectId,
         costCentreId,

@@ -72,6 +72,8 @@ const documentSchema = z
       "education_certificate",
       "professional_certificate",
       "bank_evidence",
+      "insurance_card",
+      "insurance_benefits",
       "other",
     ]),
     documentNumber: z.string().optional(),
@@ -198,6 +200,10 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
     },
   });
   const selectedDocumentType = form.watch("type");
+  const isInsuranceDocument = selectedDocumentType.startsWith("insurance_");
+  useEffect(() => {
+    if (isInsuranceDocument) form.setValue("visibility", "Restricted");
+  }, [isInsuranceDocument, form]);
   const hrCompletesVisaDetails =
     isSelf && (selectedDocumentType === "visa" || selectedDocumentType === "work_permit");
 
@@ -454,12 +460,20 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
                               "education_certificate",
                               "professional_certificate",
                               "bank_evidence",
+                              "insurance_card",
+                              "insurance_benefits",
                               "other",
-                            ].map((t) => (
-                              <SelectItem key={t} value={t}>
-                                {t.replace("_", " ").replace(/\b\w/g, (l) => l.toUpperCase())}
-                              </SelectItem>
-                            ))}
+                            ]
+                              .filter((t) => !["visa", "work_permit"].includes(t) || isHrOrAdmin)
+                              .map((t) => (
+                                <SelectItem key={t} value={t}>
+                                  {t === "insurance_benefits"
+                                    ? "Insurance Table of Benefits"
+                                    : t
+                                        .replaceAll("_", " ")
+                                        .replace(/\b\w/g, (l) => l.toUpperCase())}
+                                </SelectItem>
+                              ))}
                           </SelectContent>
                         </Select>
                         <FormMessage />
@@ -497,7 +511,8 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
                             <FormLabel>Visibility</FormLabel>
                             <Select
                               onValueChange={field.onChange}
-                              defaultValue={field.value as string}
+                              value={field.value as string}
+                              disabled={isInsuranceDocument}
                             >
                               <FormControl>
                                 <SelectTrigger>
@@ -506,7 +521,9 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
                               </FormControl>
                               <SelectContent>
                                 <SelectItem value="Public">Standard (Public)</SelectItem>
-                                <SelectItem value="Restricted">Restricted (HR Only)</SelectItem>
+                                <SelectItem value="Restricted">
+                                  Restricted (employee & HR)
+                                </SelectItem>
                               </SelectContent>
                             </Select>
                             <FormMessage />

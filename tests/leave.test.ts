@@ -4,12 +4,13 @@ import test from "node:test";
 import { configureApplicationDataServices } from "../src/lib/data/application-data.ts";
 import { AuditService } from "../src/lib/data/audit-service.ts";
 import { LeaveService } from "../src/lib/data/leave-service.ts";
+import { getLeaveEligibility, isOmaniNationality } from "../src/lib/data/leave-eligibility.ts";
 import type { LeavePolicy, LeaveTransaction } from "../src/lib/data/leave-types.ts";
 import { NotificationService } from "../src/lib/data/notification-service.ts";
 import { initializeSeedData } from "../src/lib/data/seed-service.ts";
 import { MemoryStorageDriver } from "../src/lib/data/storage-driver.ts";
 import { VersionedStorageService } from "../src/lib/data/storage.ts";
-import type { ActorContext, Employee } from "../src/lib/data/types.ts";
+import type { ActorContext, Employee, User, Notification } from "../src/lib/data/types.ts";
 import { getMasterDataRepository } from "../src/lib/data/master-data.ts";
 import type { FileRepository, SaveFileInput } from "../src/lib/data/file-repository.ts";
 import type { FileMetadata } from "../src/lib/data/types.ts";
@@ -105,6 +106,75 @@ function harness() {
   configureApplicationDataServices({ storage, audit, notifications, files });
   return { service: new LeaveService(), audit, storage, files };
 }
+
+test("Omani nationality accepts exact standard codes and names, not similar text", () => {
+  for (const value of ["Omani", " oman ", "OM", "omn", "عماني", "عُماني", "عمانية", "عمان"]) {
+    assert.equal(isOmaniNationality(value), true, value);
+  }
+  for (const value of [undefined, null, "", "Indian", "Romanian", "Non-Omani", "Omani resident"]) {
+    assert.equal(isOmaniNationality(value), false, String(value));
+  }
+});
+
+test("statutory nationality rules override stale metadata without altering other requirements", () => {
+  for (const type of ["Exam", "AccompanyPatient"]) {
+    assert.equal(getLeaveEligibility({ type, isStatutory: true }).omaniOnly, true);
+    assert.deepEqual(
+      getLeaveEligibility({
+        type,
+        isStatutory: true,
+        eligibility: { omaniOnly: false, minimumServiceMonths: 12 },
+      }),
+      { omaniOnly: true, minimumServiceMonths: 12 },
+    );
+  }
+  assert.deepEqual(
+    getLeaveEligibility({
+      type: "Hajj",
+      isStatutory: true,
+      eligibility: { omaniOnly: true, minimumServiceMonths: 12 },
+    }),
+    { omaniOnly: false, minimumServiceMonths: 12 },
+  );
+  assert.equal(
+    getLeaveEligibility({ type: "Exam", isStatutory: false, eligibility: { omaniOnly: false } })
+      .omaniOnly,
+    false,
+  );
+});
+
+test("self-service filters statutory Omani-only policies using the employee profile", () => {
+  const { service, storage } = harness();
+  const employees = storage.readCollection<Employee>("employees");
+  for (const nationality of ["Indian", "", "OMN"]) {
+    storage.writeCollection(
+      "employees",
+      employees.map((item) =>
+        item.id === employee.actor.employeeId ? { ...item, nationality } : item,
+      ),
+    );
+    const eligible = service.getEligiblePolicies(employee.actor.employeeId!, employee);
+    for (const type of ["Exam", "AccompanyPatient"]) {
+      assert.equal(
+        eligible.some((policy) => policy.type === type),
+        nationality === "OMN",
+        `${type}: ${nationality}`,
+      );
+    }
+    assert.ok(eligible.some((policy) => policy.type === "Hajj"));
+  }
+  const hajj = service.getPolicies().find((policy) => policy.type === "Hajj")!;
+  assert.equal(hajj.eligibility?.minimumServiceMonths, 12);
+  assert.equal(hajj.requiresAttachment, true);
+  assert.equal(hajj.scope, "Once Per Service");
+  assert.equal(hajj.baseEntitlementDays, 15);
+  const exam = service.getPolicies().find((policy) => policy.type === "Exam")!;
+  service.updatePolicy(exam.id, { eligibility: { omaniOnly: false } }, hr);
+  assert.equal(
+    service.getPolicies().find((policy) => policy.id === exam.id)?.eligibility?.omaniOnly,
+    true,
+  );
+});
 
 test("active public holidays are excluded from requested working days", () => {
   const { service } = harness();
@@ -549,7 +619,7 @@ test("working days are computed from the configured working week, not a hardcode
   assert.equal(service.calculateWorkingDays("2026-08-28", "2026-08-29", false), 0);
 });
 
-test("submitting a leave request notifies the assigned line manager for a manager-first policy", async () => {
+test("submitting leave notifies the manager for approval and HR for information", async () => {
   const { service, storage } = harness();
   const annualPolicy = service.getPolicies().find((policy) => policy.type === "Annual");
   assert.ok(annualPolicy);
@@ -566,14 +636,67 @@ test("submitting a leave request notifies the assigned line manager for a manage
     employee,
   );
 
-  const notifications = storage.readCollection<{ recipientUserId: string; title: string }>(
-    "notifications",
-  );
+  const notifications = storage.readCollection<{
+    recipientUserId: string;
+    title: string;
+    type: string;
+    priority: string;
+    message: string;
+    link: { path: string };
+  }>("notifications");
   assert.ok(
     notifications.some(
       (item) => item.recipientUserId === "user-layla" && item.title.includes("awaiting"),
     ),
   );
+  const hrNotice = notifications.find(
+    (item) => item.recipientUserId === "user-rana" && item.type === "leave_submitted",
+  );
+  assert.ok(hrNotice);
+  assert.equal(hrNotice.priority, "Normal");
+  assert.match(hrNotice.message, /no HR action is required yet/);
+  assert.doesNotMatch(hrNotice.message, /Personal appointment/);
+  assert.equal(hrNotice.link.path, "/staff/leave-admin");
+});
+
+test("an HR manager receives one approval notification and suspended HR receives no submission notice", async () => {
+  const { service, storage } = harness();
+  const users = storage.readCollection<User>("users");
+  const hrUser = users.find((user) => user.id === "user-rana")!;
+  storage.writeCollection("users", [
+    ...users.map((user) =>
+      user.id === "user-layla"
+        ? { ...user, roles: ["Employee", "Line Manager", "HR"] }
+        : user.id === hrUser.id
+          ? { ...user, status: "Suspended" }
+          : user,
+    ),
+    { ...hrUser, id: "user-second-hr", workspaceEmail: "second-hr@viahr.test" },
+  ]);
+  const policy = service.getPolicies().find((item) => item.type === "Annual")!;
+  const request = await service.submitLeaveRequest(
+    {
+      employeeId: "employee-omar",
+      policyId: policy.id,
+      startDate: "2027-04-01",
+      endDate: "2027-04-01",
+      reason: "Private reason",
+      handoverContactId: "employee-tariq",
+    },
+    employee,
+  );
+  const notices = storage
+    .readCollection<Notification>("notifications")
+    .filter((item) => item.link?.entityId === request.id);
+  assert.equal(notices.filter((item) => item.recipientUserId === "user-layla").length, 1);
+  assert.equal(notices.filter((item) => item.recipientUserId === "user-rana").length, 0);
+  assert.equal(
+    notices.filter(
+      (item) => item.recipientUserId === "user-second-hr" && item.type === "leave_submitted",
+    ).length,
+    1,
+  );
+  assert.equal(request.status, "Pending Line Manager");
 });
 
 test("leave attachment access is restricted to the owner, their line manager, and HR - and is audited", async () => {

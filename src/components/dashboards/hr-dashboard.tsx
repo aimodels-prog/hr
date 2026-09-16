@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { DashboardCharts } from "./dashboard-charts";
 import {
   FileWarning,
   FileClock,
@@ -346,6 +347,7 @@ export function HrDashboard() {
       </section>
 
       <PulseStrip metrics={pulseMetrics} />
+      <DashboardCharts scope="hr" />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <DashboardPanel

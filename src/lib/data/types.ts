@@ -114,6 +114,7 @@ export interface Employee extends BaseRecord {
   startDate: string;
   probationEndDate?: string | undefined;
   staffEntryType?: StaffEntryType | undefined;
+  visaRequired?: boolean | undefined;
   profileSetupStatus?: ProfileSetupStatus | undefined;
   profileSetupCompletedAt?: string | undefined;
   employmentConfirmationStatus?:
@@ -197,6 +198,8 @@ export type DocumentType =
   | "education_certificate"
   | "professional_certificate"
   | "bank_evidence"
+  | "insurance_card"
+  | "insurance_benefits"
   | "other";
 export type DocumentVisibility = "Public" | "Restricted";
 export type DocumentStatus = "Pending Verification" | "Valid" | "Rejected" | "Replaced"; // Missing and Expiring/Expired will be computed dynamically

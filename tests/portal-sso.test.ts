@@ -245,7 +245,7 @@ test("unauthenticated API requests receive JSON 401 rather than an HTML redirect
   assert.deepEqual(await response?.json(), { error: "unauthorized" });
 });
 
-test("logout revokes only the local session, clears its cookie and returns to VIA Portal", async () => {
+test("logout revokes the local session and redirects on the same origin for CSP", async () => {
   let revoked = "";
   const response = await resolvePortalAuthenticationRequest(
     new Request("https://hr.via-int.com/auth/logout", {
@@ -256,7 +256,7 @@ test("logout revokes only the local session, clears its cookie and returns to VI
   );
   assert.equal(revoked, "local-session-token");
   assert.equal(response?.status, 303);
-  assert.equal(response?.headers.get("location"), "https://portal.via-int.com/");
+  assert.equal(response?.headers.get("location"), "/auth/signed-out");
   assert.equal(response?.headers.get("set-cookie"), clearedPortalSessionCookie());
 });
 
@@ -278,13 +278,27 @@ test("logout still clears the browser session when database revocation fails", a
       },
     );
     assert.equal(response?.status, 303);
-    assert.equal(response?.headers.get("location"), "https://portal.via-int.com/");
+    assert.equal(response?.headers.get("location"), "/auth/signed-out");
     assert.equal(response?.headers.get("set-cookie"), clearedPortalSessionCookie());
     assert.equal(diagnostics.length, 1);
     assert.doesNotMatch(String(diagnostics[0]), /local-session-token/);
   } finally {
     console.error = originalError;
   }
+});
+
+test("signed-out page is accessible without SSO and offers an explicit portal link", async () => {
+  const response = await resolvePortalAuthenticationRequest(
+    new Request("https://hr.via-int.com/auth/signed-out"),
+    dependencies({}),
+  );
+  assert.equal(response?.status, 200);
+  assert.equal(response?.headers.get("location"), null);
+  assert.match(response?.headers.get("cache-control") ?? "", /no-store/);
+  const html = await response!.text();
+  assert.match(html, /You are signed out of VIA HR/);
+  assert.match(html, /href="https:\/\/portal.via-int.com\/"/);
+  assert.doesNotMatch(html, /http-equiv="refresh"|<script|sso\/launch/);
 });
 
 test("an authenticated dashboard request enters the clean staff dashboard", async () => {

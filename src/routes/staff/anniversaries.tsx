@@ -12,7 +12,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  PageSections as Tabs,
+  SectionPanel as TabsContent,
+  SectionNavigation as TabsList,
+  SectionLink as TabsTrigger,
+} from "@/components/ui/page-sections";
 import { AnniversaryService, type UpcomingAnniversary } from "@/lib/data/anniversary-service";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { PartyPopper, CalendarClock, CalendarDays, History } from "lucide-react";
@@ -160,69 +165,71 @@ function AnniversariesRoute() {
             <TabsTrigger value="past">Recently Celebrated ({buckets.past.length})</TabsTrigger>
           </TabsList>
 
-          <Card>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Employee</TableHead>
-                  <TableHead>Department</TableHead>
-                  <TableHead>Manager</TableHead>
-                  <TableHead>Milestone</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>When</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {activeEntries.length === 0 ? (
+          <TabsContent value={activeTab}>
+            <Card>
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                      No anniversaries in this window.
-                    </TableCell>
+                    <TableHead>Employee</TableHead>
+                    <TableHead>Department</TableHead>
+                    <TableHead>Manager</TableHead>
+                    <TableHead>Milestone</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead>When</TableHead>
                   </TableRow>
-                ) : (
-                  activeEntries.map((entry) => (
-                    <TableRow key={entry.employee.id}>
-                      <TableCell>
-                        <Link
-                          to="/staff/employees/$employeeId"
-                          params={{ employeeId: entry.employee.id }}
-                          className="font-medium text-primary hover:underline"
-                        >
-                          {entry.employee.preferredName}
-                        </Link>
-                        <div className="text-xs text-muted-foreground">
-                          {entry.employee.employeeNumber}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm">{entry.employee.department}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {entry.employee.lineManagerId
-                          ? managerNameById.get(entry.employee.lineManagerId) || "Unknown"
-                          : "—"}
-                      </TableCell>
-                      <TableCell>
-                        {entry.isMilestone ? (
-                          <Badge className="bg-primary/10 text-primary border-primary/20">
-                            {entry.yearsOfService} year{entry.yearsOfService === 1 ? "" : "s"}
-                          </Badge>
-                        ) : (
-                          <span className="text-sm text-muted-foreground">
-                            {entry.yearsOfService} year{entry.yearsOfService === 1 ? "" : "s"}
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {format(new Date(entry.anniversaryDate), "MMM d, yyyy")}
-                      </TableCell>
-                      <TableCell className="text-sm font-medium">
-                        {daysLabel(entry.daysRemaining)}
+                </TableHeader>
+                <TableBody>
+                  {activeEntries.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                        No anniversaries in this window.
                       </TableCell>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </Card>
+                  ) : (
+                    activeEntries.map((entry) => (
+                      <TableRow key={entry.employee.id}>
+                        <TableCell>
+                          <Link
+                            to="/staff/employees/$employeeId"
+                            params={{ employeeId: entry.employee.id }}
+                            className="font-medium text-primary hover:underline"
+                          >
+                            {entry.employee.preferredName}
+                          </Link>
+                          <div className="text-xs text-muted-foreground">
+                            {entry.employee.employeeNumber}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm">{entry.employee.department}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {entry.employee.lineManagerId
+                            ? managerNameById.get(entry.employee.lineManagerId) || "Unknown"
+                            : "—"}
+                        </TableCell>
+                        <TableCell>
+                          {entry.isMilestone ? (
+                            <Badge className="bg-primary/10 text-primary border-primary/20">
+                              {entry.yearsOfService} year{entry.yearsOfService === 1 ? "" : "s"}
+                            </Badge>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">
+                              {entry.yearsOfService} year{entry.yearsOfService === 1 ? "" : "s"}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {format(new Date(entry.anniversaryDate), "MMM d, yyyy")}
+                        </TableCell>
+                        <TableCell className="text-sm font-medium">
+                          {daysLabel(entry.daysRemaining)}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </Card>
+          </TabsContent>
         </Tabs>
       </div>
     </RequirePermission>

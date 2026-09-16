@@ -11,10 +11,17 @@ import {
   Upload,
 } from "lucide-react";
 import { toast } from "sonner";
+import { DashboardCharts } from "@/components/dashboards/dashboard-charts";
 
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { getApplicationDataServices } from "@/lib/data/application-data";
 import { AttendanceService } from "@/lib/data/attendance-service";
+import {
+  siteVisitLocalNow,
+  siteVisitReturnLabel,
+  type SiteVisitReturnPlan,
+} from "@/lib/data/site-visit";
+import { SettingsService } from "@/lib/data/settings-service";
 import type {
   AttendanceRecord,
   GeoReading,
@@ -65,6 +72,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 
 export const Route = createFileRoute("/staff/me/attendance")({
+  validateSearch: (search: Record<string, unknown>): { action?: "site-visit" } =>
+    search["action"] === "site-visit" ? { action: "site-visit" } : {},
   component: MyAttendanceRoute,
 });
 
@@ -102,8 +111,16 @@ function statusVariant(status: string): "default" | "secondary" | "destructive" 
 }
 
 function MyAttendanceRoute() {
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
   const currentUser = useCurrentUser();
   const attendanceService = useMemo(() => new AttendanceService(), []);
+  const officeTimezone =
+    attendanceService
+      .getLocations()
+      .find((location) => location.name === currentUser.currentEmployee?.location)?.timezone ||
+    new SettingsService().getAppSettingsSync().timezone;
+  const localNow = siteVisitLocalNow(officeTimezone);
   const projects = useMemo(
     () =>
       getProjectRepository()
@@ -121,13 +138,23 @@ function MyAttendanceRoute() {
   const [explanation, setExplanation] = useState("");
   const [evidence, setEvidence] = useState<File | null>(null);
   const [submittingCorrection, setSubmittingCorrection] = useState(false);
-  const [siteVisitOpen, setSiteVisitOpen] = useState(false);
-  const [visitDate, setVisitDate] = useState(format(new Date(), "yyyy-MM-dd"));
-  const [visitStart, setVisitStart] = useState("09:00");
+  const [siteVisitOpen, setSiteVisitOpen] = useState(search.action === "site-visit");
+  const [visitDate, setVisitDate] = useState(localNow.date);
+  const [visitStart, setVisitStart] = useState(localNow.time);
   const [visitEnd, setVisitEnd] = useState("17:00");
-  const [visitOrigin, setVisitOrigin] = useState<SiteVisitOrigin>("Office");
+  const [visitOrigin, setVisitOrigin] = useState<SiteVisitOrigin>("Home");
+  const [returnPlan, setReturnPlan] = useState<SiteVisitReturnPlan>("Unknown");
+  const [submittingVisit, setSubmittingVisit] = useState(false);
+  const [progressVisit, setProgressVisit] = useState<SiteVisitRequest | null>(null);
+  const [progressAction, setProgressAction] = useState<"finish" | "extend">("finish");
+  const [extensionEnd, setExtensionEnd] = useState("18:00");
+  const [extensionReason, setExtensionReason] = useState("");
+  const [savingProgress, setSavingProgress] = useState(false);
   const [visitDestination, setVisitDestination] = useState("");
   const [visitPurpose, setVisitPurpose] = useState("");
+  const [visitKind, setVisitKind] = useState("Site visit");
+  const [visitOptionsOpen, setVisitOptionsOpen] = useState(false);
+  const [visitTimeAdjusted, setVisitTimeAdjusted] = useState(false);
   const [visitProjectId, setVisitProjectId] = useState("");
   const [cancellingVisit, setCancellingVisit] = useState<SiteVisitRequest | null>(null);
   const [cancellationReason, setCancellationReason] = useState("");
@@ -135,6 +162,18 @@ function MyAttendanceRoute() {
 
   const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
   const employeeId = currentUser.employeeId;
+
+  useEffect(() => {
+    if (search.action === "site-visit") setSiteVisitOpen(true);
+  }, [search.action]);
+  const closeSiteVisit = () => {
+    setSiteVisitOpen(false);
+    setVisitOptionsOpen(false);
+    setVisitTimeAdjusted(false);
+    setReturnPlan("Unknown");
+    setVisitProjectId("");
+    if (search.action) void navigate({ search: {}, replace: true });
+  };
 
   useEffect(() => {
     let active = true;
@@ -163,10 +202,16 @@ function MyAttendanceRoute() {
 
   const records = attendanceService.getRecordsForEmployee(employeeId, actorContext);
   const openRecord = attendanceService.getOpenRecord(employeeId, actorContext);
-  const todayKey = format(new Date(), "yyyy-MM-dd");
+  const todayKey = localNow.date;
   const todayOpenRecord = openRecord?.date === todayKey ? openRecord : null;
   const missedOpenRecord = attendanceService.getMissedOpenRecord(employeeId, actorContext);
   const siteVisits = attendanceService.getSiteVisitsForEmployee(employeeId, actorContext);
+  const todayVisits = siteVisits.filter(
+    (visit) =>
+      visit.date === todayKey &&
+      ["Pending HR", "Approved"].includes(visit.status) &&
+      visit.startTime <= localNow.time,
+  );
   const policy = attendanceService.getPolicy();
   const locations = attendanceService.getClockInLocations();
   const monthPrefix = format(currentMonth, "yyyy-MM");
@@ -188,7 +233,9 @@ function MyAttendanceRoute() {
         id: `virtual-${date}`,
         employeeId,
         date,
-        status: reconciled?.status ?? "Absent",
+        status: siteVisits.some((visit) => visit.date === date && visit.status === "Pending HR")
+          ? "Site visit — awaiting HR"
+          : (reconciled?.status ?? "Absent"),
         clockIn: undefined,
         clockOut: undefined,
         breakMinutes: 0,
@@ -295,27 +342,63 @@ function MyAttendanceRoute() {
   };
 
   const submitSiteVisit = async () => {
+    if (submittingVisit) return;
+    setSubmittingVisit(true);
     try {
       await attendanceService.requestSiteVisitAsync(
         {
           employeeId,
-          date: visitDate,
-          startTime: visitStart,
-          endTime: visitEnd,
+          date: visitTimeAdjusted ? visitDate : siteVisitLocalNow(officeTimezone).date,
+          startTime: visitTimeAdjusted ? visitStart : siteVisitLocalNow(officeTimezone).time,
+          endTime: "17:00",
+          details: {
+            returnPlan,
+            ...(returnPlan === "Time" ? { expectedReturnTime: visitEnd } : {}),
+          },
           origin: visitOrigin,
           destination: visitDestination,
-          purpose: visitPurpose,
+          purpose: `${visitKind}${visitPurpose.trim() ? `: ${visitPurpose.trim()}` : " — official duty"}`,
           projectId: visitProjectId || undefined,
         },
         actorContext,
       );
-      setSiteVisitOpen(false);
+      closeSiteVisit();
       setVisitDestination("");
       setVisitPurpose("");
       setRevision((value) => value + 1);
-      toast.success("Site visit sent to HR for approval.");
+      toast.success(
+        "Site visit recorded. HR and your supervisor have been notified; attendance awaits HR confirmation.",
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Site visit could not be submitted.");
+    } finally {
+      setSubmittingVisit(false);
+    }
+  };
+
+  const saveProgress = async () => {
+    if (!progressVisit || savingProgress) return;
+    setSavingProgress(true);
+    try {
+      await attendanceService.updateSiteVisitProgressAsync(
+        progressVisit.id,
+        progressAction,
+        actorContext,
+        progressAction === "extend" ? extensionEnd : undefined,
+        progressAction === "extend" ? extensionReason : undefined,
+      );
+      setProgressVisit(null);
+      setExtensionReason("");
+      setRevision((value) => value + 1);
+      toast.success(
+        progressAction === "finish"
+          ? "Duty finish recorded. Attendance is updated after HR confirmation."
+          : "Extension sent to HR. Overtime is not automatically approved.",
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update visit.");
+    } finally {
+      setSavingProgress(false);
     }
   };
 
@@ -347,10 +430,30 @@ function MyAttendanceRoute() {
           description="Office-verified attendance, corrections and approved site visits."
           actions={
             <Button variant="outline" onClick={() => setSiteVisitOpen(true)}>
-              <Navigation className="mr-2 h-4 w-4" /> Request Site Visit
+              <Navigation className="mr-2 h-4 w-4" /> Quick visit
             </Button>
           }
         />
+
+        {todayVisits.map((visit) => (
+          <Alert key={visit.id}>
+            <Navigation className="h-4 w-4" />
+            <AlertTitle>
+              {visit.details?.finishedAt
+                ? "Site duty finished"
+                : visit.details?.returnedAt
+                  ? "Returned from site"
+                  : "On site"}
+              {visit.status === "Pending HR" ? " — awaiting HR confirmation" : " — approved"}
+            </AlertTitle>
+            <AlertDescription>
+              {visit.destination} · {siteVisitReturnLabel(visit.details)}.{" "}
+              {visit.status === "Pending HR"
+                ? "This is provisional; attendance will be finalised after HR confirmation."
+                : `Attendance close: ${visit.endTime}, unless you finish earlier or return to the office.`}
+            </AlertDescription>
+          </Alert>
+        ))}
 
         {locations.length === 0 && (
           <Alert variant="destructive">
@@ -394,28 +497,27 @@ function MyAttendanceRoute() {
               )}
             </div>
             <div className="flex flex-col gap-2 sm:min-w-52">
-              {todayOpenRecord &&
-                siteVisits.some(
-                  (visit) =>
-                    visit.date === todayKey &&
-                    visit.origin === "Office" &&
-                    visit.status === "Approved",
-                ) && (
-                  <>
-                    <Button
-                      variant="outline"
-                      disabled={locating}
-                      onClick={() => void performClockAction("in", true)}
-                    >
-                      Back at office
-                    </Button>
-                    <p className="max-w-64 text-xs text-muted-foreground">
-                      If you do not return from approved office-origin duty, you will be clocked out
-                      automatically at 5:00 PM in your office timezone. Record your return here to
-                      keep attendance open.
-                    </p>
-                  </>
-                )}
+              {siteVisits.some(
+                (visit) =>
+                  visit.date === todayKey &&
+                  !visit.details?.finishedAt &&
+                  !visit.details?.returnedAt &&
+                  ["Pending HR", "Approved"].includes(visit.status),
+              ) && (
+                <>
+                  <Button
+                    variant="outline"
+                    disabled={locating}
+                    onClick={() => void performClockAction("in", true)}
+                  >
+                    Back at office
+                  </Button>
+                  <p className="max-w-64 text-xs text-muted-foreground">
+                    Confirm your return using office location verification. Normal office clock-out
+                    then applies.
+                  </p>
+                </>
+              )}
               {!todayOpenRecord ? (
                 <Button
                   size="lg"
@@ -451,10 +553,12 @@ function MyAttendanceRoute() {
           </CardContent>
         </Card>
 
+        <DashboardCharts scope="self" />
+
         <Tabs defaultValue="attendance">
           <TabsList>
             <TabsTrigger value="attendance">Attendance</TabsTrigger>
-            <TabsTrigger value="site-visits">Site Visits ({siteVisits.length})</TabsTrigger>
+            <TabsTrigger value="site-visits">Visits ({siteVisits.length})</TabsTrigger>
           </TabsList>
 
           <TabsContent value="attendance" className="space-y-4">
@@ -570,8 +674,10 @@ function MyAttendanceRoute() {
               <Navigation className="h-4 w-4" />
               <AlertTitle>How site attendance works</AlertTitle>
               <AlertDescription>
-                Office-origin visits require a verified office clock-in. Home-origin visits are
-                automatically clocked in and out at the HR-approved times.
+                Record same-day visits even if your return time is uncertain. HR confirms
+                attendance; your supervisor is notified. Expected return is only an estimate.
+                Attendance closes at 5 PM unless you finish earlier, return to the office, or HR
+                approves an extension.
               </AlertDescription>
             </Alert>
             <Card className="overflow-hidden">
@@ -609,9 +715,70 @@ function MyAttendanceRoute() {
                             {visit.purpose}
                           </TableCell>
                           <TableCell>
-                            <Badge variant={statusVariant(visit.status)}>{visit.status}</Badge>
+                            <Badge variant={statusVariant(visit.status)}>
+                              {visit.status === "Pending HR"
+                                ? "Awaiting HR confirmation"
+                                : visit.status}
+                            </Badge>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {siteVisitReturnLabel(visit.details)}
+                            </p>
+                            {visit.details?.finishedAt && (
+                              <p className="text-xs">
+                                Duty finished {format(parseISO(visit.details.finishedAt), "HH:mm")}
+                              </p>
+                            )}
+                            {visit.details?.returnedAt && (
+                              <p className="text-xs">Returned to office</p>
+                            )}
+                            {visit.details?.attendanceClosedAt && (
+                              <p className="text-xs">
+                                {visit.details.attendanceCloseKind} clock-out:{" "}
+                                {
+                                  siteVisitLocalNow(
+                                    officeTimezone,
+                                    new Date(visit.details.attendanceClosedAt),
+                                  ).time
+                                }
+                              </p>
+                            )}
+                            {visit.details?.extension && (
+                              <p className="text-xs">
+                                Extension to {visit.details.extension.endTime}:{" "}
+                                {visit.details.extension.status}
+                              </p>
+                            )}
                           </TableCell>
                           <TableCell className="text-right">
+                            {visit.details?.returnPlan &&
+                              visit.date === todayKey &&
+                              ["Pending HR", "Approved"].includes(visit.status) &&
+                              !visit.details.finishedAt &&
+                              !visit.details.returnedAt && (
+                                <div className="mb-2 flex flex-wrap justify-end gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                      setProgressVisit(visit);
+                                      setProgressAction("finish");
+                                    }}
+                                  >
+                                    Finish duty
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={visit.details.extension?.status === "Pending"}
+                                    onClick={() => {
+                                      setProgressVisit(visit);
+                                      setProgressAction("extend");
+                                    }}
+                                  >
+                                    Request extension
+                                  </Button>
+                                </div>
+                              )}
                             {(visit.status === "Pending HR" || visit.status === "Approved") &&
                             visit.date >= format(new Date(), "yyyy-MM-dd") ? (
                               <Button
@@ -758,65 +925,94 @@ function MyAttendanceRoute() {
           </AlertDialogContent>
         </AlertDialog>
 
-        <Dialog open={siteVisitOpen} onOpenChange={setSiteVisitOpen}>
-          <DialogContent className="sm:max-w-xl">
+        <Dialog
+          open={Boolean(progressVisit)}
+          onOpenChange={(open) => !open && !savingProgress && setProgressVisit(null)}
+        >
+          <DialogContent>
             <DialogHeader>
-              <DialogTitle>Request Site Visit</DialogTitle>
+              <DialogTitle>
+                {progressAction === "finish" ? "Finish site duty" : "Request a later finish"}
+              </DialogTitle>
               <DialogDescription>
-                HR approval is required before the visit can affect attendance.
+                {progressAction === "finish"
+                  ? "Record your actual finish now. If you are returning to work in the office, use Back at office instead. Attendance still requires HR confirmation."
+                  : "HR must confirm the extension. Until then, the existing attendance close remains in place. This is not overtime approval."}
               </DialogDescription>
             </DialogHeader>
-            <div className="grid gap-4 py-2 sm:grid-cols-2">
-              <div className="space-y-2">
-                <label htmlFor="visit-date" className="text-sm font-medium">
-                  Date
-                </label>
+            {progressAction === "extend" && (
+              <div className="space-y-3">
+                <label htmlFor="extension-end">Requested finish time</label>
                 <Input
-                  id="visit-date"
-                  type="date"
-                  min={format(new Date(), "yyyy-MM-dd")}
-                  value={visitDate}
-                  onChange={(event) => setVisitDate(event.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Starting From</label>
-                <Select
-                  value={visitOrigin}
-                  onValueChange={(value) => setVisitOrigin(value as SiteVisitOrigin)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Office">Office — I will clock in</SelectItem>
-                    <SelectItem value="Home">Home — automatic attendance</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <label htmlFor="visit-start" className="text-sm font-medium">
-                  Start Time
-                </label>
-                <Input
-                  id="visit-start"
+                  id="extension-end"
                   type="time"
-                  value={visitStart}
-                  onChange={(event) => setVisitStart(event.target.value)}
+                  value={extensionEnd}
+                  onChange={(event) => setExtensionEnd(event.target.value)}
+                />
+                <label htmlFor="extension-reason">Reason</label>
+                <Textarea
+                  id="extension-reason"
+                  value={extensionReason}
+                  onChange={(event) => setExtensionReason(event.target.value)}
                 />
               </div>
+            )}
+            <DialogFooter>
+              <Button
+                variant="outline"
+                disabled={savingProgress}
+                onClick={() => setProgressVisit(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={
+                  savingProgress ||
+                  (progressAction === "extend" && extensionReason.trim().length < 5)
+                }
+                onClick={() => void saveProgress()}
+              >
+                {savingProgress
+                  ? "Saving…"
+                  : progressAction === "finish"
+                    ? "Finish duty now"
+                    : "Send extension to HR"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={siteVisitOpen}
+          onOpenChange={(open) => (open ? setSiteVisitOpen(true) : closeSiteVisit())}
+        >
+          <DialogContent className="max-h-[90dvh] w-[calc(100%-2rem)] overflow-y-auto rounded-lg sm:max-w-xl">
+            <DialogHeader>
+              <DialogTitle>Quick visit</DialogTitle>
+              <DialogDescription>
+                Heading to a site, ministry or client? Choose the type, enter the destination and
+                go. HR and your supervisor are notified. Planned trips belong in Requests.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium">Visit type</legend>
+                <div className="flex flex-wrap gap-2">
+                  {["Site visit", "Ministry visit", "Client visit", "Other duty"].map((kind) => (
+                    <Button
+                      key={kind}
+                      type="button"
+                      size="sm"
+                      variant={visitKind === kind ? "default" : "outline"}
+                      aria-pressed={visitKind === kind}
+                      onClick={() => setVisitKind(kind)}
+                    >
+                      {kind}
+                    </Button>
+                  ))}
+                </div>
+              </fieldset>
               <div className="space-y-2">
-                <label htmlFor="visit-end" className="text-sm font-medium">
-                  End Time
-                </label>
-                <Input
-                  id="visit-end"
-                  type="time"
-                  value={visitEnd}
-                  onChange={(event) => setVisitEnd(event.target.value)}
-                />
-              </div>
-              <div className="space-y-2 sm:col-span-2">
                 <label htmlFor="visit-destination" className="text-sm font-medium">
                   Site / Destination
                 </label>
@@ -824,46 +1020,156 @@ function MyAttendanceRoute() {
                   id="visit-destination"
                   value={visitDestination}
                   onChange={(event) => setVisitDestination(event.target.value)}
-                  placeholder="e.g. Al Mouj project site"
+                  placeholder="e.g. Ministry of Labour or Al Mouj site"
                 />
               </div>
-              <div className="space-y-2 sm:col-span-2">
-                <label className="text-sm font-medium">Project (optional)</label>
-                <Select
-                  value={visitProjectId || "none"}
-                  onValueChange={(value) => setVisitProjectId(value === "none" ? "" : value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select project" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No project</SelectItem>
-                    {projects.map((project) => (
-                      <SelectItem key={project.id} value={project.id}>
-                        {project.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2 sm:col-span-2">
-                <label htmlFor="visit-purpose" className="text-sm font-medium">
-                  Business Purpose
-                </label>
-                <Textarea
-                  id="visit-purpose"
-                  value={visitPurpose}
-                  onChange={(event) => setVisitPurpose(event.target.value)}
-                  placeholder="Explain why the site visit is required."
-                />
-              </div>
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium">Starting from</legend>
+                <div className="flex gap-2">
+                  {(["Home", "Office"] as const).map((origin) => (
+                    <Button
+                      key={origin}
+                      type="button"
+                      size="sm"
+                      variant={visitOrigin === origin ? "default" : "outline"}
+                      aria-pressed={visitOrigin === origin}
+                      onClick={() => setVisitOrigin(origin)}
+                    >
+                      {origin}
+                    </Button>
+                  ))}
+                </div>
+              </fieldset>
+              <p className="text-xs text-muted-foreground">
+                {visitTimeAdjusted ? `${visitDate} · ${visitStart}` : "Today · starting now"} ·{" "}
+                {siteVisitReturnLabel({ returnPlan, expectedReturnTime: visitEnd })}. Default close
+                is 5 PM after HR confirmation. From the office, clock in normally first.
+              </p>
             </div>
+            <details
+              open={visitOptionsOpen}
+              onToggle={(event) => {
+                const open = event.currentTarget.open;
+                if (open && !visitOptionsOpen && !visitTimeAdjusted) {
+                  const now = siteVisitLocalNow(officeTimezone);
+                  setVisitDate(now.date);
+                  setVisitStart(now.time);
+                }
+                setVisitOptionsOpen(open);
+              }}
+            >
+              <summary className="cursor-pointer text-sm font-medium">
+                Change time, return or add details (optional)
+              </summary>
+              <div className="grid gap-4 py-2 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <label htmlFor="visit-date" className="text-sm font-medium">
+                    Date
+                  </label>
+                  <Input
+                    id="visit-date"
+                    type="date"
+                    min={todayKey}
+                    value={visitDate}
+                    onChange={(event) => {
+                      setVisitDate(event.target.value);
+                      setVisitTimeAdjusted(true);
+                    }}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="visit-start" className="text-sm font-medium">
+                    Start Time
+                  </label>
+                  <Input
+                    id="visit-start"
+                    type="time"
+                    value={visitStart}
+                    onChange={(event) => {
+                      setVisitStart(event.target.value);
+                      setVisitTimeAdjusted(true);
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="sm"
+                    onClick={() => setVisitStart(siteVisitLocalNow(officeTimezone).time)}
+                  >
+                    Use current time
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    You can enter an earlier time today. HR confirms the actual duty start. Times
+                    use {officeTimezone}.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="visit-return" className="text-sm font-medium">
+                    Expected return
+                  </label>
+                  <Select
+                    value={returnPlan}
+                    onValueChange={(value) => setReturnPlan(value as SiteVisitReturnPlan)}
+                  >
+                    <SelectTrigger id="visit-return">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Unknown">Not sure</SelectItem>
+                      <SelectItem value="Not returning">Not returning today</SelectItem>
+                      <SelectItem value="Time">I expect to return at…</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {returnPlan === "Time" && (
+                    <Input
+                      id="visit-end"
+                      type="time"
+                      value={visitEnd}
+                      onChange={(event) => setVisitEnd(event.target.value)}
+                    />
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    An estimate only. Default attendance close: 5 PM, not the estimated return time.
+                  </p>
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <label className="text-sm font-medium">Project (optional)</label>
+                  <Select
+                    value={visitProjectId || "none"}
+                    onValueChange={(value) => setVisitProjectId(value === "none" ? "" : value)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select project" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No project</SelectItem>
+                      {projects.map((project) => (
+                        <SelectItem key={project.id} value={project.id}>
+                          {project.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <label htmlFor="visit-purpose" className="text-sm font-medium">
+                    Business Purpose (optional)
+                  </label>
+                  <Textarea
+                    id="visit-purpose"
+                    value={visitPurpose}
+                    onChange={(event) => setVisitPurpose(event.target.value)}
+                    placeholder="Explain why the site visit is required."
+                  />
+                </div>
+              </div>
+            </details>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setSiteVisitOpen(false)}>
+              <Button variant="outline" onClick={closeSiteVisit}>
                 Cancel
               </Button>
               <Button
-                disabled={!visitDate || !visitDestination.trim() || visitPurpose.trim().length < 5}
+                disabled={submittingVisit || !visitDate || visitDestination.trim().length < 3}
                 onClick={submitSiteVisit}
               >
                 <CalendarDays className="mr-2 h-4 w-4" /> Send to HR

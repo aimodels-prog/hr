@@ -12,7 +12,12 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  PageSections as Tabs,
+  SectionPanel as TabsContent,
+  SectionNavigation as TabsList,
+  SectionLink as TabsTrigger,
+} from "@/components/ui/page-sections";
 import {
   Select,
   SelectContent,
@@ -29,6 +34,7 @@ import { Download, Calendar as CalendarIcon, List, RotateCw } from "lucide-react
 import { startOfMonth, endOfMonth, eachDayOfInterval, format, parseISO, isSameDay } from "date-fns";
 import { toast } from "sonner";
 import { LeaveBalanceRegister } from "@/components/leave/leave-balance-register";
+import { SickLeaveBackdateDialog } from "@/components/leave/sick-leave-backdate-dialog";
 import { WalletCards } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -157,10 +163,11 @@ function LeaveAdminContent() {
     <>
       <div className="flex flex-col gap-6 max-w-[1400px] mx-auto pb-10">
         <PageHeader
-          title="Leave Administration & Calendar"
-          description="Global view of all employee absences, historical records, and policy snapshots."
+          title="Manage leave"
+          description="Check employee balances, review leave records, or see who will be away on the calendar. Choose a section on the left, or open Sections on your phone."
           actions={
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <SickLeaveBackdateDialog employees={employees} />
               <Button
                 variant="outline"
                 onClick={() => {

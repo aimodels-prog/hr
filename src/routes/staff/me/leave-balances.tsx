@@ -492,6 +492,11 @@ function LeaveBalancesRoute() {
                             months of service
                           </span>
                         )}
+                        {policy.eligibility?.omaniOnly && (
+                          <span className="block font-medium text-foreground">
+                            Omani employees only
+                          </span>
+                        )}
                       </TableCell>
                     </TableRow>
                   );

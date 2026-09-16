@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 
 import type { AttendancePolicy } from "../src/lib/data/attendance-types.ts";
 import { POLICY_DEFINITIONS } from "../src/lib/data/leave-service.ts";
+import { getLeaveEligibility, isOmaniNationality } from "../src/lib/data/leave-eligibility.ts";
 import { createSeedCollections, SEED_SYSTEM_USER_ID } from "../src/lib/data/seeds.ts";
 import type {
   TrainingCourse,
@@ -922,12 +923,12 @@ async function execute(mode: ImportMode): Promise<{
     const leaveYear = new Date(app.createdAt).getUTCFullYear();
     const eligibilityDate = new Date(`${leaveYear}-12-31T00:00:00.000Z`);
     const isEligible = (employee: Employee, definition: (typeof POLICY_DEFINITIONS)[number]) => {
-      const eligibility = definition.eligibility;
+      const eligibility = getLeaveEligibility(definition);
       if (!eligibility) return true;
       if (eligibility.genderRestriction && employee.gender !== eligibility.genderRestriction) {
         return false;
       }
-      if (eligibility.omaniOnly && normalized(employee.nationality ?? "") !== "omani") {
+      if (eligibility.omaniOnly && !isOmaniNationality(employee.nationality)) {
         return false;
       }
       if (eligibility.minimumServiceMonths !== undefined) {

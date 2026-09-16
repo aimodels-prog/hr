@@ -5,6 +5,34 @@ type ProductionRole = "Employee" | "Line Manager" | "HR" | "Accounts" | "Super A
 
 const portalSecret = process.env["PORTAL_SSO_SECRET"] ?? "";
 
+test("production release smoke signs out without a blocked cross-origin form redirect", async ({
+  page,
+}) => {
+  test.skip(
+    !portalSecret || process.env["PORTAL_SSO_ENABLED"] !== "true",
+    "Requires isolated portal SSO configuration",
+  );
+  const securityErrors: string[] = [];
+  page.on("console", (message) => {
+    if (/form-action|Content Security Policy/i.test(message.text()))
+      securityErrors.push(message.text());
+  });
+  await signInAs(page, "rana.nair@via-int.com", "Rana Nair", "/staff");
+  await page.getByRole("button", { name: /Rana Nair,/ }).click();
+  await page.getByRole("button", { name: "Sign out of VIA HR" }).click();
+  await expect(page).toHaveURL(/\/auth\/signed-out$/);
+  await expect(page.getByRole("heading", { name: "You are signed out of VIA HR" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Continue to VIA Portal" })).toHaveAttribute(
+    "href",
+    "https://portal.via-int.com/",
+  );
+  expect(
+    (await page.context().cookies()).some((cookie) => cookie.name === "__Host-via_hr_session"),
+  ).toBe(false);
+  expect((await page.request.get("/auth/session")).status()).toBe(401);
+  expect(securityErrors).toEqual([]);
+});
+
 async function signInAs(page: Page, email: string, name: string, path: string) {
   const token = await new SignJWT({ appSlug: "via-hr", email, name, role: "user" })
     .setProtectedHeader({ alg: "HS256" })

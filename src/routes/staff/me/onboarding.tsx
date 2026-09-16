@@ -15,7 +15,7 @@ function MyOnboardingRoute() {
       <div className="flex flex-col gap-6 max-w-3xl mx-auto pb-10">
         <PageHeader
           title="My Employee Setup"
-          description="Confirm your employment information and keep your personal records and required documents complete."
+          description="Complete your personal information and documents. HR will add your employment and visa details."
           breadcrumbs={[{ label: "Overview" }, { label: "My Employee Setup" }]}
         />
         {currentEmployee ? (

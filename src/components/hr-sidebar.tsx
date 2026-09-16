@@ -186,6 +186,18 @@ const navGroups: NavGroup[] = [
         requiredPermission: "leave:view_self",
       },
       {
+        title: "My Payslips",
+        url: "/staff/payslips",
+        icon: CalendarDays,
+        requiredPermission: "leave:view_self",
+      },
+      {
+        title: "Policies & Documents",
+        url: "/staff/company-library",
+        icon: CalendarDays,
+        requiredPermission: "leave:view_self",
+      },
+      {
         title: "Leave Approvals",
         url: "/staff/leave-approvals",
         icon: ClipboardCheck,
@@ -218,6 +230,12 @@ const navGroups: NavGroup[] = [
       {
         title: "My Attendance",
         url: "/staff/me/attendance",
+        icon: Clock,
+        requiredPermission: "attendance:view_self",
+      },
+      {
+        title: "Quick Visits",
+        url: "/staff/me/attendance?action=site-visit",
         icon: Clock,
         requiredPermission: "attendance:view_self",
       },

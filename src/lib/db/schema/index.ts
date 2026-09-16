@@ -1,5 +1,6 @@
 export * from "./common.ts";
 export * from "./documents.ts";
+export * from "./company-library.ts";
 export * from "./employee.ts";
 export * from "./leave.ts";
 export * from "./master-data.ts";

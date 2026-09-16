@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { assertHrDocumentWrite } from "../../data/hr-owned-fields.ts";
 
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
@@ -23,6 +24,8 @@ const documentTypes = new Set<DocumentType>([
   "education_certificate",
   "professional_certificate",
   "bank_evidence",
+  "insurance_card",
+  "insurance_benefits",
   "other",
 ]);
 const allowedMimeTypes = new Set(["application/pdf", "image/jpeg", "image/png"]);
@@ -56,8 +59,18 @@ export async function listEmployeeDocumentsForActor(
   return rows
     .filter(({ document, managerId }) => {
       if (actor.activeRole === "HR" || actor.activeRole === "Super Admin") return true;
+      if (
+        ["visa", "work_permit"].includes(document.type) &&
+        (!document.documentNumberEncrypted ||
+          !document.issueDate ||
+          !document.expiryDate ||
+          !document.issuingAuthority)
+      )
+        return false;
       if (document.employeeId === actor.employeeId) return true;
       if (actor.activeRole === "Accounts" && document.type === "bank_evidence") return true;
+      if (document.type === "insurance_card" || document.type === "insurance_benefits")
+        return false;
       return (
         actor.activeRole === "Line Manager" &&
         managerId === actor.employeeId &&
@@ -174,7 +187,11 @@ export async function decideEmployeeDocumentInDatabase(
           ? { notes: verifiedDetails.notes.trim() }
           : {}),
         ...(decision === "verify" && verifiedDetails?.visibility
-          ? { visibility: verifiedDetails.visibility }
+          ? {
+              visibility: document.type.startsWith("insurance_")
+                ? ("Restricted" as const)
+                : verifiedDetails.visibility,
+            }
           : {}),
         updatedAt: new Date(),
         updatedBy: actor.userId,
@@ -224,12 +241,22 @@ export async function readEmployeeDocumentInDatabase(
     )
     .limit(1);
   if (!row) throw new Error("Employee document not found.");
+  if (
+    !["HR", "Super Admin"].includes(actor.activeRole) &&
+    ["visa", "work_permit"].includes(row.document.type) &&
+    (!row.document.documentNumberEncrypted ||
+      !row.document.issueDate ||
+      !row.document.expiryDate ||
+      !row.document.issuingAuthority)
+  )
+    throw new Error("HR must complete this immigration document before it is available.");
   const allowed =
     actor.activeRole === "HR" ||
     actor.activeRole === "Super Admin" ||
     row.document.employeeId === actor.employeeId ||
     (actor.activeRole === "Accounts" && row.document.type === "bank_evidence") ||
     (actor.activeRole === "Line Manager" &&
+      !row.document.type.startsWith("insurance_") &&
       row.managerId === actor.employeeId &&
       row.document.visibility === "Public");
   if (!allowed) throw new Error("You do not have permission to open this employee document.");
@@ -352,6 +379,7 @@ export async function uploadEmployeeDocumentToDatabase(
     throw new Error("You do not have permission to upload this employee document.");
   }
   if (!documentTypes.has(input.type)) throw new Error("Unsupported employee document type.");
+  assertHrDocumentWrite(input.type, actor.activeRole);
   if (!input.fileName.trim() || input.bytes.byteLength === 0)
     throw new Error("A non-empty document is required.");
   if (input.bytes.byteLength > 10 * 1024 * 1024)
@@ -409,7 +437,9 @@ export async function uploadEmployeeDocumentToDatabase(
         issuingAuthority: input.issuingAuthority,
         issuingCountry: input.issuingCountry,
         notes: input.notes,
-        visibility: input.visibility ?? "Restricted",
+        visibility: input.type.startsWith("insurance_")
+          ? "Restricted"
+          : (input.visibility ?? "Restricted"),
         status: "Pending Verification",
         createdBy: actor.userId,
         updatedBy: actor.userId,
@@ -575,7 +605,9 @@ export async function replaceEmployeeDocumentInDatabase(
         issuingAuthority: input.issuingAuthority ?? old.issuingAuthority,
         issuingCountry: input.issuingCountry ?? old.issuingCountry,
         notes: input.notes ?? old.notes,
-        visibility: input.visibility ?? old.visibility,
+        visibility: old.type.startsWith("insurance_")
+          ? "Restricted"
+          : (input.visibility ?? old.visibility),
         status: "Pending Verification",
         createdBy: actor.userId,
         updatedBy: actor.userId,

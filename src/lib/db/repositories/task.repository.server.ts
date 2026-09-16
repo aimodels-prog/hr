@@ -206,7 +206,8 @@ export async function listTasksForActorInDatabase(
         v.date::text, NULL, 'Review request', '/staff/attendance', 'site-visit-request', v.id::text,
         v.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM site_visit_requests v JOIN employees e ON e.id=v.employee_id
-      WHERE v.organisation_id=${organisationId} AND v.archived_at IS NULL AND ${role} IN ('HR','Super Admin') AND v.status='Pending HR'
+      WHERE v.organisation_id=${organisationId} AND v.archived_at IS NULL AND ${role} IN ('HR','Super Admin')
+        AND (v.status='Pending HR' OR (v.status IN ('Approved','Completed') AND v.details->'extension'->>'status'='Pending'))
 
       UNION ALL
       SELECT 'overtime-hr-' || o.id, 'Overtime', 'Verify overtime claim',

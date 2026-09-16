@@ -11,7 +11,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  PageSections as Tabs,
+  SectionPanel as TabsContent,
+  SectionNavigation as TabsList,
+  SectionLink as TabsTrigger,
+} from "@/components/ui/page-sections";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -276,209 +281,211 @@ function DocumentExpiryRoute() {
             <TabsTrigger value="waived">Waived</TabsTrigger>
           </TabsList>
 
-          <Card>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Employee</TableHead>
-                  <TableHead>Document</TableHead>
-                  <TableHead>Location</TableHead>
-                  <TableHead>Expiry Date</TableHead>
-                  <TableHead>Days</TableHead>
-                  <TableHead>Assigned Owner</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredDocs.length === 0 ? (
+          <TabsContent value={activeTab}>
+            <Card>
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                      No documents in this category.
-                    </TableCell>
+                    <TableHead>Employee</TableHead>
+                    <TableHead>Document</TableHead>
+                    <TableHead>Location</TableHead>
+                    <TableHead>Expiry Date</TableHead>
+                    <TableHead>Days</TableHead>
+                    <TableHead>Assigned Owner</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
-                ) : (
-                  filteredDocs.map((doc) => (
-                    <TableRow key={doc.id}>
-                      <TableCell>
-                        <Link
-                          to="/staff/employees/$employeeId"
-                          params={{ employeeId: doc.employeeId }}
-                          className="font-medium text-blue-600 hover:underline"
-                        >
-                          {doc.employee!.preferredName} {doc.employee!.legalName}
-                        </Link>
-                        <div className="text-xs text-muted-foreground">
-                          {doc.employee!.employeeNumber}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="capitalize font-medium">{doc.type.replace("_", " ")}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {doc.visibility === "Restricted"
-                            ? "***REDACTED***"
-                            : doc.documentNumber || "-"}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm">{doc.employee!.location}</TableCell>
-                      <TableCell className="text-sm">
-                        {format(new Date(doc.expiryDate!), "MMM d, yyyy")}
-                        {doc.snoozedUntil && (
-                          <div className="text-xs text-orange-600 mt-1">
-                            Snoozed to {format(new Date(doc.snoozedUntil), "MMM d")}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <span
-                          className={`font-bold ${doc.daysRemaining < 0 ? "text-destructive" : doc.daysRemaining <= 30 ? "text-orange-600" : ""}`}
-                        >
-                          {doc.daysRemaining}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        {doc.assignedOwnerId ? (
-                          hrUsers.find((u) => u.id === doc.assignedOwnerId)?.displayName ||
-                          "Unknown"
-                        ) : (
-                          <span className="text-muted-foreground italic">Unassigned</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right space-x-2">
-                        <Dialog
-                          open={actionDocId === doc.id}
-                          onOpenChange={(open) => setActionDocId(open ? doc.id : null)}
-                        >
-                          <DialogTrigger asChild>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setActionDocId(doc.id)}
-                            >
-                              Manage
-                            </Button>
-                          </DialogTrigger>
-                          <DialogContent>
-                            <DialogHeader>
-                              <DialogTitle>Manage Expiry Action</DialogTitle>
-                            </DialogHeader>
-                            <Tabs defaultValue="assign" className="mt-4">
-                              <TabsList className="grid grid-cols-3">
-                                <TabsTrigger value="assign">Assign</TabsTrigger>
-                                <TabsTrigger value="snooze">Snooze</TabsTrigger>
-                                <TabsTrigger value="waive">Waive</TabsTrigger>
-                              </TabsList>
-                              <TabsContent value="assign" className="mt-4">
-                                <Form {...assignForm}>
-                                  <form
-                                    onSubmit={assignForm.handleSubmit(onAssign)}
-                                    className="space-y-4"
-                                  >
-                                    <FormField
-                                      control={assignForm.control}
-                                      name="ownerId"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Assign HR Owner</FormLabel>
-                                          <Select
-                                            onValueChange={field.onChange}
-                                            defaultValue={field.value as string}
-                                          >
-                                            <FormControl>
-                                              <SelectTrigger>
-                                                <SelectValue />
-                                              </SelectTrigger>
-                                            </FormControl>
-                                            <SelectContent>
-                                              {hrUsers.map((u) => (
-                                                <SelectItem key={u.id} value={u.id}>
-                                                  {u.displayName}
-                                                </SelectItem>
-                                              ))}
-                                            </SelectContent>
-                                          </Select>
-                                          <FormMessage />
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <Button type="submit">Assign</Button>
-                                  </form>
-                                </Form>
-                              </TabsContent>
-                              <TabsContent value="snooze" className="mt-4">
-                                <Form {...snoozeForm}>
-                                  <form
-                                    onSubmit={snoozeForm.handleSubmit(onSnooze)}
-                                    className="space-y-4"
-                                  >
-                                    <FormField
-                                      control={snoozeForm.control}
-                                      name="snoozedUntil"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Snooze Reminders Until</FormLabel>
-                                          <FormControl>
-                                            <Input type="date" {...field} />
-                                          </FormControl>
-                                          <FormMessage />
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <FormField
-                                      control={snoozeForm.control}
-                                      name="snoozeReason"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Reason</FormLabel>
-                                          <FormControl>
-                                            <Input {...field} />
-                                          </FormControl>
-                                          <FormMessage />
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <Button type="submit">Snooze</Button>
-                                  </form>
-                                </Form>
-                              </TabsContent>
-                              <TabsContent value="waive" className="mt-4">
-                                <Form {...waiveForm}>
-                                  <form
-                                    onSubmit={waiveForm.handleSubmit(onWaive)}
-                                    className="space-y-4"
-                                  >
-                                    <p className="text-sm text-muted-foreground mb-4">
-                                      Waiving a document resolves it permanently without requiring a
-                                      replacement upload.
-                                    </p>
-                                    <FormField
-                                      control={waiveForm.control}
-                                      name="waiverReason"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Authorized Waiver Reason</FormLabel>
-                                          <FormControl>
-                                            <Input {...field} />
-                                          </FormControl>
-                                          <FormMessage />
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <Button type="submit" variant="destructive">
-                                      Record Waiver
-                                    </Button>
-                                  </form>
-                                </Form>
-                              </TabsContent>
-                            </Tabs>
-                          </DialogContent>
-                        </Dialog>
+                </TableHeader>
+                <TableBody>
+                  {filteredDocs.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                        No documents in this category.
                       </TableCell>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </Card>
+                  ) : (
+                    filteredDocs.map((doc) => (
+                      <TableRow key={doc.id}>
+                        <TableCell>
+                          <Link
+                            to="/staff/employees/$employeeId"
+                            params={{ employeeId: doc.employeeId }}
+                            className="font-medium text-blue-600 hover:underline"
+                          >
+                            {doc.employee!.preferredName} {doc.employee!.legalName}
+                          </Link>
+                          <div className="text-xs text-muted-foreground">
+                            {doc.employee!.employeeNumber}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="capitalize font-medium">{doc.type.replace("_", " ")}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {doc.visibility === "Restricted"
+                              ? "***REDACTED***"
+                              : doc.documentNumber || "-"}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm">{doc.employee!.location}</TableCell>
+                        <TableCell className="text-sm">
+                          {format(new Date(doc.expiryDate!), "MMM d, yyyy")}
+                          {doc.snoozedUntil && (
+                            <div className="text-xs text-orange-600 mt-1">
+                              Snoozed to {format(new Date(doc.snoozedUntil), "MMM d")}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <span
+                            className={`font-bold ${doc.daysRemaining < 0 ? "text-destructive" : doc.daysRemaining <= 30 ? "text-orange-600" : ""}`}
+                          >
+                            {doc.daysRemaining}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          {doc.assignedOwnerId ? (
+                            hrUsers.find((u) => u.id === doc.assignedOwnerId)?.displayName ||
+                            "Unknown"
+                          ) : (
+                            <span className="text-muted-foreground italic">Unassigned</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right space-x-2">
+                          <Dialog
+                            open={actionDocId === doc.id}
+                            onOpenChange={(open) => setActionDocId(open ? doc.id : null)}
+                          >
+                            <DialogTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setActionDocId(doc.id)}
+                              >
+                                Manage
+                              </Button>
+                            </DialogTrigger>
+                            <DialogContent>
+                              <DialogHeader>
+                                <DialogTitle>Manage Expiry Action</DialogTitle>
+                              </DialogHeader>
+                              <Tabs defaultValue="assign" className="mt-4">
+                                <TabsList className="grid grid-cols-3">
+                                  <TabsTrigger value="assign">Assign</TabsTrigger>
+                                  <TabsTrigger value="snooze">Snooze</TabsTrigger>
+                                  <TabsTrigger value="waive">Waive</TabsTrigger>
+                                </TabsList>
+                                <TabsContent value="assign" className="mt-4">
+                                  <Form {...assignForm}>
+                                    <form
+                                      onSubmit={assignForm.handleSubmit(onAssign)}
+                                      className="space-y-4"
+                                    >
+                                      <FormField
+                                        control={assignForm.control}
+                                        name="ownerId"
+                                        render={({ field }) => (
+                                          <FormItem>
+                                            <FormLabel>Assign HR Owner</FormLabel>
+                                            <Select
+                                              onValueChange={field.onChange}
+                                              defaultValue={field.value as string}
+                                            >
+                                              <FormControl>
+                                                <SelectTrigger>
+                                                  <SelectValue />
+                                                </SelectTrigger>
+                                              </FormControl>
+                                              <SelectContent>
+                                                {hrUsers.map((u) => (
+                                                  <SelectItem key={u.id} value={u.id}>
+                                                    {u.displayName}
+                                                  </SelectItem>
+                                                ))}
+                                              </SelectContent>
+                                            </Select>
+                                            <FormMessage />
+                                          </FormItem>
+                                        )}
+                                      />
+                                      <Button type="submit">Assign</Button>
+                                    </form>
+                                  </Form>
+                                </TabsContent>
+                                <TabsContent value="snooze" className="mt-4">
+                                  <Form {...snoozeForm}>
+                                    <form
+                                      onSubmit={snoozeForm.handleSubmit(onSnooze)}
+                                      className="space-y-4"
+                                    >
+                                      <FormField
+                                        control={snoozeForm.control}
+                                        name="snoozedUntil"
+                                        render={({ field }) => (
+                                          <FormItem>
+                                            <FormLabel>Snooze Reminders Until</FormLabel>
+                                            <FormControl>
+                                              <Input type="date" {...field} />
+                                            </FormControl>
+                                            <FormMessage />
+                                          </FormItem>
+                                        )}
+                                      />
+                                      <FormField
+                                        control={snoozeForm.control}
+                                        name="snoozeReason"
+                                        render={({ field }) => (
+                                          <FormItem>
+                                            <FormLabel>Reason</FormLabel>
+                                            <FormControl>
+                                              <Input {...field} />
+                                            </FormControl>
+                                            <FormMessage />
+                                          </FormItem>
+                                        )}
+                                      />
+                                      <Button type="submit">Snooze</Button>
+                                    </form>
+                                  </Form>
+                                </TabsContent>
+                                <TabsContent value="waive" className="mt-4">
+                                  <Form {...waiveForm}>
+                                    <form
+                                      onSubmit={waiveForm.handleSubmit(onWaive)}
+                                      className="space-y-4"
+                                    >
+                                      <p className="text-sm text-muted-foreground mb-4">
+                                        Waiving a document resolves it permanently without requiring
+                                        a replacement upload.
+                                      </p>
+                                      <FormField
+                                        control={waiveForm.control}
+                                        name="waiverReason"
+                                        render={({ field }) => (
+                                          <FormItem>
+                                            <FormLabel>Authorized Waiver Reason</FormLabel>
+                                            <FormControl>
+                                              <Input {...field} />
+                                            </FormControl>
+                                            <FormMessage />
+                                          </FormItem>
+                                        )}
+                                      />
+                                      <Button type="submit" variant="destructive">
+                                        Record Waiver
+                                      </Button>
+                                    </form>
+                                  </Form>
+                                </TabsContent>
+                              </Tabs>
+                            </DialogContent>
+                          </Dialog>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </Card>
+          </TabsContent>
         </Tabs>
       </div>
     </RequirePermission>

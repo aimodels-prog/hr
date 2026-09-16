@@ -64,7 +64,7 @@ export interface SickPayTierBreakdown {
 
 export interface LeaveEligibility {
   genderRestriction?: Gender | undefined; // e.g. Maternity = Female only, Paternity = Male only
-  omaniOnly?: boolean | undefined; // Hajj, Exam, and Accompany-Patient leave are Omani-national entitlements
+  omaniOnly?: boolean | undefined; // Statutory Exam and Accompany-Patient leave are Omani-only, not Hajj.
   minimumServiceMonths?: number | undefined; // e.g. Hajj requires 1 continuous year of service first
 }
 

@@ -259,6 +259,20 @@ test(
         employeeDocuments.find((document) => document.id === documentId)?.status,
         "Valid",
       );
+      await assert.rejects(
+        uploadEmployeeDocumentToDatabase(
+          organisationId,
+          {
+            employeeId: created.employeeId,
+            type: "visa",
+            fileName: "visa.pdf",
+            mimeType: "application/pdf",
+            bytes: new TextEncoder().encode("%PDF-1.4"),
+          },
+          { ...actor, employeeId: created.employeeId, activeRole: "Employee" },
+        ),
+        /Only HR/,
+      );
       const visaId = await uploadEmployeeDocumentToDatabase(
         organisationId,
         {
@@ -267,13 +281,13 @@ test(
           fileName: "visa.pdf",
           mimeType: "application/pdf",
           bytes: new TextEncoder().encode("%PDF-1.4 employee supplied visa"),
+          documentNumber: "VISA-100",
+          issuingAuthority: "UAE Authority",
+          issueDate: "2026-01-01",
+          expiryDate: "2027-01-01",
           visibility: "Restricted",
         },
-        { ...actor, employeeId: created.employeeId, activeRole: "Employee" },
-      );
-      await assert.rejects(
-        decideEmployeeDocumentInDatabase(organisationId, visaId, "verify", undefined, actor),
-        /HR must complete the document number/,
+        actor,
       );
       await decideEmployeeDocumentInDatabase(organisationId, visaId, "verify", undefined, actor, {
         documentNumber: "VISA-100",

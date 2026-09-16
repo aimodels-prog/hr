@@ -3,7 +3,9 @@ import { randomUUID } from "node:crypto";
 import { processNextCandidateCvJob } from "../src/lib/db/repositories/candidate-cv-intake.repository.server.ts";
 import { processAttendanceScheduledWork } from "../src/lib/db/repositories/attendance.repository.server.ts";
 import { processCoreHrScheduledReminders } from "../src/lib/db/repositories/core-hr-reminder.repository.server.ts";
+import { processCompanyDocumentReminders } from "../src/lib/db/repositories/company-library.repository.server.ts";
 import { processScheduledLeaveRollover } from "../src/lib/db/repositories/leave.repository.server.ts";
+import { processLeaveUsageReminders } from "../src/lib/db/repositories/leave-reminder.repository.server.ts";
 import { processTimesheetWorker } from "../src/lib/db/repositories/timesheet.repository.server.ts";
 import { processOvertimeWorker } from "../src/lib/db/repositories/overtime.repository.server.ts";
 import { processTravelWorker } from "../src/lib/db/repositories/travel.repository.server.ts";
@@ -47,6 +49,16 @@ const tasks: Array<WorkerTaskDefinition & { run: () => Promise<unknown> }> = [
     run: () => processCoreHrScheduledReminders(),
   },
   { name: "leave-rollover", intervalSeconds: 60 * 60, run: () => processScheduledLeaveRollover() },
+  {
+    name: "leave-usage-reminders",
+    intervalSeconds: 60 * 60,
+    run: () => processLeaveUsageReminders(),
+  },
+  {
+    name: "company-document-expiry",
+    intervalSeconds: 60 * 60,
+    run: () => processCompanyDocumentReminders(),
+  },
   {
     name: "timesheet-reminders-and-reconciliation",
     intervalSeconds: 15 * 60,

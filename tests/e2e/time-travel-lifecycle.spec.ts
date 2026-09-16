@@ -258,7 +258,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
 
   // HR completes the second-stage people and time approvals.
   await previewAs(page, "user-rana", "HR", "/staff/leave-approvals");
-  await page.getByRole("tab", { name: /HR Confirmation/ }).click();
+  await page.getByRole("link", { name: /HR Confirmation/ }).click();
   const finalLeaveCard = page
     .getByText(labels.leave)
     .locator("xpath=ancestor::div[.//button[normalize-space()='Approve']][1]");
@@ -266,7 +266,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   await expect(finalLeaveCard).toBeHidden();
 
   await previewAs(page, "user-rana", "HR", "/staff/attendance/corrections");
-  await page.getByRole("tab", { name: /HR Finalisation/ }).click();
+  await page.getByRole("link", { name: /HR Finalisation/ }).click();
   const finalCorrectionRow = page.getByRole("row").filter({ hasText: labels.correction });
   await finalCorrectionRow.getByRole("button", { name: "Review" }).click();
   const hrCorrectionDialog = page.getByRole("dialog", { name: "HR Final Decision" });
@@ -277,7 +277,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   await expect(hrCorrectionDialog).toBeHidden();
 
   await previewAs(page, "user-rana", "HR", "/staff/overtime-approvals");
-  await page.getByRole("tab", { name: /HR Verification/ }).click();
+  await page.getByRole("link", { name: /HR Verification/ }).click();
   const finalOvertimeRow = page.getByRole("row").filter({ hasText: labels.overtime });
   await finalOvertimeRow.getByRole("button", { name: "Verify" }).click();
   const overtimeDialog = page.getByRole("dialog", { name: "Verify Overtime" });

@@ -2,6 +2,12 @@ import { createServerFn } from "@tanstack/react-start";
 import * as z from "zod";
 
 import { ROLE_VALUES } from "../data/types.ts";
+import {
+  listPayslips,
+  payslipEmployee,
+  publishPayslip,
+  readPayslip,
+} from "../db/repositories/payslip.repository.server.ts";
 import { deleteObjectFile, saveObjectFile } from "../db/object-storage.server.ts";
 import {
   acknowledgePayrollExceptionInDatabase,
@@ -64,6 +70,65 @@ async function verify(actor: z.infer<typeof Actor>) {
     throw new Error("Your VIA access could not be verified.");
   return { organisationId, actor: { ...result.actor, activeRole: actor.activeRole } };
 }
+
+export const getPayslipsFn = createServerFn({ method: "GET" })
+  .validator((input) =>
+    z
+      .object({ actor: Actor, scope: z.enum(["self", "finance"]) })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    return listPayslips(v.organisationId, v.actor, data.scope);
+  });
+export const uploadPayslipFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: Actor,
+        employeeId: z.string().uuid(),
+        payMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+        file: Evidence.extend({ mimeType: z.literal("application/pdf") }),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    await payslipEmployee(v.organisationId, data.employeeId, v.actor);
+    const bytes = verifiedEvidence(data.file);
+    const file = await saveObjectFile({
+      organisationId: v.organisationId,
+      bytes,
+      name: data.file.fileName,
+      mimeType: "application/pdf",
+      owner: { entityType: "employee-payslip", entityId: data.employeeId },
+      actor: v.actor,
+    });
+    try {
+      return await publishPayslip(
+        v.organisationId,
+        { employeeId: data.employeeId, payMonth: data.payMonth, fileId: file.id },
+        v.actor,
+      );
+    } catch (error) {
+      await deleteObjectFile(
+        v.organisationId,
+        file.id,
+        v.actor,
+        "Removed unassigned payslip after publication failed",
+      ).catch(() => undefined);
+      throw error;
+    }
+  });
+export const downloadPayslipFn = createServerFn({ method: "GET" })
+  .validator((input) => z.object({ actor: Actor, id: z.string().uuid() }).strict().parse(input))
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    const result = await readPayslip(v.organisationId, data.id, v.actor);
+    return { name: result.metadata.name, bytes: Array.from(result.bytes) };
+  });
 
 export const getPayrollPeriodsFn = createServerFn({ method: "GET" })
   .validator((input) => z.object({ actor: Actor }).strict().parse(input))

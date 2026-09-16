@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { isHrOwnedSetupTask } from "../../data/hr-owned-fields.ts";
 
 import { randomUUID } from "node:crypto";
 import { assertIndependentOfferApprover } from "../../auth/offer-approval.ts";
@@ -1137,9 +1138,10 @@ async function convertAcceptedOffer(
         title: task.title,
         taskGroup: task.group,
         checkpoint: task.checkpoint,
-        ownerRole: task.ownerRole,
-        assignedUserId:
-          task.ownerRole === "Employee"
+        ownerRole: isHrOwnedSetupTask(task) ? "HR" : task.ownerRole,
+        assignedUserId: isHrOwnedSetupTask(task)
+          ? null
+          : task.ownerRole === "Employee"
             ? userId
             : task.ownerRole === "HR"
               ? actor.userId

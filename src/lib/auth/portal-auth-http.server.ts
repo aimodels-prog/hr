@@ -287,6 +287,23 @@ export async function resolvePortalAuthenticationRequest(
     return authenticationErrorPage(config, url.searchParams.get("reason"));
   }
 
+  if (url.pathname === "/auth/signed-out") {
+    // Keep the POST redirect on this origin: Chromium applies form-action to
+    // redirect destinations too. An ordinary link can then open VIA Portal.
+    // Never auto-launch SSO here, which would immediately sign the user back in.
+    const portal = config.postLogoutUrl
+      .toString()
+      .replace(
+        /[&<>"']/g,
+        (character) =>
+          ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!,
+      );
+    return new Response(
+      `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signed out of VIA HR</title><style>body{margin:0;padding:24px;box-sizing:border-box;background:#f4f7fb;color:#10233d;font-family:system-ui,sans-serif;display:grid;min-height:100vh;place-items:center}main{background:white;border:1px solid #dbe4ef;border-radius:18px;max-width:520px;padding:32px;text-align:center}h1{font-size:24px}p{line-height:1.6;color:#53657a}a{display:inline-block;background:#0b5b98;color:white;text-decoration:none;border-radius:10px;padding:14px 20px}</style></head><body><main><h1>You are signed out of VIA HR</h1><p>Your VIA Portal account may still be signed in. On a shared computer, sign out of VIA Portal too.</p><a href="${portal}">Continue to VIA Portal</a></main></body></html>`,
+      { headers: responseHeaders("text/html; charset=utf-8") },
+    );
+  }
+
   if (url.pathname === "/auth/logout") {
     if (request.method !== "POST") {
       return Response.json(
@@ -316,7 +333,7 @@ export async function resolvePortalAuthenticationRequest(
       status: 303,
       headers: {
         ...responseHeaders(),
-        location: config.postLogoutUrl.toString(),
+        location: "/auth/signed-out",
         "set-cookie": clearedPortalSessionCookie(),
       },
     });

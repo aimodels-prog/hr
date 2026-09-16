@@ -372,6 +372,8 @@ const CompleteOnboardingDocumentTask = z
       "education_certificate",
       "professional_certificate",
       "bank_evidence",
+      "insurance_card",
+      "insurance_benefits",
       "other",
     ]),
     fileName: z.string().trim().min(1).max(255),
@@ -792,6 +794,8 @@ const DocumentType = z.enum([
   "education_certificate",
   "professional_certificate",
   "bank_evidence",
+  "insurance_card",
+  "insurance_benefits",
   "other",
 ]);
 const DocumentBytes = z

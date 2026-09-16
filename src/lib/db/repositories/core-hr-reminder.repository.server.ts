@@ -191,7 +191,11 @@ export async function processCoreHrScheduledReminders(now = new Date()): Promise
       const recipients = new Set(hrUserIds);
       const employeeUser = userByEmployee.get(employee.id);
       if (employeeUser) recipients.add(employeeUser.id);
-      if (employee.lineManagerId && daysRemaining <= 30) {
+      if (
+        employee.lineManagerId &&
+        daysRemaining <= 30 &&
+        !document.type.startsWith("insurance_")
+      ) {
         const managerUser = userByEmployee.get(employee.lineManagerId);
         if (managerUser) recipients.add(managerUser.id);
       }

@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { DashboardCharts } from "./dashboard-charts";
 import { AlertTriangle, Briefcase, CheckCircle, FileText, Plane } from "lucide-react";
 import { LeaveService } from "@/lib/data/leave-service";
 import { TimesheetService } from "@/lib/data/timesheet-service";
@@ -245,6 +246,7 @@ export function EmployeeDashboard({ employee, userId }: { employee: Employee; us
   return (
     <div className="flex flex-col gap-4">
       <PulseStrip metrics={pulseMetrics} />
+      <DashboardCharts scope="self" />
       <DashboardPanel title="Things that need you">
         <AttentionQueue items={attentionItems} />
       </DashboardPanel>

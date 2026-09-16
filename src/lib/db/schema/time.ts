@@ -569,6 +569,10 @@ export const siteVisitRequests = pgTable(
   "site_visit_requests",
   {
     ...mutableRecordColumns,
+    details: jsonb("details")
+      .$type<import("../../data/site-visit.ts").SiteVisitDetails>()
+      .notNull()
+      .default({}),
     organisationId: uuid("organisation_id")
       .notNull()
       .references(() => organisations.id, { onDelete: "restrict" }),
@@ -598,6 +602,7 @@ export const siteVisitRequests = pgTable(
       table.status,
     ),
     check("site_visit_requests_origin", sql`${table.origin} IN ('Office', 'Home')`),
+    check("site_visit_details_object", sql`jsonb_typeof(${table.details}) = 'object'`),
     check(
       "site_visit_requests_status",
       sql`${table.status} IN ('Pending HR', 'Approved', 'Rejected', 'Cancelled', 'Completed')`,

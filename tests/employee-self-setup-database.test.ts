@@ -108,6 +108,25 @@ test(
         roles: ["Employee"] as const,
         activeRole: "Employee" as const,
       };
+      const hrEmail = `hr-${organisationId}@via-int.com`;
+      const hrSession = await createPortalSession(
+        {
+          email: hrEmail,
+          name: "VIA HR Reviewer",
+          portalRole: "hr",
+          mappedRole: "HR",
+          expiresAt: Math.floor(Date.now() / 1000) + 120,
+        },
+        { lifetimeSeconds: 28_800 },
+      );
+      const hrActor = {
+        userId: hrSession.user.id,
+        employeeId: hrSession.employee.id,
+        displayName: hrSession.user.displayName,
+        workspaceEmail: hrEmail,
+        roles: ["Employee", "HR"] as const,
+        activeRole: "HR" as const,
+      };
       const [caseRow] = await sql<{ id: string }[]>`
         SELECT id FROM onboarding_cases WHERE employee_id = ${employeeSession.employee.id}
       `;
@@ -148,7 +167,7 @@ test(
           },
           actor,
         ),
-        /confirmed employment details/,
+        /Only HR/,
       );
       await saveOnboardingSelfServiceInDatabase(
         organisationId,
@@ -169,7 +188,7 @@ test(
             visaRequired: false,
           },
         },
-        actor,
+        hrActor,
       );
       const [pendingManager] = await sql`
         SELECT staff_entry_type, profile_setup_status, employment_confirmation_status,
@@ -200,26 +219,6 @@ test(
       `;
       assert.equal(linked?.line_manager_id, null);
       assert.equal(linked?.proposed_line_manager_email, managerEmail);
-
-      const hrEmail = `hr-${organisationId}@via-int.com`;
-      const hrSession = await createPortalSession(
-        {
-          email: hrEmail,
-          name: "VIA HR Reviewer",
-          portalRole: "hr",
-          mappedRole: "HR",
-          expiresAt: Math.floor(Date.now() / 1000) + 120,
-        },
-        { lifetimeSeconds: 28_800 },
-      );
-      const hrActor = {
-        userId: hrSession.user.id,
-        employeeId: hrSession.employee.id,
-        displayName: hrSession.user.displayName,
-        workspaceEmail: hrEmail,
-        roles: ["Employee", "HR"] as const,
-        activeRole: "HR" as const,
-      };
 
       await assert.rejects(
         createLeaveRequestInDatabase(

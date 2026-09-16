@@ -416,6 +416,13 @@ export function LeaveRequestDialog({
                 </div>
               )}
 
+              {selectedPolicy?.type === "Sick" && (
+                <p className="rounded-md border bg-muted/30 p-3 text-sm">
+                  Too unwell to apply earlier? Ask HR to permit backdated sick leave for your exact
+                  dates. Submit within 14 days of permission, with the required medical evidence.
+                  Your manager and HR still review the request normally.
+                </p>
+              )}
               {selectedPolicy?.type === "Sick" &&
                 workingDays > 0 &&
                 sickPayBreakdown.length > 0 && (

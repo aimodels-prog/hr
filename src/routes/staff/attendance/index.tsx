@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
 import {
   CheckCircle2,
@@ -31,6 +31,8 @@ import type {
   UnmatchedAttendancePunch,
 } from "@/lib/data/attendance-types";
 import { EmployeeService } from "@/lib/data/employee-service";
+import type { ActorContext } from "@/lib/data/types";
+import { withRequestTimeout } from "@/lib/data/request-timeout";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -52,7 +54,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  PageSections as Tabs,
+  SectionPanel as TabsContent,
+  SectionNavigation as TabsList,
+  SectionLink as TabsTrigger,
+} from "@/components/ui/page-sections";
 import {
   Table,
   TableBody,
@@ -153,6 +160,8 @@ function AttendanceAdminContent() {
   }>({ devices: [], mappings: [], unmatched: [] });
   const [deviceLoading, setDeviceLoading] = useState(true);
   const [deviceError, setDeviceError] = useState("");
+  const [deviceLoaded, setDeviceLoaded] = useState(false);
+  const deviceRequest = useRef({ generation: 0 });
   const [savingDevice, setSavingDevice] = useState(false);
   const [savingMapping, setSavingMapping] = useState(false);
   const [deviceDialogOpen, setDeviceDialogOpen] = useState(false);
@@ -171,44 +180,65 @@ function AttendanceAdminContent() {
   const [pairingCode, setPairingCode] = useState("");
   const [pairingExpiresAt, setPairingExpiresAt] = useState("");
   const [creatingPairingCode, setCreatingPairingCode] = useState(false);
-  const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
+  // Hydration refreshes the user provider. Depend on identity/permissions, not
+  // the provider object's reference, or every read starts another read.
+  const actorKey = JSON.stringify(currentUser.getActorContext());
+  const actorContext = useMemo<ActorContext>(() => JSON.parse(actorKey), [actorKey]);
 
-  const loadDeviceAdministration = async () => {
+  const loadDeviceAdministration = useCallback(async () => {
+    const request = ++deviceRequest.current.generation;
     setDeviceLoading(true);
     setDeviceError("");
     try {
-      setDeviceData(await attendanceService.listDeviceAdministrationAsync(actorContext));
+      const devices = await withRequestTimeout(
+        attendanceService.listDeviceAdministrationAsync(actorContext),
+        "Loading terminals timed out. Please try Refresh again. Your registration has not been changed.",
+      );
+      if (request !== deviceRequest.current.generation) return;
+      setDeviceData(devices);
+      setDeviceLoaded(true);
     } catch (error) {
+      if (request !== deviceRequest.current.generation) return;
       const message =
         error instanceof Error ? error.message : "Door terminals could not be refreshed.";
       setDeviceError(message);
     } finally {
-      setDeviceLoading(false);
+      if (request === deviceRequest.current.generation) setDeviceLoading(false);
     }
-  };
+  }, [actorContext, attendanceService]);
+
+  useEffect(() => {
+    const requests = deviceRequest.current;
+    setDeviceData({ devices: [], mappings: [], unmatched: [] });
+    setDeviceLoaded(false);
+    void loadDeviceAdministration();
+    const timer = window.setInterval(() => void loadDeviceAdministration(), 60_000);
+    return () => {
+      requests.generation++;
+      window.clearInterval(timer);
+    };
+  }, [loadDeviceAdministration]);
 
   useEffect(() => {
     let active = true;
+    let refreshing = false;
     const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
       try {
-        await attendanceService.hydrateFromDatabase(actorContext);
-        const devices = await attendanceService.listDeviceAdministrationAsync(actorContext);
-        if (active) {
-          setDeviceData(devices);
-          setDeviceError("");
-        }
+        await withRequestTimeout(
+          attendanceService.hydrateFromDatabase(actorContext),
+          "Attendance refresh timed out. Please reload the page.",
+        );
         if (active) setRevision((value) => value + 1);
       } catch (error) {
         if (active) {
-          setDeviceError(
-            error instanceof Error ? error.message : "Door terminals could not be refreshed.",
-          );
           toast.error(
             error instanceof Error ? error.message : "Attendance could not be refreshed.",
           );
         }
       }
-      if (active) setDeviceLoading(false);
+      refreshing = false;
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 60_000);
@@ -241,7 +271,9 @@ function AttendanceAdminContent() {
   const locations = attendanceService.getLocations();
   const clockInLocations = attendanceService.getClockInLocations();
   const siteVisits = attendanceService.getAllSiteVisits(actorContext);
-  const pendingSiteVisits = siteVisits.filter((visit) => visit.status === "Pending HR");
+  const pendingSiteVisits = siteVisits.filter(
+    (visit) => visit.status === "Pending HR" || visit.details?.extension?.status === "Pending",
+  );
   const exceptionCases = attendanceService.getExceptionCases(actorContext);
   const openExceptionCases = exceptionCases.filter((item) => item.status !== "Resolved");
   const currentRows = employees
@@ -565,8 +597,8 @@ function AttendanceAdminContent() {
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6 pb-10" data-revision={revision}>
       <PageHeader
-        title="Attendance Administration"
-        description="Control office attendance, exceptions, site visits and geofence policy."
+        title="Manage attendance"
+        description="Check attendance, review visits and resolve missing records. Use Office Setup only when office locations or working hours change."
         actions={
           <Button asChild variant="outline">
             <Link to="/staff/attendance/corrections">Review Corrections</Link>
@@ -574,7 +606,7 @@ function AttendanceAdminContent() {
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {[
           ["Staff roster", employees.length],
           [
@@ -596,10 +628,10 @@ function AttendanceAdminContent() {
       <Tabs defaultValue="daily">
         <div className="overflow-x-auto pb-2">
           <TabsList>
-            <TabsTrigger value="daily">Daily Roster</TabsTrigger>
+            <TabsTrigger value="daily">Today's attendance</TabsTrigger>
             <TabsTrigger value="site-visits">Site Visits ({pendingSiteVisits.length})</TabsTrigger>
             <TabsTrigger value="exceptions">
-              Exception Cases ({openExceptionCases.length})
+              Needs attention ({openExceptionCases.length})
             </TabsTrigger>
             <TabsTrigger value="terminals">
               Door Terminals ({deviceData.unmatched.length})
@@ -771,7 +803,10 @@ function AttendanceAdminContent() {
                 <RefreshCw className={`mr-2 h-4 w-4 ${deviceLoading ? "animate-spin" : ""}`} />
                 Refresh
               </Button>
-              <Button onClick={openNewDevice}>
+              <Button
+                onClick={openNewDevice}
+                disabled={deviceLoading || !deviceLoaded || Boolean(deviceError)}
+              >
                 <DoorOpen className="mr-2 h-4 w-4" /> Register Terminal
               </Button>
             </div>
@@ -794,7 +829,11 @@ function AttendanceAdminContent() {
                   {deviceData.devices.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={7} className="h-28 text-center text-muted-foreground">
-                        No door terminal has been registered yet.
+                        {deviceError
+                          ? "Terminal records could not be loaded. Use Refresh to try again."
+                          : !deviceLoaded || deviceLoading
+                            ? "Loading registered terminals…"
+                            : "No door terminal has been registered yet."}
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -884,7 +923,11 @@ function AttendanceAdminContent() {
                   {deviceData.unmatched.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
-                        Every received terminal user is matched.
+                        {deviceError
+                          ? "Terminal users could not be loaded. Use Refresh to try again."
+                          : !deviceLoaded || deviceLoading
+                            ? "Loading terminal users…"
+                            : "Every received terminal user is matched."}
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -987,7 +1030,8 @@ function AttendanceAdminContent() {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-right">
-                            {visit.status === "Pending HR" && (
+                            {(visit.status === "Pending HR" ||
+                              visit.details?.extension?.status === "Pending") && (
                               <Button
                                 size="sm"
                                 onClick={() => {
@@ -1285,40 +1329,51 @@ function AttendanceAdminContent() {
                   onChange={(event) => setLateGrace(event.target.value)}
                 />
               </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Maximum GPS uncertainty</label>
-                <Input
-                  type="number"
-                  min="10"
-                  value={maxAccuracy}
-                  onChange={(event) => setMaxAccuracy(event.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Ignore repeat punches within</label>
-                <Input
-                  type="number"
-                  min="0"
-                  max="15"
-                  value={deduplicationMinutes}
-                  onChange={(event) => setDeduplicationMinutes(event.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Minutes; prevents accidental double taps.
+              <details className="rounded-xl border p-3 sm:col-span-2">
+                <summary className="min-h-8 cursor-pointer text-sm font-semibold">
+                  Advanced location and network settings
+                </summary>
+                <p className="mb-4 mt-2 text-xs text-muted-foreground">
+                  These settings control where staff can clock in. Ask your IT colleague for help
+                  with GPS accuracy or office network addresses.
                 </p>
-              </div>
-              <div className="space-y-2 sm:col-span-2">
-                <label className="text-sm font-medium">Approved office networks</label>
-                <Input
-                  value={approvedNetworks}
-                  onChange={(event) => setApprovedNetworks(event.target.value)}
-                  placeholder="Example: 203.0.113.24/32"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Enter the public IP address or network used by each VIA office, separated by
-                  commas. Attendance requires both this network and the office location.
-                </p>
-              </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Maximum GPS uncertainty</label>
+                    <Input
+                      type="number"
+                      min="10"
+                      value={maxAccuracy}
+                      onChange={(event) => setMaxAccuracy(event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Ignore repeat punches within</label>
+                    <Input
+                      type="number"
+                      min="0"
+                      max="15"
+                      value={deduplicationMinutes}
+                      onChange={(event) => setDeduplicationMinutes(event.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Minutes; prevents accidental double taps.
+                    </p>
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">
+                    <label className="text-sm font-medium">Approved office networks</label>
+                    <Input
+                      value={approvedNetworks}
+                      onChange={(event) => setApprovedNetworks(event.target.value)}
+                      placeholder="Example: 203.0.113.24/32"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Enter the public IP address or network used by each VIA office, separated by
+                      commas. Attendance requires both this network and the office location.
+                    </p>
+                  </div>
+                </div>
+              </details>
               <div className="space-y-2 sm:col-span-2">
                 <label className="text-sm font-medium">Reason for change</label>
                 <Input
@@ -1685,6 +1740,26 @@ function AttendanceAdminContent() {
                 {reviewVisit.date} · {reviewVisit.startTime}–{reviewVisit.endTime}
               </p>
               <p className="mt-2 text-muted-foreground">{reviewVisit.purpose}</p>
+              {reviewVisit.details?.returnPlan && (
+                <p className="mt-2">
+                  Expected return:{" "}
+                  {reviewVisit.details.returnPlan === "Time"
+                    ? reviewVisit.details.expectedReturnTime
+                    : reviewVisit.details.returnPlan}
+                  . Estimate only; attendance closes at {reviewVisit.endTime} unless the employee
+                  finishes earlier or returns.
+                </p>
+              )}
+              {reviewVisit.details?.finishedAt && (
+                <p>Actual finish: {new Date(reviewVisit.details.finishedAt).toLocaleString()}</p>
+              )}
+              {reviewVisit.details?.extension?.status === "Pending" && (
+                <p className="mt-2 font-medium">
+                  Extension requested until {reviewVisit.details.extension.endTime}:{" "}
+                  {reviewVisit.details.extension.reason}. Approval confirms duty time, not overtime
+                  pay.
+                </p>
+              )}
             </div>
           )}
           <Textarea

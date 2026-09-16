@@ -34,7 +34,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  PageSections as Tabs,
+  SectionPanel as TabsContent,
+  SectionNavigation as TabsList,
+  SectionLink as TabsTrigger,
+} from "@/components/ui/page-sections";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { OnboardingService } from "@/lib/data/onboarding-service";

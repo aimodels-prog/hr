@@ -24,6 +24,7 @@ export interface GeoReading {
 }
 
 export interface AttendanceLocation extends MasterRecord {
+  timezone?: string | undefined;
   latitude?: number | undefined;
   longitude?: number | undefined;
   radiusMeters?: number | undefined;
@@ -144,6 +145,7 @@ export type SiteVisitOrigin = "Office" | "Home";
 export type SiteVisitStatus = "Pending HR" | "Approved" | "Rejected" | "Cancelled" | "Completed";
 
 export interface SiteVisitRequest extends BaseRecord {
+  details?: import("./site-visit.ts").SiteVisitDetails;
   databaseId?: string | undefined;
   employeeId: RecordId;
   date: string;

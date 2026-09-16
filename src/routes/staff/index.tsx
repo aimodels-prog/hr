@@ -220,6 +220,13 @@ function Dashboard() {
               ];
 
   const quickActions = [
+    {
+      title: "Quick visit",
+      description: "Site, ministry or client · record today's duty",
+      to: "/staff/me/attendance?action=site-visit",
+      icon: Plane,
+      tone: "bg-primary/10 text-primary",
+    },
     ...roleQuickActions,
     {
       title: "Apply for a position",
@@ -262,6 +269,16 @@ function Dashboard() {
           )}
         </div>
       </div>
+
+      {currentEmployee && (
+        <Link
+          to="/staff/me/attendance"
+          search={{ action: "site-visit" }}
+          className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 py-2 font-medium text-primary-foreground"
+        >
+          <Plane className="h-4 w-4" /> Quick visit
+        </Link>
+      )}
 
       {activeRole === "HR" && currentEmployee && (
         <section aria-labelledby="my-day-heading">

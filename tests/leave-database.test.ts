@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 import postgres from "postgres";
+import { processLeaveUsageReminders } from "../src/lib/db/repositories/leave-reminder.repository.server.ts";
 
 import {
   approveLeaveRequestInDatabase,
+  grantSickLeaveBackdatePermission,
   createLeaveRequestInDatabase,
   exportLeaveRequestsCsvInDatabase,
   listLeaveSnapshotForActor,
@@ -225,6 +228,44 @@ test(
         ),
         /Supporting evidence is required/,
       );
+      const secondHrUserId = randomUUID();
+      const inactiveHrUserId = randomUUID();
+      const foreignHrUserId = randomUUID();
+      const foreignOrgId = randomUUID();
+      await sql`INSERT INTO organisations (id, name, slug, is_active, created_by, updated_by)
+        VALUES (${foreignOrgId}, 'Other leave organisation', ${`leave-other-${foreignOrgId}`}, true, ${hrUserId}, ${hrUserId})`;
+      for (const [id, org, status] of [
+        [secondHrUserId, organisationId, "Active"],
+        [inactiveHrUserId, organisationId, "Suspended"],
+        [foreignHrUserId, foreignOrgId, "Active"],
+      ] as const) {
+        const noticeEmployeeId = randomUUID();
+        const noticeMasterIds = [departmentId, positionId, locationId, employmentTypeId];
+        if (org !== organisationId) {
+          for (const [index, table] of [
+            "departments",
+            "positions",
+            "locations",
+            "employment_types",
+          ].entries()) {
+            const masterId = randomUUID();
+            noticeMasterIds[index] = masterId;
+            await sql.unsafe(
+              `INSERT INTO ${table} (id, organisation_id, name, code, is_active, order_index, created_by, updated_by)
+              VALUES ($1, $2, 'Other organisation master', 'OTHER', true, 1, $3, $3)`,
+              [masterId, org, hrUserId],
+            );
+          }
+        }
+        await sql`INSERT INTO employees (id, organisation_id, employee_number, legal_name, preferred_name, work_email,
+          department_id, position_id, location_id, employment_type_id, status, start_date, created_by, updated_by)
+          VALUES (${noticeEmployeeId}, ${org}, ${`HR-${id.slice(0, 6)}`}, 'HR notification test', 'HR', ${`${id}@viahr.test`},
+          ${noticeMasterIds[0]!}, ${noticeMasterIds[1]!}, ${noticeMasterIds[2]!}, ${noticeMasterIds[3]!}, 'Active', '2020-01-01', ${hrUserId}, ${hrUserId})`;
+        await sql`INSERT INTO users (id, organisation_id, employee_id, display_name, workspace_email, status, created_by, updated_by)
+          VALUES (${id}, ${org}, ${noticeEmployeeId}, 'HR notification test', ${`${id}@viahr.test`}, ${status}, ${hrUserId}, ${hrUserId})`;
+        await sql`INSERT INTO user_roles (organisation_id, user_id, role_id, assigned_by)
+          VALUES (${org}, ${id}, ${roleIds.HR}, ${hrUserId})`;
+      }
       const requestId = await createLeaveRequestInDatabase(
         organisationId,
         {
@@ -241,6 +282,25 @@ test(
       const submitted = snapshot.requests.find((item) => item.id === requestId);
       assert.equal(submitted?.workingDaysRequested, 4, "the public holiday must not count");
       assert.equal(submitted?.status, "Pending Line Manager");
+      const submissionNotices = await sql`
+        SELECT recipient_user_id, type, message, priority, link FROM notifications
+        WHERE organisation_id = ${organisationId} AND link->>'entityId' = ${requestId}
+      `;
+      assert.deepEqual(
+        submissionNotices.map((item) => item.recipient_user_id).sort(),
+        [managerUserId, hrUserId, secondHrUserId].sort(),
+        "Notify the manager and every active HR user in this organisation only",
+      );
+      assert.equal(
+        submissionNotices.find((item) => item.recipient_user_id === managerUserId)?.type,
+        "leave_approval",
+      );
+      for (const notice of submissionNotices.filter((item) => item.type === "leave_submitted")) {
+        assert.equal(notice.priority, "Normal");
+        assert.match(notice.message, /Awaiting line manager approval/);
+        assert.doesNotMatch(notice.message, /Family travel arrangements/);
+        assert.equal(notice.link.path, "/staff/leave-admin");
+      }
       await assert.rejects(
         approveLeaveRequestInDatabase(organisationId, requestId, hrActor, "approve"),
         /assigned approver/,
@@ -248,6 +308,13 @@ test(
       await approveLeaveRequestInDatabase(organisationId, requestId, managerActor, "approve");
       snapshot = await listLeaveSnapshotForActor(organisationId, hrActor);
       assert.equal(snapshot.requests.find((item) => item.id === requestId)?.status, "Pending HR");
+      const [hrApprovalNotice] = await sql`SELECT count(*)::int AS count FROM notifications
+        WHERE recipient_user_id = ${hrUserId} AND type = 'leave_approval' AND link->>'entityId' = ${requestId}`;
+      assert.equal(
+        hrApprovalNotice.count,
+        1,
+        "The later actionable HR approval notice is separate from the submission FYI",
+      );
       const decisions = await Promise.allSettled([
         approveLeaveRequestInDatabase(organisationId, requestId, hrActor, "approve"),
         approveLeaveRequestInDatabase(organisationId, requestId, hrActor, "approve"),
@@ -318,6 +385,205 @@ test(
       await approveLeaveRequestInDatabase(organisationId, requestId, hrActor, "approve");
       const [restored] = await sql`SELECT balance_days FROM leave_balances WHERE id = ${balanceId}`;
       assert.equal(Number(restored?.balance_days), 35);
+
+      // Old or incorrectly configured statutory policies must still enforce nationality.
+      const statutoryPolicyIds: string[] = [];
+      for (const type of ["Exam", "AccompanyPatient", "Hajj"]) {
+        const policyId = randomUUID();
+        statutoryPolicyIds.push(policyId);
+        await sql`INSERT INTO leave_policies (id, organisation_id, code, name, type, category,
+          description, is_paid, scope, accrual_mode, is_statutory, consumes_balance,
+          requires_handover_contact, eligibility, approval_chain, created_by, updated_by)
+          VALUES (${policyId}, ${organisationId}, ${type}, ${type}, ${type}, 'Statutory',
+          'Nationality eligibility regression', true, 'Annual', 'Upfront', true, false,
+          false, ${sql.json({ omaniOnly: type === "Hajj", minimumServiceMonths: 12 })},
+          '["Line Manager", "HR"]'::jsonb, ${hrUserId}, ${hrUserId})`;
+        for (const nationality of ["Indian", ""]) {
+          await sql`UPDATE employees SET nationality = ${nationality} WHERE id = ${employeeId}`;
+          if (type !== "Hajj") {
+            await assert.rejects(
+              createLeaveRequestInDatabase(
+                organisationId,
+                {
+                  employeeId,
+                  policyId,
+                  startDate: isoDate(start),
+                  endDate: isoDate(start),
+                  reason: "Nationality restriction test",
+                },
+                employeeActor,
+              ),
+              /only to Omani employees/,
+            );
+          }
+        }
+        await sql`UPDATE employees SET nationality = ${type === "Hajj" ? "Indian" : "OMN"} WHERE id = ${employeeId}`;
+        const eligibleRequestId = await createLeaveRequestInDatabase(
+          organisationId,
+          {
+            employeeId,
+            policyId,
+            startDate: isoDate(start),
+            endDate: isoDate(start),
+            reason: "Eligible nationality test",
+          },
+          employeeActor,
+        );
+        if (type !== "Hajj") {
+          await sql`UPDATE employees SET nationality = 'Indian' WHERE id = ${employeeId}`;
+          await assert.rejects(
+            approveLeaveRequestInDatabase(
+              organisationId,
+              eligibleRequestId,
+              managerActor,
+              "approve",
+            ),
+            /only to Omani employees/,
+          );
+        }
+        await approveLeaveRequestInDatabase(
+          organisationId,
+          eligibleRequestId,
+          managerActor,
+          "decline",
+          "Regression test complete",
+        );
+      }
+
+      // Correct existing metadata, audit the correction, preserve ledger/history, and remain idempotent.
+      const [beforeMigration] = await sql`SELECT
+        (SELECT count(*) FROM leave_requests WHERE organisation_id = ${organisationId}) AS requests,
+        (SELECT count(*) FROM leave_transactions WHERE organisation_id = ${organisationId}) AS transactions`;
+      const migration = await readFile(
+        new URL("../drizzle/0038_omani_leave_eligibility.sql", import.meta.url),
+        "utf8",
+      );
+      await sql.unsafe(migration);
+      const correctedPolicies =
+        await sql`SELECT type, eligibility FROM leave_policies WHERE id IN ${sql(statutoryPolicyIds)}`;
+      for (const policy of correctedPolicies) {
+        assert.equal(policy.eligibility.omaniOnly, policy.type !== "Hajj");
+        assert.equal(policy.eligibility.minimumServiceMonths, 12);
+      }
+      await sql.unsafe(migration);
+      const [auditCount] = await sql`SELECT count(*)::int AS count FROM audit_events
+        WHERE organisation_id = ${organisationId} AND action = 'correct-statutory-nationality'`;
+      assert.equal(auditCount.count, 3);
+      const [afterMigration] = await sql`SELECT
+        (SELECT count(*) FROM leave_requests WHERE organisation_id = ${organisationId}) AS requests,
+        (SELECT count(*) FROM leave_transactions WHERE organisation_id = ${organisationId}) AS transactions`;
+      assert.deepEqual(afterMigration, beforeMigration);
+      const [preservedBalance] =
+        await sql`SELECT balance_days FROM leave_balances WHERE id = ${balanceId}`;
+      assert.equal(Number(preservedBalance.balance_days), 35);
+      const past = new Date();
+      past.setUTCDate(past.getUTCDate() - 14);
+      while (past.getUTCDay() !== 1) past.setUTCDate(past.getUTCDate() - 1);
+      const pastDate = isoDate(past);
+      const permissionInput = {
+        employeeId,
+        startDate: pastDate,
+        endDate: pastDate,
+        reason: "Too unwell to apply at the time",
+      };
+      await assert.rejects(
+        grantSickLeaveBackdatePermission(organisationId, permissionInput, employeeActor),
+        /Only HR/,
+      );
+      await assert.rejects(
+        grantSickLeaveBackdatePermission(
+          organisationId,
+          { ...permissionInput, employeeId: hrEmployeeId },
+          hrActor,
+        ),
+        /Another HR/,
+      );
+      await assert.rejects(
+        grantSickLeaveBackdatePermission(
+          organisationId,
+          { ...permissionInput, employeeId: randomUUID() },
+          hrActor,
+        ),
+        /active employee/,
+      );
+      // Evidence is tested above; disable only for these isolated authorisation scenarios.
+      await sql`UPDATE leave_policies SET requires_attachment=false, consumes_balance=false,
+        notice_rules=${sql.json({ enabled: true, shortLeaveMaxDays: 5, shortLeaveNoticeDays: 14, longLeaveNoticeDays: 60 })}
+        WHERE id=${sickPolicyId}`;
+      const lateInput = { ...permissionInput, policyId: sickPolicyId };
+      await assert.rejects(
+        createLeaveRequestInDatabase(organisationId, lateInput, employeeActor),
+        /Ask HR to authorise/,
+      );
+      const permission = await grantSickLeaveBackdatePermission(
+        organisationId,
+        permissionInput,
+        hrActor,
+      );
+      await assert.rejects(
+        createLeaveRequestInDatabase(
+          organisationId,
+          { ...lateInput, endDate: isoDate(new Date(past.getTime() + 86400000)) },
+          employeeActor,
+        ),
+        /exact dates/,
+      );
+      const submissions = await Promise.allSettled([
+        createLeaveRequestInDatabase(organisationId, lateInput, employeeActor),
+        createLeaveRequestInDatabase(organisationId, lateInput, employeeActor),
+      ]);
+      assert.equal(submissions.filter((result) => result.status === "fulfilled").length, 1);
+      const [used] =
+        await sql`SELECT p.used_by_request_id, r.status, r.policy_snapshot FROM sick_leave_backdate_permissions p JOIN leave_requests r ON r.id=p.used_by_request_id WHERE p.id=${permission.id}`;
+      assert.equal(used.status, "Pending Line Manager");
+      assert.equal(used.policy_snapshot.backdatePermissionId, permission.id);
+      await assert.rejects(
+        createLeaveRequestInDatabase(organisationId, lateInput, employeeActor),
+        /Ask HR to authorise/,
+      );
+      const expired = await grantSickLeaveBackdatePermission(
+        organisationId,
+        permissionInput,
+        hrActor,
+      );
+      await sql`UPDATE sick_leave_backdate_permissions SET expires_at=now()-interval '1 second' WHERE id=${expired.id}`;
+      await assert.rejects(
+        createLeaveRequestInDatabase(organisationId, lateInput, employeeActor),
+        /Ask HR to authorise/,
+      );
+      const [notice] =
+        await sql`SELECT link FROM notifications WHERE organisation_id=${organisationId} AND recipient_user_id=${employeeUserId} AND deduplication_key=${`sick-backdate-${permission.id}-${employeeUserId}`}`;
+      assert.equal(notice.link.path, "/staff/leave");
+      // Scheduled reminders are role-independent, private, repeat-safe and read-only for balances.
+      await sql`UPDATE app_settings SET leave_year_start='01-01', timezone='Asia/Muscat' WHERE organisation_id=${organisationId}`;
+      const reminderBalanceId = randomUUID();
+      await sql`INSERT INTO leave_balances (id, organisation_id, employee_id, policy_id, leave_year, balance_days, created_by, updated_by)
+        VALUES (${reminderBalanceId}, ${organisationId}, ${employeeId}, ${annualPolicyId}, 2090, 40, ${hrUserId}, ${hrUserId})`;
+      await sql`INSERT INTO leave_transactions (organisation_id, employee_id, policy_id, date, transaction_type, days, reason, actor_user_id, created_by, updated_by)
+        VALUES (${organisationId}, ${employeeId}, ${annualPolicyId}, '2090-01-01', 'Carry-Forward', 10, 'Test old leave', ${hrUserId}, ${hrUserId}, ${hrUserId})`;
+      await Promise.all([
+        processLeaveUsageReminders(new Date("2090-04-15T08:00:00Z")),
+        processLeaveUsageReminders(new Date("2090-04-15T08:00:00Z")),
+      ]);
+      const reminders =
+        await sql`SELECT * FROM notifications WHERE organisation_id=${organisationId} AND deduplication_key=${`leave-use:${reminderBalanceId}:carry:2090-04-15`}`;
+      assert.equal(reminders.length, 1);
+      assert.equal(reminders[0].recipient_user_id, employeeUserId);
+      assert.equal(reminders[0].priority, "Normal");
+      assert.equal(reminders[0].link.path, "/staff/leave");
+      assert.match(reminders[0].message, /30 April 2090/);
+      await processLeaveUsageReminders(new Date("2090-05-01T08:00:00Z"));
+      const annualReminder =
+        await sql`SELECT * FROM notifications WHERE organisation_id=${organisationId} AND deduplication_key=${`leave-use:${reminderBalanceId}:annual:2090-05`}`;
+      assert.equal(annualReminder.length, 1);
+      const [unchanged] =
+        await sql`SELECT balance_days FROM leave_balances WHERE id=${reminderBalanceId}`;
+      assert.equal(Number(unchanged.balance_days), 40);
+      await sql`UPDATE leave_balances SET balance_days=0 WHERE id=${reminderBalanceId}`;
+      await processLeaveUsageReminders(new Date("2090-06-01T08:00:00Z"));
+      const none =
+        await sql`SELECT * FROM notifications WHERE organisation_id=${organisationId} AND deduplication_key=${`leave-use:${reminderBalanceId}:annual:2090-06`}`;
+      assert.equal(none.length, 0);
     } finally {
       await sql.end();
     }

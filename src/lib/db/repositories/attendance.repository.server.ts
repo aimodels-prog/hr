@@ -1,6 +1,11 @@
 import "@tanstack/react-start/server-only";
 
 import { randomUUID } from "node:crypto";
+import {
+  validateSiteVisitPlan,
+  type SiteVisitDetails,
+  type SiteVisitReturnPlan,
+} from "../../data/site-visit.ts";
 import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 
 import { getDatabaseClient } from "../client.ts";
@@ -585,6 +590,7 @@ export async function captureAttendancePunchInDatabase(
         latitude: locations.latitude,
         longitude: locations.longitude,
         radiusMeters: locations.radiusMeters,
+        timezone: locations.timezone,
       })
       .from(locations)
       .where(
@@ -630,8 +636,8 @@ export async function captureAttendancePunchInDatabase(
       .limit(1);
     const id = existing?.id ?? randomUUID();
     if (input.returnFromSiteVisit) {
-      if (input.direction !== "in" || !existing?.clockInAt || existing.clockOutAt)
-        throw new Error("An open office attendance record is required to record your return.");
+      if (input.direction !== "in" || existing?.clockOutAt)
+        throw new Error("Attendance has already closed. Ask HR for a correction.");
       const activeVisits = await tx
         .select()
         .from(siteVisitRequests)
@@ -640,19 +646,36 @@ export async function captureAttendancePunchInDatabase(
             eq(siteVisitRequests.organisationId, organisationId),
             eq(siteVisitRequests.employeeId, input.employeeId),
             eq(siteVisitRequests.date, date),
-            eq(siteVisitRequests.origin, "Office"),
-            eq(siteVisitRequests.status, "Approved"),
+            inArray(siteVisitRequests.status, ["Pending HR", "Approved"]),
           ),
         );
-      if (
-        !activeVisits.some(
-          (visit) =>
-            at > zonedDateTimeToUtc(visit.date, visit.startTime, settings?.timezone ?? "UTC"),
-        )
-      )
-        throw new Error("No approved office-origin visit is awaiting your return.");
+      const activeVisit = activeVisits.find(
+        (visit) =>
+          !visit.details.finishedAt &&
+          !visit.details.returnedAt &&
+          at >
+            zonedDateTimeToUtc(
+              visit.date,
+              visit.startTime,
+              site.timezone || settings?.timezone || "UTC",
+            ),
+      );
+      if (!activeVisit) throw new Error("No active site visit is awaiting your return.");
+      if (activeVisit.origin === "Office" && !existing?.clockInAt)
+        throw new Error(
+          "An office-origin visit requires the original office clock-in. Ask HR for a correction.",
+        );
+      await tx
+        .update(siteVisitRequests)
+        .set({
+          details: { ...activeVisit.details, returnedAt: now },
+          updatedAt: new Date(),
+          updatedBy: actor.userId,
+        })
+        .where(eq(siteVisitRequests.id, activeVisit.id));
       // Record an additional verified IN punch, without replacing the day's first clock-in.
-    } else if (input.direction === "in") {
+    }
+    if (input.direction === "in" && !(input.returnFromSiteVisit && existing?.clockInAt)) {
       if (existing?.clockInAt) throw new Error("You are already clocked in today.");
       if (existing)
         await tx
@@ -685,7 +708,7 @@ export async function captureAttendancePunchInDatabase(
           createdBy: actor.userId,
           updatedBy: actor.userId,
         } as typeof attendanceRecords.$inferInsert);
-    } else {
+    } else if (input.direction === "out") {
       if (!existing?.clockInAt) throw new Error("Clock in before clocking out.");
       if (existing.clockOutAt) throw new Error("You are already clocked out today.");
       const hours = Math.max(
@@ -1267,17 +1290,27 @@ export async function requestSiteVisitInDatabase(
     destination: string;
     purpose: string;
     projectId?: string;
+    returnPlan?: SiteVisitReturnPlan;
+    expectedReturnTime?: string;
   },
   actor: AuditActorContext,
 ): Promise<string> {
   if (!actor.employeeId || actor.employeeId !== input.employeeId)
     throw new Error("You can only request your own site visit.");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || input.date < new Date().toISOString().slice(0, 10))
-    throw new Error("Site visits cannot be requested for a past date.");
+  const details: SiteVisitDetails = input.returnPlan
+    ? {
+        returnPlan: input.returnPlan,
+        ...(input.returnPlan === "Time" && input.expectedReturnTime
+          ? { expectedReturnTime: input.expectedReturnTime }
+          : {}),
+      }
+    : {};
+  validateSiteVisitPlan(input.startTime, details);
+  const attendanceEnd = input.returnPlan ? "17:00" : input.endTime;
   if (
     !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.startTime) ||
     !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.endTime) ||
-    input.startTime >= input.endTime
+    input.startTime >= attendanceEnd
   )
     throw new Error("Enter a valid site-visit start and end time.");
   if (input.destination.trim().length < 3 || input.purpose.trim().length < 5)
@@ -1286,7 +1319,11 @@ export async function requestSiteVisitInDatabase(
   const id = randomUUID();
   await db.transaction(async (tx) => {
     const [employee] = await tx
-      .select({ id: employees.id })
+      .select({
+        id: employees.id,
+        lineManagerId: employees.lineManagerId,
+        locationId: employees.locationId,
+      })
       .from(employees)
       .where(
         and(
@@ -1297,6 +1334,28 @@ export async function requestSiteVisitInDatabase(
       )
       .limit(1);
     if (!employee) throw new Error("The employee is not active.");
+    const [office] = await tx
+      .select({ timezone: locations.timezone })
+      .from(locations)
+      .where(
+        and(eq(locations.id, employee.locationId), eq(locations.organisationId, organisationId)),
+      )
+      .limit(1);
+    const [settings] = await tx
+      .select({ timezone: appSettings.timezone })
+      .from(appSettings)
+      .where(eq(appSettings.organisationId, organisationId))
+      .limit(1);
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(input.date) ||
+      input.date < zonedParts(new Date(), office?.timezone || settings?.timezone || "UTC").date
+    )
+      throw new Error(
+        "Site visits cannot be requested for a past date. Ask HR for an attendance correction.",
+      );
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${organisationId}:${input.employeeId}:${input.date}`}, 0))`,
+    );
     const [overlap] = await tx
       .select({ id: siteVisitRequests.id })
       .from(siteVisitRequests)
@@ -1306,7 +1365,7 @@ export async function requestSiteVisitInDatabase(
           eq(siteVisitRequests.employeeId, input.employeeId),
           eq(siteVisitRequests.date, input.date),
           inArray(siteVisitRequests.status, ["Pending HR", "Approved"]),
-          sql`${siteVisitRequests.startTime} < ${input.endTime} AND ${siteVisitRequests.endTime} > ${input.startTime}`,
+          sql`${siteVisitRequests.startTime} < ${attendanceEnd} AND ${siteVisitRequests.endTime} > ${input.startTime} AND (${siteVisitRequests.details}->>'finishedAt' IS NULL AND ${siteVisitRequests.details}->>'returnedAt' IS NULL)`,
         ),
       )
       .limit(1);
@@ -1317,7 +1376,8 @@ export async function requestSiteVisitInDatabase(
       employeeId: input.employeeId,
       date: input.date,
       startTime: input.startTime,
-      endTime: input.endTime,
+      endTime: attendanceEnd,
+      details,
       origin: input.origin,
       destination: input.destination.trim(),
       purpose: input.purpose.trim(),
@@ -1334,7 +1394,7 @@ export async function requestSiteVisitInDatabase(
         and(
           eq(users.organisationId, organisationId),
           eq(users.status, "Active"),
-          sql`EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ${users.id} AND r.code IN ('HR','Super Admin'))`,
+          sql`EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ${users.id} AND ur.organisation_id = ${organisationId} AND r.code IN ('HR','Super Admin'))`,
         ),
       );
     for (const hr of hrUsers)
@@ -1353,6 +1413,36 @@ export async function requestSiteVisitInDatabase(
           updatedBy: actor.userId!,
         } as typeof notifications.$inferInsert)
         .onConflictDoNothing();
+    if (employee.lineManagerId) {
+      const [manager] = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(
+          and(
+            eq(users.organisationId, organisationId),
+            eq(users.employeeId, employee.lineManagerId),
+            eq(users.status, "Active"),
+          ),
+        )
+        .limit(1);
+      if (manager && !hrUsers.some((user) => user.id === manager.id)) {
+        await tx
+          .insert(notifications)
+          .values({
+            organisationId,
+            recipientUserId: manager.id,
+            type: "attendance.site_visit",
+            title: "Team member going on a site visit",
+            message: `${actor.displayName}: ${input.destination.trim()}, ${input.date} from ${input.startTime}. Awaiting HR confirmation; no approval action is required from you.`,
+            priority: "Normal",
+            deduplicationKey: `site-visit-manager-${id}`,
+            link: { entityType: "site-visit", entityId: id, path: "/staff" },
+            createdBy: actor.userId!,
+            updatedBy: actor.userId!,
+          } as typeof notifications.$inferInsert)
+          .onConflictDoNothing();
+      }
+    }
     await tx.insert(auditEvents).values({
       organisationId,
       actorUserId: actor.userId,
@@ -1374,6 +1464,117 @@ export async function requestSiteVisitInDatabase(
     } as typeof auditEvents.$inferInsert);
   });
   return id;
+}
+
+export async function updateSiteVisitProgressInDatabase(
+  organisationId: string,
+  visitId: string,
+  input: { action: "finish" | "extend"; endTime?: string | undefined; reason?: string | undefined },
+  actor: AuditActorContext,
+  at = new Date(),
+): Promise<void> {
+  const db = getDatabaseClient();
+  await db.transaction(async (tx) => {
+    const [visit] = await tx
+      .select()
+      .from(siteVisitRequests)
+      .where(
+        and(
+          eq(siteVisitRequests.id, visitId),
+          eq(siteVisitRequests.organisationId, organisationId),
+          eq(siteVisitRequests.employeeId, actor.employeeId!),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!visit || !["Pending HR", "Approved"].includes(visit.status))
+      throw new Error(
+        "This visit cannot be updated. Ask HR for an attendance correction if it has closed.",
+      );
+    if (!visit.details.returnPlan || visit.details.finishedAt || visit.details.returnedAt)
+      throw new Error("This visit has already ended or uses the previous scheduled-visit flow.");
+    const [employee] = await tx
+      .select({ timezone: locations.timezone })
+      .from(employees)
+      .leftJoin(locations, eq(locations.id, employees.locationId))
+      .where(and(eq(employees.id, visit.employeeId), eq(employees.organisationId, organisationId)))
+      .limit(1);
+    const [settings] = await tx
+      .select({ timezone: appSettings.timezone })
+      .from(appSettings)
+      .where(eq(appSettings.organisationId, organisationId))
+      .limit(1);
+    const local = zonedParts(at, employee?.timezone || settings?.timezone || "UTC");
+    if (local.date !== visit.date || local.time < visit.startTime)
+      throw new Error("Update the visit on its date, after it starts.");
+    const details = { ...visit.details };
+    if (input.action === "finish") {
+      details.finishedAt = at.toISOString();
+    } else {
+      if (
+        !input.endTime ||
+        !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.endTime) ||
+        input.endTime <= visit.endTime ||
+        input.endTime <= local.time ||
+        (input.reason?.trim().length ?? 0) < 5
+      )
+        throw new Error("Choose a later finish time and explain the extension.");
+      if (details.extension?.status === "Pending")
+        throw new Error("An extension is already awaiting HR confirmation.");
+      details.extension = {
+        endTime: input.endTime,
+        reason: input.reason!.trim(),
+        status: "Pending",
+        requestedAt: at.toISOString(),
+      };
+      const reviewers = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(
+          and(
+            eq(users.organisationId, organisationId),
+            eq(users.status, "Active"),
+            sql`EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=${users.id} AND ur.organisation_id=${organisationId} AND r.code IN ('HR','Super Admin'))`,
+          ),
+        );
+      for (const reviewer of reviewers)
+        await tx
+          .insert(notifications)
+          .values({
+            organisationId,
+            recipientUserId: reviewer.id,
+            type: "attendance.site_visit",
+            title: "Site visit extension awaiting review",
+            message: `${actor.displayName} requested duty until ${input.endTime}: ${input.reason!.trim()}. This does not approve overtime.`,
+            priority: "Normal",
+            deduplicationKey: `site-visit-extension-${visitId}-${at.toISOString()}`,
+            link: { entityType: "site-visit", entityId: visitId, path: "/staff/attendance" },
+            createdBy: actor.userId!,
+            updatedBy: actor.userId!,
+          } as typeof notifications.$inferInsert)
+          .onConflictDoNothing();
+    }
+    await tx
+      .update(siteVisitRequests)
+      .set({ details, updatedAt: new Date(), updatedBy: actor.userId })
+      .where(eq(siteVisitRequests.id, visitId));
+    await tx.insert(auditEvents).values({
+      organisationId,
+      actorUserId: actor.userId,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [],
+      action: `site-visit-${input.action}`,
+      module: "attendance",
+      entityType: "site-visit",
+      entityId: visitId,
+      beforeSummary: { details: visit.details },
+      afterSummary: { details },
+      reason: input.reason?.trim() || "Employee recorded actual duty finish",
+      riskLevel: "Medium",
+    } as typeof auditEvents.$inferInsert);
+  });
 }
 
 export async function decideSiteVisitInDatabase(
@@ -1400,14 +1601,37 @@ export async function decideSiteVisitInDatabase(
       )
       .for("update")
       .limit(1);
-    if (!visit || visit.status !== "Pending HR")
+    const extensionReview =
+      visit?.details.extension?.status === "Pending" &&
+      ["Approved", "Completed"].includes(visit.status);
+    if (!visit || (visit.status !== "Pending HR" && !extensionReview))
       throw new Error("This site visit is no longer awaiting review.");
     if (visit.employeeId === actor.employeeId)
       throw new Error("You cannot approve your own site visit.");
     await tx
       .update(siteVisitRequests)
       .set({
-        status: decision === "approve" ? "Approved" : "Rejected",
+        status: extensionReview
+          ? decision === "approve"
+            ? "Approved"
+            : visit.status
+          : decision === "approve"
+            ? "Approved"
+            : "Rejected",
+        ...(visit.details.extension?.status === "Pending"
+          ? {
+              details: {
+                ...visit.details,
+                extension: {
+                  ...visit.details.extension,
+                  status: decision === "approve" ? ("Approved" as const) : ("Rejected" as const),
+                  reviewedAt: new Date().toISOString(),
+                  reviewedBy: actor.userId!,
+                },
+              },
+              ...(decision === "approve" ? { endTime: visit.details.extension.endTime } : {}),
+            }
+          : {}),
         hrReviewedBy: actor.userId,
         hrReviewedAt: new Date().toISOString(),
         hrNotes: notes?.trim(),
@@ -1415,7 +1639,7 @@ export async function decideSiteVisitInDatabase(
         updatedBy: actor.userId,
         recordVersion: sql`${siteVisitRequests.recordVersion} + 1`,
       })
-      .where(and(eq(siteVisitRequests.id, visitId), eq(siteVisitRequests.status, "Pending HR")));
+      .where(and(eq(siteVisitRequests.id, visitId), eq(siteVisitRequests.status, visit.status)));
     const [employeeUser] = await tx
       .select({ id: users.id })
       .from(users)
@@ -1428,12 +1652,12 @@ export async function decideSiteVisitInDatabase(
           organisationId,
           recipientUserId: employeeUser.id,
           type: "attendance.site_visit",
-          title: `Site visit ${decision === "approve" ? "approved" : "declined"}`,
+          title: `Site visit${extensionReview ? " extension" : ""} ${decision === "approve" ? "approved" : "declined"}`,
           message:
             notes?.trim() ||
             `Your site visit to ${visit.destination} was ${decision === "approve" ? "approved" : "declined"}.`,
           priority: decision === "reject" ? "High" : "Normal",
-          deduplicationKey: `site-visit-${visitId}-${decision}`,
+          deduplicationKey: `site-visit-${visitId}-${decision}${extensionReview ? `-extension-${visit.recordVersion}` : ""}`,
           link: { entityType: "site-visit", entityId: visitId, path: "/staff/me/attendance" },
           createdBy: actor.userId!,
           updatedBy: actor.userId!,
@@ -1446,7 +1670,7 @@ export async function decideSiteVisitInDatabase(
       actorDisplayName: actor.displayName,
       activeRole: actor.activeRole,
       actorRoles: actor.roles ?? [],
-      action: decision,
+      action: extensionReview ? `extension-${decision}` : decision,
       module: "attendance",
       entityType: "site-visit",
       entityId: visitId,
@@ -1918,8 +2142,6 @@ export async function processAttendanceScheduledWork(
           .for("update")
           .limit(1);
         if (!visit) continue;
-        const start = zonedDateTimeToUtc(visit.date, visit.startTime, timezone);
-        const end = zonedDateTimeToUtc(visit.date, visit.endTime, timezone);
         let [record] = await tx
           .select()
           .from(attendanceRecords)
@@ -1949,12 +2171,20 @@ export async function processAttendanceScheduledWork(
             ),
           )
           .limit(1);
-        const closeAt =
-          visit.origin === "Office"
-            ? zonedDateTimeToUtc(visit.date, "17:00", employeeOffice?.timezone || timezone)
+        const visitTimezone = employeeOffice?.timezone || timezone;
+        const start = zonedDateTimeToUtc(visit.date, visit.startTime, visitTimezone);
+        const end = zonedDateTimeToUtc(visit.date, visit.endTime, visitTimezone);
+        const scheduledClose =
+          visit.origin === "Office" && !visit.details.returnPlan
+            ? zonedDateTimeToUtc(visit.date, "17:00", visitTimezone)
             : end;
+        const closeAt = visit.details.finishedAt
+          ? new Date(
+              Math.min(new Date(visit.details.finishedAt).getTime(), scheduledClose.getTime()),
+            )
+          : scheduledClose;
         const [returnPunch] =
-          record && visit.origin === "Office"
+          record && (visit.origin === "Office" || visit.details.returnPlan)
             ? await tx
                 .select({ id: attendancePunchEvents.id })
                 .from(attendancePunchEvents)
@@ -1964,22 +2194,109 @@ export async function processAttendanceScheduledWork(
                     eq(attendancePunchEvents.attendanceRecordId, record.id),
                     eq(attendancePunchEvents.direction, "in"),
                     sql`${attendancePunchEvents.occurredAt} > ${start.toISOString()}`,
-                    sql`${attendancePunchEvents.occurredAt} > ${record.clockInAt}`,
+                    ...(visit.origin === "Office"
+                      ? [sql`${attendancePunchEvents.occurredAt} > ${record.clockInAt}`]
+                      : []),
                     sql`${attendancePunchEvents.occurredAt} <= ${now}`,
                   ),
                 )
                 .limit(1)
             : [];
+        const hasReturned = !!returnPunch || !!visit.details.returnedAt;
+        if (hasReturned && !visit.details.returnedAt) {
+          await tx
+            .update(siteVisitRequests)
+            .set({ details: { ...visit.details, returnedAt: now } })
+            .where(eq(siteVisitRequests.id, visit.id));
+        }
+        if (
+          visit.details.returnPlan &&
+          visit.origin === "Home" &&
+          hasReturned &&
+          record?.clockInAt &&
+          !["Corrected", "Correction Pending"].includes(record.status) &&
+          record.source !== "Manual Entry" &&
+          new Date(record.clockInAt) > start
+        ) {
+          // Keep raw office punches; the confirmed home-origin duty supplies the earlier duty start.
+          const hours = record.clockOutAt
+            ? Math.max(
+                0,
+                (new Date(record.clockOutAt).getTime() - start.getTime()) / 3_600_000 -
+                  Number(record.breakMinutes ?? 0) / 60,
+              )
+            : 0;
+          await tx
+            .update(attendanceRecords)
+            .set({
+              clockInAt: start.toISOString(),
+              calculatedHours: String(hours),
+              workMode: "Approved Site Visit",
+              siteVisitId: visit.id,
+              updatedAt: new Date(),
+              updatedBy: visit.updatedBy,
+            })
+            .where(eq(attendanceRecords.id, record.id));
+          record = { ...record, clockInAt: start.toISOString() };
+          await tx.insert(auditEvents).values({
+            organisationId: organisation.organisationId,
+            actorDisplayName: "VIA background worker",
+            actorRoles: [],
+            action: "site-visit-start-confirmed",
+            module: "attendance",
+            entityType: "attendance-record",
+            entityId: record.id,
+            afterSummary: { clockInAt: start.toISOString(), siteVisitId: visit.id },
+            reason: "HR confirmed home-origin duty before verified office return",
+            riskLevel: "Medium",
+          } as typeof auditEvents.$inferInsert);
+        }
+        if (
+          record?.clockOutAt &&
+          !["Corrected", "Correction Pending"].includes(record.status) &&
+          record.source !== "Manual Entry" &&
+          visit.details.extension?.status === "Approved" &&
+          !hasReturned &&
+          new Date(record.clockOutAt) < closeAt
+        ) {
+          const [automaticClose] = await tx
+            .select({ id: auditEvents.id })
+            .from(auditEvents)
+            .where(
+              and(
+                eq(auditEvents.organisationId, organisation.organisationId),
+                eq(auditEvents.entityId, record.id),
+                eq(auditEvents.action, "site-visit-auto-clock-out"),
+                sql`(${auditEvents.afterSummary}->>'clockOutAt')::timestamptz = ${record.clockOutAt}::timestamptz`,
+              ),
+            )
+            .limit(1);
+          if (automaticClose) {
+            await tx
+              .update(attendanceRecords)
+              .set({
+                clockOutAt: null,
+                calculatedHours: "0",
+                updatedAt: new Date(),
+                updatedBy: visit.updatedBy,
+              })
+              .where(eq(attendanceRecords.id, record.id));
+            record = { ...record, clockOutAt: null };
+          }
+        }
         if (visit.origin === "Home" && at >= start && !record) {
           const id = randomUUID();
-          const hours = at >= end ? Math.max(0, (end.getTime() - start.getTime()) / 3_600_000) : 0;
+          const hours =
+            at >= closeAt && !hasReturned
+              ? Math.max(0, (closeAt.getTime() - start.getTime()) / 3_600_000)
+              : 0;
           await tx.insert(attendanceRecords).values({
             id,
             organisationId: organisation.organisationId,
             employeeId: visit.employeeId,
             date: visit.date,
             clockInAt: start.toISOString(),
-            clockOutAt: at >= end ? end.toISOString() : null,
+            clockOutAt: null,
             source: "Site Visit Auto",
             workMode: "Approved Site Visit",
             siteVisitId: visit.id,
@@ -2011,7 +2328,7 @@ export async function processAttendanceScheduledWork(
           at >= closeAt &&
           closeAt >= start &&
           !record.clockOutAt &&
-          !returnPunch &&
+          !hasReturned &&
           new Date(record.clockInAt) < closeAt
         ) {
           const hours = Math.max(
@@ -2047,13 +2364,30 @@ export async function processAttendanceScheduledWork(
             },
             reason:
               visit.origin === "Office"
-                ? "Approved office-origin duty: automatic 5 PM clock-out; no return recorded"
-                : "Approved home-origin site visit ended",
+                ? "Approved office-origin duty: actual finish or automatic approved end; no return recorded"
+                : "Approved home-origin duty: actual finish or automatic approved end",
             riskLevel: "Medium",
           } as typeof auditEvents.$inferInsert);
+          await tx
+            .update(siteVisitRequests)
+            .set({
+              details: {
+                ...visit.details,
+                attendanceClosedAt: closeAt.toISOString(),
+                attendanceCloseKind:
+                  visit.details.finishedAt && new Date(visit.details.finishedAt) <= scheduledClose
+                    ? "Reported finish"
+                    : "Automatic",
+              },
+            })
+            .where(eq(siteVisitRequests.id, visit.id));
           siteVisits += 1;
         }
-        if (visit.origin === "Office" && at >= end && !record) {
+        if (
+          visit.origin === "Office" &&
+          at >= (visit.details.returnPlan ? closeAt : end) &&
+          !record
+        ) {
           const id = randomUUID();
           const created = await tx
             .insert(attendanceExceptionCases)
@@ -2088,7 +2422,7 @@ export async function processAttendanceScheduledWork(
             } as typeof auditEvents.$inferInsert);
         }
         if (
-          at >= end &&
+          (at >= closeAt || hasReturned) &&
           (visit.origin !== "Office" ||
             at >= closeAt ||
             !!returnPunch ||

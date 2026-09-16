@@ -156,6 +156,15 @@ function SettingsRoute() {
   const currentUser = useCurrentUser();
   const navigate = Route.useNavigate();
   const { section } = Route.useSearch();
+  const [sectionSearch, setSectionSearch] = useState("");
+  const visibleGroups = SETTINGS_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) =>
+      `${group.label} ${item.label} ${item.description}`
+        .toLowerCase()
+        .includes(sectionSearch.trim().toLowerCase()),
+    ),
+  })).filter((group) => group.items.length > 0);
   if (!currentUser.can("system:settings_manage")) {
     return (
       <RequirePermission permission="leave:admin_all" resourceName="Leave Policies">
@@ -175,7 +184,7 @@ function SettingsRoute() {
       <div className="flex flex-col gap-6 max-w-7xl mx-auto">
         <PageHeader
           title="Company Setup"
-          description="Manage company information, people structures, workflow templates and reference lists."
+          description="Keep company details, departments, job titles and HR rules up to date. Choose a section to get started."
           breadcrumbs={[{ label: "System" }, { label: "Company Setup" }]}
         />
 
@@ -209,8 +218,20 @@ function SettingsRoute() {
 
         <div className="items-start gap-6 lg:grid lg:grid-cols-[250px_minmax(0,1fr)]">
           <aside className="sticky top-20 hidden max-h-[calc(100vh-6rem)] overflow-y-auto rounded-2xl border border-border/80 bg-card p-3 shadow-sm lg:block">
+            <Input
+              aria-label="Find a settings section"
+              placeholder="Find a setting…"
+              value={sectionSearch}
+              onChange={(event) => setSectionSearch(event.target.value)}
+              className="mb-4 min-h-11"
+            />
+            {visibleGroups.length === 0 && (
+              <p className="p-2 text-sm text-muted-foreground">
+                No matching section. Try “leave” or “department”.
+              </p>
+            )}
             <nav aria-label="Company setup sections" className="space-y-5">
-              {SETTINGS_GROUPS.map((group) => {
+              {visibleGroups.map((group) => {
                 const GroupIcon = group.icon;
                 return (
                   <section key={group.label}>
@@ -227,7 +248,7 @@ function SettingsRoute() {
                             void navigate({ search: { section: item.key }, replace: true })
                           }
                           className={cn(
-                            "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors",
+                            "flex min-h-11 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors focus-visible:ring-2 focus-visible:ring-ring",
                             section === item.key
                               ? "bg-primary/10 font-semibold text-primary"
                               : "text-foreground/80 hover:bg-muted hover:text-foreground",

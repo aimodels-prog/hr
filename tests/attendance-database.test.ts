@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
 import postgres from "postgres";
+import { getWorkforceAnalytics } from "../src/lib/db/repositories/workforce-analytics.repository.server.ts";
 
 import {
   captureAttendancePunchInDatabase,
@@ -14,6 +15,7 @@ import {
   listAttendanceForActor,
   processAttendanceScheduledWork,
   requestSiteVisitInDatabase,
+  updateSiteVisitProgressInDatabase,
   requestAttendanceCorrectionInDatabase,
   resolveAttendanceExceptionInDatabase,
   saveAttendancePolicyInDatabase,
@@ -645,6 +647,205 @@ test(
         WHERE attendance_record_id = ${returnRecordId} AND direction = 'in' AND network_verified = true
       `;
       assert.equal(returnEvidence.count, 1);
+
+      const [hrRole] = await sql`SELECT id FROM roles WHERE code='HR' LIMIT 1`;
+      if (hrRole)
+        await sql`INSERT INTO user_roles (organisation_id, user_id, role_id, assigned_by)
+        VALUES (${organisationId}, ${hrUserId}, ${hrRole.id}, ${hrUserId}) ON CONFLICT DO NOTHING`;
+      const homeActor = actor(homeUserId, homeEmployeeId, "Home Visit Employee", "Employee");
+      for (const [offset, scenario] of [
+        "estimate",
+        "finish-before-approval",
+        "extension",
+        "home-return",
+        "pending",
+      ].entries()) {
+        const day = new Date();
+        day.setUTCDate(day.getUTCDate() + 90 + offset);
+        const date = day.toISOString().slice(0, 10);
+        const visitId = await requestSiteVisitInDatabase(
+          organisationId,
+          {
+            employeeId: homeEmployeeId,
+            date,
+            startTime: "08:00",
+            endTime: "10:00",
+            origin: "Home",
+            destination: `Flexible ${scenario}`,
+            purpose: "Last minute client site assignment",
+            returnPlan: scenario === "estimate" ? "Time" : "Unknown",
+            ...(scenario === "estimate" ? { expectedReturnTime: "10:00" } : {}),
+          },
+          homeActor,
+        );
+        const [visit] =
+          await sql`SELECT end_time, details FROM site_visit_requests WHERE id=${visitId}`;
+        assert.equal(visit.end_time, "17:00", "Expected return must not become the clock-out time");
+        const recipients =
+          await sql`SELECT recipient_user_id FROM notifications WHERE organisation_id=${organisationId} AND link->>'entityId'=${visitId}`;
+        assert.ok(recipients.some((row) => row.recipient_user_id === managerUserId));
+        if (hrRole) assert.ok(recipients.some((row) => row.recipient_user_id === hrUserId));
+        await processAttendanceScheduledWork(new Date(`${date}T05:00:00Z`));
+        const [provisional] =
+          await sql`SELECT count(*)::int AS count FROM attendance_records WHERE employee_id=${homeEmployeeId} AND date=${date}`;
+        assert.equal(
+          provisional.count,
+          0,
+          "Unconfirmed site duty must not grant approved attendance",
+        );
+        await assert.rejects(
+          updateSiteVisitProgressInDatabase(
+            organisationId,
+            visitId,
+            { action: "finish" },
+            employeeActor,
+            new Date(`${date}T06:00:00Z`),
+          ),
+          /cannot be updated/,
+        );
+        if (scenario === "pending") continue;
+        if (scenario === "finish-before-approval") {
+          await updateSiteVisitProgressInDatabase(
+            organisationId,
+            visitId,
+            { action: "finish" },
+            homeActor,
+            new Date(`${date}T07:30:00Z`),
+          );
+          await assert.rejects(
+            updateSiteVisitProgressInDatabase(
+              organisationId,
+              visitId,
+              { action: "finish" },
+              homeActor,
+              new Date(`${date}T07:31:00Z`),
+            ),
+            /already ended/,
+          );
+        }
+        await decideSiteVisitInDatabase(
+          organisationId,
+          visitId,
+          "approve",
+          "Duty confirmed",
+          hrActor,
+        );
+        await processAttendanceScheduledWork(new Date(`${date}T08:00:00Z`));
+        const [midday] =
+          await sql`SELECT id, clock_in_at, clock_out_at FROM attendance_records WHERE employee_id=${homeEmployeeId} AND date=${date}`;
+        assert.equal(new Date(midday.clock_in_at).toISOString(), `${date}T04:00:00.000Z`);
+        assert.equal(
+          midday.clock_out_at ? new Date(midday.clock_out_at).toISOString() : null,
+          scenario === "finish-before-approval" ? `${date}T07:30:00.000Z` : null,
+        );
+        if (scenario === "extension") {
+          await updateSiteVisitProgressInDatabase(
+            organisationId,
+            visitId,
+            {
+              action: "extend",
+              endTime: "19:00",
+              reason: "Client requested extra site inspection",
+            },
+            homeActor,
+            new Date(`${date}T12:00:00Z`),
+          );
+          await assert.rejects(
+            updateSiteVisitProgressInDatabase(
+              organisationId,
+              visitId,
+              { action: "extend", endTime: "20:00", reason: "Duplicate request" },
+              homeActor,
+              new Date(`${date}T12:01:00Z`),
+            ),
+            /already awaiting/,
+          );
+          await assert.rejects(
+            decideSiteVisitInDatabase(organisationId, visitId, "approve", "Self approval", {
+              ...homeActor,
+              activeRole: "HR",
+              roles: ["Employee", "HR"],
+            }),
+            /own site visit/,
+          );
+        }
+        if (scenario === "home-return") {
+          await sql`INSERT INTO attendance_punch_events (organisation_id, employee_id, attendance_record_id, occurred_at, direction, source, network_verified, location_id, latitude, longitude, client_ip, created_by)
+            VALUES (${organisationId}, ${homeEmployeeId}, ${midday.id}, ${`${date}T09:00:00Z`}, 'in', 'Web', true, ${locationId}, 25.2048, 55.2708, '10.20.1.5', ${homeUserId})`;
+        }
+        await processAttendanceScheduledWork(new Date(`${date}T13:00:00Z`));
+        if (scenario === "extension") {
+          const [beforeApproval] =
+            await sql`SELECT clock_out_at FROM attendance_records WHERE id=${midday.id}`;
+          assert.equal(
+            new Date(beforeApproval.clock_out_at).toISOString(),
+            `${date}T13:00:00.000Z`,
+            "An unapproved extension does not grant extra hours",
+          );
+          await decideSiteVisitInDatabase(
+            organisationId,
+            visitId,
+            "approve",
+            "Later finish confirmed; overtime remains separate",
+            hrActor,
+          );
+          await processAttendanceScheduledWork(new Date(`${date}T15:00:00Z`));
+        }
+        await processAttendanceScheduledWork(new Date(`${date}T16:00:00Z`));
+        const [final] =
+          await sql`SELECT clock_out_at FROM attendance_records WHERE id=${midday.id}`;
+        const expected =
+          scenario === "home-return"
+            ? null
+            : scenario === "finish-before-approval"
+              ? `${date}T07:30:00.000Z`
+              : scenario === "extension"
+                ? `${date}T15:00:00.000Z`
+                : `${date}T13:00:00.000Z`;
+        assert.equal(
+          final.clock_out_at ? new Date(final.clock_out_at).toISOString() : null,
+          expected,
+          scenario,
+        );
+      }
+      await sql`INSERT INTO app_settings (id, organisation_id, timezone, base_currency, working_days,
+        standard_daily_hours, standard_weekly_hours, leave_year_start, leave_year_end,
+        document_reminder_days, employee_number_format, candidate_reference_format, created_by, updated_by)
+        VALUES (${randomUUID()}, ${organisationId}, 'UTC', 'OMR', ARRAY[1,2,3,4,5], 8, 40,
+        '01-01', '12-31', ARRAY[30], 'EMP-{0000}', 'CAN-{0000}', ${hrUserId}, ${hrUserId})`;
+      const analyticsAt = new Date(`${scheduledDate}T23:59:59Z`);
+      for (const activeRole of ["Employee", "Accounts", "IT"] as const) {
+        const personal = await getWorkforceAnalytics(
+          organisationId,
+          { ...employeeActor, activeRole },
+          "self",
+          7,
+          analyticsAt,
+        );
+        assert.equal(personal.days.length, 7);
+        assert.deepEqual(personal.departments, []);
+        assert.deepEqual(personal.recruitment, []);
+        assert.ok(personal.days.every((day) => day.recorded + day.review + day.missing <= 1));
+        await assert.rejects(
+          getWorkforceAnalytics(organisationId, { ...employeeActor, activeRole }, "hr", 7),
+          /Only HR/,
+        );
+      }
+      const overview = await getWorkforceAnalytics(organisationId, hrActor, "hr", 30, analyticsAt);
+      assert.equal(overview.days.length, 30);
+      assert.equal(
+        overview.departments.reduce((sum, row) => sum + row.count, 0),
+        people.length,
+      );
+      await assert.rejects(
+        getWorkforceAnalytics(
+          organisationId,
+          { ...employeeActor, employeeId: randomUUID() },
+          "self",
+          7,
+        ),
+        /profile was not found/,
+      );
     } finally {
       delete process.env["VIA_HR_ATTENDANCE_NETWORK_ENFORCEMENT"];
       await sql.end();

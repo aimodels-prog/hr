@@ -1104,7 +1104,14 @@ export class OnboardingService {
     }
     const c = this.getCaseByEmployeeIdInternal(employeeId);
     if (!c) return [];
-    return c.tasks.filter((t) => t.ownerRole === "Employee" && t.isMandatory);
+    return c.tasks.filter(
+      (t) =>
+        t.ownerRole === "Employee" &&
+        t.isMandatory &&
+        t.selfServiceFormKey !== "employment_details" &&
+        t.documentType !== "visa" &&
+        t.documentType !== "work_permit",
+    );
   }
 
   /** True while the employee still has required self-service onboarding items outstanding. */
@@ -1122,6 +1129,9 @@ export class OnboardingService {
     return c.tasks.some(
       (t) =>
         t.ownerRole === "Employee" &&
+        t.selfServiceFormKey !== "employment_details" &&
+        t.documentType !== "visa" &&
+        t.documentType !== "work_permit" &&
         t.isMandatory &&
         t.status !== "Completed" &&
         t.status !== "Waived",

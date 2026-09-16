@@ -8,6 +8,7 @@ import { OffboardingService } from "@/lib/data/offboarding-service";
 import { useCurrentUser } from "@/lib/auth";
 import { format } from "date-fns";
 import { ArrowRight, UserMinus, UserPlus } from "lucide-react";
+import { SelfServiceOnboardingForm } from "@/components/onboarding/self-service-onboarding-form";
 
 export function OnboardingOffboardingTab({ employeeId }: { employeeId: string }) {
   const currentUser = useCurrentUser();
@@ -42,6 +43,10 @@ export function OnboardingOffboardingTab({ employeeId }: { employeeId: string })
 
   return (
     <div className="space-y-4">
+      {["HR", "Super Admin"].includes(currentUser.activeRole) &&
+        onboardingCase?.status === "In Progress" && (
+          <SelfServiceOnboardingForm employeeId={employeeId} hrEmploymentOnly />
+        )}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-base flex items-center gap-2">

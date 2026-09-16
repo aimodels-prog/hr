@@ -13,6 +13,7 @@ import {
   listAttendanceForActor,
   readAttendanceCorrectionEvidenceInDatabase,
   requestSiteVisitInDatabase,
+  updateSiteVisitProgressInDatabase,
   requestAttendanceCorrectionInDatabase,
   resolveAttendanceExceptionInDatabase,
   saveAttendancePolicyInDatabase,
@@ -377,6 +378,11 @@ const SiteVisit = z
     destination: z.string().trim().min(3).max(300),
     purpose: z.string().trim().min(5).max(2000),
     projectId: z.string().uuid().optional(),
+    returnPlan: z.enum(["Time", "Unknown", "Not returning"]).optional(),
+    expectedReturnTime: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .optional(),
   })
   .strict();
 export const requestSiteVisitFn = createServerFn({ method: "POST" })
@@ -393,6 +399,8 @@ export const requestSiteVisitFn = createServerFn({ method: "POST" })
         origin: data.origin,
         destination: data.destination,
         purpose: data.purpose,
+        ...(data.returnPlan ? { returnPlan: data.returnPlan } : {}),
+        ...(data.expectedReturnTime ? { expectedReturnTime: data.expectedReturnTime } : {}),
         ...(data.projectId ? { projectId: data.projectId } : {}),
       },
       v.actor,
@@ -418,6 +426,28 @@ export const decideSiteVisitFn = createServerFn({ method: "POST" })
       data.notes,
       v.actor,
     );
+    return { ok: true };
+  });
+
+export const updateSiteVisitProgressFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: Actor,
+        visitId: z.string().uuid(),
+        action: z.enum(["finish", "extend"]),
+        endTime: z
+          .string()
+          .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+          .optional(),
+        reason: z.string().trim().max(1000).optional(),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    await updateSiteVisitProgressInDatabase(v.organisationId, data.visitId, data, v.actor);
     return { ok: true };
   });
 

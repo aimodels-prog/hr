@@ -153,6 +153,7 @@ export class DocumentService {
         return true;
       }
       if (context.actor.employeeId === document.employeeId) return true;
+      if (document.type.startsWith("insurance_")) return false;
       const employee = employees.find((item) => item.id === document.employeeId);
       return (
         context.actor.activeRole === "Line Manager" &&
@@ -300,6 +301,11 @@ export class DocumentService {
     actorContext: ActorContext,
   ): Promise<EmployeeDocument> {
     this.assertCanManage(employeeId, actorContext);
+    if (
+      ["visa", "work_permit"].includes(metadata.type) &&
+      !["HR", "Super Admin"].includes(actorContext.actor.activeRole ?? "Employee")
+    )
+      throw new Error("Only HR can upload or change visa and work-permit documents.");
     if (fileBlob.size === 0) throw new Error("The selected document is empty.");
     if (fileBlob.size > MAX_DOCUMENT_SIZE) throw new Error("Documents cannot exceed 10 MB.");
     if (!ALLOWED_DOCUMENT_TYPES.has(fileBlob.type)) {
@@ -363,6 +369,7 @@ export class DocumentService {
           fileId: fileRecord.id,
           status: initialStatus,
           ...metadata,
+          ...(metadata.type.startsWith("insurance_") ? { visibility: "Restricted" as const } : {}),
         },
         actorContext,
       );

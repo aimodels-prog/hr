@@ -307,6 +307,56 @@ test(
         }),
         /Only HR or a Super Admin/,
       );
+
+      const siteDay = new Date(yesterday);
+      siteDay.setUTCDate(siteDay.getUTCDate() - 5);
+      const siteDate = siteDay.toISOString().slice(0, 10);
+      const siteRecordId = randomUUID();
+      await sql`INSERT INTO attendance_records (id, organisation_id, employee_id, date, clock_in_at, source, status, created_by, updated_by)
+        VALUES (${siteRecordId}, ${organisationId}, ${employeeId}, ${siteDate}, ${`${siteDate}T08:00:00Z`}, 'Site Visit Auto', 'Present', ${hrUserId}, ${hrUserId})`;
+      await sql`INSERT INTO site_visit_requests (organisation_id, employee_id, date, start_time, end_time, origin, destination, purpose, status, requested_at, details, created_by, updated_by)
+        VALUES (${organisationId}, ${employeeId}, ${siteDate}, '08:00', '17:00', 'Home', 'Client site', 'Approved site duty', 'Approved', now(), '{"returnPlan":"Unknown"}'::jsonb, ${hrUserId}, ${hrUserId})`;
+      await ingestZktecoPunchBatch(organisationId, "front-door", {
+        punches: [
+          {
+            externalEventId: "site-return",
+            deviceUserId: "VIA-TERM-101",
+            occurredAt: `${siteDate}T14:00:00Z`,
+            status: 0,
+          },
+        ],
+      });
+      const [returnedFromSite] =
+        await sql`SELECT clock_in_at, clock_out_at FROM attendance_records WHERE id=${siteRecordId}`;
+      assert.equal(
+        new Date(returnedFromSite.clock_in_at).toISOString(),
+        `${siteDate}T08:00:00.000Z`,
+        "Keep the approved home-origin start",
+      );
+      assert.equal(returnedFromSite.clock_out_at, null, "Terminal IN marks return, not clock-out");
+      const [siteVisit] =
+        await sql`SELECT details FROM site_visit_requests WHERE employee_id=${employeeId} AND date=${siteDate}`;
+      assert.equal(
+        new Date(siteVisit.details.returnedAt).toISOString(),
+        `${siteDate}T14:00:00.000Z`,
+      );
+      await ingestZktecoPunchBatch(organisationId, "front-door", {
+        punches: [
+          {
+            externalEventId: "site-office-out",
+            deviceUserId: "VIA-TERM-101",
+            occurredAt: `${siteDate}T17:30:00Z`,
+            status: 1,
+          },
+        ],
+      });
+      const [finishedOffice] =
+        await sql`SELECT clock_in_at, clock_out_at FROM attendance_records WHERE id=${siteRecordId}`;
+      assert.equal(new Date(finishedOffice.clock_in_at).toISOString(), `${siteDate}T08:00:00.000Z`);
+      assert.equal(
+        new Date(finishedOffice.clock_out_at).toISOString(),
+        `${siteDate}T17:30:00.000Z`,
+      );
     } finally {
       await sql.end();
     }

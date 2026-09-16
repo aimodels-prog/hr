@@ -10,6 +10,7 @@ import {
   pgEnum,
   pgTable,
   text,
+  timestamp,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -18,6 +19,38 @@ import { mutableRecordColumns } from "./common.ts";
 import { fileMetadata } from "./documents.ts";
 import { employees, users } from "./employee.ts";
 import { organisations } from "./organisation.ts";
+
+export const sickLeaveBackdatePermissions = pgTable(
+  "sick_leave_backdate_permissions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id),
+    employeeId: uuid("employee_id")
+      .notNull()
+      .references(() => employees.id),
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+    reason: text("reason").notNull(),
+    grantedBy: uuid("granted_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedByRequestId: uuid("used_by_request_id"),
+  },
+  (table) => [
+    index("sick_backdate_employee_idx").on(
+      table.organisationId,
+      table.employeeId,
+      table.startDate,
+      table.endDate,
+    ),
+    check("sick_backdate_dates_valid", sql`${table.endDate} >= ${table.startDate}`),
+    check("sick_backdate_reason_required", sql`length(btrim(${table.reason})) >= 5`),
+  ],
+);
 
 export const leaveScope = pgEnum("leave_scope", [
   "Annual",
