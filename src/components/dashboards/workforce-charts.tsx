@@ -2,8 +2,9 @@ import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
-  Area,
-  AreaChart,
+  Pie,
+  PieChart,
+  Cell,
   Bar,
   BarChart,
   CartesianGrid,
@@ -19,6 +20,7 @@ import { useCurrentUser } from "@/lib/auth";
 import { getWorkforceAnalyticsFn } from "@/lib/server-functions/workforce-analytics.server";
 import { ChartContainer } from "@/components/ui/chart";
 import { Button } from "@/components/ui/button";
+import type { LeaveChartRow } from "@/lib/data/dashboard-priorities";
 
 const colors = {
   worked: "#0d9488",
@@ -64,7 +66,15 @@ function Panel({
   );
 }
 
-function CountChart({ data, label }: { data: { name: string; count: number }[]; label: string }) {
+function CountChart({
+  data,
+  label,
+  donut = false,
+}: {
+  data: { name: string; count: number }[];
+  label: string;
+  donut?: boolean;
+}) {
   if (!data.length)
     return (
       <p className="flex h-52 items-center justify-center text-sm text-muted-foreground">
@@ -73,33 +83,89 @@ function CountChart({ data, label }: { data: { name: string; count: number }[]; 
     );
   return (
     <>
-      <ChartContainer
-        config={chartConfig}
-        className="h-64 w-full aspect-auto"
-        role="img"
-        aria-label={label}
-      >
-        <BarChart data={data} layout="vertical" margin={{ left: 0, right: 20 }} accessibilityLayer>
-          <CartesianGrid horizontal={false} />
-          <XAxis type="number" allowDecimals={false} />
-          <YAxis
-            dataKey="name"
-            type="category"
-            width={105}
-            tickFormatter={(name: string) => (name.length > 16 ? `${name.slice(0, 15)}…` : name)}
-            tickLine={false}
-            axisLine={false}
-          />
-          <Tooltip />
-          <Bar
-            dataKey="count"
-            name="Count"
-            fill={colors.count}
-            radius={[0, 4, 4, 0]}
-            isAnimationActive={false}
-          />
-        </BarChart>
-      </ChartContainer>
+      {donut && data.some((row) => row.count > 0) ? (
+        <>
+          <ChartContainer
+            config={chartConfig}
+            className="h-56 w-full aspect-auto"
+            role="img"
+            aria-label={label}
+          >
+            <PieChart>
+              <Tooltip />
+              <Pie
+                data={data}
+                dataKey="count"
+                nameKey="name"
+                innerRadius={55}
+                outerRadius={85}
+                isAnimationActive={false}
+              >
+                {data.map((row, index) => (
+                  <Cell
+                    key={row.name}
+                    fill={[colors.recorded, colors.review, colors.missing, colors.count][index % 4]}
+                  />
+                ))}
+              </Pie>
+            </PieChart>
+          </ChartContainer>
+          <ul
+            className="flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs"
+            aria-label={`${label} legend`}
+          >
+            {data.map((row, index) => (
+              <li key={row.name} className="flex items-center gap-2">
+                <span
+                  aria-hidden="true"
+                  className="h-3 w-3 rounded-full"
+                  style={{
+                    backgroundColor: [colors.recorded, colors.review, colors.missing, colors.count][
+                      index % 4
+                    ],
+                  }}
+                />
+                {row.name}: {row.count}
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <ChartContainer
+          config={chartConfig}
+          className="w-full aspect-auto"
+          style={{ height: Math.max(256, data.length * 32) }}
+          role="img"
+          aria-label={label}
+        >
+          <BarChart
+            data={data}
+            layout="vertical"
+            margin={{ left: 0, right: 20 }}
+            accessibilityLayer
+          >
+            <CartesianGrid horizontal={false} />
+            <XAxis type="number" allowDecimals={false} />
+            <YAxis
+              dataKey="name"
+              type="category"
+              width={150}
+              tick={{ fontSize: 11 }}
+              tickFormatter={(name: string) => (name.length > 25 ? `${name.slice(0, 24)}…` : name)}
+              tickLine={false}
+              axisLine={false}
+            />
+            <Tooltip />
+            <Bar
+              dataKey="count"
+              name="Count"
+              fill={colors.count}
+              radius={[0, 4, 4, 0]}
+              isAnimationActive={false}
+            />
+          </BarChart>
+        </ChartContainer>
+      )}
       <details className="mt-3 text-xs">
         <summary className="cursor-pointer text-muted-foreground">View chart data</summary>
         <table className="mt-2 w-full text-left">
@@ -122,6 +188,66 @@ function CountChart({ data, label }: { data: { name: string; count: number }[]; 
           </tbody>
         </table>
       </details>
+    </>
+  );
+}
+
+function LeaveChart({ rows }: { rows: LeaveChartRow[] }) {
+  if (!rows.length)
+    return (
+      <p className="py-10 text-sm text-muted-foreground">
+        No annual leave balance has been recorded for this leave year. HR can confirm the
+        entitlement.
+      </p>
+    );
+  return (
+    <>
+      <ChartContainer
+        config={chartConfig}
+        className="h-64 w-full aspect-auto"
+        role="img"
+        aria-label="Annual leave used booked remaining and carryover"
+      >
+        <BarChart data={rows} margin={{ left: -18, right: 8 }} accessibilityLayer>
+          <CartesianGrid vertical={false} />
+          <XAxis dataKey="name" />
+          <YAxis />
+          <Tooltip />
+          <Legend />
+          <Bar dataKey="used" name="Used days" fill="#2563eb" isAnimationActive={false} />
+          <Bar dataKey="booked" name="Booked days" fill="#6366f1" isAnimationActive={false} />
+          <Bar dataKey="remaining" name="Remaining days" fill="#0d9488" isAnimationActive={false} />
+          <Bar dataKey="carry" name="Carryover estimate" fill="#d97706" isAnimationActive={false} />
+        </BarChart>
+      </ChartContainer>
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <caption className="sr-only">Annual leave figures in days</caption>
+          <thead>
+            <tr>
+              {["Leave", "Used", "Booked", "Remaining", "Carryover estimate"].map((name) => (
+                <th key={name} scope="col" className="p-1">
+                  {name}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.name}>
+                <th scope="row" className="p-1 font-normal">
+                  {row.name}
+                </th>
+                {[row.used, row.booked, row.remaining, row.carry].map((value, index) => (
+                  <td key={index} className="p-1">
+                    {hours(value)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 }
@@ -268,7 +394,10 @@ export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
               The difference is not a confirmed absence or salary deduction.
             </p>
           )}
-          <div className={scope === "hr" ? "grid min-w-0 gap-4 xl:grid-cols-2" : "min-w-0"}>
+          <div
+            className={scope === "hr" ? "grid min-w-0 gap-4 xl:grid-cols-2" : "min-w-0 space-y-4"}
+            data-testid="primary-dashboard-charts"
+          >
             <Panel
               title="Worked hours vs expected hours"
               description="Recorded, completed attendance—including approved site duty—against the working-calendar expectation."
@@ -309,6 +438,19 @@ export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
                 </p>
               )}
             </Panel>
+            <Panel
+              title={scope === "hr" ? "Leave usage and carryover" : "My annual leave balance"}
+              description={`Leave year starting ${data.priorities.leaveYearStart}; independent of the attendance period. Used means approved days before today; booked means approved days from today onwards. Remaining is the recorded balance, already reduced for approved bookings.`}
+              link={scope === "hr" ? "/staff/leave-admin" : "/staff/leave"}
+            >
+              <LeaveChart rows={data.priorities.annualLeave} />
+              <p className="mt-3 text-xs text-muted-foreground">
+                Carryover is an estimated part of remaining leave, not extra days. It uses the same
+                oldest-leave-first calculation as reminders. Plan old leave before May and confirm
+                the applicable deadline with HR. These figures do not grant leave eligibility or
+                change balances.
+              </p>
+            </Panel>
             {scope === "self" && (
               <Panel
                 title="My attendance summary"
@@ -316,6 +458,7 @@ export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
                 link="/staff/me/attendance"
               >
                 <CountChart
+                  donut
                   label="My attendance record coverage"
                   data={[
                     {
@@ -331,7 +474,7 @@ export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
             {scope === "hr" && (
               <>
                 <Panel
-                  title="Attendance coverage"
+                  title="Attendance trend"
                   description="Employee-days with expected work: completed records, pending review, or no confirmed record. Missing data is not a finding of absence."
                   link="/staff/attendance"
                 >
@@ -372,38 +515,39 @@ export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
                   </ChartContainer>
                 </Panel>
                 <Panel
-                  title="Employees by department"
-                  description={`Current headcount: ${data.departments.reduce((sum, row) => sum + row.count, 0)}. Department assignments reflect current profiles, not historical changes.`}
-                  link="/staff/employees"
+                  title="Approvals waiting"
+                  description="Outstanding decisions by responsible role across leave, overtime, travel, training and visits. A travel request can need several decisions, so this is not a unique-request count. Independent of the attendance period."
                 >
-                  <CountChart data={departmentData} label="Current employees by department" />
+                  <CountChart
+                    data={data.priorities.approvals}
+                    label="Outstanding decisions by responsible role"
+                  />
+                  <nav
+                    aria-label="Approval details"
+                    className="mt-3 flex flex-wrap gap-3 text-xs text-primary underline"
+                  >
+                    <Link to="/staff/leave-admin">Leave</Link>
+                    <Link to="/staff/overtime-approvals">Overtime</Link>
+                    <Link to="/staff/travel-hr-approvals">Travel</Link>
+                    <Link to="/staff/training">Training</Link>
+                    <Link to="/staff/attendance">Visits</Link>
+                  </nav>
                 </Panel>
                 <Panel
-                  title="Approved leave trend"
-                  description="Approved leave in working-day equivalents; a half-day counts as 0.5. Weekends and applicable holidays are excluded."
-                  link="/staff/leave-admin"
+                  title="Upcoming document expiries"
+                  description="Current verified employee documents and published company documents with recorded expiry dates. Includes visas and insurance when recorded. Buckets are non-overlapping; due today is in 0–30 days. Independent of the attendance period."
+                  link="/staff/document-expiry"
                 >
-                  <ChartContainer
-                    config={chartConfig}
-                    className="h-64 w-full aspect-auto"
-                    role="img"
-                    aria-label="Daily approved leave days"
+                  <CountChart
+                    data={data.priorities.expiries}
+                    label="Documents overdue or expiring within 90 days"
+                  />
+                  <Link
+                    to="/staff/company-library"
+                    className="mt-3 inline-block text-xs text-primary underline"
                   >
-                    <AreaChart data={data.days} margin={{ left: -18, right: 8 }} accessibilityLayer>
-                      <CartesianGrid vertical={false} />
-                      <XAxis dataKey="date" tickFormatter={shortDate} minTickGap={24} />
-                      <YAxis />
-                      <Tooltip />
-                      <Area
-                        name="Approved leave days"
-                        dataKey="leaveDays"
-                        stroke={colors.leaveDays}
-                        fill={colors.leaveDays}
-                        fillOpacity={0.15}
-                        isAnimationActive={false}
-                      />
-                    </AreaChart>
-                  </ChartContainer>
+                    View company documents
+                  </Link>
                 </Panel>
                 <Panel
                   title="Recruitment pipeline"
@@ -418,12 +562,19 @@ export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
           {scope === "hr" && (
             <details className="rounded-xl border bg-card p-4">
               <summary className="cursor-pointer font-semibold">
-                More HR insights: offices, employment, leave approvals and visits
+                More HR insights: departments, offices, employment and visits
               </summary>
               <p className="mt-2 text-xs text-muted-foreground">
                 Expand the charts you need without crowding your daily overview.
               </p>
               <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
+                <Panel
+                  title="Employees by department"
+                  description="Current headcount by department; independent of the attendance period."
+                  link="/staff/employees"
+                >
+                  <CountChart data={departmentData} label="Current employees by department" />
+                </Panel>
                 <Panel
                   title="Employees by office"
                   description="Current headcount by assigned work location; independent of the attendance period."
@@ -437,16 +588,10 @@ export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
                   link="/staff/employees"
                 >
                   <CountChart
+                    donut
                     data={data.employmentStatuses}
                     label="Current employee employment statuses"
                   />
-                </Panel>
-                <Panel
-                  title="Leave awaiting a decision"
-                  description="All outstanding leave requests, amendments and cancellations, grouped by current approval stage; independent of the attendance period."
-                  link="/staff/leave-admin"
-                >
-                  <CountChart data={data.leaveQueue} label="Outstanding leave approval stages" />
                 </Panel>
                 <Panel
                   title="Site and ministry visits"

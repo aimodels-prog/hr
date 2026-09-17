@@ -56,27 +56,50 @@ test("production release smoke loads HR and employee charts through portal SSO",
     page.getByRole("heading", { name: "Worked hours vs expected hours" }).first(),
   ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("heading", { name: "Recruitment pipeline" })).toBeVisible();
+  await expect(
+    page.getByTestId("primary-dashboard-charts").locator(":scope > section"),
+  ).toHaveCount(6);
+  for (const name of [
+    "Attendance trend",
+    "Approvals waiting",
+    "Leave usage and carryover",
+    "Upcoming document expiries",
+  ])
+    await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
   await page
-    .getByText("More HR insights: offices, employment, leave approvals and visits", { exact: true })
+    .getByText("More HR insights: departments, offices, employment and visits", { exact: true })
     .click();
   for (const name of [
     "Employees by office",
     "Employment status",
-    "Leave awaiting a decision",
+    "Employees by department",
     "Site and ministry visits",
   ]) {
     await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
   }
   await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page
+    .getByTestId("primary-dashboard-charts")
+    .screenshot({ path: test.info().outputPath("hr-priority-charts-mobile.png") });
   await page.goto("/staff/me/attendance");
   await expect(page.getByRole("heading", { name: "Worked hours vs expected hours" })).toBeVisible({
     timeout: 30_000,
   });
   await expect(page.getByRole("heading", { name: "My attendance summary" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Leave awaiting a decision" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "My annual leave balance" })).toBeVisible();
+  await expect(
+    page.getByTestId("primary-dashboard-charts").locator(":scope > section"),
+  ).toHaveCount(3);
+  await expect(page.getByRole("heading", { name: "Approvals waiting" })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
+  await page
+    .getByTestId("primary-dashboard-charts")
+    .screenshot({ path: test.info().outputPath("personal-priority-charts-mobile.png") });
 });
 
 test("production release smoke preserves employee charts when a refresh fails", async ({

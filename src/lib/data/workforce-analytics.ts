@@ -16,6 +16,14 @@ export interface AnalyticsDay {
   leaveDays: number;
 }
 export interface WorkforceAnalytics {
+  priorities: {
+    leaveYear: number;
+    leaveYearStart: string;
+    leaveYearEnd: string;
+    annualLeave: import("./dashboard-priorities.ts").LeaveChartRow[];
+    approvals: { name: string; count: number }[];
+    expiries: { name: string; count: number }[];
+  };
   scope: "self" | "hr";
   timezone: string;
   startDate: string;

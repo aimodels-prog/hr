@@ -829,6 +829,8 @@ test(
         assert.deepEqual(personal.employmentStatuses, []);
         assert.deepEqual(personal.leaveQueue, []);
         assert.deepEqual(personal.visits, []);
+        assert.deepEqual(personal.priorities.approvals, []);
+        assert.deepEqual(personal.priorities.expiries, []);
         assert.ok(personal.days.every((day) => day.recorded + day.review + day.missing <= 1));
         await assert.rejects(
           getWorkforceAnalytics(organisationId, { ...employeeActor, activeRole }, "hr", 7),
@@ -837,6 +839,13 @@ test(
       }
       const overview = await getWorkforceAnalytics(organisationId, hrActor, "hr", 30, analyticsAt);
       assert.equal(overview.days.length, 30);
+      assert.equal(overview.priorities.expiries.length, 4);
+      const [pendingVisits] =
+        await sql`SELECT count(*)::int as count FROM site_visit_requests WHERE organisation_id = ${organisationId} AND archived_at IS NULL AND status = 'Pending HR'`;
+      assert.equal(
+        overview.priorities.approvals.find((row) => row.name === "Visits · HR")?.count ?? 0,
+        pendingVisits!.count,
+      );
       assert.equal(
         overview.offices.reduce((sum, row) => sum + row.count, 0),
         people.length,
@@ -873,6 +882,45 @@ test(
         ),
         /profile was not found/,
       );
+      const annualPolicyId = randomUUID();
+      await sql`INSERT INTO leave_policies (id, organisation_id, code, name, type, category, description, is_paid, scope, accrual_mode, created_by, updated_by)
+        VALUES (${annualPolicyId}, ${organisationId}, 'CHART-ANNUAL', 'Chart Annual Leave', 'Annual', 'Annual', 'Chart test', true, 'Annual', 'Upfront', ${hrUserId}, ${hrUserId})`;
+      for (const [person, balance] of [
+        [employeeId, 30],
+        [hrEmployeeId, 50],
+      ] as const) {
+        await sql`INSERT INTO leave_balances (organisation_id, employee_id, policy_id, leave_year, balance_days, created_by, updated_by)
+          VALUES (${organisationId}, ${person}, ${annualPolicyId}, 2026, ${balance}, ${hrUserId}, ${hrUserId})`;
+      }
+      for (const [kind, days] of [
+        ["Carry-Forward", 10],
+        ["Approved Leave", -4],
+      ] as const) {
+        await sql`INSERT INTO leave_transactions (organisation_id, employee_id, policy_id, date, transaction_type, days, reason, actor_user_id, created_by, updated_by)
+          VALUES (${organisationId}, ${employeeId}, ${annualPolicyId}, '2026-01-01', ${kind}, ${days}, 'Chart test', ${hrUserId}, ${hrUserId}, ${hrUserId})`;
+      }
+      for (const [date, status] of [
+        ["2026-09-14", "Approved"],
+        ["2026-09-17", "Approved"],
+        ["2026-09-18", "Pending HR"],
+      ] as const) {
+        await sql`INSERT INTO leave_requests (organisation_id, employee_id, policy_id, start_date, end_date, working_days_requested, reason, status, policy_snapshot, created_by, updated_by)
+          VALUES (${organisationId}, ${employeeId}, ${annualPolicyId}, ${date}, ${date}, 1, 'Chart test', ${status}, '{}', ${hrUserId}, ${hrUserId})`;
+      }
+      const chartAt = new Date("2026-09-16T12:00:00Z");
+      const ownLeave = await getWorkforceAnalytics(
+        organisationId,
+        employeeActor,
+        "self",
+        7,
+        chartAt,
+      );
+      assert.deepEqual(ownLeave.priorities.annualLeave, [
+        { name: "Chart Annual Leave", used: 1, booked: 1, remaining: 30, carry: 6 },
+      ]);
+      const hrLeave = await getWorkforceAnalytics(organisationId, hrActor, "hr", 7, chartAt);
+      assert.equal(hrLeave.priorities.annualLeave[0]!.remaining, 80);
+      assert.equal(hrLeave.priorities.approvals.find((row) => row.name === "Leave · HR")?.count, 1);
     } finally {
       delete process.env["VIA_HR_ATTENDANCE_NETWORK_ENFORCEMENT"];
       await sql.end();

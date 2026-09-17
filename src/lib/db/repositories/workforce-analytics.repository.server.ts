@@ -15,6 +15,7 @@ import {
   type WorkforceAnalytics,
 } from "../../data/workforce-analytics.ts";
 import { siteVisitLocalNow } from "../../data/site-visit.ts";
+import { dashboardPriorities } from "./dashboard-priorities.repository.server.ts";
 
 export async function getWorkforceAnalytics(
   organisationId: string,
@@ -35,6 +36,7 @@ export async function getWorkforceAnalytics(
         timezone: appSettings.timezone,
         workingDays: appSettings.workingDays,
         dailyHours: appSettings.standardDailyHours,
+        yearStart: appSettings.leaveYearStart,
       })
       .from(appSettings)
       .where(eq(appSettings.organisationId, organisationId))
@@ -244,6 +246,14 @@ export async function getWorkforceAnalytics(
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   return {
+    priorities: await dashboardPriorities({
+      organisationId,
+      scope,
+      today,
+      yearStart: settings.yearStart,
+      workingDays: settings.workingDays,
+      people: scope === "hr" ? people.filter((person) => employedOn(person, today)) : people,
+    }),
     scope,
     timezone,
     startDate,
