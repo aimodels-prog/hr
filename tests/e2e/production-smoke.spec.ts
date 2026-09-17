@@ -5,6 +5,120 @@ type ProductionRole = "Employee" | "Line Manager" | "HR" | "Accounts" | "Super A
 
 const portalSecret = process.env["PORTAL_SSO_SECRET"] ?? "";
 
+test("production release smoke recovers charts after a transient request failure", async ({
+  page,
+}) => {
+  test.skip(
+    !portalSecret || process.env["PORTAL_SSO_ENABLED"] !== "true",
+    "Requires isolated portal SSO configuration",
+  );
+  let attempts = 0;
+  let unavailable = true;
+  await page.route("**/_serverFn/**", async (route) => {
+    const url = decodeURIComponent(route.request().url());
+    if (route.request().method() === "GET" && url.includes('"scope"') && url.includes('"days"')) {
+      attempts += 1;
+      if (unavailable) {
+        await route.fulfill({
+          status: 503,
+          contentType: "text/plain",
+          body: "Temporarily unavailable",
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await signInAs(page, "rana.nair@via-int.com", "Rana Nair", "/staff");
+  await expect(page.getByText("Charts are temporarily unavailable.", { exact: false })).toBeVisible(
+    { timeout: 30_000 },
+  );
+  expect(attempts).toBeGreaterThanOrEqual(3);
+  unavailable = false;
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Recruitment pipeline" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByText("Charts are temporarily unavailable.", { exact: false })).toHaveCount(
+    0,
+  );
+});
+
+test("production release smoke loads HR and employee charts through portal SSO", async ({
+  page,
+}) => {
+  test.skip(
+    !portalSecret || process.env["PORTAL_SSO_ENABLED"] !== "true",
+    "Requires isolated portal SSO configuration",
+  );
+  await signInAs(page, "rana.nair@via-int.com", "Rana Nair", "/staff");
+  await expect(
+    page.getByRole("heading", { name: "Worked hours vs expected hours" }).first(),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: "Recruitment pipeline" })).toBeVisible();
+  await page
+    .getByText("More HR insights: offices, employment, leave approvals and visits", { exact: true })
+    .click();
+  for (const name of [
+    "Employees by office",
+    "Employment status",
+    "Leave awaiting a decision",
+    "Site and ministry visits",
+  ]) {
+    await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/staff/me/attendance");
+  await expect(page.getByRole("heading", { name: "Worked hours vs expected hours" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByRole("heading", { name: "My attendance summary" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Leave awaiting a decision" })).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+});
+
+test("production release smoke preserves employee charts when a refresh fails", async ({
+  page,
+}) => {
+  test.skip(
+    !portalSecret || process.env["PORTAL_SSO_ENABLED"] !== "true",
+    "Requires isolated portal SSO configuration",
+  );
+  await signInAs(page, "rana.nair@via-int.com", "Rana Nair", "/staff/me/attendance");
+  const chart = page.getByRole("heading", { name: "Worked hours vs expected hours" });
+  await expect(chart).toBeVisible({ timeout: 30_000 });
+  let unavailable = true;
+  await page.route("**/_serverFn/**", async (route) => {
+    const url = decodeURIComponent(route.request().url());
+    if (
+      unavailable &&
+      route.request().method() === "GET" &&
+      url.includes('"scope"') &&
+      url.includes('"days"')
+    ) {
+      await route.fulfill({
+        status: 503,
+        contentType: "text/plain",
+        body: "Temporarily unavailable",
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByRole("button", { name: "Refresh My working hours", exact: true }).click();
+  await expect(page.getByText(/The latest refresh did not complete/)).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(chart).toBeVisible();
+  await expect(page.getByText(/Charts are temporarily unavailable/)).toHaveCount(0);
+  unavailable = false;
+  await page.getByRole("button", { name: "Retry refresh", exact: true }).click();
+  await expect(page.getByText(/The latest refresh did not complete/)).toHaveCount(0);
+  await expect(chart).toBeVisible();
+});
+
 test("production release smoke signs out without a blocked cross-origin form redirect", async ({
   page,
 }) => {

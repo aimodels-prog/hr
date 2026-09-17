@@ -144,7 +144,8 @@ export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
     enabled: typeof window !== "undefined",
     staleTime: 60_000,
     refetchInterval: 300_000,
-    retry: false,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
   });
   const data = query.data;
   const label = scope === "self" ? "My working hours" : "HR insights";
@@ -198,15 +199,49 @@ export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
           Loading attendance charts…
         </p>
       )}
-      {query.isError && (
-        <p role="alert" className="rounded-xl border p-4 text-sm">
-          Charts could not be loaded. {query.error.message}{" "}
-          <button className="text-primary underline" onClick={() => void query.refetch()}>
-            Try again
-          </button>
-        </p>
+      {query.isError && !data && (
+        <div role="alert" className="space-y-3 rounded-xl border p-4 text-sm">
+          <p>Charts are temporarily unavailable. Your attendance records have not been changed.</p>
+          <p className="text-muted-foreground">
+            Try again. If this page was open during an update, reload it to use the latest version.
+            If your session has expired, you will be asked to sign in again.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              disabled={query.isFetching}
+              onClick={() => void query.refetch()}
+            >
+              {query.isFetching ? "Retrying…" : "Try again"}
+            </Button>
+            <Button variant="outline" onClick={() => window.location.reload()}>
+              Reload page
+            </Button>
+          </div>
+        </div>
       )}
-      {data && !query.isError && (
+      {query.isError && data && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4 text-sm"
+        >
+          <p>
+            The latest refresh did not complete. Showing the last loaded figures
+            {query.dataUpdatedAt
+              ? ` (${new Date(query.dataUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })})`
+              : ""}
+            .
+          </p>
+          <Button
+            variant="outline"
+            disabled={query.isFetching}
+            onClick={() => void query.refetch()}
+          >
+            {query.isFetching ? "Retrying…" : "Retry refresh"}
+          </Button>
+        </div>
+      )}
+      {data && (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[
@@ -274,6 +309,25 @@ export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
                 </p>
               )}
             </Panel>
+            {scope === "self" && (
+              <Panel
+                title="My attendance summary"
+                description="Completed working days, days needing review and days without a confirmed record for the selected period. Missing records do not automatically mean absence."
+                link="/staff/me/attendance"
+              >
+                <CountChart
+                  label="My attendance record coverage"
+                  data={[
+                    {
+                      name: "Completed records",
+                      count: data.days.reduce((sum, day) => sum + day.recorded, 0),
+                    },
+                    { name: "Pending review", count: data.totals.review },
+                    { name: "No confirmed record", count: data.totals.missing },
+                  ]}
+                />
+              </Panel>
+            )}
             {scope === "hr" && (
               <>
                 <Panel
@@ -361,6 +415,49 @@ export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
               </>
             )}
           </div>
+          {scope === "hr" && (
+            <details className="rounded-xl border bg-card p-4">
+              <summary className="cursor-pointer font-semibold">
+                More HR insights: offices, employment, leave approvals and visits
+              </summary>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Expand the charts you need without crowding your daily overview.
+              </p>
+              <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
+                <Panel
+                  title="Employees by office"
+                  description="Current headcount by assigned work location; independent of the attendance period."
+                  link="/staff/employees"
+                >
+                  <CountChart data={data.offices} label="Current employees by office" />
+                </Panel>
+                <Panel
+                  title="Employment status"
+                  description="Current employees by status, including probation and notice. This is not an attendance status."
+                  link="/staff/employees"
+                >
+                  <CountChart
+                    data={data.employmentStatuses}
+                    label="Current employee employment statuses"
+                  />
+                </Panel>
+                <Panel
+                  title="Leave awaiting a decision"
+                  description="All outstanding leave requests, amendments and cancellations, grouped by current approval stage; independent of the attendance period."
+                  link="/staff/leave-admin"
+                >
+                  <CountChart data={data.leaveQueue} label="Outstanding leave approval stages" />
+                </Panel>
+                <Panel
+                  title="Site and ministry visits"
+                  description="Visit requests by their current status whose visit date falls in the selected completed-day period. Includes site, ministry and client visits."
+                  link="/staff/attendance"
+                >
+                  <CountChart data={data.visits} label="Visit requests by status" />
+                </Panel>
+              </div>
+            </details>
+          )}
           <details className="rounded-lg border p-3 text-xs">
             <summary className="cursor-pointer font-medium">
               Daily figures and calculation notes

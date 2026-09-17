@@ -825,6 +825,10 @@ test(
         assert.equal(personal.days.length, 7);
         assert.deepEqual(personal.departments, []);
         assert.deepEqual(personal.recruitment, []);
+        assert.deepEqual(personal.offices, []);
+        assert.deepEqual(personal.employmentStatuses, []);
+        assert.deepEqual(personal.leaveQueue, []);
+        assert.deepEqual(personal.visits, []);
         assert.ok(personal.days.every((day) => day.recorded + day.review + day.missing <= 1));
         await assert.rejects(
           getWorkforceAnalytics(organisationId, { ...employeeActor, activeRole }, "hr", 7),
@@ -833,6 +837,29 @@ test(
       }
       const overview = await getWorkforceAnalytics(organisationId, hrActor, "hr", 30, analyticsAt);
       assert.equal(overview.days.length, 30);
+      assert.equal(
+        overview.offices.reduce((sum, row) => sum + row.count, 0),
+        people.length,
+      );
+      assert.equal(
+        overview.employmentStatuses.reduce((sum, row) => sum + row.count, 0),
+        people.length,
+      );
+      const [visitCount] = await sql`SELECT count(*)::int AS count FROM site_visit_requests
+        WHERE organisation_id = ${organisationId} AND archived_at IS NULL
+        AND date >= ${overview.startDate} AND date <= ${overview.endDate}`;
+      assert.equal(
+        overview.visits.reduce((sum, row) => sum + row.count, 0),
+        visitCount!.count,
+      );
+      const [leaveCount] = await sql`SELECT count(*)::int AS count FROM leave_requests
+        WHERE organisation_id = ${organisationId} AND archived_at IS NULL
+        AND status IN ('Pending Line Manager', 'Pending HR', 'Cancellation Pending',
+          'Amendment Pending Line Manager', 'Amendment Pending HR')`;
+      assert.equal(
+        overview.leaveQueue.reduce((sum, row) => sum + row.count, 0),
+        leaveCount!.count,
+      );
       assert.equal(
         overview.departments.reduce((sum, row) => sum + row.count, 0),
         people.length,

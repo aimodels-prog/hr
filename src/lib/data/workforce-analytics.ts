@@ -25,6 +25,10 @@ export interface WorkforceAnalytics {
   totals: { worked: number; expected: number; review: number; missing: number; leaveDays: number };
   departments: { name: string; count: number }[];
   recruitment: { name: string; count: number }[];
+  offices: { name: string; count: number }[];
+  employmentStatuses: { name: string; count: number }[];
+  leaveQueue: { name: string; count: number }[];
+  visits: { name: string; count: number }[];
 }
 
 export function completedDateRange(today: string, count: number): string[] {
