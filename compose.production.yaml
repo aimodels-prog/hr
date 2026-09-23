@@ -276,6 +276,9 @@ services:
     command: ["npm", "run", "worker:background"]
     environment:
       NODE_ENV: production
+      APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN in .env.production}
+      GOOGLE_CALENDAR_CLIENT_ID: ${GOOGLE_CALENDAR_CLIENT_ID:-}
+      GOOGLE_CALENDAR_CLIENT_SECRET: ${GOOGLE_CALENDAR_CLIENT_SECRET:-}
       DATABASE_URL: ${VIA_HR_DATABASE_URL:?Set VIA_HR_DATABASE_URL in .env.production}
       VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID: ${VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID:?Set VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID in .env.production}
       VIA_HR_FIELD_ENCRYPTION_KEYS: ${VIA_HR_FIELD_ENCRYPTION_KEYS:?Set VIA_HR_FIELD_ENCRYPTION_KEYS in .env.production}
@@ -305,6 +308,7 @@ services:
         condition: service_healthy
     networks:
       - backend
+      - email-egress
     healthcheck:
       test: ["CMD", "node", "--experimental-transform-types", "scripts/worker-health.ts"]
       interval: 60s
@@ -424,6 +428,7 @@ services:
         max-file: "3"
 
 networks:
+  email-egress:
   frontend:
   backend:
     internal: true
