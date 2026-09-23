@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
 import { useMemo, useState } from "react";
 import { ArrowRight, CheckCircle2, FileText, Target, Users } from "lucide-react";
 import { toast } from "sonner";
@@ -36,6 +37,7 @@ import { GoalService, type EmployeeGoal } from "@/lib/data/goal-service";
 import { PerformanceService } from "@/lib/data/performance-service";
 
 export const Route = createFileRoute("/staff/performance/team")({
+  validateSearch: employeeSearch,
   component: TeamPerformanceRoute,
 });
 
@@ -48,6 +50,7 @@ function TeamPerformanceRoute() {
 }
 
 function TeamPerformancePage() {
+  const employeeFilter = useEmployeeFilter();
   const currentUser = useCurrentUser();
   const navigate = useNavigate();
   const context = currentUser.getActorContext();
@@ -59,11 +62,17 @@ function TeamPerformancePage() {
   const [returnReason, setReturnReason] = useState("");
   void version;
   const isManager = currentUser.activeRole === "Line Manager";
-  const reviews = performanceService.getReviewsForTeam(context);
+  const reviews = performanceService
+    .getReviewsForTeam(context)
+    .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
   const cycles = performanceService.getCyclesForTeam(context);
   const employees = employeeService.getEmployees(context);
-  const pendingGoals = goalService.getPendingGoalsForTeam(context);
-  const allTeamGoals = goalService.getGoalsForTeam(context);
+  const pendingGoals = goalService
+    .getPendingGoalsForTeam(context)
+    .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
+  const allTeamGoals = goalService
+    .getGoalsForTeam(context)
+    .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
   const refresh = () => setVersion((value) => value + 1);
   const employeeName = (id: string) =>
     employees.find((employee) => employee.id === id)?.preferredName ||
@@ -96,6 +105,7 @@ function TeamPerformancePage() {
 
   return (
     <div className="mx-auto flex max-w-[1200px] flex-col gap-6 pb-10">
+      {employeeFilter.control}
       <PageHeader
         title="Team Performance"
         description={

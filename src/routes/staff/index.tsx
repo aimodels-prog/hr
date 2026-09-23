@@ -25,8 +25,11 @@ import { ManagerDashboard } from "@/components/dashboards/manager-dashboard";
 import { HrDashboard } from "@/components/dashboards/hr-dashboard";
 import { AccountsDashboard } from "@/components/dashboards/accounts-dashboard";
 import { AdminDashboard } from "@/components/dashboards/admin-dashboard";
+import { employeeSearch } from "@/components/employees/employee-filter";
+import { RequestTrackerSummary } from "@/components/dashboards/request-tracker-summary";
 
 export const Route = createFileRoute("/staff/")({
+  validateSearch: employeeSearch,
   head: () => ({
     meta: [
       { title: "Staff Dashboard | VIA HR System" },
@@ -246,6 +249,7 @@ function Dashboard() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 pb-10">
+      <RequestTrackerSummary />
       {/* Header Banner */}
       <div className="flex flex-wrap items-end justify-between gap-5 border-b border-border/70 pb-6">
         <div>

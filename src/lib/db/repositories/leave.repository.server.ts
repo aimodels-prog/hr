@@ -1654,7 +1654,13 @@ function csvCell(value: unknown): string {
 
 export async function exportLeaveRequestsCsvInDatabase(
   organisationId: string,
-  filters: { startDate?: string; endDate?: string; status?: string; departmentId?: string },
+  filters: {
+    startDate?: string;
+    endDate?: string;
+    status?: string;
+    departmentId?: string;
+    employeeId?: string;
+  },
   actor: AuditActorContext,
 ): Promise<{ fileName: string; content: string; rowCount: number }> {
   if (actor.activeRole !== "HR" && actor.activeRole !== "Super Admin")
@@ -1669,6 +1675,7 @@ export async function exportLeaveRequestsCsvInDatabase(
   if (filters.endDate) conditions.push(sql`${leaveRequests.startDate} <= ${filters.endDate}`);
   if (filters.status) conditions.push(sql`${leaveRequests.status}::text = ${filters.status}`);
   if (filters.departmentId) conditions.push(eq(employees.departmentId, filters.departmentId));
+  if (filters.employeeId) conditions.push(eq(leaveRequests.employeeId, filters.employeeId));
   const rows = await db
     .select({
       employeeNumber: employees.employeeNumber,

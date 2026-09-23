@@ -168,7 +168,11 @@ export function LeaveTab({ employeeId }: { employeeId: string }) {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle>Request History</CardTitle>
-          <Link to={leaveDestination} className="text-sm text-primary hover:underline">
+          <Link
+            to={leaveDestination}
+            search={{ employeeId }}
+            className="text-sm text-primary hover:underline"
+          >
             {leaveDestinationLabel}
           </Link>
         </CardHeader>

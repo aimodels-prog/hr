@@ -1,6 +1,6 @@
 import "@tanstack/react-start/server-only";
 import { createHash, randomBytes } from "node:crypto";
-import { and, eq, gt, lt } from "drizzle-orm";
+import { and, eq, gt, lt, sql } from "drizzle-orm";
 import { getPortalPrincipalForRequest } from "../auth/portal-auth-http.server.ts";
 import { getDatabaseClient } from "../db/client.ts";
 import { encryptSensitiveJson, decryptSensitiveJson } from "../db/encryption.server.ts";
@@ -50,14 +50,23 @@ export async function resolveGoogleCalendarRequest(
         /* No secret details in the response. */
       }
       const [connection] = await db
-        .select({ email: connections.accountEmail, connectedAt: connections.connectedAt })
+        .select({
+          email: connections.accountEmail,
+          connectedAt: connections.connectedAt,
+          emailEnabledAt: connections.emailEnabledAt,
+        })
         .from(connections)
         .where(eq(connections.organisationId, principal.organisationId));
+      const deliveryCounts = await db.execute(
+        sql`SELECT status,count(*)::int count FROM workflow_notification_emails WHERE organisation_id=${principal.organisationId} GROUP BY status`,
+      );
       return Response.json(
         {
           configured,
           connected: !!connection,
           accountEmail: connection?.email ?? "hr@via-int.com",
+          emailEnabled: !!connection?.emailEnabledAt,
+          emailDeliveryCounts: deliveryCounts,
         },
         { headers },
       );
@@ -91,6 +100,7 @@ export async function resolveGoogleCalendarRequest(
           accountEmail: account.email,
           refreshTokenEncrypted: encryptSensitiveJson(account.refreshToken),
           connectedBy: principal.user.id,
+          emailEnabledAt: account.emailAuthorised ? new Date() : null,
         })
         .onConflictDoUpdate({
           target: connections.organisationId,
@@ -99,14 +109,28 @@ export async function resolveGoogleCalendarRequest(
             refreshTokenEncrypted: encryptSensitiveJson(account.refreshToken),
             connectedBy: principal.user.id,
             connectedAt: new Date(),
+            emailEnabledAt: account.emailAuthorised
+              ? sql`coalesce(${connections.emailEnabledAt},now())`
+              : null,
           },
         });
+      if (account.emailAuthorised)
+        await db.execute(
+          sql`UPDATE workflow_notification_emails SET attempts=0,next_attempt_at=now() WHERE organisation_id=${principal.organisationId} AND status='Blocked'`,
+        );
       return redirect("connected");
     }
     if (api && request.method === "POST") {
       const config = googleCalendarConfig();
       if (request.headers.get("origin") !== config.origin)
         return Response.json({ error: "forbidden_origin" }, { status: 403, headers });
+      if (url.searchParams.get("email") === "disable") {
+        await db
+          .update(connections)
+          .set({ emailEnabledAt: null })
+          .where(eq(connections.organisationId, principal.organisationId));
+        return redirect("connected");
+      }
       const state = randomBytes(32).toString("base64url");
       const verifier = randomBytes(32).toString("base64url");
       await db.transaction(async (tx) => {
@@ -137,7 +161,14 @@ export async function resolveGoogleCalendarRequest(
       });
       return new Response(null, {
         status: 303,
-        headers: { ...headers, location: calendarAuthorisationUrl(state, verifier) },
+        headers: {
+          ...headers,
+          location: calendarAuthorisationUrl(
+            state,
+            verifier,
+            url.searchParams.get("email") === "enable",
+          ),
+        },
       });
     }
     return Response.json({ error: "method_not_allowed" }, { status: 405, headers });

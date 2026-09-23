@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { DashboardCharts } from "./dashboard-charts";
 import {
   FileWarning,
@@ -39,6 +40,120 @@ function formatNames(names: string[], max = 3): string {
 }
 
 export function HrDashboard() {
+  const user = useCurrentUser();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const search = location.search as { employeeId?: string; days?: 7 | 30 };
+  const [term, setTerm] = useState("");
+  const service = useMemo(() => new EmployeeService(), []);
+  const employees = service.getEmployees(user.getActorContext());
+  const selected = employees.find((person) => person.id === search.employeeId);
+  const matches = employees.filter((person) =>
+    `${person.legalName} ${person.preferredName ?? ""} ${person.workEmail}`
+      .toLowerCase()
+      .includes(term.trim().toLowerCase()),
+  );
+  const select = (employeeId?: string) => {
+    setTerm("");
+    void navigate({ to: "/staff", search: { employeeId, days: search.days ?? 30 } });
+  };
+  return (
+    <div className="space-y-4">
+      <section
+        className="rounded-xl border bg-card p-4 space-y-3"
+        aria-label="Employee dashboard filter"
+      >
+        <label htmlFor="hr-employee-search" className="block font-semibold">
+          Find an employee
+        </label>
+        <input
+          id="hr-employee-search"
+          type="search"
+          placeholder="Search name or VIA email"
+          value={term}
+          onChange={(event) => setTerm(event.target.value)}
+          className="h-11 w-full rounded-lg border bg-background px-3"
+        />
+        {term.trim() && (
+          <ul aria-label="Matching employees" className="max-h-64 overflow-y-auto divide-y">
+            {matches.map((person) => (
+              <li key={person.id}>
+                <button
+                  type="button"
+                  className="w-full p-3 text-left hover:bg-muted focus-visible:outline-primary"
+                  onClick={() => select(person.id)}
+                >
+                  {person.preferredName || person.legalName}
+                  <span className="block break-all text-xs text-muted-foreground">
+                    {person.workEmail}
+                  </span>
+                </button>
+              </li>
+            ))}
+            {!matches.length && <li className="p-3 text-sm">No matching employees.</li>}
+          </ul>
+        )}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p role="status">
+            {selected
+              ? `Viewing: ${selected.preferredName || selected.legalName} — Individual overview`
+              : search.employeeId
+                ? "This employee is unavailable. Clear the selection to see the organisation."
+                : "Viewing: All employees — Organisation overview"}
+          </p>
+          {search.employeeId && (
+            <button className="min-h-11 rounded-lg border px-3 text-sm" onClick={() => select()}>
+              Clear employee filter
+            </button>
+          )}
+        </div>
+      </section>
+      {selected ? (
+        <>
+          <nav
+            aria-label="Selected employee records"
+            className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4"
+          >
+            {Object.entries({
+              overview: "Employee overview",
+              employment: "Employment & history",
+              personal: "Personal details",
+              documents: "Documents, visa & insurance",
+              leave: "Leave & balances",
+              timesheets: "Timesheets",
+              attendance: "Attendance & overtime",
+              travel: "Travel",
+              performance: "Performance",
+              training: "Training",
+              equipment: "Assets",
+              onboarding: "Onboarding & offboarding",
+            }).map(([section, label]) => (
+              <Link
+                key={section}
+                to="/staff/employees/$employeeId"
+                params={{ employeeId: selected.id }}
+                search={{ days: search.days ?? 30 }}
+                hash={section}
+                className="rounded-lg border bg-card p-3 text-sm font-medium hover:bg-muted"
+              >
+                {label}
+              </Link>
+            ))}
+          </nav>
+          <DashboardCharts
+            scope="hr"
+            employeeId={selected.databaseId ?? selected.id}
+            profileId={selected.id}
+          />
+        </>
+      ) : (
+        !search.employeeId && <OrganisationHrDashboard />
+      )}
+    </div>
+  );
+}
+
+function OrganisationHrDashboard() {
   const currentUser = useCurrentUser();
   const empService = useMemo(() => new EmployeeService(), []);
   const recService = useMemo(() => new RecruitmentService(), []);

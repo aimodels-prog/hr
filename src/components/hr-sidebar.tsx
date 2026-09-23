@@ -72,6 +72,7 @@ const navGroups: NavGroup[] = [
         requiredPermission: "employee:view_self",
       },
       { title: "My Tasks", url: "/staff/my-tasks", icon: ClipboardCheck },
+      { title: "Requests & approvals", url: "/staff/requests", icon: ClipboardCheck },
       { title: "Offer approvals", url: "/staff/offers", icon: ClipboardCheck },
       { title: "Opportunities", url: "/staff/opportunities", icon: BriefcaseBusiness },
       {

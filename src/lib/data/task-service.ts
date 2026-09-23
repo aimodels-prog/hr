@@ -43,6 +43,7 @@ export interface AppTask {
   actionUrl: string;
   sourceType: string;
   sourceId: string;
+  sourceVersion?: number | undefined;
   dueDate?: string | undefined;
   subjectEmployeeId?: string | undefined;
   subjectName?: string | undefined;

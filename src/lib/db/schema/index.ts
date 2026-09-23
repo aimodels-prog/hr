@@ -12,3 +12,4 @@ export * from "./talent.ts";
 export * from "./time.ts";
 export * from "./travel-payroll.ts";
 export * from "./google-calendar.ts";
+export * from "./workflow-email.ts";

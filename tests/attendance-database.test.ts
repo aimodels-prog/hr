@@ -920,6 +920,61 @@ test(
       ]);
       const hrLeave = await getWorkforceAnalytics(organisationId, hrActor, "hr", 7, chartAt);
       assert.equal(hrLeave.priorities.annualLeave[0]!.remaining, 80);
+      const selected = await getWorkforceAnalytics(
+        organisationId,
+        hrActor,
+        "hr",
+        7,
+        chartAt,
+        employeeId,
+      );
+      assert.deepEqual(selected.priorities.annualLeave, ownLeave.priorities.annualLeave);
+      assert.deepEqual(selected.days, ownLeave.days);
+      assert.deepEqual(selected.departments, []);
+      assert.deepEqual(selected.offices, []);
+      assert.deepEqual(selected.employmentStatuses, []);
+      assert.deepEqual(selected.recruitment, []);
+      assert.equal(
+        selected.priorities.approvals.find((row) => row.name === "Leave · HR")?.count,
+        1,
+      );
+      const otherSelected = await getWorkforceAnalytics(
+        organisationId,
+        hrActor,
+        "hr",
+        7,
+        chartAt,
+        hrEmployeeId,
+      );
+      assert.equal(otherSelected.priorities.annualLeave[0]!.remaining, 50);
+      const { exportLeaveRequestsCsvInDatabase } =
+        await import("../src/lib/db/repositories/leave.repository.server.ts");
+      const otherExport = await exportLeaveRequestsCsvInDatabase(
+        organisationId,
+        { employeeId: hrEmployeeId },
+        hrActor,
+      );
+      assert.equal(
+        otherExport.rowCount,
+        0,
+        "An employee-filtered export must not include another employee's leave",
+      );
+      assert.equal(
+        otherSelected.priorities.approvals.some((row) => row.name === "Leave · HR"),
+        false,
+      );
+      await assert.rejects(
+        getWorkforceAnalytics(organisationId, employeeActor, "self", 7, chartAt, hrEmployeeId),
+        /Only HR/,
+      );
+      await assert.rejects(
+        getWorkforceAnalytics(organisationId, employeeActor, "hr", 7, chartAt, employeeId),
+        /Only HR/,
+      );
+      await assert.rejects(
+        getWorkforceAnalytics(organisationId, hrActor, "hr", 7, chartAt, randomUUID()),
+        /profile was not found/,
+      );
       assert.equal(hrLeave.priorities.approvals.find((row) => row.name === "Leave · HR")?.count, 1);
     } finally {
       delete process.env["VIA_HR_ATTENDANCE_NETWORK_ENFORCEMENT"];

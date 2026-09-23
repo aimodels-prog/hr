@@ -219,6 +219,7 @@ const ExportLeave = z
     endDate: z.string().date().optional(),
     status: z.string().trim().max(100).optional(),
     departmentId: z.string().uuid().optional(),
+    employeeId: z.string().uuid().optional(),
   })
   .strict();
 export const exportLeaveRequestsFn = createServerFn({ method: "POST" })
@@ -232,6 +233,7 @@ export const exportLeaveRequestsFn = createServerFn({ method: "POST" })
         ...(data.endDate ? { endDate: data.endDate } : {}),
         ...(data.status ? { status: data.status } : {}),
         ...(data.departmentId ? { departmentId: data.departmentId } : {}),
+        ...(data.employeeId ? { employeeId: data.employeeId } : {}),
       },
       verified.actor,
     );

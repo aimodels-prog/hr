@@ -75,7 +75,11 @@ export function TravelTab({ employeeId }: { employeeId: string }) {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle>Travel History</CardTitle>
-          <Link to={destination} className="text-sm text-primary hover:underline">
+          <Link
+            to={destination}
+            search={{ employeeId }}
+            className="text-sm text-primary hover:underline"
+          >
             {destinationLabel}
           </Link>
         </CardHeader>

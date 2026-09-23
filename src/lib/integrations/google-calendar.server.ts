@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import * as z from "zod";
 
 export const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+export const GOOGLE_EMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 export function googleCalendarConfig() {
   const clientId = process.env["GOOGLE_CALENDAR_CLIENT_ID"]?.trim();
   const clientSecret = process.env["GOOGLE_CALENDAR_CLIENT_SECRET"]?.trim();
@@ -28,14 +29,14 @@ export function googleCalendarConfig() {
   };
 }
 
-export function calendarAuthorisationUrl(state: string, verifier: string) {
+export function calendarAuthorisationUrl(state: string, verifier: string, includeEmail = false) {
   const config = googleCalendarConfig();
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.search = new URLSearchParams({
     client_id: config.clientId,
     redirect_uri: config.redirectUri,
     response_type: "code",
-    scope: `openid email ${GOOGLE_CALENDAR_SCOPE}`,
+    scope: `openid email ${GOOGLE_CALENDAR_SCOPE}${includeEmail ? ` ${GOOGLE_EMAIL_SCOPE}` : ""}`,
     access_type: "offline",
     prompt: "consent",
     login_hint: config.accountEmail,
@@ -79,7 +80,11 @@ export async function exchangeCalendarCode(code: string, verifier: string) {
     .parse(await identityResponse.json());
   if (identity.email.trim().toLowerCase() !== config.accountEmail)
     throw new Error("Connect the hr@via-int.com Google account.");
-  return { email: config.accountEmail, refreshToken: tokens.refresh_token };
+  return {
+    email: config.accountEmail,
+    refreshToken: tokens.refresh_token,
+    emailAuthorised: tokens.scope.split(" ").includes(GOOGLE_EMAIL_SCOPE),
+  };
 }
 
 export async function calendarAccessToken(refreshToken: string) {

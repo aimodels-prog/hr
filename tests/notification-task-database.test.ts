@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
 import postgres from "postgres";
+import { listTrackedRequests } from "../src/lib/db/repositories/request-tracking.repository.server.ts";
+import { enqueueWorkflowEmails } from "../src/lib/db/repositories/workflow-email.repository.server.ts";
 
 import {
   listNotificationsForUserInDatabase,
@@ -122,7 +124,54 @@ test(
       const [projection] =
         await sql`SELECT id FROM workflow_tasks WHERE organisation_id=${ids.org} AND entity_id=${ids.request} AND assigned_user_id=${ids.managerUser} AND status='Open'`;
       assert.ok(projection);
+      const employeeActor = {
+        ...managerActor,
+        userId: ids.employeeUser,
+        employeeId: ids.employee,
+        activeRole: "Accounts" as const,
+      };
+      const own = await listTrackedRequests(ids.org!, employeeActor, { scope: "my", page: 1 });
+      assert.ok(own.rows.some((row) => row.id === ids.request));
+      const managerOwn = await listTrackedRequests(ids.org!, managerActor, {
+        scope: "my",
+        page: 1,
+      });
+      assert.equal(
+        managerOwn.rows.some((row) => row.id === ids.request),
+        false,
+      );
+      await assert.rejects(
+        () => listTrackedRequests(ids.org!, employeeActor, { scope: "organisation", page: 1 }),
+        /Only HR/,
+      );
+      const organisation = await listTrackedRequests(
+        ids.org!,
+        { ...managerActor, activeRole: "HR" },
+        { scope: "organisation", page: 1, module: "Leave" },
+      );
+      assert.equal(organisation.total, 1);
+      const [before] =
+        await sql`SELECT count(*)::int count FROM notifications WHERE organisation_id=${ids.org} AND type='workflow.request_update'`;
+      await sql`UPDATE leave_requests SET reason='Updated reason' WHERE id=${ids.request}`;
+      const [unchanged] =
+        await sql`SELECT count(*)::int count FROM notifications WHERE organisation_id=${ids.org} AND type='workflow.request_update'`;
+      assert.equal(unchanged!.count, before!.count);
+      await sql`INSERT INTO google_calendar_connections (organisation_id,account_email,refresh_token_encrypted,connected_by,email_enabled_at) VALUES (${ids.org},'hr@via-int.com','test-not-a-real-token',${ids.managerUser},now())`;
+      await sql`UPDATE leave_requests SET status='Pending HR' WHERE id=${ids.request}`;
+      await enqueueWorkflowEmails();
+      const [queued] =
+        await sql`SELECT count(*)::int count FROM workflow_notification_emails WHERE organisation_id=${ids.org}`;
+      assert.equal(
+        queued!.count,
+        1,
+        "Only new workflow notifications are queued, not historic backlog",
+      );
+      await enqueueWorkflowEmails();
+      const [again] =
+        await sql`SELECT count(*)::int count FROM workflow_notification_emails WHERE organisation_id=${ids.org}`;
+      assert.equal(again!.count, 1);
     } finally {
+      await sql`DELETE FROM google_calendar_connections WHERE organisation_id=${ids.org}`;
       await sql.end({ timeout: 5 });
     }
   },

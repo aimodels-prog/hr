@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
 import { useEffect, useState, useMemo } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent } from "@/components/ui/card";
@@ -35,6 +36,7 @@ import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { CheckCircle, Paperclip, XCircle } from "lucide-react";
 
 export const Route = createFileRoute("/staff/travel-hr-approvals")({
+  validateSearch: employeeSearch,
   component: HrTravelApprovalsRoute,
 });
 
@@ -47,6 +49,7 @@ function HrTravelApprovalsRoute() {
 }
 
 function HrTravelApprovalsContent() {
+  const employeeFilter = useEmployeeFilter();
   const currentUser = useCurrentUser();
   const travelService = useMemo(() => new TravelService(), []);
   const empService = useMemo(() => new EmployeeService(), []);
@@ -71,9 +74,14 @@ function HrTravelApprovalsContent() {
   const [actionType, setActionType] = useState<"approve" | "reject">("approve");
 
   const pendingHr = requests.filter(
-    (r) => r.hrApprovalStatus === "Pending" && r.status === "Pending HR and Accounts",
+    (r) =>
+      employeeFilter.matchesEmployee(r.employeeId) &&
+      r.hrApprovalStatus === "Pending" &&
+      r.status === "Pending HR and Accounts",
   );
-  const processed = requests.filter((r) => r.hrApprovalStatus !== "Pending");
+  const processed = requests.filter(
+    (r) => employeeFilter.matchesEmployee(r.employeeId) && r.hrApprovalStatus !== "Pending",
+  );
 
   const handleOpenAction = (req: TravelRequest, type: "approve" | "reject") => {
     setSelectedReq(req);
@@ -116,6 +124,7 @@ function HrTravelApprovalsContent() {
 
   return (
     <div className="flex flex-col gap-6 max-w-[1200px] mx-auto pb-10">
+      {employeeFilter.control}
       <PageHeader
         title="HR Travel Approvals"
         description="Review travel requests for policy compliance, dates, and employee readiness."

@@ -41,7 +41,7 @@ function formatDays(value: number): string {
   return new Intl.NumberFormat("en", { maximumFractionDigits: 1 }).format(value);
 }
 
-export function LeaveBalanceRegister() {
+export function LeaveBalanceRegister({ employeeId }: { employeeId?: string | undefined } = {}) {
   const currentUser = useCurrentUser();
   const leaveService = useMemo(() => new LeaveService(), []);
   const employeeService = useMemo(() => new EmployeeService(), []);
@@ -54,7 +54,11 @@ export function LeaveBalanceRegister() {
 
   const employees = employeeService
     .getEmployees(currentUser.getActorContext())
-    .filter((employee) => !["Inactive", "Archived"].includes(employee.status))
+    .filter(
+      (employee) =>
+        !["Inactive", "Archived"].includes(employee.status) &&
+        (!employeeId || employee.id === employeeId),
+    )
     .sort((a, b) => a.preferredName.localeCompare(b.preferredName));
 
   const rows = employees.flatMap((employee) =>

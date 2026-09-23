@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import type { AppTask, TaskState } from "../../data/task-service.ts";
+import { isApprovalTask } from "../../data/request-tracking.ts";
 import type { NotificationPriority, Role } from "../../data/types.ts";
 import { getDatabaseClient } from "../client.ts";
 import { roles, userRoles, users } from "../schema/employee.ts";
@@ -25,6 +26,7 @@ type TaskRow = {
   action_url: string;
   source_type: string;
   source_id: string;
+  source_version: number | null;
   subject_employee_id: string | null;
   subject_name: string | null;
 };
@@ -244,6 +246,35 @@ export async function listTasksForActorInDatabase(
         AND r.status='Pending HR and Accounts' AND r.hr_approval_status='Pending'
 
       UNION ALL
+      SELECT 'travel-manager-' || r.id, 'Travel', 'Review travel request',
+        coalesce(e.preferred_name,e.legal_name) || ' submitted a travel request.', 'Normal',
+        (r.created_at::date + 2)::text, NULL, 'Review travel', '/staff/travel-approvals',
+        'travel-request', r.id::text, r.employee_id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM travel_requests r JOIN employees e ON e.id=r.employee_id AND e.organisation_id=r.organisation_id
+      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role}='Line Manager'
+        AND e.line_manager_id=${employeeId}::uuid AND r.employee_id<>${employeeId}::uuid
+        AND r.status='Pending HR and Accounts' AND r.manager_approval_status='Pending'
+
+      UNION ALL
+      SELECT 'goal-manager-' || g.id, 'Performance', 'Review employee objective',
+        coalesce(e.preferred_name,e.legal_name) || ' has an objective awaiting your decision.', 'Normal',
+        (g.updated_at::date + 3)::text, NULL, 'Review objective', '/staff/performance/team',
+        'employee-goal', g.id::text, g.employee_id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM employee_goals g JOIN employees e ON e.id=g.employee_id AND e.organisation_id=g.organisation_id
+      WHERE g.organisation_id=${organisationId} AND g.archived_at IS NULL AND ${role}='Line Manager'
+        AND e.line_manager_id=${employeeId}::uuid AND g.employee_id<>${employeeId}::uuid
+        AND g.status IN ('Pending Approval','Completion Pending')
+
+      UNION ALL
+      SELECT 'referral-hr-' || r.id, 'Recruitment', 'Review employee referral',
+        'An employee referral is waiting for an HR decision.', 'Normal',
+        (r.created_at::date + 3)::text, NULL, 'Review referral', '/staff/recommendations',
+        'candidate-recommendation', r.id::text, r.recommender_employee_id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM candidate_recommendations r LEFT JOIN employees e ON e.id=r.recommender_employee_id AND e.organisation_id=r.organisation_id
+      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role} IN ('HR','Super Admin')
+        AND r.review_status='Pending HR Review' AND r.recommender_employee_id IS NOT NULL
+
+      UNION ALL
       SELECT 'travel-accounts-' || r.id, 'Travel', 'Review travel pre-authorisation',
         coalesce(e.preferred_name,e.legal_name) || ' requested travel to ' || r.destination || '.', 'Normal',
         (r.created_at::date + 2)::text, NULL, 'Review travel', '/staff/travel-accounts-approvals',
@@ -354,7 +385,21 @@ export async function listTasksForActorInDatabase(
           WHERE ur.organisation_id=${organisationId} AND ur.user_id=u.id AND r.code='Line Manager')
         AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(o.history) entry
           WHERE entry->>'preparedBy'=${actor.userId})
-    ) SELECT * FROM task_rows
+    ) SELECT *, CASE source_type
+        WHEN 'leave-request' THEN (SELECT record_version FROM leave_requests v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
+        WHEN 'timesheet' THEN (SELECT record_version FROM timesheets v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
+        WHEN 'attendance-correction' THEN (SELECT record_version FROM attendance_corrections v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
+        WHEN 'overtime-claim' THEN (SELECT record_version FROM overtime_claims v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
+        WHEN 'training-request' THEN (SELECT record_version FROM training_requests v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
+        WHEN 'employee-goal' THEN (SELECT record_version FROM employee_goals v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
+        WHEN 'site-visit-request' THEN (SELECT record_version FROM site_visit_requests v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
+        WHEN 'travel-request' THEN (SELECT record_version FROM travel_requests v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
+        WHEN 'profile-change-request' THEN (SELECT record_version FROM profile_change_requests v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
+        WHEN 'employee-document' THEN (SELECT record_version FROM employee_documents v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
+        WHEN 'performance-review' THEN (SELECT record_version FROM performance_reviews v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
+        WHEN 'offer' THEN (SELECT record_version FROM job_offers v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
+        WHEN 'candidate-recommendation' THEN (SELECT record_version FROM candidate_recommendations v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
+        ELSE 1 END source_version FROM task_rows
   `);
   const rows = [...result] as unknown as TaskRow[];
   const tasks = rows.map((row): AppTask => {
@@ -370,6 +415,7 @@ export async function listTasksForActorInDatabase(
       actionUrl: row.action_url,
       sourceType: row.source_type,
       sourceId: row.source_id,
+      sourceVersion: row.source_version ?? 1,
       ...(row.due_date ? { dueDate: row.due_date } : {}),
       ...(row.subject_employee_id ? { subjectEmployeeId: row.subject_employee_id } : {}),
       ...(row.subject_name ? { subjectName: row.subject_name } : {}),
@@ -434,7 +480,9 @@ export async function processTaskAutomationInDatabase(
       },
       today,
     );
-    for (const task of tasks)
+    for (const task of tasks.filter(
+      (task) => !isApprovalTask(task) || task.subjectEmployeeId !== person.employeeId,
+    ))
       projections.push({
         userId: person.userId,
         employeeId: person.employeeId,
@@ -506,15 +554,22 @@ export async function processTaskAutomationInDatabase(
           ...values,
           createdBy: fallbackActor.userId,
         } as typeof workflowTasks.$inferInsert);
-      if (projection.task.state !== "Overdue" && projection.task.state !== "Due Soon") continue;
-      const key = `task-${projection.task.state.toLowerCase().replaceAll(" ", "-")}-${projection.task.id}-${projection.role}`;
+      const approval = isApprovalTask(projection.task);
+      if (!approval && projection.task.state !== "Overdue" && projection.task.state !== "Due Soon")
+        continue;
+      const key = `task-${projection.task.state.toLowerCase().replaceAll(" ", "-")}-${projection.task.id}-v${projection.task.sourceVersion ?? 1}`;
       const inserted = await tx
         .insert(notifications)
         .values({
           organisationId,
           recipientUserId: projection.userId,
-          type: "task.reminder",
-          title: projection.task.state === "Overdue" ? "Task overdue" : "Task due soon",
+          type: approval ? "approval.reminder" : "task.reminder",
+          title:
+            projection.task.state === "Overdue"
+              ? "Task overdue"
+              : approval
+                ? "Your approval is required"
+                : "Task due soon",
           message: projection.task.title,
           priority: projection.task.state === "Overdue" ? "High" : projection.task.priority,
           status: "Unread",

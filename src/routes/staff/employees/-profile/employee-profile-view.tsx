@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
-import { useNavigate, Link } from "@tanstack/react-router";
+import { DashboardCharts } from "@/components/dashboards/dashboard-charts";
+import { useNavigate, useLocation, Link } from "@tanstack/react-router";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -171,7 +172,30 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
   const currentUser = useCurrentUser();
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isSalaryEditOpen, setIsSalaryEditOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState("overview");
+  const profileLocation = useLocation();
+  const sections = [
+    "overview",
+    "employment",
+    "personal",
+    "emergency_contacts",
+    "dependants",
+    "documents",
+    "leave",
+    "timesheets",
+    "attendance",
+    "travel",
+    "performance",
+    "training",
+    "equipment",
+    "onboarding",
+    "activity",
+    "payroll",
+    "audit",
+  ];
+  const activeTab = sections.includes(profileLocation.hash) ? profileLocation.hash : "overview";
+  const setActiveTab = (section: string) => {
+    void navigate({ to: ".", hash: section, search: (previous) => previous, replace: true });
+  };
   const [, setProfileVersion] = useState(0);
   const [employmentReviewNote, setEmploymentReviewNote] = useState("");
   const [employmentDecisionPending, setEmploymentDecisionPending] = useState(false);
@@ -1155,6 +1179,13 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
           <div className="min-w-0">
             <TabsContent value="overview" className="space-y-6 mt-0">
               <OverviewTab employee={employee} userMapping={userMapping} />
+              {isHROrSuperAdmin && (
+                <DashboardCharts
+                  scope="hr"
+                  employeeId={rawEmployee?.databaseId ?? employeeId}
+                  profileId={employeeId}
+                />
+              )}
             </TabsContent>
 
             <TabsContent value="personal" className="space-y-6 mt-0">

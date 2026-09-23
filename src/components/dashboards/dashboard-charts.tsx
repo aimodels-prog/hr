@@ -1,7 +1,12 @@
 import { lazy, Suspense } from "react";
 
 const WorkforceCharts = lazy(() => import("./workforce-charts"));
-export function DashboardCharts({ scope }: { scope: "self" | "hr" }) {
+export interface DashboardChartsProps {
+  scope: "self" | "hr";
+  employeeId?: string;
+  profileId?: string;
+}
+export function DashboardCharts(props: DashboardChartsProps) {
   return (
     <Suspense
       fallback={
@@ -10,7 +15,7 @@ export function DashboardCharts({ scope }: { scope: "self" | "hr" }) {
         </p>
       }
     >
-      <WorkforceCharts scope={scope} />
+      <WorkforceCharts {...props} />
     </Suspense>
   );
 }

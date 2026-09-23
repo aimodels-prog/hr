@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
 import {
@@ -71,6 +72,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 
 export const Route = createFileRoute("/staff/attendance/")({
+  validateSearch: employeeSearch,
   component: AttendanceAdminRoute,
 });
 
@@ -267,16 +269,24 @@ function AttendanceAdminContent() {
       }, new Map<string, { punch: UnmatchedAttendancePunch; firstPunchAt: string; waitingCount: number }>())
       .values(),
   ];
-  const allRecords = attendanceService.getAllRecords(actorContext);
+  const employeeFilter = useEmployeeFilter();
+  const allRecords = attendanceService
+    .getAllRecords(actorContext)
+    .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
   const locations = attendanceService.getLocations();
   const clockInLocations = attendanceService.getClockInLocations();
-  const siteVisits = attendanceService.getAllSiteVisits(actorContext);
+  const siteVisits = attendanceService
+    .getAllSiteVisits(actorContext)
+    .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
   const pendingSiteVisits = siteVisits.filter(
     (visit) => visit.status === "Pending HR" || visit.details?.extension?.status === "Pending",
   );
-  const exceptionCases = attendanceService.getExceptionCases(actorContext);
+  const exceptionCases = attendanceService
+    .getExceptionCases(actorContext)
+    .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
   const openExceptionCases = exceptionCases.filter((item) => item.status !== "Resolved");
   const currentRows = employees
+    .filter((employee) => employeeFilter.matchesEmployee(employee.id))
     .map((employee) => {
       const record = allRecords.find(
         (item) => item.employeeId === employee.id && item.date === date,
@@ -596,6 +606,7 @@ function AttendanceAdminContent() {
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6 pb-10" data-revision={revision}>
+      {employeeFilter.control}
       <PageHeader
         title="Manage attendance"
         description="Check attendance, review visits and resolve missing records. Use Office Setup only when office locations or working hours change."

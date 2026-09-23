@@ -23,12 +23,15 @@ export async function getWorkforceAnalytics(
   scope: "self" | "hr",
   days: 7 | 30,
   at = new Date(),
+  employeeId?: string,
 ): Promise<WorkforceAnalytics> {
   if (![7, 30].includes(days)) throw new Error("Choose 7 or 30 completed days.");
   if (scope !== "self" && scope !== "hr") throw new Error("Unknown dashboard scope.");
   if (scope === "hr" && !["HR", "Super Admin"].includes(actor.activeRole ?? ""))
     throw new Error("Only HR can view organisation charts.");
   if (scope === "self" && !actor.employeeId) throw new Error("An employee profile is required.");
+  if (employeeId && scope !== "hr") throw new Error("Only HR can select another employee.");
+  const individualId = employeeId ?? (scope === "self" ? actor.employeeId : undefined);
   const db = getDatabaseClient();
   const [settingsRows, policyRows, people] = await Promise.all([
     db
@@ -73,15 +76,15 @@ export async function getWorkforceAnalytics(
         and(
           eq(employees.organisationId, organisationId),
           isNull(employees.archivedAt),
-          ...(scope === "self" ? [eq(employees.id, actor.employeeId!)] : []),
+          ...(individualId ? [eq(employees.id, individualId)] : []),
         ),
       ),
   ]);
   const settings = settingsRows[0];
   if (!settings)
     throw new Error("HR must configure the working calendar before charts are available.");
-  if (scope === "self" && !people.length) throw new Error("Your employee profile was not found.");
-  const timezone = (scope === "self" ? people[0]?.timezone : null) || settings.timezone;
+  if (individualId && !people.length) throw new Error("Your employee profile was not found.");
+  const timezone = (individualId ? people[0]?.timezone : null) || settings.timezone;
   const today = siteVisitLocalNow(timezone, at).date;
   const dates = completedDateRange(today, days);
   const startDate = dates[0]!;
@@ -164,7 +167,7 @@ export async function getWorkforceAnalytics(
               ),
             )
         : [],
-      scope === "hr"
+      scope === "hr" && !employeeId
         ? db
             .select({ name: candidateApplications.status, count: sql<number>`count(*)::int` })
             .from(candidateApplications)
@@ -193,6 +196,7 @@ export async function getWorkforceAnalytics(
               and(
                 eq(leaveRequests.organisationId, organisationId),
                 isNull(leaveRequests.archivedAt),
+                ...(employeeId ? [eq(leaveRequests.employeeId, employeeId)] : []),
                 inArray(leaveRequests.status, [
                   "Pending Line Manager",
                   "Pending HR",
@@ -212,6 +216,7 @@ export async function getWorkforceAnalytics(
               and(
                 eq(siteVisitRequests.organisationId, organisationId),
                 isNull(siteVisitRequests.archivedAt),
+                ...(employeeId ? [eq(siteVisitRequests.employeeId, employeeId)] : []),
                 gte(siteVisitRequests.date, startDate),
                 lte(siteVisitRequests.date, endDate),
               ),
@@ -232,7 +237,7 @@ export async function getWorkforceAnalytics(
   const departmentCounts = new Map<string, number>();
   const officeCounts = new Map<string, number>();
   const statusCounts = new Map<string, number>();
-  if (scope === "hr")
+  if (scope === "hr" && !employeeId)
     for (const employee of people.filter((person) => employedOn(person, today))) {
       departmentCounts.set(
         employee.department,
@@ -249,10 +254,14 @@ export async function getWorkforceAnalytics(
     priorities: await dashboardPriorities({
       organisationId,
       scope,
+      employeeId,
       today,
       yearStart: settings.yearStart,
       workingDays: settings.workingDays,
-      people: scope === "hr" ? people.filter((person) => employedOn(person, today)) : people,
+      people:
+        scope === "hr" && !employeeId
+          ? people.filter((person) => employedOn(person, today))
+          : people,
     }),
     scope,
     timezone,

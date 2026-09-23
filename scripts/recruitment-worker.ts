@@ -11,6 +11,7 @@ import { processOvertimeWorker } from "../src/lib/db/repositories/overtime.repos
 import { processTravelWorker } from "../src/lib/db/repositories/travel.repository.server.ts";
 import { processTrainingWorker } from "../src/lib/db/repositories/training.repository.server.ts";
 import { processTaskWorker } from "../src/lib/db/repositories/task.repository.server.ts";
+import { processWorkflowEmails } from "../src/lib/db/repositories/workflow-email.repository.server.ts";
 import { processRecruitmentDeadlines } from "../src/lib/db/repositories/recruitment-deadline.repository.server.ts";
 import {
   cleanupOrphanedFiles,
@@ -31,6 +32,12 @@ const buildVersion = process.env["VIA_HR_IMAGE_TAG"]?.trim() || "development";
 let stopping = false;
 
 const tasks: Array<WorkerTaskDefinition & { run: () => Promise<unknown> }> = [
+  {
+    name: "workflow-notification-emails",
+    intervalSeconds: 30,
+    leaseSeconds: 600,
+    run: () => processWorkflowEmails(),
+  },
   {
     name: "candidate-cv-processing",
     intervalSeconds: 2,

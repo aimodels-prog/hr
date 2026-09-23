@@ -2955,7 +2955,7 @@ export class LeaveService {
   }
 
   async exportRequestsCsv(
-    filters: { status?: string; departmentId?: string },
+    filters: { status?: string; departmentId?: string; employeeId?: string },
     context: ActorContext,
   ): Promise<{ fileName: string; content: string; rowCount: number }> {
     if (typeof window === "undefined")
@@ -2966,6 +2966,7 @@ export class LeaveService {
         actor: await this.serverActor(context),
         ...(filters.status ? { status: filters.status } : {}),
         ...(filters.departmentId ? { departmentId: filters.departmentId } : {}),
+        ...(filters.employeeId ? { employeeId: filters.employeeId } : {}),
       },
     });
   }

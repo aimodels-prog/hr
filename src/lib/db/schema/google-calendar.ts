@@ -13,6 +13,7 @@ export const googleCalendarConnections = pgTable("google_calendar_connections", 
     .notNull()
     .references(() => users.id),
   connectedAt: timestamp("connected_at", { withTimezone: true }).notNull().defaultNow(),
+  emailEnabledAt: timestamp("email_enabled_at", { withTimezone: true }),
 });
 
 export const googleCalendarOAuthStates = pgTable("google_calendar_oauth_states", {

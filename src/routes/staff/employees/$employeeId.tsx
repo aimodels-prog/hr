@@ -1,8 +1,10 @@
 import { createFileRoute, useParams } from "@tanstack/react-router";
 import { RequirePermission } from "@/lib/auth";
 import { EmployeeProfileView } from "./-profile/employee-profile-view";
+import { employeeSearch } from "@/components/employees/employee-filter";
 
 export const Route = createFileRoute("/staff/employees/$employeeId")({
+  validateSearch: employeeSearch,
   component: EmployeeProfileRoute,
 });
 

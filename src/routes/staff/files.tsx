@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
+import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { getScopedEmployees, getScopedDocuments } from "@/lib/auth/record-scope";
@@ -28,6 +29,7 @@ import { format } from "date-fns";
 import type { DocumentType, DocumentStatus } from "@/lib/data/types";
 
 export const Route = createFileRoute("/staff/files")({
+  validateSearch: employeeSearch,
   component: EmployeeFilesRoute,
 });
 
@@ -55,6 +57,7 @@ const DOCUMENT_STATUSES: DocumentStatus[] = [
 ];
 
 function EmployeeFilesRoute() {
+  const employeeFilter = useEmployeeFilter();
   const currentUser = useCurrentUser();
   const employeeService = useMemo(() => new EmployeeService(), []);
   const documentService = useMemo(() => new DocumentService(), []);
@@ -105,6 +108,7 @@ function EmployeeFilesRoute() {
 
   const rows = useMemo(() => {
     return scopedDocs
+      .filter((doc) => !employeeFilter.employeeId || doc.employeeId === employeeFilter.employeeId)
       .map((doc) => ({ doc, employee: employees.find((e) => e.id === doc.employeeId) }))
       .filter((r) => r.employee)
       .filter((r) => typeFilter === "all" || r.doc.type === typeFilter)
@@ -120,13 +124,14 @@ function EmployeeFilesRoute() {
         );
       })
       .sort((a, b) => b.doc.updatedAt.localeCompare(a.doc.updatedAt));
-  }, [scopedDocs, employees, searchQuery, typeFilter, statusFilter]);
+  }, [scopedDocs, employees, searchQuery, typeFilter, statusFilter, employeeFilter.employeeId]);
 
   const canViewRestricted = currentUser.can("employee:manage_all");
 
   return (
     <RequirePermission permission="employee:view_all" resourceName="Employee Files">
       <div className="flex flex-col gap-6 max-w-[1400px] mx-auto pb-10">
+        {employeeFilter.control}
         <PageHeader
           title="Employee Files"
           description="Search and review documents across every employee, without opening each profile individually."

@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
 import { useState, useMemo } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -48,6 +49,7 @@ import {
 } from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/staff/leave-admin")({
+  validateSearch: employeeSearch,
   component: LeaveAdminRoute,
 });
 
@@ -60,6 +62,7 @@ function LeaveAdminRoute() {
 }
 
 function LeaveAdminContent() {
+  const employeeFilter = useEmployeeFilter();
   const currentUser = useCurrentUser();
   const leaveService = useMemo(() => new LeaveService(), []);
   const empService = useMemo(() => new EmployeeService(), []);
@@ -67,7 +70,9 @@ function LeaveAdminContent() {
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = () => setRefreshKey((k) => k + 1);
 
-  const employees = empService.getEmployees(currentUser.getActorContext());
+  const employees = empService
+    .getEmployees(currentUser.getActorContext())
+    .filter((employee) => employeeFilter.matchesEmployee(employee.id));
   const departments = getMasterDataRepository("departments").list() as MasterRecord[];
   const policies = leaveService.getPolicies();
 
@@ -87,6 +92,7 @@ function LeaveAdminContent() {
     deptFilter === "all" ? null : (departments.find((d) => d.id === deptFilter)?.name ?? null);
 
   const filteredRequests = allRequests.filter((req) => {
+    if (!employeeFilter.matchesEmployee(req.employeeId)) return false;
     if (statusFilter !== "all" && req.status !== statusFilter) return false;
     if (deptFilterName !== null) {
       const emp = employees.find((e) => e.id === req.employeeId);
@@ -135,12 +141,18 @@ function LeaveAdminContent() {
 
   const handleExportData = async () => {
     try {
+      const selectedEmployee = employees.find((person) => person.id === employeeFilter.employeeId);
+      if (employeeFilter.employeeId && !selectedEmployee)
+        throw new Error("The selected employee is unavailable.");
       const department = departments.find((item) => item.id === deptFilter) as
         (MasterRecord & { databaseId?: string }) | undefined;
       const result = await leaveService.exportRequestsCsv(
         {
           ...(statusFilter !== "all" ? { status: statusFilter } : {}),
           ...(department?.databaseId ? { departmentId: department.databaseId } : {}),
+          ...(selectedEmployee
+            ? { employeeId: selectedEmployee.databaseId ?? selectedEmployee.id }
+            : {}),
         },
         currentUser.getActorContext(),
       );
@@ -162,6 +174,7 @@ function LeaveAdminContent() {
   return (
     <>
       <div className="flex flex-col gap-6 max-w-[1400px] mx-auto pb-10">
+        {employeeFilter.control}
         <PageHeader
           title="Manage leave"
           description="Check employee balances, review leave records, or see who will be away on the calendar. Choose a section on the left, or open Sections on your phone."
@@ -198,7 +211,7 @@ function LeaveAdminContent() {
           </TabsList>
 
           <TabsContent value="balances" className="space-y-4">
-            <LeaveBalanceRegister />
+            <LeaveBalanceRegister employeeId={employeeFilter.employeeId} />
           </TabsContent>
 
           <TabsContent value="list" className="space-y-4">

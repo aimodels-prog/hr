@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
 import { useMemo, useState, type ReactNode } from "react";
 import { BookOpen, CalendarDays, CheckCircle2, FileText, Plus, Search, Users } from "lucide-react";
 import { toast } from "sonner";
@@ -51,7 +52,10 @@ import type {
   TrainingRequest,
 } from "@/lib/data/training-types";
 
-export const Route = createFileRoute("/staff/training/")({ component: StaffTrainingRoute });
+export const Route = createFileRoute("/staff/training/")({
+  validateSearch: employeeSearch,
+  component: StaffTrainingRoute,
+});
 
 type CourseForm = {
   id?: string;
@@ -93,6 +97,7 @@ const emptyCourse = (): CourseForm => ({
 });
 
 function StaffTrainingRoute() {
+  const employeeFilter = useEmployeeFilter();
   const currentUser = useCurrentUser();
   const context = currentUser.getActorContext();
   const isHr = currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
@@ -137,10 +142,16 @@ function StaffTrainingRoute() {
   void version;
 
   const courses = service.getCourses(context, { includeInactive: isHr });
-  const requests = service.getRequests(context);
-  const enrollments = service.getEnrollments(context);
+  const requests = service
+    .getRequests(context)
+    .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
+  const enrollments = service
+    .getEnrollments(context)
+    .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
   const sessions = service.getSessions(context);
-  const records = service.getTeamRecords(context);
+  const records = service
+    .getTeamRecords(context)
+    .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
   const employees = employeeService.getEmployees(context);
   const locations = masterDataService.list("locations", false).filter((item) => item.isActive);
   const projects = masterDataService.listProjects(false).filter((item) => item.isActive);
@@ -284,6 +295,13 @@ function StaffTrainingRoute() {
 
   return (
     <div className="mx-auto flex max-w-[1280px] flex-col gap-6 pb-10">
+      {employeeFilter.control}
+      {employeeFilter.employeeId && (
+        <p className="text-sm text-muted-foreground">
+          Requests, enrolments and records below are filtered. The course catalogue and scheduled
+          sessions remain organisation-wide.
+        </p>
+      )}
       <PageHeader
         title={isHr ? "Learning & Development" : "Team Training"}
         description={

@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
 import { useState, useMemo } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -27,6 +28,7 @@ import { Lock } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/staff/timesheet-monitoring")({
+  validateSearch: employeeSearch,
   component: TimesheetMonitoringRoute,
 });
 
@@ -39,6 +41,7 @@ function TimesheetMonitoringRoute() {
 }
 
 function TimesheetMonitoringContent() {
+  const employeeFilter = useEmployeeFilter();
   const currentUser = useCurrentUser();
   const tsService = useMemo(() => new TimesheetService(), []);
   const empService = useMemo(() => new EmployeeService(), []);
@@ -51,7 +54,10 @@ function TimesheetMonitoringContent() {
   const settings = tsService.getSettings();
   const allEmployees = empService
     .getDirectoryEmployees(currentUser.getActorContext())
-    .filter((e) => e.status !== "Inactive" && e.status !== "Archived");
+    .filter(
+      (e) =>
+        e.status !== "Inactive" && e.status !== "Archived" && employeeFilter.matchesEmployee(e.id),
+    );
 
   const [, setRefreshKey] = useState(0);
   const canLockPayroll = currentUser.can("timesheet:admin_all");
@@ -119,6 +125,7 @@ function TimesheetMonitoringContent() {
 
   return (
     <div className="flex flex-col gap-6 max-w-[1200px] mx-auto pb-10">
+      {employeeFilter.control}
       <PageHeader
         title="Timesheet Monitoring"
         description={

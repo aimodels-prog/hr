@@ -7,6 +7,8 @@ export function GoogleCalendarConnection() {
     configured: boolean;
     connected: boolean;
     accountEmail: string;
+    emailEnabled: boolean;
+    emailDeliveryCounts: Array<{ status: string; count: number }>;
   }>();
   const [error, setError] = useState("");
   useEffect(() => {
@@ -53,6 +55,46 @@ export function GoogleCalendarConnection() {
             {status?.connected ? "Reconnect Google Calendar" : "Connect Google Calendar & Meet"}
           </Button>
         </form>
+        <div className="space-y-3 border-t pt-4">
+          <h3 className="font-semibold">Approval emails & reminders</h3>
+          <p className="text-sm">
+            {status?.emailEnabled
+              ? `Enabled through ${status.accountEmail}. The background worker sends workflow notifications and reminders.`
+              : "Not enabled. Calendar permission alone cannot send workflow emails."}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Enable Gmail API in the existing Google Cloud project, add the gmail.send scope, then
+            connect below and allow sending as hr@via-int.com. This starts emails for new workflow
+            notifications; it does not email the old notification backlog. Private details stay
+            inside VIA HR.
+          </p>
+          <form method="post" action="/api/integrations/google-calendar?email=enable">
+            <Button disabled={!status?.configured} variant="outline">
+              {status?.emailEnabled
+                ? "Reconnect email sender"
+                : "Enable approval emails & reminders"}
+            </Button>
+          </form>
+          {status?.emailEnabled && (
+            <form method="post" action="/api/integrations/google-calendar?email=disable">
+              <Button variant="outline">Pause approval emails</Button>
+            </form>
+          )}
+          {!!status?.emailDeliveryCounts?.length && (
+            <ul className="text-sm">
+              {status.emailDeliveryCounts.map((row) => (
+                <li key={row.status}>
+                  {row.status}: {row.count}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Sent means Google accepted the message, not that it was read or reached the inbox.
+            Blocked messages need sender reconnection. Failed or uncertain sends require
+            administrator review; uncertain sends are not automatically repeated.
+          </p>
+        </div>
       </CardContent>
     </Card>
   );

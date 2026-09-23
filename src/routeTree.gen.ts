@@ -44,6 +44,7 @@ import { Route as StaffPayslipsRouteImport } from './routes/staff/payslips'
 import { Route as StaffPerformanceRouteImport } from './routes/staff/performance'
 import { Route as StaffRecommendationsRouteImport } from './routes/staff/recommendations'
 import { Route as StaffReportsRouteImport } from './routes/staff/reports'
+import { Route as StaffRequestsRouteImport } from './routes/staff/requests'
 import { Route as StaffSettingsRouteImport } from './routes/staff/settings'
 import { Route as StaffTimesheetMonitoringRouteImport } from './routes/staff/timesheet-monitoring'
 import { Route as StaffTimesheetSettingsRouteImport } from './routes/staff/timesheet-settings'
@@ -275,6 +276,11 @@ const StaffRecommendationsRoute = StaffRecommendationsRouteImport.update({
 const StaffReportsRoute = StaffReportsRouteImport.update({
   id: '/reports',
   path: '/reports',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffRequestsRoute = StaffRequestsRouteImport.update({
+  id: '/requests',
+  path: '/requests',
   getParentRoute: () => StaffRoute,
 } as any)
 const StaffSettingsRoute = StaffSettingsRouteImport.update({
@@ -614,6 +620,7 @@ export interface FileRoutesByFullPath {
   '/staff/performance': typeof StaffPerformanceRouteWithChildren
   '/staff/recommendations': typeof StaffRecommendationsRouteWithChildren
   '/staff/reports': typeof StaffReportsRoute
+  '/staff/requests': typeof StaffRequestsRoute
   '/staff/settings': typeof StaffSettingsRoute
   '/staff/timesheet-monitoring': typeof StaffTimesheetMonitoringRoute
   '/staff/timesheet-settings': typeof StaffTimesheetSettingsRoute
@@ -701,6 +708,7 @@ export interface FileRoutesByTo {
   '/staff/payslips': typeof StaffPayslipsRoute
   '/staff/performance': typeof StaffPerformanceRouteWithChildren
   '/staff/reports': typeof StaffReportsRoute
+  '/staff/requests': typeof StaffRequestsRoute
   '/staff/settings': typeof StaffSettingsRoute
   '/staff/timesheet-monitoring': typeof StaffTimesheetMonitoringRoute
   '/staff/timesheet-settings': typeof StaffTimesheetSettingsRoute
@@ -794,6 +802,7 @@ export interface FileRoutesById {
   '/staff/performance': typeof StaffPerformanceRouteWithChildren
   '/staff/recommendations': typeof StaffRecommendationsRouteWithChildren
   '/staff/reports': typeof StaffReportsRoute
+  '/staff/requests': typeof StaffRequestsRoute
   '/staff/settings': typeof StaffSettingsRoute
   '/staff/timesheet-monitoring': typeof StaffTimesheetMonitoringRoute
   '/staff/timesheet-settings': typeof StaffTimesheetSettingsRoute
@@ -890,6 +899,7 @@ export interface FileRouteTypes {
     | '/staff/performance'
     | '/staff/recommendations'
     | '/staff/reports'
+    | '/staff/requests'
     | '/staff/settings'
     | '/staff/timesheet-monitoring'
     | '/staff/timesheet-settings'
@@ -977,6 +987,7 @@ export interface FileRouteTypes {
     | '/staff/payslips'
     | '/staff/performance'
     | '/staff/reports'
+    | '/staff/requests'
     | '/staff/settings'
     | '/staff/timesheet-monitoring'
     | '/staff/timesheet-settings'
@@ -1069,6 +1080,7 @@ export interface FileRouteTypes {
     | '/staff/performance'
     | '/staff/recommendations'
     | '/staff/reports'
+    | '/staff/requests'
     | '/staff/settings'
     | '/staff/timesheet-monitoring'
     | '/staff/timesheet-settings'
@@ -1387,6 +1399,13 @@ declare module '@tanstack/react-router' {
       path: '/reports'
       fullPath: '/staff/reports'
       preLoaderRoute: typeof StaffReportsRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/requests': {
+      id: '/staff/requests'
+      path: '/requests'
+      fullPath: '/staff/requests'
+      preLoaderRoute: typeof StaffRequestsRouteImport
       parentRoute: typeof StaffRoute
     }
     '/staff/settings': {
@@ -1973,6 +1992,7 @@ interface StaffRouteChildren {
   StaffPerformanceRoute: typeof StaffPerformanceRouteWithChildren
   StaffRecommendationsRoute: typeof StaffRecommendationsRouteWithChildren
   StaffReportsRoute: typeof StaffReportsRoute
+  StaffRequestsRoute: typeof StaffRequestsRoute
   StaffSettingsRoute: typeof StaffSettingsRoute
   StaffTimesheetMonitoringRoute: typeof StaffTimesheetMonitoringRoute
   StaffTimesheetSettingsRoute: typeof StaffTimesheetSettingsRoute
@@ -2031,6 +2051,7 @@ const StaffRouteChildren: StaffRouteChildren = {
   StaffPerformanceRoute: StaffPerformanceRouteWithChildren,
   StaffRecommendationsRoute: StaffRecommendationsRouteWithChildren,
   StaffReportsRoute: StaffReportsRoute,
+  StaffRequestsRoute: StaffRequestsRoute,
   StaffSettingsRoute: StaffSettingsRoute,
   StaffTimesheetMonitoringRoute: StaffTimesheetMonitoringRoute,
   StaffTimesheetSettingsRoute: StaffTimesheetSettingsRoute,

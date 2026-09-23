@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import {
   Pie,
   PieChart,
@@ -21,6 +21,7 @@ import { getWorkforceAnalyticsFn } from "@/lib/server-functions/workforce-analyt
 import { ChartContainer } from "@/components/ui/chart";
 import { Button } from "@/components/ui/button";
 import type { LeaveChartRow } from "@/lib/data/dashboard-priorities";
+import type { DashboardChartsProps } from "./dashboard-charts";
 
 const colors = {
   worked: "#0d9488",
@@ -252,11 +253,24 @@ function LeaveChart({ rows }: { rows: LeaveChartRow[] }) {
   );
 }
 
-export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
+export default function WorkforceCharts({ scope, employeeId, profileId }: DashboardChartsProps) {
   const user = useCurrentUser();
-  const [days, setDays] = useState<7 | 30>(30);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const days: 7 | 30 = Number((location.search as { days?: number }).days) === 7 ? 7 : 30;
+  const setDays = (value: 7 | 30) => {
+    void navigate({ to: ".", search: (previous) => ({ ...previous, days: value }), replace: true });
+  };
   const query = useQuery({
-    queryKey: ["workforce-analytics", user.id, user.workspaceEmail, user.activeRole, scope, days],
+    queryKey: [
+      "workforce-analytics",
+      user.id,
+      user.workspaceEmail,
+      user.activeRole,
+      scope,
+      days,
+      employeeId,
+    ],
     queryFn: () =>
       getWorkforceAnalyticsFn({
         data: {
@@ -265,6 +279,7 @@ export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
           activeRole: user.activeRole,
           scope,
           days,
+          employeeId,
         },
       }),
     enabled: typeof window !== "undefined",
@@ -274,7 +289,12 @@ export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
   });
   const data = query.data;
-  const label = scope === "self" ? "My working hours" : "HR insights";
+  const label =
+    scope === "self" ? "My working hours" : employeeId ? "Employee insights" : "HR insights";
+  const detail = (section: string, fallback: string) =>
+    profileId
+      ? `/staff/employees/${encodeURIComponent(profileId)}?days=${days}&from=${data?.startDate ?? ""}&until=${data?.endDate ?? ""}#${section}`
+      : fallback;
   const departmentData =
     data?.departments.length && data.departments.length > 8
       ? [
@@ -401,7 +421,10 @@ export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
             <Panel
               title="Worked hours vs expected hours"
               description="Recorded, completed attendance—including approved site duty—against the working-calendar expectation."
-              link={scope === "hr" ? "/staff/attendance" : "/staff/me/attendance"}
+              link={detail(
+                "attendance",
+                scope === "hr" ? "/staff/attendance" : "/staff/me/attendance",
+              )}
             >
               <ChartContainer
                 config={chartConfig}
@@ -441,7 +464,7 @@ export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
             <Panel
               title={scope === "hr" ? "Leave usage and carryover" : "My annual leave balance"}
               description={`Leave year starting ${data.priorities.leaveYearStart}; independent of the attendance period. Used means approved days before today; booked means approved days from today onwards. Remaining is the recorded balance, already reduced for approved bookings.`}
-              link={scope === "hr" ? "/staff/leave-admin" : "/staff/leave"}
+              link={detail("leave", scope === "hr" ? "/staff/leave-admin" : "/staff/leave")}
             >
               <LeaveChart rows={data.priorities.annualLeave} />
               <p className="mt-3 text-xs text-muted-foreground">
@@ -476,7 +499,7 @@ export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
                 <Panel
                   title="Attendance trend"
                   description="Employee-days with expected work: completed records, pending review, or no confirmed record. Missing data is not a finding of absence."
-                  link="/staff/attendance"
+                  link={detail("attendance", "/staff/attendance")}
                 >
                   <ChartContainer
                     config={chartConfig}
@@ -526,82 +549,91 @@ export default function WorkforceCharts({ scope }: { scope: "self" | "hr" }) {
                     aria-label="Approval details"
                     className="mt-3 flex flex-wrap gap-3 text-xs text-primary underline"
                   >
-                    <Link to="/staff/leave-admin">Leave</Link>
-                    <Link to="/staff/overtime-approvals">Overtime</Link>
-                    <Link to="/staff/travel-hr-approvals">Travel</Link>
-                    <Link to="/staff/training">Training</Link>
-                    <Link to="/staff/attendance">Visits</Link>
+                    <Link to={detail("leave", "/staff/leave-admin")}>Leave</Link>
+                    <Link to={detail("attendance", "/staff/overtime-approvals")}>Overtime</Link>
+                    <Link to={detail("travel", "/staff/travel-hr-approvals")}>Travel</Link>
+                    <Link to={detail("training", "/staff/training")}>Training</Link>
+                    <Link to={detail("attendance", "/staff/attendance")}>Visits</Link>
                   </nav>
                 </Panel>
                 <Panel
                   title="Upcoming document expiries"
-                  description="Current verified employee documents and published company documents with recorded expiry dates. Includes visas and insurance when recorded. Buckets are non-overlapping; due today is in 0–30 days. Independent of the attendance period."
-                  link="/staff/document-expiry"
+                  description={
+                    employeeId
+                      ? "This employee’s current verified documents expiring within 90 days or overdue, including visa and insurance when recorded."
+                      : "Current verified employee documents and published company documents with recorded expiry dates. Includes visas and insurance when recorded. Buckets are non-overlapping; due today is in 0–30 days. Independent of the attendance period."
+                  }
+                  link={detail("documents", "/staff/document-expiry")}
                 >
                   <CountChart
                     data={data.priorities.expiries}
                     label="Documents overdue or expiring within 90 days"
                   />
-                  <Link
-                    to="/staff/company-library"
-                    className="mt-3 inline-block text-xs text-primary underline"
+                  {!employeeId && (
+                    <Link
+                      to="/staff/company-library"
+                      className="mt-3 inline-block text-xs text-primary underline"
+                    >
+                      View company documents
+                    </Link>
+                  )}
+                </Panel>
+                {!employeeId && (
+                  <Panel
+                    title="Recruitment pipeline"
+                    description="Current application statuses for open vacancies, independent of the attendance date filter. Applications are counted—not unique people or stage conversions."
+                    link="/staff/vacancies"
                   >
-                    View company documents
-                  </Link>
-                </Panel>
-                <Panel
-                  title="Recruitment pipeline"
-                  description="Current application statuses for open vacancies, independent of the attendance date filter. Applications are counted—not unique people or stage conversions."
-                  link="/staff/vacancies"
-                >
-                  <CountChart data={data.recruitment} label="Applications by recruitment status" />
-                </Panel>
+                    <CountChart
+                      data={data.recruitment}
+                      label="Applications by recruitment status"
+                    />
+                  </Panel>
+                )}
               </>
             )}
           </div>
           {scope === "hr" && (
-            <details className="rounded-xl border bg-card p-4">
-              <summary className="cursor-pointer font-semibold">
-                More HR insights: departments, offices, employment and visits
-              </summary>
-              <p className="mt-2 text-xs text-muted-foreground">
-                Expand the charts you need without crowding your daily overview.
-              </p>
+            <section aria-label="Workforce and visit insights">
               <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
-                <Panel
-                  title="Employees by department"
-                  description="Current headcount by department; independent of the attendance period."
-                  link="/staff/employees"
-                >
-                  <CountChart data={departmentData} label="Current employees by department" />
-                </Panel>
-                <Panel
-                  title="Employees by office"
-                  description="Current headcount by assigned work location; independent of the attendance period."
-                  link="/staff/employees"
-                >
-                  <CountChart data={data.offices} label="Current employees by office" />
-                </Panel>
-                <Panel
-                  title="Employment status"
-                  description="Current employees by status, including probation and notice. This is not an attendance status."
-                  link="/staff/employees"
-                >
-                  <CountChart
-                    donut
-                    data={data.employmentStatuses}
-                    label="Current employee employment statuses"
-                  />
-                </Panel>
+                {!employeeId && (
+                  <>
+                    <Panel
+                      title="Employees by department"
+                      description="Current headcount by department; independent of the attendance period."
+                      link="/staff/employees"
+                    >
+                      <CountChart data={departmentData} label="Current employees by department" />
+                    </Panel>
+                    <Panel
+                      title="Employees by office"
+                      description="Current headcount by assigned work location; independent of the attendance period."
+                      link="/staff/employees"
+                    >
+                      <CountChart data={data.offices} label="Current employees by office" />
+                    </Panel>
+                    <Panel
+                      title="Employment status"
+                      description="Current employees by status, including probation and notice. This is not an attendance status."
+                      link="/staff/employees"
+                    >
+                      <CountChart
+                        donut
+                        data={data.employmentStatuses}
+                        label="Current employee employment statuses"
+                      />
+                    </Panel>
+                  </>
+                )}
                 <Panel
                   title="Site and ministry visits"
                   description="Visit requests by their current status whose visit date falls in the selected completed-day period. Includes site, ministry and client visits."
-                  link="/staff/attendance"
+                  link={detail("attendance", "/staff/attendance")}
                 >
                   <CountChart data={data.visits} label="Visit requests by status" />
                 </Panel>
               </div>
-            </details>
+            </section>
           )}
           <details className="rounded-lg border p-3 text-xs">
             <summary className="cursor-pointer font-medium">

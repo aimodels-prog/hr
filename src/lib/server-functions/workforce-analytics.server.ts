@@ -13,6 +13,7 @@ export const getWorkforceAnalyticsFn = createServerFn({ method: "GET" })
         activeRole: z.enum(ROLE_VALUES),
         scope: z.enum(["self", "hr"]),
         days: z.union([z.literal(7), z.literal(30)]),
+        employeeId: z.string().uuid().optional(),
       })
       .strict()
       .parse(input),
@@ -32,5 +33,7 @@ export const getWorkforceAnalyticsFn = createServerFn({ method: "GET" })
       { ...result.actor, activeRole: data.activeRole },
       data.scope,
       data.days,
+      undefined,
+      data.employeeId,
     );
   });
