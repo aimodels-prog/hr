@@ -107,22 +107,19 @@ export function PulseStrip({ metrics }: { metrics: PulseMetric[] }) {
       ? "xl:grid-cols-7"
       : metrics.length >= 8
         ? "xl:grid-cols-4"
-        : "xl:grid-cols-6";
+        : metrics.length === 4
+          ? "xl:grid-cols-4"
+          : "xl:grid-cols-3";
 
   return (
-    <div
-      className={cn(
-        "grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-3",
-        desktopColumns,
-      )}
-    >
+    <div className={cn("grid grid-cols-1 gap-4 sm:grid-cols-2", desktopColumns)}>
       {metrics.map((metric, index) => (
-        <div key={index} className="bg-card px-3 py-2.5">
-          <p className="truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            {metric.label}
-          </p>
+        <div key={index} className="rounded-xl border border-border/70 bg-card p-5 sm:p-6">
+          <p className="text-xs font-medium text-muted-foreground">{metric.label}</p>
           <div className="mt-1 flex items-baseline gap-1.5">
-            <span className="text-lg font-bold tabular-nums">{metric.value}</span>
+            <span className="text-2xl font-semibold tracking-tight tabular-nums">
+              {metric.value}
+            </span>
             {metric.deltaDirection ? (
               <span
                 className={cn("text-xs font-medium", deltaColorByDirection[metric.deltaDirection])}
@@ -132,7 +129,7 @@ export function PulseStrip({ metrics }: { metrics: PulseMetric[] }) {
             ) : null}
           </div>
           {metric.note ? (
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">{metric.note}</p>
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{metric.note}</p>
           ) : null}
         </div>
       ))}

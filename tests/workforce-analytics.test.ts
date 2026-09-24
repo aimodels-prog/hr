@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   calculateAttendanceAnalytics,
+  attendanceToday,
   completedDateRange,
   type AnalyticsEmployee,
 } from "../src/lib/data/workforce-analytics.ts";
@@ -24,6 +25,34 @@ const base = {
   records: [],
   pendingVisits: [],
 };
+
+test("today counts unique recorded people, not everyone who is off leave", () => {
+  const date = "2026-09-14";
+  const people = [
+    employee,
+    { ...employee, id: "b" },
+    { ...employee, id: "future", startDate: "2026-10-01" },
+  ];
+  const records = [
+    { employeeId: "a", date, clockInAt: `${date}T06:00:00Z`, status: "Present" },
+    { employeeId: "a", date, clockInAt: `${date}T06:00:00Z`, status: "Present" },
+    { employeeId: "b", date, clockInAt: `${date}T16:00:00Z`, status: "Present" },
+    { employeeId: "future", date, clockInAt: `${date}T06:00:00Z`, status: "Present" },
+  ];
+  const input = {
+    date,
+    now: new Date(`${date}T12:00:00Z`),
+    people,
+    records,
+    leave: [{ employeeId: "b", startDate: date, endDate: date }],
+    pendingVisits: [],
+  };
+  assert.deepEqual(attendanceToday(input), { date, headcount: 2, recorded: 1, onLeave: 1 });
+  assert.equal(
+    attendanceToday({ ...input, pendingVisits: [{ employeeId: "a", date }] }).recorded,
+    0,
+  );
+});
 test("analytics excludes today and handles year boundaries", () => {
   assert.deepEqual(completedDateRange("2026-01-02", 3), ["2025-12-30", "2025-12-31", "2026-01-01"]);
 });

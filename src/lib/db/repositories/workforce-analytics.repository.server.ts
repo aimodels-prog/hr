@@ -10,6 +10,7 @@ import { candidateApplications, vacancies } from "../schema/recruitment.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 import {
   calculateAttendanceAnalytics,
+  attendanceToday,
   completedDateRange,
   employedOn,
   type WorkforceAnalytics,
@@ -109,7 +110,7 @@ export async function getWorkforceAnalytics(
                 eq(attendanceRecords.organisationId, organisationId),
                 inArray(attendanceRecords.employeeId, ids),
                 gte(attendanceRecords.date, startDate),
-                lte(attendanceRecords.date, endDate),
+                lte(attendanceRecords.date, today),
                 isNull(attendanceRecords.archivedAt),
               ),
             )
@@ -134,7 +135,7 @@ export async function getWorkforceAnalytics(
                   "Amendment Pending Line Manager",
                   "Amendment Pending HR",
                 ]),
-                lte(leaveRequests.startDate, endDate),
+                lte(leaveRequests.startDate, today),
                 gte(leaveRequests.endDate, startDate),
                 isNull(leaveRequests.archivedAt),
               ),
@@ -162,7 +163,7 @@ export async function getWorkforceAnalytics(
                 inArray(siteVisitRequests.employeeId, ids),
                 eq(siteVisitRequests.status, "Pending HR"),
                 gte(siteVisitRequests.date, startDate),
-                lte(siteVisitRequests.date, endDate),
+                lte(siteVisitRequests.date, today),
                 isNull(siteVisitRequests.archivedAt),
               ),
             )
@@ -251,6 +252,7 @@ export async function getWorkforceAnalytics(
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   return {
+    today: attendanceToday({ date: today, now: at, people, records, leave, pendingVisits }),
     priorities: await dashboardPriorities({
       organisationId,
       scope,

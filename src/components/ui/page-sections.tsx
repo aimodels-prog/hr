@@ -57,7 +57,7 @@ export function PageSections({
         {...props}
         className={cn(
           className,
-          "grid min-w-0 items-start gap-5 space-y-0 lg:grid-cols-[220px_minmax(0,1fr)] [&>[data-section-content]]:lg:col-start-2 [&>[data-section-content]]:lg:row-start-1",
+          "grid min-w-0 items-start gap-5 space-y-0 lg:grid-cols-[190px_minmax(0,1fr)] [&>[data-section-content]]:lg:col-start-2 [&>[data-section-content]]:lg:row-start-1",
         )}
       >
         {children}
@@ -127,13 +127,10 @@ export function SectionNavigation({ children, className, ...props }: React.Compo
       </details>
       <div
         {...props}
-        className={cn(
-          className,
-          "hidden h-auto w-full rounded-xl border bg-card p-2 shadow-sm lg:block",
-        )}
+        className={cn(className, "hidden h-auto w-full border-r border-border/70 pr-3 lg:block")}
       >
         <p className="px-3 pb-3 pt-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          In this page
+          Sections
         </p>
         <nav
           aria-label="Page sections"

@@ -5,6 +5,7 @@ import { ClipboardCheck, Sparkles } from "lucide-react";
 import { HrSidebar } from "@/components/hr-sidebar";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { NotificationDrawer } from "@/components/layout/notification-drawer";
+import { ApplicationBootScreen } from "@/components/layout/application-boot-screen";
 import { DevRoleSwitcher } from "@/components/dev-role-switcher";
 import { useCurrentUser } from "@/lib/auth";
 import { OnboardingService } from "@/lib/data/onboarding-service";
@@ -171,11 +172,7 @@ function StaffLayout() {
   }
 
   if (!settings) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background p-6">
-        <p className="text-sm text-muted-foreground">Loading VIA HR organisation data…</p>
-      </div>
-    );
+    return <ApplicationBootScreen />;
   }
 
   return (
@@ -204,7 +201,7 @@ function StaffLayout() {
               <DevRoleSwitcher />
             </div>
           </header>
-          <main className="page-grid flex-1 p-4 sm:p-6 lg:p-8">
+          <main className="flex-1 bg-background p-4 sm:p-6 lg:p-8">
             {setupNeedsAttention && (
               <div className="mx-auto mb-5 flex max-w-7xl flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex gap-3">

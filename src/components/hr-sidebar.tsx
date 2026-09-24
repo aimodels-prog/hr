@@ -40,6 +40,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { useCurrentUser } from "@/lib/auth";
 import type { Permission } from "@/lib/auth/permissions";
@@ -394,21 +395,19 @@ const navGroups: NavGroup[] = [
 ];
 
 export function HrSidebar() {
+  const { state, isMobile } = useSidebar();
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const { displayName, activeRole, can: checkCan, currentEmployee } = useCurrentUser();
 
   return (
-    <Sidebar collapsible="icon" className="border-r-0">
+    <Sidebar collapsible="icon" className="border-r border-sidebar-border">
       <SidebarHeader className="border-b border-sidebar-border/70 px-4 py-4 group-data-[collapsible=icon]:px-2">
         <Link
           to="/staff"
           aria-label="VIA HR System dashboard"
           className="flex h-10 items-center overflow-hidden"
         >
-          <BrandLogo
-            invert
-            className="h-10 min-w-[108px] group-data-[collapsible=icon]:h-8 group-data-[collapsible=icon]:min-w-[86px]"
-          />
+          <BrandLogo className="h-10 min-w-[108px] dark:brightness-0 dark:invert group-data-[collapsible=icon]:h-8 group-data-[collapsible=icon]:min-w-[86px]" />
         </Link>
       </SidebarHeader>
       <SidebarContent className="px-1 py-2">
@@ -426,28 +425,52 @@ export function HrSidebar() {
 
           return (
             <SidebarGroup key={group.label} className="py-1.5">
-              <SidebarGroupLabel className="px-2 text-[10px] font-bold uppercase tracking-[0.16em] text-sidebar-foreground/45">
-                {group.label}
-              </SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {visibleItems.map((item) => (
-                    <SidebarMenuItem key={`${item.title}:${item.url}`}>
-                      <SidebarMenuButton
-                        asChild
-                        isActive={pathname === item.url || pathname.startsWith(item.url + "/")}
-                        tooltip={item.title}
-                        className="h-9 rounded-lg px-2.5 text-[13px] text-sidebar-foreground/78 data-[active=true]:bg-white/12 data-[active=true]:font-semibold data-[active=true]:text-white data-[active=true]:shadow-sm"
-                      >
-                        <Link to={item.url}>
-                          <item.icon />
-                          <span>{item.title}</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
+              <details
+                key={`${group.label}:${pathname}:${state}:${isMobile}`}
+                open={
+                  (state === "collapsed" && !isMobile) ||
+                  group.label === "Overview" ||
+                  visibleItems.some(
+                    (item) =>
+                      pathname === item.url ||
+                      (item.url !== "/staff" && pathname.startsWith(item.url + "/")),
+                  )
+                }
+                className="group/nav-section group-data-[collapsible=icon]:[&>div]:block"
+              >
+                <summary className="cursor-pointer rounded-md px-2 py-2 text-xs font-medium text-sidebar-foreground/70 hover:bg-sidebar-accent focus-visible:outline-primary group-data-[collapsible=icon]:hidden">
+                  {group.label}
+                </summary>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    {visibleItems.map((item) => (
+                      <SidebarMenuItem key={`${item.title}:${item.url}`}>
+                        <SidebarMenuButton
+                          asChild
+                          isActive={
+                            pathname === item.url ||
+                            (item.url !== "/staff" &&
+                              pathname.startsWith(item.url + "/") &&
+                              !visibleItems.some(
+                                (other) =>
+                                  other.url !== item.url &&
+                                  other.url.startsWith(item.url + "/") &&
+                                  (pathname === other.url || pathname.startsWith(other.url + "/")),
+                              ))
+                          }
+                          tooltip={item.title}
+                          className="h-10 rounded-lg px-2.5 text-[13px] text-sidebar-foreground/80 data-[active=true]:bg-sidebar-accent data-[active=true]:font-semibold data-[active=true]:text-sidebar-accent-foreground"
+                        >
+                          <Link to={item.url}>
+                            <item.icon />
+                            <span>{item.title}</span>
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    ))}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </details>
             </SidebarGroup>
           );
         })}

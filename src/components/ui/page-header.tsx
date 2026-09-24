@@ -21,12 +21,12 @@ export function PageHeader({
   return (
     <div
       className={cn(
-        "relative flex flex-col gap-5 pb-7 pt-1 md:flex-row md:items-end md:justify-between",
+        "relative flex flex-col gap-3 pb-5 pt-1 md:flex-row md:items-center md:justify-between",
         className,
       )}
       {...props}
     >
-      <div className="flex max-w-3xl flex-col gap-2.5">
+      <div className="flex min-w-0 max-w-3xl flex-col gap-2">
         {breadcrumbs && breadcrumbs.length > 0 && (
           <nav
             aria-label="Breadcrumb"
@@ -52,17 +52,15 @@ export function PageHeader({
           </nav>
         )}
         <div className="space-y-1">
-          <h1 className="font-display text-3xl font-bold tracking-[-0.035em] text-foreground sm:text-[2rem]">
+          <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground">
             {title}
           </h1>
           {description && (
-            <p className="max-w-2xl text-sm leading-6 text-muted-foreground sm:text-[15px]">
-              {description}
-            </p>
+            <p className="max-w-2xl text-sm leading-5 text-muted-foreground">{description}</p>
           )}
         </div>
       </div>
-      {actions && <div className="flex flex-shrink-0 items-center gap-2">{actions}</div>}
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }

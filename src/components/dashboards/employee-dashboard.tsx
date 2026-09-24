@@ -16,9 +16,7 @@ import { sortByStartDate } from "@/components/dashboards/dashboard-data";
 import {
   AttentionQueue,
   DashboardPanel,
-  PulseStrip,
   type AttentionItem,
-  type PulseMetric,
 } from "@/components/dashboards/dashboard-kit";
 
 export function EmployeeDashboard({ employee, userId }: { employee: Employee; userId: string }) {
@@ -187,72 +185,15 @@ export function EmployeeDashboard({ employee, userId }: { employee: Employee; us
     });
   }
 
-  // ---------- Pulse Strip ----------
-  const pulseMetrics: PulseMetric[] = [
-    {
-      label: "Annual Leave",
-      value: `${annualBalance.toFixed(1)} days`,
-      note:
-        upcomingLeave.length > 0
-          ? `Upcoming leave: ${new Date(upcomingLeave[0]!.startDate).toLocaleDateString()}`
-          : "Available balance",
-    },
-    {
-      label: "Timesheet",
-      value:
-        overdueTs.length > 0
-          ? "Needs correction"
-          : latestTimesheet
-            ? latestTimesheet.status
-            : "Not started",
-      ...(latestTimesheetPeriod
-        ? { note: `${latestTimesheetPeriod.startDate} to ${latestTimesheetPeriod.endDate}` }
-        : {}),
-    },
-    {
-      label: "Pending Requests",
-      value: String(pendingLeaveRequests.length + pendingOvertime.length + myTravel.length),
-      note: "Leave, overtime and travel",
-    },
-    {
-      label: "Attendance Alerts",
-      value: String(attendanceExceptions.length),
-      note: attendanceExceptions.length ? "Review your record" : "No exceptions",
-    },
-    {
-      label: "Approved Overtime",
-      value: `${approvedOvertimeHours.toFixed(1)} hrs`,
-      note: `${pendingOvertime.length} awaiting approval`,
-    },
-    {
-      label: "Training Records",
-      value: String(trainingRecords.length),
-      note: `${trainingRecords.filter((record) => record.hrVerified).length} HR verified`,
-    },
-  ];
-
-  if (employee.startDate) {
-    const yearsOfService =
-      (new Date().getTime() - new Date(employee.startDate).getTime()) / (1000 * 3600 * 24 * 365.25);
-    if (yearsOfService >= 0) {
-      pulseMetrics.push({
-        label: "With Us Since",
-        value: new Date(employee.startDate).toLocaleDateString(),
-        note: `${yearsOfService.toFixed(1)} years of service`,
-      });
-    }
-  }
-
   return (
     <div className="flex flex-col gap-4">
-      <PulseStrip metrics={pulseMetrics} />
       <DashboardCharts scope="self" />
       <DashboardPanel title="Things that need you">
         <AttentionQueue items={attentionItems} />
       </DashboardPanel>
       <div className="grid gap-4 lg:grid-cols-2">
         <DashboardPanel
-          title="My Recent Requests"
+          title="My recent leave requests"
           description="Latest leave requests and their current decision"
           viewAllLabel="Open Leave"
           viewAllTo="/staff/me/leave-balances"
@@ -291,7 +232,7 @@ export function EmployeeDashboard({ employee, userId }: { employee: Employee; us
         >
           <div className="grid grid-cols-2 gap-3">
             {[
-              ["Attendance exceptions", attendanceExceptions.length],
+              ["Approved overtime hours", approvedOvertimeHours.toFixed(1)],
               ["Pending overtime", pendingOvertime.length],
               ["Training records", trainingRecords.length],
               ["Onboarding progress", obCase ? `${obCase.progressPercentage}%` : "Complete"],

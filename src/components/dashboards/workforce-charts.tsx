@@ -1,4 +1,5 @@
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { PulseStrip } from "./dashboard-kit";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import {
@@ -50,11 +51,31 @@ function Panel({
   children: ReactNode;
 }) {
   return (
-    <section className="min-w-0 rounded-xl border bg-card p-4 shadow-sm sm:p-5" aria-label={title}>
+    <section
+      className="min-w-0 rounded-xl border border-border/70 bg-card p-5 sm:p-6"
+      style={{
+        order:
+          title === "Attendance trend" || title === "Worked hours vs expected hours"
+            ? 0
+            : title === "Approvals waiting"
+              ? 1
+              : title.toLowerCase().includes("leave")
+                ? 2
+                : title === "Workforce distribution"
+                  ? 3
+                  : title === "Recruitment pipeline"
+                    ? 4
+                    : 5,
+      }}
+      aria-label={title}
+    >
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h3 className="font-semibold">{title}</h3>
-          <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+          <details className="mt-1 text-xs text-muted-foreground">
+            <summary className="cursor-pointer">About these figures</summary>
+            <p className="mt-2 max-w-prose leading-relaxed">{description}</p>
+          </details>
         </div>
         {link && (
           <Link to={link} className="shrink-0 text-xs font-medium text-primary hover:underline">
@@ -215,13 +236,37 @@ function LeaveChart({ rows }: { rows: LeaveChartRow[] }) {
           <YAxis />
           <Tooltip />
           <Legend />
-          <Bar dataKey="used" name="Used days" fill="#2563eb" isAnimationActive={false} />
-          <Bar dataKey="booked" name="Booked days" fill="#6366f1" isAnimationActive={false} />
-          <Bar dataKey="remaining" name="Remaining days" fill="#0d9488" isAnimationActive={false} />
-          <Bar dataKey="carry" name="Carryover estimate" fill="#d97706" isAnimationActive={false} />
+          <Bar
+            stackId="leave"
+            dataKey="used"
+            name="Used days"
+            fill="#2563eb"
+            isAnimationActive={false}
+          />
+          <Bar
+            stackId="leave"
+            dataKey="booked"
+            name="Booked days"
+            fill="#6366f1"
+            isAnimationActive={false}
+          />
+          <Bar
+            stackId="leave"
+            dataKey="remaining"
+            name="Remaining days"
+            fill="#0d9488"
+            isAnimationActive={false}
+          />
         </BarChart>
       </ChartContainer>
-      <div className="mt-3 overflow-x-auto">
+      <p className="mt-3 text-sm text-muted-foreground">
+        Estimated carryover within remaining leave:{" "}
+        {hours(rows.reduce((sum, row) => sum + row.carry, 0))} days
+      </p>
+      <details className="mt-3 overflow-x-auto">
+        <summary className="cursor-pointer text-xs text-muted-foreground">
+          View leave figures
+        </summary>
         <table className="w-full text-left text-xs">
           <caption className="sr-only">Annual leave figures in days</caption>
           <thead>
@@ -248,13 +293,14 @@ function LeaveChart({ rows }: { rows: LeaveChartRow[] }) {
             ))}
           </tbody>
         </table>
-      </div>
+      </details>
     </>
   );
 }
 
 export default function WorkforceCharts({ scope, employeeId, profileId }: DashboardChartsProps) {
   const user = useCurrentUser();
+  const [distribution, setDistribution] = useState<"department" | "office">("department");
   const location = useLocation();
   const navigate = useNavigate();
   const days: 7 | 30 = Number((location.search as { days?: number }).days) === 7 ? 7 : 30;
@@ -389,78 +435,113 @@ export default function WorkforceCharts({ scope, employeeId, profileId }: Dashbo
       )}
       {data && (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[
-              { name: "Recorded hours", value: `${hours(data.totals.worked)} h` },
-              { name: "Policy expected", value: `${hours(data.totals.expected)} h` },
-              {
-                name: "Difference",
-                value: `${hours(data.totals.worked - data.totals.expected)} h`,
-              },
-              {
-                name: "Days needing review",
-                value: String(data.totals.review + data.totals.missing),
-              },
-            ].map((metric) => (
-              <div key={metric.name} className="rounded-lg border bg-card p-3">
-                <p className="text-xs text-muted-foreground">{metric.name}</p>
-                <p className="mt-1 text-xl font-semibold tabular-nums">{metric.value}</p>
-              </div>
-            ))}
-          </div>
+          <PulseStrip
+            metrics={
+              scope === "hr" && !employeeId
+                ? [
+                    {
+                      label: "Current employees",
+                      value: String(data.today.headcount),
+                      note: "Current workforce",
+                    },
+                    {
+                      label: "Attendance recorded today",
+                      value: String(data.today.recorded),
+                      note: `${data.today.date} · Clock-in or approved duty`,
+                    },
+                    {
+                      label: "On leave today",
+                      value: String(data.today.onLeave),
+                      note: "Approved full or partial leave",
+                    },
+                    {
+                      label: "Awaiting decisions",
+                      value: String(
+                        data.priorities.approvals.reduce((sum, item) => sum + item.count, 0),
+                      ),
+                      note: "Leave, overtime, travel, training & visits",
+                    },
+                  ]
+                : [
+                    {
+                      label: "Recorded hours",
+                      value: `${hours(data.totals.worked)} h`,
+                      note: "Completed attendance",
+                    },
+                    {
+                      label: "Expected hours",
+                      value: `${hours(data.totals.expected)} h`,
+                      note: "Working calendar adjusted for leave",
+                    },
+                    {
+                      label: "Annual leave remaining",
+                      value: `${hours(data.priorities.annualLeave.reduce((sum, row) => sum + row.remaining, 0))} days`,
+                      note: "Recorded leave-year balance",
+                    },
+                    {
+                      label: "Days needing review",
+                      value: String(data.totals.review + data.totals.missing),
+                      note: "Missing or incomplete records",
+                    },
+                  ]
+            }
+          />
           {data.totals.review + data.totals.missing > 0 && (
             <p className="text-xs text-muted-foreground">
               This comparison is incomplete until missing punches and pending records are reviewed.
               The difference is not a confirmed absence or salary deduction.
             </p>
           )}
-          <div
-            className={scope === "hr" ? "grid min-w-0 gap-4 xl:grid-cols-2" : "min-w-0 space-y-4"}
-            data-testid="primary-dashboard-charts"
-          >
-            <Panel
-              title="Worked hours vs expected hours"
-              description="Recorded, completed attendance—including approved site duty—against the working-calendar expectation."
-              link={detail(
-                "attendance",
-                scope === "hr" ? "/staff/attendance" : "/staff/me/attendance",
-              )}
-            >
-              <ChartContainer
-                config={chartConfig}
-                className="h-64 w-full aspect-auto"
-                role="img"
-                aria-label="Daily recorded hours compared with expected hours"
+          <div className="grid min-w-0 gap-5 xl:grid-cols-2" data-testid="primary-dashboard-charts">
+            {(scope === "self" || employeeId) && (
+              <Panel
+                title="Worked hours vs expected hours"
+                description="Recorded, completed attendance—including approved site duty—against the working-calendar expectation."
+                link={detail(
+                  "attendance",
+                  scope === "hr" ? "/staff/attendance" : "/staff/me/attendance",
+                )}
               >
-                <ComposedChart data={data.days} margin={{ left: -18, right: 8 }} accessibilityLayer>
-                  <CartesianGrid vertical={false} />
-                  <XAxis dataKey="date" tickFormatter={shortDate} minTickGap={24} />
-                  <YAxis />
-                  <Tooltip labelFormatter={(date) => String(date)} />
-                  <Legend />
-                  <Bar
-                    name="Recorded hours"
-                    dataKey="worked"
-                    fill={colors.worked}
-                    radius={[3, 3, 0, 0]}
-                    isAnimationActive={false}
-                  />
-                  <Line
-                    name="Expected hours"
-                    dataKey="expected"
-                    stroke={colors.expected}
-                    strokeWidth={2}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                </ComposedChart>
-              </ChartContainer>
-              {data.totals.worked === 0 && (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  No completed attendance hours recorded in this period.
-                </p>
-              )}
-            </Panel>
+                <ChartContainer
+                  config={chartConfig}
+                  className="h-64 w-full aspect-auto"
+                  role="img"
+                  aria-label="Daily recorded hours compared with expected hours"
+                >
+                  <ComposedChart
+                    data={data.days}
+                    margin={{ left: -18, right: 8 }}
+                    accessibilityLayer
+                  >
+                    <CartesianGrid vertical={false} />
+                    <XAxis dataKey="date" tickFormatter={shortDate} minTickGap={24} />
+                    <YAxis />
+                    <Tooltip labelFormatter={(date) => String(date)} />
+                    <Legend />
+                    <Bar
+                      name="Recorded hours"
+                      dataKey="worked"
+                      fill={colors.worked}
+                      radius={[3, 3, 0, 0]}
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      name="Expected hours"
+                      dataKey="expected"
+                      stroke={colors.expected}
+                      strokeWidth={2}
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                  </ComposedChart>
+                </ChartContainer>
+                {data.totals.worked === 0 && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    No completed attendance hours recorded in this period.
+                  </p>
+                )}
+              </Panel>
+            )}
             <Panel
               title={scope === "hr" ? "Leave usage and carryover" : "My annual leave balance"}
               description={`Leave year starting ${data.priorities.leaveYearStart}; independent of the attendance period. Used means approved days before today; booked means approved days from today onwards. Remaining is the recorded balance, already reduced for approved bookings.`}
@@ -474,26 +555,6 @@ export default function WorkforceCharts({ scope, employeeId, profileId }: Dashbo
                 change balances.
               </p>
             </Panel>
-            {scope === "self" && (
-              <Panel
-                title="My attendance summary"
-                description="Completed working days, days needing review and days without a confirmed record for the selected period. Missing records do not automatically mean absence."
-                link="/staff/me/attendance"
-              >
-                <CountChart
-                  donut
-                  label="My attendance record coverage"
-                  data={[
-                    {
-                      name: "Completed records",
-                      count: data.days.reduce((sum, day) => sum + day.recorded, 0),
-                    },
-                    { name: "Pending review", count: data.totals.review },
-                    { name: "No confirmed record", count: data.totals.missing },
-                  ]}
-                />
-              </Panel>
-            )}
             {scope === "hr" && (
               <>
                 <Panel
@@ -592,49 +653,37 @@ export default function WorkforceCharts({ scope, employeeId, profileId }: Dashbo
                 )}
               </>
             )}
+            {scope === "hr" && !employeeId && (
+              <Panel
+                title="Workforce distribution"
+                description="Current employees by department or assigned office, independent of the attendance date range."
+                link="/staff/employees"
+              >
+                <label className="mb-4 flex items-center justify-between gap-3 text-sm">
+                  Group employees by
+                  <select
+                    aria-label="Workforce grouping"
+                    value={distribution}
+                    onChange={(event) =>
+                      setDistribution(event.target.value as "department" | "office")
+                    }
+                    className="min-h-11 rounded-lg border bg-background px-3"
+                  >
+                    <option value="department">Department</option>
+                    <option value="office">Office</option>
+                  </select>
+                </label>
+                <CountChart
+                  data={distribution === "department" ? departmentData : data.offices}
+                  label={
+                    distribution === "department"
+                      ? "Current employees by department"
+                      : "Current employees by office"
+                  }
+                />
+              </Panel>
+            )}
           </div>
-          {scope === "hr" && (
-            <section aria-label="Workforce and visit insights">
-              <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
-                {!employeeId && (
-                  <>
-                    <Panel
-                      title="Employees by department"
-                      description="Current headcount by department; independent of the attendance period."
-                      link="/staff/employees"
-                    >
-                      <CountChart data={departmentData} label="Current employees by department" />
-                    </Panel>
-                    <Panel
-                      title="Employees by office"
-                      description="Current headcount by assigned work location; independent of the attendance period."
-                      link="/staff/employees"
-                    >
-                      <CountChart data={data.offices} label="Current employees by office" />
-                    </Panel>
-                    <Panel
-                      title="Employment status"
-                      description="Current employees by status, including probation and notice. This is not an attendance status."
-                      link="/staff/employees"
-                    >
-                      <CountChart
-                        donut
-                        data={data.employmentStatuses}
-                        label="Current employee employment statuses"
-                      />
-                    </Panel>
-                  </>
-                )}
-                <Panel
-                  title="Site and ministry visits"
-                  description="Visit requests by their current status whose visit date falls in the selected completed-day period. Includes site, ministry and client visits."
-                  link={detail("attendance", "/staff/attendance")}
-                >
-                  <CountChart data={data.visits} label="Visit requests by status" />
-                </Panel>
-              </div>
-            </section>
-          )}
           <details className="rounded-lg border p-3 text-xs">
             <summary className="cursor-pointer font-medium">
               Daily figures and calculation notes

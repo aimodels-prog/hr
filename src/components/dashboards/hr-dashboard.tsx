@@ -26,11 +26,9 @@ import { isCurrentWorkforceMember } from "@/components/dashboards/dashboard-data
 import { useCurrentUser } from "@/lib/auth";
 import {
   AttentionQueue,
-  PulseStrip,
   DashboardPanel,
   ProgressRing,
   type AttentionItem,
-  type PulseMetric,
 } from "@/components/dashboards/dashboard-kit";
 
 function formatNames(names: string[], max = 3): string {
@@ -58,12 +56,12 @@ export function HrDashboard() {
     void navigate({ to: "/staff", search: { employeeId, days: search.days ?? 30 } });
   };
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <section
-        className="rounded-xl border bg-card p-4 space-y-3"
+        className="relative flex flex-wrap items-center gap-3"
         aria-label="Employee dashboard filter"
       >
-        <label htmlFor="hr-employee-search" className="block font-semibold">
+        <label htmlFor="hr-employee-search" className="sr-only">
           Find an employee
         </label>
         <input
@@ -72,10 +70,13 @@ export function HrDashboard() {
           placeholder="Search name or VIA email"
           value={term}
           onChange={(event) => setTerm(event.target.value)}
-          className="h-11 w-full rounded-lg border bg-background px-3"
+          className="h-11 w-full rounded-lg border bg-background px-3 sm:max-w-md"
         />
         {term.trim() && (
-          <ul aria-label="Matching employees" className="max-h-64 overflow-y-auto divide-y">
+          <ul
+            aria-label="Matching employees"
+            className="absolute top-12 left-0 z-20 max-h-64 w-full max-w-md overflow-y-auto divide-y rounded-xl border bg-card shadow-lg"
+          >
             {matches.map((person) => (
               <li key={person.id}>
                 <button
@@ -94,7 +95,7 @@ export function HrDashboard() {
           </ul>
         )}
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p role="status">
+          <p role="status" className="text-xs text-muted-foreground">
             {selected
               ? `Viewing: ${selected.preferredName || selected.legalName} — Individual overview`
               : search.employeeId
@@ -416,36 +417,13 @@ function OrganisationHrDashboard() {
     });
   }
 
-  // ---------- Pulse Strip ----------
-  const pulseMetrics: PulseMetric[] = [
-    {
-      label: "Current workforce",
-      value: String(activeEmployees.length),
-      note: "Active employees",
-    },
-    {
-      label: "Not on leave today",
-      value: String(Math.max(activeEmployees.length - peopleOnLeaveToday, 0)),
-      note: `${peopleOnLeaveToday} on approved leave`,
-    },
-    {
-      label: "Joining this month",
-      value: String(thisMonthJoiners.length),
-      note:
-        joinerDelta === 0
-          ? "Same as last month"
-          : `${joinerDelta > 0 ? "+" : ""}${joinerDelta} compared with last month`,
-    },
-    {
-      label: "Documents requiring action",
-      value: String(docsExpiringCritical.length + docsExpiringWarning.length),
-      note: `${docsExpiringCritical.length} urgent`,
-    },
-  ];
-
   return (
     <div className="flex flex-col gap-4">
-      <section aria-labelledby="hr-attention-heading">
+      <DashboardCharts scope="hr" />
+      <section
+        aria-labelledby="hr-attention-heading"
+        className="rounded-xl border border-border/70 bg-card p-5"
+      >
         <div className="mb-3">
           <h2 id="hr-attention-heading" className="text-sm font-bold">
             Needs my attention
@@ -460,9 +438,6 @@ function OrganisationHrDashboard() {
           </p>
         ) : null}
       </section>
-
-      <PulseStrip metrics={pulseMetrics} />
-      <DashboardCharts scope="hr" />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <DashboardPanel

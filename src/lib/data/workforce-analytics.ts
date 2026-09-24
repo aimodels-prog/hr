@@ -16,6 +16,7 @@ export interface AnalyticsDay {
   leaveDays: number;
 }
 export interface WorkforceAnalytics {
+  today: { date: string; headcount: number; recorded: number; onLeave: number };
   priorities: {
     leaveYear: number;
     leaveYearStart: string;
@@ -45,6 +46,52 @@ export function completedDateRange(today: string, count: number): string[] {
     date.setUTCDate(date.getUTCDate() - count + index);
     return date.toISOString().slice(0, 10);
   });
+}
+
+/** Today's snapshot is separate from completed-day trends; a missing punch is not absence. */
+export function attendanceToday(input: {
+  date: string;
+  now: Date;
+  people: AnalyticsEmployee[];
+  records: { employeeId: string; date: string; clockInAt: string | null; status: string }[];
+  leave: { employeeId: string; startDate: string; endDate: string }[];
+  pendingVisits: { employeeId: string; date: string }[];
+}) {
+  const current = new Set(
+    input.people.filter((person) => employedOn(person, input.date)).map((person) => person.id),
+  );
+  const pending = new Set(
+    input.pendingVisits
+      .filter((visit) => visit.date === input.date)
+      .map((visit) => visit.employeeId),
+  );
+  return {
+    date: input.date,
+    headcount: current.size,
+    recorded: new Set(
+      input.records
+        .filter(
+          (record) =>
+            record.date === input.date &&
+            current.has(record.employeeId) &&
+            !!record.clockInAt &&
+            Date.parse(record.clockInAt) <= input.now.getTime() &&
+            !["Absent", "Correction Pending"].includes(record.status) &&
+            !pending.has(record.employeeId),
+        )
+        .map((record) => record.employeeId),
+    ).size,
+    onLeave: new Set(
+      input.leave
+        .filter(
+          (request) =>
+            current.has(request.employeeId) &&
+            request.startDate <= input.date &&
+            request.endDate >= input.date,
+        )
+        .map((request) => request.employeeId),
+    ).size,
+  };
 }
 
 export function employedOn(employee: AnalyticsEmployee, date: string): boolean {

@@ -24,7 +24,6 @@ import { EmployeeDashboard } from "@/components/dashboards/employee-dashboard";
 import { ManagerDashboard } from "@/components/dashboards/manager-dashboard";
 import { HrDashboard } from "@/components/dashboards/hr-dashboard";
 import { AccountsDashboard } from "@/components/dashboards/accounts-dashboard";
-import { AdminDashboard } from "@/components/dashboards/admin-dashboard";
 import { employeeSearch } from "@/components/employees/employee-filter";
 import { RequestTrackerSummary } from "@/components/dashboards/request-tracker-summary";
 
@@ -249,16 +248,14 @@ function Dashboard() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 pb-10">
-      <RequestTrackerSummary />
       {/* Header Banner */}
       <div className="flex flex-wrap items-end justify-between gap-5 border-b border-border/70 pb-6">
         <div>
-          <p className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-primary">
-            Your workspace
-          </p>
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="font-display text-3xl font-bold tracking-[-0.04em]">
-              Welcome back, {displayName.split(" ")[0]}
+            <h1 className="text-2xl font-semibold tracking-tight">
+              {["HR", "Super Admin"].includes(activeRole)
+                ? "People overview"
+                : `Welcome back, ${displayName.split(" ")[0]}`}
             </h1>
             <Badge variant="outline" className="rounded-full bg-card px-2.5 text-[11px]">
               {activeRole}
@@ -275,67 +272,80 @@ function Dashboard() {
       </div>
 
       {currentEmployee && (
-        <Link
-          to="/staff/me/attendance"
-          search={{ action: "site-visit" }}
-          className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 py-2 font-medium text-primary-foreground"
-        >
-          <Plane className="h-4 w-4" /> Quick visit
-        </Link>
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            to="/staff/me/attendance"
+            className="inline-flex min-h-11 items-center gap-2 rounded-lg border bg-card px-4 py-2 text-sm font-medium"
+          >
+            <Clock3 className="h-4 w-4" /> My attendance
+          </Link>
+          <Link
+            to="/staff/me/attendance"
+            search={{ action: "site-visit" }}
+            className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 py-2 font-medium text-primary-foreground"
+          >
+            <Plane className="h-4 w-4" /> Quick visit
+          </Link>
+        </div>
       )}
 
-      {activeRole === "HR" && currentEmployee && (
-        <section aria-labelledby="my-day-heading">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <h2 id="my-day-heading" className="text-sm font-bold">
-                My day
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                Your own attendance, leave, timesheet and assigned work
-              </p>
+      {["HR", "Super Admin"].includes(activeRole) && currentEmployee && (
+        <details className="rounded-xl border border-border/70 bg-card p-4">
+          <summary className="cursor-pointer text-sm font-medium">
+            My employee tools · Attendance, leave and timesheets
+          </summary>
+          <section aria-labelledby="my-day-heading" className="mt-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h2 id="my-day-heading" className="text-sm font-bold">
+                  My day
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  Your own attendance, leave, timesheet and assigned work
+                </p>
+              </div>
             </div>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-            {[
-              {
-                title: "My attendance",
-                to: "/staff/me/attendance",
-                icon: Clock3,
-              },
-              {
-                title: "My leave",
-                to: "/staff/me/leave-balances",
-                icon: CalendarPlus,
-              },
-              {
-                title: "My timesheet",
-                to: "/staff/me/timesheets",
-                icon: ClipboardCheck,
-              },
-              {
-                title: "My tasks",
-                to: "/staff/my-tasks",
-                icon: UserCheck,
-              },
-            ].map((item) => {
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.title}
-                  to={item.to}
-                  className="group flex min-h-12 items-center gap-3 rounded-xl border border-border/80 bg-card px-3 py-2.5 shadow-sm transition-colors hover:border-primary/30 hover:bg-muted/30"
-                >
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                    <Icon className="h-4 w-4" />
-                  </span>
-                  <span className="text-sm font-semibold">{item.title}</span>
-                  <ArrowRight className="ml-auto h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-                </Link>
-              );
-            })}
-          </div>
-        </section>
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                {
+                  title: "My attendance",
+                  to: "/staff/me/attendance",
+                  icon: Clock3,
+                },
+                {
+                  title: "My leave",
+                  to: "/staff/me/leave-balances",
+                  icon: CalendarPlus,
+                },
+                {
+                  title: "My timesheet",
+                  to: "/staff/me/timesheets",
+                  icon: ClipboardCheck,
+                },
+                {
+                  title: "My tasks",
+                  to: "/staff/my-tasks",
+                  icon: UserCheck,
+                },
+              ].map((item) => {
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.title}
+                    to={item.to}
+                    className="group flex min-h-12 items-center gap-3 rounded-xl border border-border/80 bg-card px-3 py-2.5 shadow-sm transition-colors hover:border-primary/30 hover:bg-muted/30"
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    <span className="text-sm font-semibold">{item.title}</span>
+                    <ArrowRight className="ml-auto h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        </details>
       )}
 
       {(activeRole === "Employee" || activeRole === "IT") && currentEmployee && (
@@ -344,12 +354,15 @@ function Dashboard() {
       {activeRole === "Line Manager" && currentEmployee && (
         <ManagerDashboard employee={currentEmployee} userId={currentUserId} />
       )}
-      {activeRole === "HR" && <HrDashboard />}
+      {["HR", "Super Admin"].includes(activeRole) && <HrDashboard />}
       {activeRole === "Accounts" && <AccountsDashboard />}
-      {activeRole === "Super Admin" && <AdminDashboard />}
+      <RequestTrackerSummary />
 
-      <section>
-        <div className="mb-3 flex items-center justify-between">
+      <details className="rounded-xl border border-border/70 bg-card p-5">
+        <summary className="cursor-pointer text-sm font-medium">
+          Quick access · My work and administration
+        </summary>
+        <div className="mb-3 mt-4 flex items-center justify-between">
           <h2 className="text-sm font-bold">Quick access</h2>
           <span className="text-xs text-muted-foreground">Your most-used areas</span>
         </div>
@@ -378,7 +391,7 @@ function Dashboard() {
             );
           })}
         </div>
-      </section>
+      </details>
     </div>
   );
 }

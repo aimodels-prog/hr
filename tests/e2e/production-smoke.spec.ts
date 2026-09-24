@@ -52,9 +52,9 @@ test("production release smoke loads HR and employee charts through portal SSO",
     "Requires isolated portal SSO configuration",
   );
   await signInAs(page, "rana.nair@via-int.com", "Rana Nair", "/staff");
-  await expect(
-    page.getByRole("heading", { name: "Worked hours vs expected hours" }).first(),
-  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: "Attendance trend" }).first()).toBeVisible({
+    timeout: 30_000,
+  });
   await expect(page.getByRole("heading", { name: "Recruitment pipeline" })).toBeVisible();
   await expect(
     page.getByTestId("primary-dashboard-charts").locator(":scope > section"),
@@ -66,14 +66,12 @@ test("production release smoke loads HR and employee charts through portal SSO",
     "Upcoming document expiries",
   ])
     await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
-  for (const name of [
-    "Employees by office",
-    "Employment status",
-    "Employees by department",
-    "Site and ministry visits",
-  ]) {
-    await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
-  }
+  await expect(
+    page.getByRole("heading", { name: "Workforce distribution", exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Workforce grouping").selectOption("office");
+  await expect(page.getByRole("img", { name: "Current employees by office" })).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath("hr-clean-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
@@ -103,11 +101,11 @@ test("production release smoke loads HR and employee charts through portal SSO",
   await expect(page.getByRole("heading", { name: "Worked hours vs expected hours" })).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByRole("heading", { name: "My attendance summary" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "My attendance summary" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "My annual leave balance" })).toBeVisible();
   await expect(
     page.getByTestId("primary-dashboard-charts").locator(":scope > section"),
-  ).toHaveCount(3);
+  ).toHaveCount(2);
   await expect(page.getByRole("heading", { name: "Approvals waiting" })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
@@ -229,6 +227,40 @@ async function signInAs(page: Page, email: string, name: string, path: string) {
     timeout: 30_000,
   });
 }
+
+test("production release smoke shows six charts for Super Admin on desktop and phone", async ({
+  page,
+}) => {
+  test.skip(
+    !portalSecret || process.env["PORTAL_SSO_ENABLED"] !== "true",
+    "Requires isolated portal SSO configuration",
+  );
+  await signInAs(page, "yusuf.balushi@via-int.com", "Yusuf Al Balushi", "/staff");
+  await expect(page.getByRole("heading", { name: "People overview", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Attendance trend", exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(
+    page.getByTestId("primary-dashboard-charts").locator(":scope > section"),
+  ).toHaveCount(6);
+  await expect(page.getByText("Attendance recorded today", { exact: true })).toBeVisible();
+  const recruitmentMenu = page
+    .locator("details")
+    .filter({ has: page.locator("summary", { hasText: /^Recruitment$/ }) });
+  await expect(recruitmentMenu).not.toHaveAttribute("open", "");
+  await recruitmentMenu.locator("summary").click();
+  await expect(recruitmentMenu.getByRole("link", { name: "Vacancies", exact: true })).toBeVisible();
+  await recruitmentMenu.locator("summary").click();
+  await page.screenshot({
+    path: test.info().outputPath("super-admin-desktop.png"),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: test.info().outputPath("super-admin-mobile.png"), fullPage: true });
+});
 
 test("production release smoke covers health, secure CV intake and all five roles", async ({
   page,

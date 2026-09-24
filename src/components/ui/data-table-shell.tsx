@@ -9,7 +9,7 @@ export function DataTableShell({ children, className, ...props }: DataTableShell
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-2xl border border-border/80 bg-card text-card-foreground shadow-[0_12px_38px_-32px_oklch(0.3_0.1_253/0.4)]",
+        "min-w-0 overflow-hidden rounded-xl border border-border/70 bg-card text-card-foreground",
         className,
       )}
       {...props}
