@@ -5,8 +5,11 @@ import { test } from "node:test";
 import postgres from "postgres";
 
 import type { PerformanceReview } from "../src/lib/data/performance-types.ts";
+import { closeDatabaseConnection } from "../src/lib/db/client.ts";
 import {
   actOnPerformanceReviewInDatabase,
+  archiveGoalInDatabase,
+  changePerformanceCycleStatusInDatabase,
   decideGoalInDatabase,
   listPerformanceForActor,
   recordGoalProgressInDatabase,
@@ -39,7 +42,7 @@ function assessedSections(
 test(
   "performance objectives and reviews preserve role scope, lifecycle and correction history",
   { skip: !testDatabaseUrl },
-  async () => {
+  async (t) => {
     assert.match(new URL(testDatabaseUrl!).pathname.slice(1).toLowerCase(), /(test|scratch)/);
     const sql = postgres(testDatabaseUrl!, { max: 5, prepare: false });
     const ids = Object.fromEntries(
@@ -111,6 +114,259 @@ test(
 
       const initial = await listPerformanceForActor(ids.org!, hrActor);
       assert.equal(initial.templates.length, 1);
+      const createCycle = (status: "Draft" | "Active" = "Active") =>
+        savePerformanceCycleInDatabase(
+          ids.org!,
+          {
+            name: `Objective gate ${randomUUID()}`,
+            templateId: initial.templates[0]!.id,
+            status,
+            departments: [ids.department!],
+            employmentTypes: [ids.employmentType!],
+            selfAssessmentDeadline: "2026-11-30",
+            managerReviewDeadline: "2026-12-15",
+            discussionDeadline: "2026-12-31",
+            requiresModeration: false,
+          },
+          hrActor,
+        );
+      const goalInput = (cycleId: string, weight: number) => ({
+        employeeId: ids.employee!,
+        cycleId,
+        title: `Delivery objective ${weight}`,
+        description: "Deliver the agreed measurable outcomes.",
+        successMeasure: "Verified quarterly quality results.",
+        targetValue: "At least 95 percent",
+        startDate: "2026-09-01",
+        dueDate: "2026-11-30",
+        weight,
+      });
+      const addGoal = (cycleId: string, weight: number) =>
+        saveGoalInDatabase(ids.org!, goalInput(cycleId, weight), employeeActor);
+      const getReview = async (cycleId: string) =>
+        (await listPerformanceForActor(ids.org!, employeeActor)).reviews.find(
+          (item) =>
+            item.cycleId === cycleId && item.employeeId === ids.employee && !item.archivedAt,
+        )!;
+      const rawReview = async (cycleId: string) =>
+        (
+          await sql`select * from performance_reviews where organisation_id=${ids.org} and employee_id=${ids.employee} and cycle_id=${cycleId} and archived_at is null`
+        )[0]!;
+      const submitSelf = async (cycleId: string) => {
+        const review = await getReview(cycleId);
+        return actOnPerformanceReviewInDatabase(
+          ids.org!,
+          review.id,
+          review.recordVersion,
+          { type: "self", sections: assessedSections(review.sections, "self") },
+          employeeActor,
+        );
+      };
+      const approve = (id: string) =>
+        decideGoalInDatabase(ids.org!, id, "approve", undefined, managerActor);
+
+      await t.test(
+        "omitting the deadline cannot bypass objectives, including legacy self-assessment rows",
+        async () => {
+          const cycle = await createCycle();
+          assert.equal((await rawReview(cycle)).status, "Objectives Pending");
+          await assert.rejects(submitSelf(cycle), /approve objectives totalling 100%/);
+          await sql`update performance_reviews set status='Self Assessment Pending' where employee_id=${ids.employee} and cycle_id=${cycle}`;
+          assert.equal((await getReview(cycle)).status, "Objectives Pending");
+          await assert.rejects(submitSelf(cycle), /approve objectives totalling 100%/);
+          assert.equal((await rawReview(cycle)).overall_self_score, null);
+          assert.equal((await rawReview(cycle)).record_version, 1);
+        },
+      );
+      await t.test(
+        "returned objectives can be resubmitted without resetting approved objectives",
+        async () => {
+          const cycle = await createCycle(),
+            first = await addGoal(cycle, 60),
+            second = await addGoal(cycle, 40);
+          await submitGoalsInDatabase(ids.org!, ids.employee!, cycle, employeeActor);
+          await approve(first);
+          await assert.rejects(submitSelf(cycle), /approve objectives totalling 100%/);
+          await decideGoalInDatabase(
+            ids.org!,
+            second,
+            "return",
+            "Clarify the success measure.",
+            managerActor,
+          );
+          const [before] = await sql`select * from employee_goals where id=${first}`;
+          await saveGoalInDatabase(
+            ids.org!,
+            { ...goalInput(cycle, 40), goalId: second, targetValue: "At least 97 percent" },
+            employeeActor,
+          );
+          await submitGoalsInDatabase(ids.org!, ids.employee!, cycle, employeeActor);
+          assert.deepEqual((await sql`select * from employee_goals where id=${first}`)[0], before);
+          const [notices] = await sql`select count(*)::integer as count from notifications
+            where organisation_id=${ids.org} and recipient_user_id=${ids.managerUser}
+              and type='performance-objectives' and link->>'entityId'=${cycle}`;
+          assert.equal(
+            notices!.count,
+            2,
+            "A returned set must notify the manager again when resubmitted.",
+          );
+          await approve(second);
+          assert.equal((await rawReview(cycle)).status, "Self Assessment Pending");
+          const ready = await getReview(cycle);
+          assert.ok(
+            ready.sections
+              .flatMap((section) => section.items)
+              .some((item) => item.description.includes("97 percent")),
+          );
+        },
+      );
+      await t.test(
+        "simultaneous final approvals reliably open self-assessment exactly once",
+        async () => {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const cycle = await createCycle(),
+              first = await addGoal(cycle, 60),
+              second = await addGoal(cycle, 40);
+            await submitGoalsInDatabase(ids.org!, ids.employee!, cycle, employeeActor);
+            await Promise.all([approve(first), approve(second)]);
+            const saved = await rawReview(cycle);
+            assert.equal(saved.status, "Self Assessment Pending");
+            assert.equal(saved.record_version, 2);
+            const goalItems = (await getReview(cycle)).sections
+              .flatMap((section) => section.items)
+              .filter((item) => item.templateItemId.startsWith("goal-"));
+            assert.deepEqual(
+              goalItems.map((item) => item.templateItemId).sort(),
+              [`goal-${first}`, `goal-${second}`].sort(),
+            );
+          }
+        },
+      );
+      await t.test(
+        "incomplete imported approvals and concurrent overweight inserts cannot bypass the gate",
+        async () => {
+          const cycle = await createCycle(),
+            only = await addGoal(cycle, 50);
+          await assert.rejects(
+            submitGoalsInDatabase(ids.org!, ids.employee!, cycle, employeeActor),
+            /total 100%/,
+          );
+          await sql`update employee_goals set status='Pending Approval' where id=${only}`;
+          await approve(only);
+          assert.equal((await rawReview(cycle)).status, "Objectives Pending");
+          await assert.rejects(submitSelf(cycle), /approve objectives totalling 100%/);
+          const concurrentCycle = await createCycle();
+          const results = await Promise.allSettled([
+            addGoal(concurrentCycle, 60),
+            addGoal(concurrentCycle, 60),
+          ]);
+          assert.equal(results.filter((item) => item.status === "fulfilled").length, 1);
+          const [total] =
+            await sql`select sum(weight)::integer as weight from employee_goals where cycle_id=${concurrentCycle} and employee_id=${ids.employee}`;
+          assert.equal(total!.weight, 60);
+        },
+      );
+      await t.test(
+        "approved goals before launch open immediately even with an objectives deadline",
+        async () => {
+          const cycle = await createCycle("Draft");
+          await sql`update performance_cycles set objective_setting_deadline='2026-09-30' where id=${cycle}`;
+          await sql`insert into employee_goals (organisation_id,employee_id,cycle_id,title,description,success_measure,target_value,start_date,due_date,weight,status,approved_at,approved_by,created_by,updated_by)
+          values (${ids.org},${ids.employee},${cycle},'Existing agreed objective','Deliver agreed work','Measured quarterly','95 percent','2026-09-01','2026-11-30',100,'Active',now(),${ids.managerUser},${ids.employeeUser},${ids.employeeUser})`;
+          await changePerformanceCycleStatusInDatabase(ids.org!, cycle, "Active", 1, hrActor);
+          assert.equal((await rawReview(cycle)).status, "Self Assessment Pending");
+          const other = await createCycle();
+          await assert.rejects(submitSelf(other), /approve objectives totalling 100%/);
+        },
+      );
+      await t.test(
+        "completion-pending objectives remain approved and appraised targets cannot be rewritten",
+        async () => {
+          const cycle = await createCycle(),
+            goal = await addGoal(cycle, 100);
+          await submitGoalsInDatabase(ids.org!, ids.employee!, cycle, employeeActor);
+          await approve(goal);
+          await recordGoalProgressInDatabase(
+            ids.org!,
+            goal,
+            100,
+            "Outcome is ready for confirmation.",
+            undefined,
+            employeeActor,
+          );
+          assert.equal((await getReview(cycle)).status, "Self Assessment Pending");
+          await submitSelf(cycle);
+          const before = await rawReview(cycle);
+          await decideGoalInDatabase(
+            ids.org!,
+            goal,
+            "return",
+            "Please provide the final evidence.",
+            managerActor,
+          );
+          assert.equal(
+            (await sql`select status from employee_goals where id=${goal}`)[0]!.status,
+            "Active",
+          );
+          await assert.rejects(
+            saveGoalInDatabase(
+              ids.org!,
+              { ...goalInput(cycle, 100), goalId: goal, targetValue: "Changed after appraisal" },
+              employeeActor,
+            ),
+            /cannot change after self-assessment/,
+          );
+          await assert.rejects(
+            archiveGoalInDatabase(ids.org!, goal, employeeActor),
+            /cannot change after self-assessment/,
+          );
+          await assert.rejects(addGoal(cycle, 1), /cannot change after self-assessment/);
+          assert.deepEqual(await rawReview(cycle), before);
+        },
+      );
+      await t.test(
+        "objective identity, cycle participation, archived goals and closed cycles are enforced",
+        async () => {
+          const cycle = await createCycle(),
+            goal = await addGoal(cycle, 100),
+            otherCycle = await createCycle();
+          await assert.rejects(
+            saveGoalInDatabase(
+              ids.org!,
+              { ...goalInput(otherCycle, 100), goalId: goal },
+              employeeActor,
+            ),
+            /does not belong/,
+          );
+          await assert.rejects(
+            saveGoalInDatabase(
+              ids.org!,
+              { ...goalInput(cycle, 100), employeeId: ids.otherManager!, goalId: goal },
+              otherManagerActor,
+            ),
+            /does not belong/,
+          );
+          await archiveGoalInDatabase(ids.org!, goal, employeeActor);
+          await assert.rejects(approve(goal), /not found/);
+          await assert.rejects(
+            saveGoalInDatabase(ids.org!, { ...goalInput(cycle, 100), goalId: goal }, employeeActor),
+            /does not belong/,
+          );
+          await assert.rejects(submitSelf(cycle), /approve objectives totalling 100%/);
+          const replacement = await addGoal(cycle, 100);
+          await sql`update performance_cycles set status='Completed' where id=${cycle}`;
+          await assert.rejects(
+            submitGoalsInDatabase(ids.org!, ids.employee!, cycle, employeeActor),
+            /active performance cycle/,
+          );
+          await assert.rejects(
+            archiveGoalInDatabase(ids.org!, replacement, employeeActor),
+            /active performance cycle/,
+          );
+          await sql`update performance_reviews set archived_at=now() where employee_id=${ids.employee} and cycle_id=${otherCycle}`;
+          await assert.rejects(addGoal(otherCycle, 100), /not included/);
+        },
+      );
       const cycleId = await savePerformanceCycleInDatabase(
         ids.org!,
         {
@@ -182,7 +438,7 @@ test(
         (item) => item.employeeId === ids.employee && item.cycleId === cycleId && !item.archivedAt,
       )!;
       assert.equal(review.status, "Self Assessment Pending");
-      assert.equal(snapshot.goals.length, 2);
+      assert.equal(snapshot.goals.filter((goal) => goal.cycleId === cycleId).length, 2);
       await actOnPerformanceReviewInDatabase(
         ids.org!,
         review.id,
@@ -310,6 +566,7 @@ test(
       assert.ok(counts!.notifications >= 8);
     } finally {
       await sql.end({ timeout: 5 });
+      await closeDatabaseConnection();
     }
   },
 );

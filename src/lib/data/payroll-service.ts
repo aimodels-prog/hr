@@ -13,6 +13,9 @@ import { TimesheetService } from "./timesheet-service.ts";
 import { OvertimeService } from "./overtime-service.ts";
 import { TravelService } from "./travel-service.ts";
 import { LeaveService } from "./leave-service.ts";
+import { payrollLeaveDaysInPeriod } from "./leave-working-days.ts";
+import { sickLeavePayrollReductions } from "./sick-leave-payroll.ts";
+import { SettingsService } from "./settings-service.ts";
 import { isWithinInterval, parseISO } from "date-fns";
 import { getApplicationDataServices } from "./application-data.ts";
 import { getRolePermissions, type Permission } from "../auth/permissions.ts";
@@ -23,15 +26,6 @@ const generateId = () => Math.random().toString(36).substring(2, 9);
 function escapeCsvCell(value: string): string {
   const protectedValue = /^[=+\-@]/.test(value.trimStart()) ? `'${value}` : value;
   return `"${protectedValue.replace(/"/g, '""')}"`;
-}
-
-// Matches the shape LeaveService.getSickLeavePayBreakdown returns, expected to be persisted on
-// LeaveRequest as an optional `sickPayTiers` field at submission time.
-interface SickPayTierBreakdown {
-  fromDay: number;
-  toDay: number;
-  payPercentage: number;
-  days: number;
 }
 
 export class PayrollService {
@@ -74,7 +68,7 @@ export class PayrollService {
     return value;
   }
 
-  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+  async hydrateCompatibilityCache(context: ActorContext, canCommit = () => true): Promise<void> {
     if (typeof window === "undefined") return;
     const { storage } = getApplicationDataServices();
     const employeeMap = new Map(
@@ -85,6 +79,7 @@ export class PayrollService {
     );
     const { getPayrollPeriodsFn } = await import("../server-functions/payroll.server.ts");
     const periods = await getPayrollPeriodsFn({ data: { actor: await this.serverActor(context) } });
+    if (!canCommit()) return;
     storage.writeCollection(
       "payrollPeriods",
       periods.map((period) => ({
@@ -376,6 +371,7 @@ export class PayrollService {
     this.requirePermission("payroll:prepare", context, "collect payroll inputs", periodId);
     const period = this.repo.getById(periodId);
     if (!period) throw new Error("Not found");
+    if (period.archivedAt) throw new Error("Archived payroll periods cannot collect inputs.");
     if (
       period.status !== "Draft" &&
       period.status !== "Collecting Inputs" &&
@@ -408,6 +404,7 @@ export class PayrollService {
         (r) =>
           r.employeeId === emp.id &&
           r.status === "Approved" &&
+          !r.archivedAt &&
           r.compensationType === "Payment" &&
           (r.payrollPeriodId === period.id ||
             (!r.payrollPeriodId && parseISO(r.date) <= interval.end)),
@@ -418,40 +415,54 @@ export class PayrollService {
       const unpaidLeaves = payrollLeave.filter(
         (r) =>
           r.employeeId === emp.id &&
-          (r.status === "Approved" || r.status === "Taken") &&
+          [
+            "Approved",
+            "Taken",
+            "Cancellation Pending",
+            "Amendment Pending Line Manager",
+            "Amendment Pending HR",
+          ].includes(r.status) &&
           r.policySnapshot.isPaid === false &&
-          isWithinInterval(parseISO(r.startDate), interval),
+          !r.archivedAt &&
+          r.startDate <= period.endDate &&
+          r.endDate >= period.startDate,
       );
 
-      // Sick leave (policySnapshot.isPaid === true) is not flat-rate paid: Labour Law Art. 82 tiers the
-      // pay percentage down (100% / 75% / 50% / 35%) the longer sick leave runs across the year. A request
-      // that has a persisted sickPayTiers breakdown (see LeaveRequest / LeaveService.getSickLeavePayBreakdown)
-      // must be reduced proportionally instead of being compiled as if fully paid.
+      // Match the authoritative server: approved history consumes tiers in date order,
+      // then only the dates in this payroll period contribute a reduction.
       const sickLeaves = payrollLeave.filter(
         (r) =>
           r.employeeId === emp.id &&
-          (r.status === "Approved" || r.status === "Taken") &&
+          [
+            "Approved",
+            "Taken",
+            "Cancellation Pending",
+            "Amendment Pending Line Manager",
+            "Amendment Pending HR",
+          ].includes(r.status) &&
+          !r.archivedAt &&
           r.policySnapshot.type === "Sick" &&
-          isWithinInterval(parseISO(r.startDate), interval),
+          r.startDate <= period.endDate,
       );
-
-      let sickPartialUnpaidDays = 0;
-      for (const sick of sickLeaves) {
-        const tiers = (sick as unknown as { sickPayTiers?: SickPayTierBreakdown[] }).sickPayTiers;
-        if (!tiers || tiers.length === 0) continue; // no persisted tier data yet - fall back to the flat isPaid=true default
-
-        // Any portion of the request not covered by the persisted tier breakdown (stale/partial data) is
-        // conservatively left at the flat fully-paid default rather than guessed at.
-        const tierUnpaidDays = tiers.reduce(
-          (sum, t) => sum + t.days * (1 - t.payPercentage / 100),
-          0,
-        );
-        sickPartialUnpaidDays += tierUnpaidDays;
-      }
-      sickPartialUnpaidDays = Math.round(sickPartialUnpaidDays * 100) / 100;
+      const sickPartialUnpaidDays = sickLeaves.some((r) => r.endDate >= period.startDate)
+        ? (sickLeavePayrollReductions(
+            sickLeaves.map((r) => ({
+              ...r,
+              workingDates: r.policySnapshot.workingDates,
+              isPaid: r.policySnapshot.isPaid,
+              payTiers:
+                r.policySnapshot.payTiers ??
+                this.leaveService.getPolicies().find((p) => p.id === r.policyId)?.payTiers ??
+                [],
+            })),
+            period,
+            new SettingsService().getAppSettingsSync().leaveYearStart,
+            (r) => this.leaveService.calculateWorkingDates(r.startDate, r.endDate, r.isHalfDay),
+          ).get(emp.id) ?? 0)
+        : 0;
 
       const allClosedTravels = payrollTravel.filter(
-        (r) => r.employeeId === emp.id && r.status === "Closed",
+        (r) => r.employeeId === emp.id && r.status === "Closed" && !r.archivedAt,
       );
 
       // A closed reimbursement belongs to the first payroll period collected after closure,
@@ -473,7 +484,19 @@ export class PayrollService {
 
       const otHours = overtime.reduce((sum, r) => sum + r.hours, 0);
       const leaveDays =
-        unpaidLeaves.reduce((sum, r) => sum + r.workingDaysRequested, 0) + sickPartialUnpaidDays;
+        unpaidLeaves.reduce(
+          (sum, r) =>
+            sum +
+            payrollLeaveDaysInPeriod(
+              {
+                ...r,
+                workingDates: r.policySnapshot.workingDates,
+              },
+              period,
+              () => this.leaveService.calculateWorkingDates(r.startDate, r.endDate, r.isHalfDay),
+            ),
+          0,
+        ) + sickPartialUnpaidDays;
       // Must use the currency-safe OMR-equivalent total (see TravelService.submitExpenses), not the raw
       // actualTotal, which silently mixes currencies for trips whose expense lines aren't all in OMR.
       // Records closed before actualTotalOmr existed won't have it - those are flagged below rather than
@@ -546,21 +569,13 @@ export class PayrollService {
       }
 
       if (sickPartialUnpaidDays > 0) {
-        const tierDescriptions = sickLeaves
-          .map(
-            (sick) => (sick as unknown as { sickPayTiers?: SickPayTierBreakdown[] }).sickPayTiers,
-          )
-          .filter((tiers): tiers is SickPayTierBreakdown[] => !!tiers && tiers.length > 0)
-          .flat()
-          .map((t) => `days ${t.fromDay}-${t.toDay} @ ${t.payPercentage}%`)
-          .join(", ");
         exceptions.push({
           id: generateId(),
           employeeId: emp.id,
           // Reusing the closest existing leave-related category so this doesn't collide (by
           // type+employeeId) with the unrelated "Extreme Value" overtime exception above.
           type: "Pending Leave",
-          description: `Sick leave partial-pay tiering applied (${tierDescriptions}). Compiled unpaid-leave-equivalent increased by ${sickPartialUnpaidDays} day(s) to reflect the blended pay percentage - verify before running payroll.`,
+          description: `Configured sick-pay tiers contribute ${sickPartialUnpaidDays} unpaid-equivalent day(s) in this period. Review before approving payroll.`,
           severity: "Medium",
           acknowledged: false,
         });

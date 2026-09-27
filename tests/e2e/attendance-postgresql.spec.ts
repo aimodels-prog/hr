@@ -93,18 +93,17 @@ test("HR page sections work as side navigation on desktop and a menu on phones",
     fullPage: true,
   });
   await page.setViewportSize({ width: 390, height: 844 });
-  const menu = page.locator("details[data-section-menu]");
-  await menu.locator("summary").click();
-  await menu.getByRole("link", { name: /Office Setup/ }).click();
-  await expect(menu).not.toHaveAttribute("open");
-  await expect(menu.locator("summary")).toContainText("Office Setup");
+  await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+  await navigation.getByRole("link", { name: /Office Setup/ }).click();
+  await expect(page.getByRole("dialog")).toBeHidden();
   await expect(panel).toBeVisible();
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
   ).toBeTruthy();
   await page.screenshot({ path: test.info().outputPath("hr-sections-mobile.png"), fullPage: true });
   await previewAs(page, "user-rana", "HR", "/staff/leave-admin");
-  await expect(page.locator("details[data-section-menu] summary")).toBeVisible();
+  await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+  await expect(page.getByRole("navigation", { name: "Page sections", exact: true })).toBeVisible();
   await expect(page.getByRole("tablist")).toHaveCount(0);
 });
 
@@ -131,8 +130,11 @@ test("employee profile hides pending HR fields and shows confirmed details read-
         { exact: true },
       ),
     ).toBeVisible({ timeout: 30000 });
-    await page.getByLabel("Profile section").click();
-    await page.getByRole("option", { name: "Employment", exact: true }).click();
+    await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+    await page
+      .getByRole("navigation", { name: "Page sections" })
+      .getByRole("link", { name: "Employment", exact: true })
+      .click();
     await expect(
       page.getByText(
         "HR will add your employment details. You can continue completing your personal information.",
@@ -141,8 +143,11 @@ test("employee profile hides pending HR fields and shows confirmed details read-
     await expect(page.getByText("Start Date", { exact: true })).toHaveCount(0);
     await sql`UPDATE employees SET employment_confirmation_status='Confirmed' WHERE id=${employee.id}`;
     await page.reload();
-    await page.getByLabel("Profile section").click();
-    await page.getByRole("option", { name: "Employment", exact: true }).click();
+    await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+    await page
+      .getByRole("navigation", { name: "Page sections" })
+      .getByRole("link", { name: "Employment", exact: true })
+      .click();
     await expect(page.getByText("Start Date", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Edit Employment", exact: false })).toHaveCount(
       0,
@@ -187,7 +192,7 @@ test("HR publishes a policy and staff can read it without seeing restricted comp
   await expect(page.locator("article").filter({ hasText: title })).toContainText("Published");
   await expect(page.getByRole("button", { name: "Upload document", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Company register", exact: true })).toHaveCount(0);
-  await page.locator("details[data-section-menu] summary").click();
+  await page.getByRole("button", { name: "Toggle Sidebar" }).click();
   await page.getByRole("link", { name: "Ask VIA Policies", exact: true }).click();
   await expect(page.getByLabel("Your question")).toBeVisible();
   expect(
@@ -195,13 +200,19 @@ test("HR publishes a policy and staff can read it without seeing restricted comp
   ).toBeTruthy();
 });
 
-test("Finance shares a protected payslip and the employee downloads it on mobile", async ({
-  page,
-}) => {
+test("Finance shares and replaces a protected payslip with history on mobile", async ({ page }) => {
   test.skip(!process.env["VIA_HR_OBJECT_STORAGE_ENDPOINT"], "Requires isolated object storage");
   const month = `${4000 + Number(String(Date.now()).slice(-3))}-09`;
-  await page.goto("/staff");
-  await previewAs(page, "user-mariam", "Accounts", "/staff/payslips");
+  // Select the initial preview identity before hydration can redirect the default user.
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("via_hr:dev_preview_state")) {
+      localStorage.setItem(
+        "via_hr:dev_preview_state",
+        JSON.stringify({ userId: "user-mariam", activeRole: "Accounts" }),
+      );
+    }
+  });
+  await page.goto("/staff/payslips");
   await page.getByRole("button", { name: "Manage employee payslips" }).click();
   const employee = page.getByLabel("Employee", { exact: true });
   const option = await employee
@@ -219,13 +230,42 @@ test("Finance shares a protected payslip and the employee downloads it on mobile
   await page.getByRole("button", { name: "Upload & share" }).click();
   await expect(page.getByText("Payslip shared with the employee.")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
+  const financeSlip = page.locator("article").filter({ hasText: month });
+  await financeSlip.getByRole("button", { name: "Replace", exact: true }).click();
+  const replaceDialog = page.getByRole("dialog", { name: "Replace payslip", exact: true });
+  await expect(
+    replaceDialog.getByRole("button", { name: "Replace & notify employee" }),
+  ).toBeDisabled();
+  await replaceDialog.getByLabel("Replacement PDF (maximum 10 MB)").setInputFiles({
+    name: "corrected-payslip.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4\nCorrected allowance\n%%EOF"),
+  });
+  await replaceDialog.getByLabel("Reason for replacement").fill("Corrected allowance total");
+  await replaceDialog.getByRole("button", { name: "Replace & notify employee" }).click();
+  await expect(replaceDialog).toBeHidden();
+  await expect(financeSlip).toContainText("Version 2");
+  await financeSlip.getByRole("button", { name: "History", exact: true }).click();
+  const historyDialog = page.getByRole("dialog", { name: "Payslip history", exact: true });
+  await expect(historyDialog).toContainText("Version 1 · Superseded");
+  await expect(historyDialog).toContainText("Corrected allowance total");
+  const original = page.waitForEvent("download");
+  await historyDialog.getByRole("button", { name: "Download version 1" }).click();
+  expect((await original).suggestedFilename()).toBe("private-payslip.pdf");
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+  ).toBeTruthy();
+  await historyDialog.getByRole("button", { name: "Close", exact: true }).click();
   await previewAs(page, "user-omar", "Employee", "/staff/payslips");
   const slip = page.locator("article").filter({ hasText: month });
   await expect(slip).toBeVisible();
   await expect(page.getByRole("button", { name: "Manage employee payslips" })).toHaveCount(0);
+  await expect(slip.getByRole("button", { name: "Replace", exact: true })).toHaveCount(0);
+  await expect(slip.getByRole("button", { name: "History", exact: true })).toHaveCount(0);
+  await expect(slip).toContainText("Version 2");
   const downloaded = page.waitForEvent("download");
   await slip.getByRole("button", { name: "Download PDF" }).click();
-  expect((await downloaded).suggestedFilename()).toBe("private-payslip.pdf");
+  expect((await downloaded).suggestedFilename()).toBe("corrected-payslip.pdf");
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
   ).toBeTruthy();
@@ -266,14 +306,10 @@ test("workforce charts load real data for HR and personal attendance on mobile",
   await previewAs(page, "user-rana", "HR", "/staff");
   const insights = page.getByRole("region", { name: "HR insights", exact: true });
   await expect(insights).toBeVisible({ timeout: 30_000 });
-  await expect(
-    insights.getByRole("heading", { name: "Worked hours vs expected hours" }),
-  ).toBeVisible();
+  await expect(insights.getByRole("heading", { name: "Attendance trend" })).toBeVisible();
   await expect(insights.getByRole("heading", { name: "Recruitment pipeline" })).toBeVisible();
   await insights.getByLabel("Chart period").selectOption("7");
-  await expect(
-    insights.getByRole("heading", { name: "Worked hours vs expected hours" }),
-  ).toBeVisible();
+  await expect(insights.getByRole("heading", { name: "Attendance trend" })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await previewAs(page, "user-omar", "Employee", "/staff/me/attendance");
   const personal = page.getByRole("region", { name: "My working hours", exact: true });

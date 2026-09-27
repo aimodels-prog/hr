@@ -11,6 +11,11 @@ import type {
 import { getDatabaseClient } from "../client.ts";
 import { auditEvents, reportSavedViews } from "../schema/system.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
+import {
+  queryLeaveBalances,
+  queryLeaveUsage,
+  resolveLeaveReportYears,
+} from "./leave-report.repository.server.ts";
 
 export const REPORT_CATALOGUE = [
   { id: "headcount", name: "Headcount & Diversity", category: "Core HR" },
@@ -40,7 +45,7 @@ type QueryDefinition = {
   description: string;
   columns: ReportColumn[];
   containsPersonalData: boolean;
-  query: (organisationId: string) => Promise<unknown>;
+  query: (organisationId: string, leaveYears?: ReportData["leaveYears"]) => Promise<unknown>;
 };
 
 const c = (key: string, label: string, type?: ReportColumn["type"]): ReportColumn => ({
@@ -138,39 +143,39 @@ const definitions: Record<ReportId, QueryDefinition> = {
   },
   leave_balances: {
     name: "Leave Balances",
-    description: "Current employee leave balances by policy.",
+    description:
+      "Balances by entitlement year. Dates select whole leave periods, not historical snapshots.",
     containsPersonalData: true,
     columns: [
       c("employee", "Employee"),
       c("department", "Department"),
       c("leaveType", "Leave Type"),
+      c("leaveYear", "Leave Year", "number"),
+      c("periodStart", "Period Start", "date"),
+      c("periodEnd", "Period End", "date"),
       c("entitlement", "Entitlement", "number"),
       c("used", "Used", "number"),
+      c("adjustments", "Adjustments", "number"),
       c("pending", "Pending", "number"),
       c("available", "Available", "number"),
     ],
-    query: (org) =>
-      getDatabaseClient().execute(
-        sql`select e.legal_name as employee, d.name as department, p.name as "leaveType", coalesce(sum(lt.days) filter (where lt.transaction_type in ('Entitlement','Carry-Forward','Accrual')),0)::double precision as entitlement, abs(coalesce(sum(lt.days) filter (where lt.transaction_type in ('Approved Leave','Leave Amendment')),0))::double precision as used, coalesce((select sum(lr.working_days_requested) from leave_requests lr where lr.employee_id=b.employee_id and lr.policy_id=b.policy_id and lr.status in ('Pending Line Manager','Pending HR','Pending Super Admin','Cancellation Pending') and lr.archived_at is null),0)::double precision as pending, b.balance_days::double precision as available from leave_balances b join employees e on e.id=b.employee_id join departments d on d.id=e.department_id join leave_policies p on p.id=b.policy_id left join leave_transactions lt on lt.employee_id=b.employee_id and lt.policy_id=b.policy_id and lt.archived_at is null where b.organisation_id=${org} and b.archived_at is null group by b.id,e.id,d.name,p.name order by e.legal_name,p.name`,
-      ),
+    query: queryLeaveBalances,
   },
   leave_usage: {
     name: "Leave Usage & Upcoming Absence",
-    description: "Submitted leave, approval status and working days away.",
+    description: "Submitted leave by entitlement year, based on the request start date.",
     containsPersonalData: true,
     columns: [
       c("employee", "Employee"),
       c("department", "Department"),
       c("leaveType", "Leave Type"),
+      c("leaveYear", "Leave Year", "number"),
       c("startDate", "Start", "date"),
       c("endDate", "End", "date"),
       c("days", "Working Days", "number"),
       c("status", "Status"),
     ],
-    query: (org) =>
-      getDatabaseClient().execute(
-        sql`select e.legal_name as employee, d.name as department, p.name as "leaveType", r.start_date as "startDate", r.end_date as "endDate", r.working_days_requested::double precision as days, r.status::text as status from leave_requests r join employees e on e.id=r.employee_id join departments d on d.id=e.department_id join leave_policies p on p.id=r.policy_id where r.organisation_id=${org} and r.archived_at is null order by r.start_date desc`,
-      ),
+    query: queryLeaveUsage,
   },
   timesheet_completion: {
     name: "Timesheet Completion",
@@ -369,16 +374,15 @@ const definitions: Record<ReportId, QueryDefinition> = {
   },
 };
 
-function assertAccess(reportId: string, actor: AuditActorContext): asserts reportId is ReportId {
+export function assertReportAccess(
+  reportId: string,
+  actor: AuditActorContext,
+): asserts reportId is ReportId {
   const reportExists = REPORT_CATALOGUE.some((item) => item.id === reportId);
-  const roleAllowed =
-    actor.activeRole === "HR" ||
-    actor.activeRole === "Super Admin" ||
-    actor.activeRole === "Accounts";
-  const reportAllowed =
-    actor.activeRole !== "Accounts" || reportId === "travel" || reportId === "payroll";
   if (!reportExists) throw new Error("This report does not exist.");
-  if (!roleAllowed || !reportAllowed)
+  // The catalogue and every server-side read/write use exactly the same policy.
+  // Hiding payroll in HR's menu must also deny direct requests and CSV exports.
+  if (!listAvailableReportsForActor(actor).some((report) => report.id === reportId))
     throw new Error("You do not have permission to view this report.");
 }
 
@@ -460,13 +464,17 @@ export async function generateReportInDatabase(
   actor: AuditActorContext,
 ): Promise<ReportData> {
   try {
-    assertAccess(reportId, actor);
+    assertReportAccess(reportId, actor);
   } catch (error) {
     await recordDenied(organisationId, reportId, actor);
     throw error;
   }
   const definition = definitions[reportId];
-  const result = await definition.query(organisationId);
+  const leaveYears =
+    reportId === "leave_balances" || reportId === "leave_usage"
+      ? await resolveLeaveReportYears(organisationId, filters.leaveYear)
+      : undefined;
+  const result = await definition.query(organisationId, leaveYears);
   const rows = Array.from(result as Iterable<Record<string, unknown>>).map((row) =>
     Object.fromEntries(Object.entries(row).map(([key, value]) => [key, normalizeCell(value)])),
   );
@@ -477,6 +485,7 @@ export async function generateReportInDatabase(
     columns: definition.columns,
     containsPersonalData: definition.containsPersonalData,
     rows: applyFilters(rows, definition.columns, filters),
+    ...(leaveYears ? { leaveYears } : {}),
   };
 }
 
@@ -512,12 +521,18 @@ export async function exportReportCsvInDatabase(
       module: "reports",
       entityType: "report",
       entityId: actor.userId!,
-      afterSummary: { reportId, format: "CSV", rowCount: report.rows.length, filters },
+      afterSummary: {
+        reportId,
+        format: "CSV",
+        rowCount: report.rows.length,
+        filters,
+        ...(report.leaveYears ? { leaveYear: report.leaveYears.selectedYear } : {}),
+      },
       reason: "Exported a permission-filtered report",
       riskLevel: report.containsPersonalData ? "High" : "Medium",
     } as typeof auditEvents.$inferInsert);
   return {
-    fileName: `via-${reportId}-${new Date().toISOString().slice(0, 10)}.csv`,
+    fileName: `via-${reportId}${report.leaveYears ? `-${report.leaveYears.selectedYear}` : ""}-${new Date().toISOString().slice(0, 10)}.csv`,
     csv,
     rowCount: report.rows.length,
   };
@@ -549,7 +564,7 @@ export async function saveReportViewInDatabase(
   filters: ReportFilters,
   actor: AuditActorContext,
 ) {
-  assertAccess(reportId, actor);
+  assertReportAccess(reportId, actor);
   if (!actor.userId) throw new Error("A verified user is required.");
   const actorUserId = actor.userId;
   const cleanName = name.trim();
@@ -636,7 +651,7 @@ export async function archiveReportViewInDatabase(
       .limit(1);
     if (!view || view.ownerUserId !== actor.userId)
       throw new Error("The saved view was not found.");
-    assertAccess(view.reportId, actor);
+    assertReportAccess(view.reportId, actor);
     await tx
       .update(reportSavedViews)
       .set({

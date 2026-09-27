@@ -37,6 +37,7 @@ import {
   assignCompanyAssetInDatabase,
   closeCompanyAssetAssignmentInDatabase,
   listCompanyAssetAssignmentsForActor,
+  listAvailableCompanyAssets,
 } from "../db/repositories/company-asset.repository.server.ts";
 import { rolloverLeaveBalancesInDatabase } from "../db/repositories/leave.repository.server.ts";
 
@@ -996,6 +997,42 @@ export const getCompanyAssetAssignmentsFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const verified = await verify(data.actor);
     return listCompanyAssetAssignmentsForActor(verified.organisationId, verified.actor);
+  });
+
+export const getAvailableCompanyAssetsFn = createServerFn({ method: "GET" })
+  .validator((input) => z.object({ actor: Actor }).strict().parse(input))
+  .handler(async ({ data }) => {
+    const verified = await verify(data.actor);
+    return listAvailableCompanyAssets(verified.organisationId, verified.actor);
+  });
+
+export const assignAvailableCompanyAssetFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: Actor,
+        employeeId: z.string().uuid(),
+        assetId: z.string().uuid(),
+        expectedVersion: z.number().int().positive(),
+        assignedDate: IsoDate,
+        notes: z.string().trim().max(1000).optional(),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await verify(data.actor);
+    return assignCompanyAssetInDatabase(
+      verified.organisationId,
+      {
+        employeeId: data.employeeId,
+        assetId: data.assetId,
+        expectedVersion: data.expectedVersion,
+        assignedDate: data.assignedDate,
+        ...(data.notes ? { notes: data.notes } : {}),
+      },
+      verified.actor,
+    );
   });
 
 const AssetType = z.enum([

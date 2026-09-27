@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { processNextCandidateCvJob } from "../src/lib/db/repositories/candidate-cv-intake.repository.server.ts";
 import { processAttendanceScheduledWork } from "../src/lib/db/repositories/attendance.repository.server.ts";
 import { processCoreHrScheduledReminders } from "../src/lib/db/repositories/core-hr-reminder.repository.server.ts";
+import { processScheduledEmploymentChanges } from "../src/lib/db/repositories/employee.repository.server.ts";
 import { processCompanyDocumentReminders } from "../src/lib/db/repositories/company-library.repository.server.ts";
 import { processScheduledLeaveRollover } from "../src/lib/db/repositories/leave.repository.server.ts";
 import { processLeaveUsageReminders } from "../src/lib/db/repositories/leave-reminder.repository.server.ts";
@@ -32,6 +33,11 @@ const buildVersion = process.env["VIA_HR_IMAGE_TAG"]?.trim() || "development";
 let stopping = false;
 
 const tasks: Array<WorkerTaskDefinition & { run: () => Promise<unknown> }> = [
+  {
+    name: "scheduled-employment-changes",
+    intervalSeconds: 60,
+    run: () => processScheduledEmploymentChanges(),
+  },
   {
     name: "workflow-notification-emails",
     intervalSeconds: 30,

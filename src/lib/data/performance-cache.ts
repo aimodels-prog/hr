@@ -47,7 +47,7 @@ export function performanceMasterDataId(collection: string, value: string) {
   return id;
 }
 
-export async function hydratePerformanceCache(context: ActorContext) {
+export async function hydratePerformanceCache(context: ActorContext, canCommit = () => true) {
   if (typeof window === "undefined") return;
   const { storage } = getApplicationDataServices();
   const employeeMap = new Map(
@@ -64,6 +64,7 @@ export async function hydratePerformanceCache(context: ActorContext) {
   const snapshot = await getPerformanceSnapshotFn({
     data: { actor: await performanceServerActor(context) },
   });
+  if (!canCommit()) return;
   storage.writeCollection("performanceTemplates", snapshot.templates);
   storage.writeCollection(
     "performanceCycles",

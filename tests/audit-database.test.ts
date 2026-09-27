@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
 import postgres from "postgres";
+import { generateDeterministicUuid } from "../scripts/import-staging-seed.ts";
 
 import {
   checkAuditIntegrityInDatabase,
@@ -20,7 +21,9 @@ test(
     assert.match(new URL(testDatabaseUrl!).pathname.slice(1).toLowerCase(), /(test|scratch)/);
     const query = postgres(testDatabaseUrl!, { max: 3, prepare: false });
     try {
-      const [organisation] = await query<{ id: string }[]>`select id from organisations limit 1`;
+      const [organisation] = await query<
+        { id: string }[]
+      >`select id from organisations where id=${generateDeterministicUuid("organisations", "via-international")}`;
       assert.ok(organisation);
       const people = await query<
         { userId: string; employeeId: string; displayName: string; role: string }[]

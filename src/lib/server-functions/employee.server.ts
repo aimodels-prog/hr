@@ -19,6 +19,8 @@ import {
   updatePersonalRecordInDatabase,
   updateUserAccessInDatabase,
   updateEmploymentRecordInDatabase,
+  listScheduledEmploymentChangesInDatabase,
+  cancelScheduledEmploymentChangeInDatabase,
 } from "../db/repositories/employee.repository.server.ts";
 import { resolveOrganisationIdForActor, verifyServerActorRole } from "../db/utils.server.ts";
 import {
@@ -392,7 +394,7 @@ export const updateEmploymentRecordFn = createServerFn({ method: "POST" })
       );
       throw new Error("The selected responsibility is not assigned to your account.");
     }
-    await updateEmploymentRecordInDatabase(
+    return updateEmploymentRecordInDatabase(
       organisationId,
       data.employeeId,
       data.changes as EmploymentRecordChanges,
@@ -400,6 +402,53 @@ export const updateEmploymentRecordFn = createServerFn({ method: "POST" })
       data.reason,
       { ...verification.actor, activeRole: data.actor.activeRole },
     );
+  });
+
+const ScheduledChangeRequest = z
+  .object({
+    actor: ActorInput,
+    employeeId: z.string().uuid(),
+  })
+  .strict();
+const CancelScheduledChangeRequest = z
+  .object({
+    actor: ActorInput,
+    id: z.string().uuid(),
+    reason: z.string().trim().min(5).max(1000),
+  })
+  .strict();
+
+async function verifiedEmploymentActor(input: z.infer<typeof ActorInput>) {
+  const organisationId = await resolveOrganisationIdForActor(input.actorId, input.actorEmail);
+  const verification = await verifyServerActorRole(
+    organisationId,
+    input.actorId,
+    undefined,
+    input.actorEmail,
+  );
+  if (
+    !verification.verified ||
+    !verification.actor ||
+    !verification.actor.roles.includes(input.activeRole)
+  )
+    throw new Error("Your selected responsibility is not available.");
+  return { organisationId, actor: { ...verification.actor, activeRole: input.activeRole } };
+}
+
+export const listScheduledEmploymentChangesFn = createServerFn({ method: "POST" })
+  .validator((input: z.infer<typeof ScheduledChangeRequest>) => ScheduledChangeRequest.parse(input))
+  .handler(async ({ data }) => {
+    const { organisationId, actor } = await verifiedEmploymentActor(data.actor);
+    return listScheduledEmploymentChangesInDatabase(organisationId, data.employeeId, actor);
+  });
+
+export const cancelScheduledEmploymentChangeFn = createServerFn({ method: "POST" })
+  .validator((input: z.infer<typeof CancelScheduledChangeRequest>) =>
+    CancelScheduledChangeRequest.parse(input),
+  )
+  .handler(async ({ data }) => {
+    const { organisationId, actor } = await verifiedEmploymentActor(data.actor);
+    return cancelScheduledEmploymentChangeInDatabase(organisationId, data.id, data.reason, actor);
   });
 
 const PersonalChangesInput = EmployeeInput.pick({

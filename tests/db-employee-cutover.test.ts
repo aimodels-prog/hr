@@ -15,6 +15,8 @@ import {
   updateUserAccessInDatabase,
 } from "../src/lib/db/repositories/employee.repository.server.ts";
 import {
+  assignOffboardingTaskOwnerInDatabase,
+  cancelOffboardingCaseInDatabase,
   createOnboardingCaseInDatabase,
   createOffboardingCaseInDatabase,
   ensureCoreHrLifecycleTemplates,
@@ -511,57 +513,187 @@ test(
       `;
       assert.ok(Number(notificationCount?.count) >= 2);
 
-      const offboardingCaseId = await createOffboardingCaseInDatabase(
-        organisationId,
-        {
-          employeeId: created.employeeId,
-          templateId: templates.offboardingTemplateId,
-          assignedHRId: managerEmployeeId,
-          reasonCategory: "Resignation",
-          noticeDate: "2026-09-01",
-          lastWorkingDate: "2026-09-05",
-          confidentialityLevel: "Restricted",
-          confidentialNotes: "Restricted test departure record",
-          rehireEligible: true,
-        },
-        actor,
-      );
-      const offboarding = (
-        await listCoreHrLifecycleForActor(organisationId, actor)
-      ).offboardingCases.find((item) => item.id === offboardingCaseId);
-      assert.ok(offboarding);
-      const [activeAccess] = await sql`SELECT status FROM users WHERE id = ${created.userId}`;
-      assert.equal(activeAccess?.status, "Active");
-      for (const task of offboarding.tasks) {
-        await updateOffboardingTaskInDatabase(
+      const readyOffboarding = async (employeeId: string) => {
+        const offboardingCaseId = await createOffboardingCaseInDatabase(
           organisationId,
           {
-            caseId: offboardingCaseId,
-            taskId: task.id,
-            status: "Waived",
-            waiverReason: "Approved test clearance waiver",
+            employeeId,
+            templateId: templates.offboardingTemplateId,
+            assignedHRId: managerEmployeeId,
+            reasonCategory: "Resignation",
+            noticeDate: "2026-09-01",
+            lastWorkingDate: "2026-09-05",
+            confidentialityLevel: "Restricted",
+            confidentialNotes: "Restricted test departure record",
+            rehireEligible: true,
           },
           actor,
         );
-      }
-      await grantOffboardingClearanceInDatabase(
+        const offboarding = (
+          await listCoreHrLifecycleForActor(organisationId, actor)
+        ).offboardingCases.find((item) => item.id === offboardingCaseId);
+        assert.ok(offboarding);
+        const [activeAccess] =
+          await sql`SELECT status FROM users WHERE employee_id = ${employeeId}`;
+        assert.equal(activeAccess?.status, "Active");
+        for (const task of offboarding.tasks) {
+          await updateOffboardingTaskInDatabase(
+            organisationId,
+            {
+              caseId: offboardingCaseId,
+              taskId: task.id,
+              status: "Waived",
+              waiverReason: "Approved test clearance waiver",
+            },
+            actor,
+          );
+        }
+        await grantOffboardingClearanceInDatabase(
+          organisationId,
+          offboardingCaseId,
+          "financial",
+          actor,
+        );
+        await grantOffboardingClearanceInDatabase(
+          organisationId,
+          offboardingCaseId,
+          "legal",
+          actor,
+        );
+        return { caseId: offboardingCaseId, taskId: offboarding.tasks[0]!.id };
+      };
+      const hrActor = { ...actor, activeRole: "HR" as const, roles: ["HR"] as const };
+      const snapshot = async (caseId: string, employeeId: string) => ({
+        cases: await sql`SELECT * FROM offboarding_cases WHERE id = ${caseId}`,
+        tasks: await sql`SELECT * FROM offboarding_tasks WHERE case_id = ${caseId} ORDER BY id`,
+        employees: await sql`SELECT * FROM employees WHERE id = ${employeeId}`,
+        users: await sql`SELECT * FROM users WHERE employee_id = ${employeeId} ORDER BY id`,
+        audits:
+          await sql`SELECT * FROM audit_events WHERE organisation_id = ${organisationId} ORDER BY id`,
+      });
+      const assertClosed = async (closed: { caseId: string; taskId: string }, status: string) => {
+        const before = await snapshot(closed.caseId, created.employeeId);
+        const error = new RegExp(status);
+        await assert.rejects(
+          finaliseOffboardingCaseInDatabase(organisationId, closed.caseId, hrActor, "2026-09-05"),
+          error,
+        );
+        await assert.rejects(
+          cancelOffboardingCaseInDatabase(
+            organisationId,
+            closed.caseId,
+            "Repeated cancellation",
+            hrActor,
+          ),
+          error,
+        );
+        await assert.rejects(
+          grantOffboardingClearanceInDatabase(organisationId, closed.caseId, "financial", actor),
+          error,
+        );
+        await assert.rejects(
+          grantOffboardingClearanceInDatabase(organisationId, closed.caseId, "legal", hrActor),
+          error,
+        );
+        await assert.rejects(
+          assignOffboardingTaskOwnerInDatabase(
+            organisationId,
+            closed.caseId,
+            closed.taskId,
+            undefined,
+            hrActor,
+          ),
+          error,
+        );
+        await assert.rejects(
+          updateOffboardingTaskInDatabase(
+            organisationId,
+            {
+              caseId: closed.caseId,
+              taskId: closed.taskId,
+              status: "Waived",
+              waiverReason: "Repeated task waiver",
+            },
+            hrActor,
+          ),
+          error,
+        );
+        assert.deepEqual(await snapshot(closed.caseId, created.employeeId), before);
+      };
+
+      const cancelled = await readyOffboarding(created.employeeId);
+      await cancelOffboardingCaseInDatabase(
         organisationId,
-        offboardingCaseId,
-        "financial",
-        actor,
+        cancelled.caseId,
+        "Employee decided to stay",
+        hrActor,
       );
-      await grantOffboardingClearanceInDatabase(organisationId, offboardingCaseId, "legal", actor);
+      await assertClosed(cancelled, "Cancelled");
+      const cancelledState = await snapshot(cancelled.caseId, created.employeeId);
+      assert.equal(cancelledState.employees[0]?.status, "Active");
+      assert.equal(cancelledState.users[0]?.status, "Active");
+      assert.equal(cancelledState.cases[0]?.finalized_at, null);
+
+      const completed = await readyOffboarding(created.employeeId);
       await finaliseOffboardingCaseInDatabase(
         organisationId,
-        offboardingCaseId,
-        { ...actor, activeRole: "HR", roles: ["HR"] },
+        completed.caseId,
+        hrActor,
         "2026-09-05",
       );
+      await assertClosed(completed, "Completed");
       const [closedEmployee] =
         await sql`SELECT status FROM employees WHERE id = ${created.employeeId}`;
       const [closedAccess] = await sql`SELECT status FROM users WHERE id = ${created.userId}`;
       assert.equal(closedEmployee?.status, "Inactive");
       assert.equal(closedAccess?.status, "Suspended");
+
+      const raceEmployee = await createEmployeeInDatabase(
+        organisationId,
+        {
+          employeeNumber: "TEST-OFFBOARD-RACE",
+          legalName: "Concurrent Offboarding Employee",
+          preferredName: "Concurrent",
+          workEmail: `offboard-race-${organisationId}@viahr.test`,
+          department: "Operations",
+          position: "Manager",
+          location: "Head Office",
+          employmentType: "Full-time",
+          lineManagerId: managerEmployeeId,
+          startDate: "2026-08-31",
+          status: "Active",
+          emergencyContacts: [],
+          dependants: [],
+        },
+        actor,
+      );
+      const racing = await readyOffboarding(raceEmployee.employeeId);
+      const outcomes = await Promise.allSettled([
+        cancelOffboardingCaseInDatabase(
+          organisationId,
+          racing.caseId,
+          "Concurrent cancellation",
+          hrActor,
+        ),
+        finaliseOffboardingCaseInDatabase(organisationId, racing.caseId, hrActor, "2026-09-05"),
+      ]);
+      assert.equal(outcomes.filter((result) => result.status === "fulfilled").length, 1);
+      const rejected = outcomes.find((result) => result.status === "rejected");
+      assert.ok(rejected?.status === "rejected");
+      assert.match(String(rejected.reason), /Cancelled|Completed/);
+      const raceState = await snapshot(racing.caseId, raceEmployee.employeeId);
+      const wasCancelled = raceState.cases[0]?.status === "Cancelled";
+      assert.equal(raceState.employees[0]?.status, wasCancelled ? "Active" : "Inactive");
+      assert.equal(raceState.users[0]?.status, wasCancelled ? "Active" : "Suspended");
+      assert.equal(
+        raceState.audits.filter(
+          (event) =>
+            event.entity_id === racing.caseId &&
+            ["cancel", "complete"].includes(String(event.action)),
+        ).length,
+        1,
+        "Only the successful final decision may write a completion/cancellation audit",
+      );
     } finally {
       await sql.end();
     }

@@ -5,6 +5,8 @@ export interface CvExtractionResult {
   confidence: Partial<Record<keyof CandidateCvExtractedFields, number>>;
   warnings: string[];
   method: "Local Preview" | "Python Service";
+  /** Original readable context for checking negated/expired keyword extractions. */
+  semanticText?: string;
 }
 
 export interface CvExtractionProvider {
@@ -61,9 +63,13 @@ function readableText(buffer: ArrayBuffer, mimeType: string): string {
   return decoded.replace(/[^\x20-\x7E\n\r\t]+/g, " ").replace(/\s+/g, " ");
 }
 
+export async function readPreviewCvText(file: Blob): Promise<string> {
+  return readableText(await file.arrayBuffer(), file.type).slice(0, 1_000_000);
+}
+
 export class LocalCvExtractionProvider implements CvExtractionProvider {
   async extract({ file, fileName }: { file: Blob; fileName: string }): Promise<CvExtractionResult> {
-    const text = readableText(await file.arrayBuffer(), file.type).slice(0, 1_000_000);
+    const text = await readPreviewCvText(file);
     const fields: CandidateCvExtractedFields = {};
     const confidence: CvExtractionResult["confidence"] = {};
     const warnings: string[] = [];
@@ -110,6 +116,6 @@ export class LocalCvExtractionProvider implements CvExtractionProvider {
       );
     }
 
-    return { fields, confidence, warnings, method: "Local Preview" };
+    return { fields, confidence, warnings, method: "Local Preview", semanticText: text };
   }
 }

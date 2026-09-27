@@ -52,6 +52,12 @@ export type ReportData = {
   columns: ReportColumn[];
   rows: Record<string, ReportCellValue>[];
   containsPersonalData: boolean;
+  leaveYears?: {
+    currentYear: number;
+    selectedYear: number | "all";
+    startMonthDay: string;
+    availableYears: number[];
+  };
 };
 
 export interface ReportFilters {
@@ -60,6 +66,7 @@ export interface ReportFilters {
   dateTo: string;
   department: string;
   status: string;
+  leaveYear?: number | "current" | "all";
 }
 
 export interface ReportSavedView extends BaseRecord {

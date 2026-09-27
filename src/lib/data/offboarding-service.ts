@@ -11,6 +11,7 @@ import type {
 import type { ActorContext, Employee, Role, User } from "./types.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { OnboardingService } from "./onboarding-service.ts";
+import { assertOffboardingCaseActive } from "./offboarding-policy.ts";
 
 import { getApplicationDataServices } from "./application-data.ts";
 
@@ -933,9 +934,7 @@ export class OffboardingService {
     }
     const c = this.casesRepo.getById(caseId);
     if (!c) throw new Error("Case not found");
-    if (c.status === "Completed" || c.status === "Cancelled") {
-      throw new Error(`This offboarding case is already ${c.status} and can no longer be updated.`);
-    }
+    assertOffboardingCaseActive(c.status);
 
     const task = c.tasks.find((t) => t.id === taskId);
     if (!task) throw new Error("Task not found");
@@ -1002,9 +1001,7 @@ export class OffboardingService {
     this.requireRole(context, ["HR", "Super Admin"], "reassign an offboarding task", caseId);
     const c = this.casesRepo.getById(caseId);
     if (!c) throw new Error("Case not found");
-    if (c.status === "Completed" || c.status === "Cancelled") {
-      throw new Error(`This offboarding case is already ${c.status} and can no longer be updated.`);
-    }
+    assertOffboardingCaseActive(c.status);
     const task = c.tasks.find((t) => t.id === taskId);
     if (!task) throw new Error("Task not found");
 
@@ -1050,6 +1047,7 @@ export class OffboardingService {
   recalculateCaseProgress(caseId: string, context: ActorContext) {
     const c = this.casesRepo.getById(caseId);
     if (!c) throw new Error("Case not found");
+    assertOffboardingCaseActive(c.status);
 
     for (const task of c.tasks) {
       const hasUnmetDependencies = task.dependsOnTaskIds.some((depId) => {
@@ -1145,6 +1143,7 @@ export class OffboardingService {
     const c = this.casesRepo.getById(caseId);
     if (!c) throw new Error("Case not found");
     this.requireRole(context, ["Accounts", "Super Admin"], "confirm financial clearance", caseId);
+    assertOffboardingCaseActive(c.status);
     // A departing employee who also happens to hold Accounts or Super Admin must never be able
     // to grant clearance on their own case, independent of the role check above.
     if (context.actor.employeeId === c.employeeId) {
@@ -1169,6 +1168,7 @@ export class OffboardingService {
     const c = this.casesRepo.getById(caseId);
     if (!c) throw new Error("Case not found");
     this.requireRole(context, ["HR", "Super Admin"], "confirm HR and document clearance", caseId);
+    assertOffboardingCaseActive(c.status);
     // A departing employee who also happens to hold HR or Super Admin must never be able to
     // grant clearance on their own case, independent of the role check above.
     if (context.actor.employeeId === c.employeeId) {
@@ -1199,9 +1199,7 @@ export class OffboardingService {
 
     const c = this.casesRepo.getById(caseId);
     if (!c) throw new Error("Case not found");
-    if (c.status === "Completed" || c.status === "Cancelled") {
-      throw new Error(`This offboarding case is already ${c.status} and cannot be cancelled.`);
-    }
+    assertOffboardingCaseActive(c.status);
 
     const actionContext = { ...context, reason: trimmedReason };
 
@@ -1239,6 +1237,7 @@ export class OffboardingService {
     const c = this.casesRepo.getById(caseId);
     if (!c) throw new Error("Case not found");
     this.requireRole(context, ["HR"], "complete offboarding", caseId);
+    assertOffboardingCaseActive(c.status);
     // A departing employee who also happens to hold Super Admin must never be able to
     // finalise their own departure, independent of the role check above.
     if (context.actor.employeeId === c.employeeId) {

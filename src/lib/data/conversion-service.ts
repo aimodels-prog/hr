@@ -6,6 +6,11 @@ import { LocalRepository } from "./repository.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import type { Employee, JobOffer, Vacancy } from "./types.ts";
 import type { ActorContext } from "./types.ts";
+import {
+  assertReusableEmployeeIdentity,
+  resolveHireIdentity,
+  type HireIdentityInput,
+} from "../recruitment/hire-identity.ts";
 
 export class ConversionService {
   private empService = new EmployeeService();
@@ -27,35 +32,15 @@ export class ConversionService {
     return `VIA-${year}-${String(count).padStart(4, "0")}`;
   }
 
-  private availableWorkspaceEmail(firstName: string, lastName: string): string {
-    const base =
-      `${firstName}.${lastName}`
-        .toLowerCase()
-        .normalize("NFKD")
-        .replace(/[^a-z0-9.]/g, "")
-        .replace(/\.+/g, ".")
-        .replace(/^\.|\.$/g, "") || "new.employee";
-    const used = new Set(
-      this.empService
-        .getUserRepository(SYSTEM_CONTEXT)
-        .list({ includeArchived: true })
-        .map((user) => user.workspaceEmail.toLowerCase()),
-    );
-    let suffix = 0;
-    let email = `${base}@via-int.com`;
-    while (used.has(email)) {
-      suffix += 1;
-      email = `${base}${suffix}@via-int.com`;
-    }
-    return email;
-  }
-
   async convertCandidateToEmployee(
     candidateId: string,
     offerId: string,
     employeeData: Partial<Employee>,
     context: ActorContext,
+    hireIdentity?: HireIdentityInput,
   ): Promise<string> {
+    if (!["HR", "Super Admin"].includes(context.actor.activeRole ?? ""))
+      throw new Error("Only HR or a Super Admin can convert an accepted offer.");
     if (typeof window !== "undefined") {
       const candidate = this.candidateService.getCandidate(candidateId, context);
       if (!candidate) throw new Error("Candidate not found");
@@ -72,6 +57,7 @@ export class ConversionService {
             activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
           },
           offerId: offer.id,
+          ...(hireIdentity ? { hireIdentity } : {}),
         },
       });
       await Promise.all([
@@ -85,14 +71,10 @@ export class ConversionService {
     const candidate = this.candidateService.getCandidate(candidateId, context);
     if (!candidate) throw new Error("Candidate not found");
 
-    if (candidate.convertedToEmployeeId) {
-      throw new Error(
-        `Candidate already converted to employee ID: ${candidate.convertedToEmployeeId}`,
-      );
-    }
-
     const offer = this.offerRepo.getById(offerId);
     if (!offer) throw new Error("Offer not found");
+    if (offer.candidateId !== candidate.id)
+      throw new Error("The accepted offer does not belong to this candidate.");
 
     if (offer.status !== "Accepted") {
       throw new Error("Offer must be Accepted to convert.");
@@ -101,7 +83,67 @@ export class ConversionService {
       throw new Error(`Offer already converted to employee ID: ${offer.convertedToEmployeeId}`);
     }
 
-    // Check for obvious duplicates via EmployeeService (soft block, but here we can enforce or bypass based on context. In real world, we'd return a warning first. Our UI will warn first, so if it reaches here, HR acknowledged it).
+    const application = this.candidateService
+      .getApplicationRepository()
+      .list()
+      .find((item) => item.candidateId === candidate.id && item.vacancyId === offer.vacancyId);
+    if (
+      (application?.source === "Internal Application" ||
+        candidate.source === "Internal Application") &&
+      !application?.internalApplicantEmployeeId &&
+      !candidate.convertedToEmployeeId
+    )
+      throw new Error(
+        "The internal application is missing its employee link. Repair it before continuing.",
+      );
+    if (
+      application?.internalApplicantEmployeeId &&
+      candidate.convertedToEmployeeId &&
+      application.internalApplicantEmployeeId !== candidate.convertedToEmployeeId
+    )
+      throw new Error("The application and candidate point to different employees.");
+    const identity = resolveHireIdentity(
+      hireIdentity,
+      application?.internalApplicantEmployeeId ?? candidate.convertedToEmployeeId,
+      "via-int.com",
+    );
+    const allEmployees = this.empService
+      .getEmployeeRepository(SYSTEM_CONTEXT)
+      .list({ includeArchived: true });
+    if (identity.kind === "Existing") {
+      const existing = allEmployees.find((item) => item.id === identity.employeeId);
+      if (!existing) throw new Error("The selected employee was not found.");
+      const accounts = this.empService
+        .getUserRepository(SYSTEM_CONTEXT)
+        .list({ includeArchived: true })
+        .filter((item) => item.employeeId === existing.id);
+      if (accounts.length > 1) throw new Error("This employee has conflicting account mappings.");
+      assertReusableEmployeeIdentity(existing, accounts[0]);
+      this.candidateService
+        .getCandidateRepository()
+        .update(candidate.id, { stage: "Hired", convertedToEmployeeId: existing.id }, context);
+      this.offerRepo.update(offer.id, { convertedToEmployeeId: existing.id }, context);
+      this.candidateService.updateApplicationStatus(
+        candidate.id,
+        offer.vacancyId,
+        "Hired",
+        context,
+      );
+      return existing.id;
+    }
+    const contactEmails = [candidate.email.toLowerCase().trim(), identity.workspaceEmail];
+    if (
+      allEmployees.some(
+        (item) =>
+          item.candidateId === candidate.id ||
+          [item.workEmail, item.workspaceEmail, item.personalEmail].some(
+            (email) => email && contactEmails.includes(email.trim().toLowerCase()),
+          ),
+      )
+    )
+      throw new Error(
+        "An employee already matches this candidate or email. Select the existing employee record.",
+      );
 
     // Candidate.maritalStatus uses a recruitment-tracker vocabulary that doesn't map 1:1
     // onto the employee-record vocabulary - normalize rather than carry the raw value across.
@@ -111,10 +153,7 @@ export class ConversionService {
         : candidate.maritalStatus === "Single" || candidate.maritalStatus === "Married"
           ? candidate.maritalStatus
           : undefined;
-    const workspaceEmail =
-      employeeData.workspaceEmail ||
-      employeeData.workEmail ||
-      this.availableWorkspaceEmail(candidate.firstName, candidate.lastName);
+    const workspaceEmail = identity.workspaceEmail;
     const vacancy = getApplicationDataServices()
       .storage.readCollection<Vacancy>("vacancies")
       .find((item) => item.id === offer.vacancyId);

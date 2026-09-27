@@ -1,25 +1,10 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { Fragment, useState, useMemo, useEffect, useCallback } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import {
-  Building2,
-  CalendarClock,
-  ChevronRight,
-  ClipboardCheck,
-  Landmark,
-  ShieldCheck,
-} from "lucide-react";
+import { Building2, CalendarClock, ClipboardCheck, Landmark, ShieldCheck } from "lucide-react";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { PageSections, SectionNavigation, SectionLink } from "@/components/ui/page-sections";
 import { MasterDataService, type MasterDataCollection } from "@/lib/data/master-data";
 import type { MasterRecord } from "@/lib/data/types";
 import { MasterDataTable } from "@/components/settings/master-data-table";
@@ -36,7 +21,7 @@ import {
   NumberingSettingsPanel,
 } from "@/components/settings/organisation-settings-panel";
 import { ProjectsPanel } from "@/components/settings/projects-panel";
-import { cn } from "@/lib/utils";
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -156,15 +141,6 @@ function SettingsRoute() {
   const currentUser = useCurrentUser();
   const navigate = Route.useNavigate();
   const { section } = Route.useSearch();
-  const [sectionSearch, setSectionSearch] = useState("");
-  const visibleGroups = SETTINGS_GROUPS.map((group) => ({
-    ...group,
-    items: group.items.filter((item) =>
-      `${group.label} ${item.label} ${item.description}`
-        .toLowerCase()
-        .includes(sectionSearch.trim().toLowerCase()),
-    ),
-  })).filter((group) => group.items.length > 0);
   if (!currentUser.can("system:settings_manage")) {
     return (
       <RequirePermission permission="leave:admin_all" resourceName="Leave Policies">
@@ -185,99 +161,40 @@ function SettingsRoute() {
         <PageHeader
           title="Company Setup"
           description="Keep company details, departments, job titles and HR rules up to date. Choose a section to get started."
-          breadcrumbs={[{ label: "System" }, { label: "Company Setup" }]}
+          breadcrumbs={[{ label: "HR Settings" }, { label: "Company Setup" }]}
         />
 
-        <div className="lg:hidden">
-          <label className="mb-2 block text-sm font-medium" htmlFor="settings-section">
-            Settings section
-          </label>
-          <Select
-            value={section}
-            onValueChange={(value) =>
-              void navigate({ search: { section: value as SettingsSection }, replace: true })
-            }
-          >
-            <SelectTrigger id="settings-section" className="w-full bg-card">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {SETTINGS_GROUPS.map((group) => (
-                <SelectGroup key={group.label}>
-                  <SelectLabel>{group.label}</SelectLabel>
-                  {group.items.map((item) => (
-                    <SelectItem key={item.key} value={item.key}>
-                      {item.label}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="items-start gap-6 lg:grid lg:grid-cols-[250px_minmax(0,1fr)]">
-          <aside className="sticky top-20 hidden max-h-[calc(100vh-6rem)] overflow-y-auto rounded-2xl border border-border/80 bg-card p-3 shadow-sm lg:block">
-            <Input
-              aria-label="Find a settings section"
-              placeholder="Find a setting…"
-              value={sectionSearch}
-              onChange={(event) => setSectionSearch(event.target.value)}
-              className="mb-4 min-h-11"
-            />
-            {visibleGroups.length === 0 && (
-              <p className="p-2 text-sm text-muted-foreground">
-                No matching section. Try “leave” or “department”.
-              </p>
-            )}
-            <nav aria-label="Company setup sections" className="space-y-5">
-              {visibleGroups.map((group) => {
-                const GroupIcon = group.icon;
-                return (
-                  <section key={group.label}>
-                    <div className="mb-1.5 flex items-center gap-2 px-2 text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
-                      <GroupIcon className="h-3.5 w-3.5" />
-                      {group.label}
-                    </div>
-                    <div className="space-y-0.5">
-                      {group.items.map((item) => (
-                        <button
-                          key={item.key}
-                          type="button"
-                          onClick={() =>
-                            void navigate({ search: { section: item.key }, replace: true })
-                          }
-                          className={cn(
-                            "flex min-h-11 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors focus-visible:ring-2 focus-visible:ring-ring",
-                            section === item.key
-                              ? "bg-primary/10 font-semibold text-primary"
-                              : "text-foreground/80 hover:bg-muted hover:text-foreground",
-                          )}
-                          aria-current={section === item.key ? "page" : undefined}
-                        >
-                          <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                          {section === item.key ? <ChevronRight className="h-4 w-4" /> : null}
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                );
-              })}
-            </nav>
-          </aside>
-
-          <main className="mt-5 min-w-0 lg:mt-0">
-            <div className="mb-5 border-b border-border/70 pb-4">
-              <h2 className="text-xl font-bold tracking-tight">
-                {SETTINGS_ITEMS.find((item) => item.key === section)?.label}
-              </h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {SETTINGS_ITEMS.find((item) => item.key === section)?.description}
-              </p>
-            </div>
+        <PageSections
+          value={section}
+          onValueChange={(value) => {
+            if (isSettingsSection(value)) void navigate({ search: { section: value } });
+          }}
+        >
+          <SectionNavigation restoreHash={false}>
+            {SETTINGS_GROUPS.map((group) => (
+              <Fragment key={group.label}>
+                <p className="px-3 pb-1 pt-3 text-xs font-semibold text-muted-foreground">
+                  {group.label}
+                </p>
+                {group.items.map((item) => (
+                  <SectionLink
+                    key={item.key}
+                    value={item.key}
+                    onClick={(event) => event.preventDefault()}
+                  >
+                    {item.label}
+                  </SectionLink>
+                ))}
+              </Fragment>
+            ))}
+          </SectionNavigation>
+          <div className="min-w-0">
+            <h2 className="mb-5 text-xl font-semibold">
+              {SETTINGS_ITEMS.find((item) => item.key === section)?.label}
+            </h2>
             <SettingsSectionContent section={section} />
-          </main>
-        </div>
+          </div>
+        </PageSections>
       </div>
     </RequirePermission>
   );

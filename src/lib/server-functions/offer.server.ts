@@ -21,6 +21,14 @@ const Actor = z.object({
   activeRole: z.enum(ROLE_VALUES),
 });
 
+const HireIdentity = z
+  .object({
+    existingEmployeeId: z.string().uuid().optional(),
+    workspaceEmail: z.string().trim().email().max(254).optional(),
+    identityConfirmed: z.boolean().optional(),
+  })
+  .strict();
+
 async function authenticated(data: z.infer<typeof Actor>) {
   const organisationId = await resolveOrganisationIdForActor(data.actorId, data.actorEmail);
   const verified = await verifyServerActorRole(
@@ -157,6 +165,7 @@ export const transitionJobOfferFn = createServerFn({ method: "POST" })
         ]),
         reason: z.string().trim().max(2000).optional(),
         expectedRecordVersion: z.number().int().positive(),
+        hireIdentity: HireIdentity.optional(),
         manualDelivery: z
           .object({
             recipientEmail: z.string().email(),
@@ -180,16 +189,25 @@ export const transitionJobOfferFn = createServerFn({ method: "POST" })
       verified.actor,
       data.expectedRecordVersion,
       data.manualDelivery,
+      data.hireIdentity,
     );
   });
 
 export const convertAcceptedJobOfferFn = createServerFn({ method: "POST" })
   .validator((input) =>
-    z.object({ actor: Actor, offerId: z.string().uuid() }).strict().parse(input),
+    z
+      .object({ actor: Actor, offerId: z.string().uuid(), hireIdentity: HireIdentity.optional() })
+      .strict()
+      .parse(input),
   )
   .handler(async ({ data }) => {
     const verified = await recruiter(data.actor);
-    return convertAcceptedJobOfferInDatabase(verified.organisationId, data.offerId, verified.actor);
+    return convertAcceptedJobOfferInDatabase(
+      verified.organisationId,
+      data.offerId,
+      verified.actor,
+      data.hireIdentity,
+    );
   });
 
 export const generateJobOfferDocumentFn = createServerFn({ method: "POST" })

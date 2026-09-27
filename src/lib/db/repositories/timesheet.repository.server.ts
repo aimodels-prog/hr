@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
@@ -261,6 +262,7 @@ export async function submitTimesheetInDatabase(
       );
     if (employee.employmentConfirmationStatus !== "Confirmed")
       throw new Error("HR must confirm your employment details before you can submit a timesheet.");
+    await requireEmployeeSupervisor(tx, organisationId, sheet.employeeId);
     const entryRows = await tx
       .select()
       .from(timesheetEntries)

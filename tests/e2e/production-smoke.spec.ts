@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { SignJWT } from "jose";
+import { textPdf } from "./pdf-fixture";
 
 type ProductionRole = "Employee" | "Line Manager" | "HR" | "Accounts" | "Super Admin";
 
@@ -70,6 +71,11 @@ test("production release smoke loads HR and employee charts through portal SSO",
     page.getByRole("heading", { name: "Workforce distribution", exact: true }),
   ).toBeVisible();
   await page.getByLabel("Workforce grouping").selectOption("office");
+  await expect(
+    page
+      .getByRole("region", { name: "Workforce distribution", exact: true })
+      .locator(".recharts-pie"),
+  ).toHaveCount(1);
   await expect(page.getByRole("img", { name: "Current employees by office" })).toBeVisible();
   await page.screenshot({ path: test.info().outputPath("hr-clean-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -81,8 +87,8 @@ test("production release smoke loads HR and employee charts through portal SSO",
     .screenshot({ path: test.info().outputPath("hr-priority-charts-mobile.png") });
   await page.getByLabel("Find an employee", { exact: true }).fill("rana.nair@via-int.com");
   await page.getByRole("list", { name: "Matching employees" }).getByRole("button").click();
-  await expect(page.getByText(/Viewing: Rana.*Individual overview/)).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Employee insights" })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: /^Rana/ })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Employee insights", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Recruitment pipeline" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Employees by office" })).toHaveCount(0);
   await page.getByLabel("Chart period", { exact: true }).selectOption("7");
@@ -94,7 +100,7 @@ test("production release smoke loads HR and employee charts through portal SSO",
   await expect(page).toHaveURL(/days=7.*#attendance/);
   await expect(page.getByText(/Dashboard period:/)).toBeVisible();
   await page.goBack();
-  await expect(page.getByText(/Viewing: Rana.*Individual overview/)).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: /^Rana/ })).toBeVisible();
   await page.getByRole("button", { name: "Clear employee filter" }).click();
   await expect(page.getByRole("heading", { name: "Recruitment pipeline" })).toBeVisible();
   await page.goto("/staff/me/attendance");
@@ -103,6 +109,11 @@ test("production release smoke loads HR and employee charts through portal SSO",
   });
   await expect(page.getByRole("heading", { name: "My attendance summary" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "My annual leave balance" })).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "My annual leave balance", exact: true })
+      .locator(".recharts-pie"),
+  ).toHaveCount(1);
   await expect(
     page.getByTestId("primary-dashboard-charts").locator(":scope > section"),
   ).toHaveCount(2);
@@ -223,10 +234,38 @@ async function signInAs(page: Page, email: string, name: string, path: string) {
   await page.goto(`/auth/portal/callback?portal_token=${encodeURIComponent(token)}`);
   await expect(page).toHaveURL(/\/staff$/);
   await page.goto(path);
-  await expect(page.getByText("Loading your VIA profile and permissions")).toHaveCount(0, {
+  await expect(page.getByText("VIA HR System is loading.", { exact: true })).toHaveCount(0, {
     timeout: 30_000,
   });
 }
+
+test("production release smoke keeps employee dashboard concise on desktop and phone", async ({
+  page,
+}) => {
+  test.skip(
+    !portalSecret || process.env["PORTAL_SSO_ENABLED"] !== "true",
+    "Requires isolated portal SSO configuration",
+  );
+  await signInAs(page, "omar.rahman@via-int.com", "Omar Rahman", "/staff");
+  await expect(page.getByRole("heading", { name: "Worked hours vs expected hours" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(
+    page.getByTestId("primary-dashboard-charts").locator(":scope > section"),
+  ).toHaveCount(2);
+  await expect(page.getByText("Viewing: All employees", { exact: false })).toHaveCount(0);
+  await page.getByRole("button", { name: "About Expected hours", exact: true }).click();
+  await expect(
+    page.getByText("Working calendar adjusted for leave", { exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.screenshot({ path: test.info().outputPath("employee-desktop.png"), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: test.info().outputPath("employee-mobile.png"), fullPage: true });
+});
 
 test("production release smoke shows six charts for Super Admin on desktop and phone", async ({
   page,
@@ -244,13 +283,11 @@ test("production release smoke shows six charts for Super Admin on desktop and p
     page.getByTestId("primary-dashboard-charts").locator(":scope > section"),
   ).toHaveCount(6);
   await expect(page.getByText("Attendance recorded today", { exact: true })).toBeVisible();
-  const recruitmentMenu = page
-    .locator("details")
-    .filter({ has: page.locator("summary", { hasText: /^Recruitment$/ }) });
-  await expect(recruitmentMenu).not.toHaveAttribute("open", "");
-  await recruitmentMenu.locator("summary").click();
-  await expect(recruitmentMenu.getByRole("link", { name: "Vacancies", exact: true })).toBeVisible();
-  await recruitmentMenu.locator("summary").click();
+  const recruitmentMenu = page.getByRole("button", { name: "Recruitment", exact: true });
+  await expect(recruitmentMenu).toHaveAttribute("aria-expanded", "false");
+  await recruitmentMenu.click();
+  await expect(page.getByRole("link", { name: "Vacancies", exact: true })).toBeVisible();
+  await recruitmentMenu.click();
   await page.screenshot({
     path: test.info().outputPath("super-admin-desktop.png"),
     fullPage: true,
@@ -308,8 +345,8 @@ test("production release smoke covers health, secure CV intake and all five role
   await page.locator('input[type="file"]').setInputFiles({
     name: "Production-Smoke-CV.pdf",
     mimeType: "application/pdf",
-    buffer: Buffer.from(
-      "%PDF-1.4\nProduction release candidate logistics operations leadership\n%%EOF",
+    buffer: textPdf(
+      "Production release candidate. Logistics operations and leadership. Eight years of experience in supply chain, customs clearance and regional freight operations. Bachelor of Business Administration. Languages: English.",
     ),
   });
   await page.getByRole("checkbox").click();
@@ -366,7 +403,13 @@ test("production release smoke covers health, secure CV intake and all five role
     });
   }
 });
-test("request centre loads HR tracking and personal approval inbox", async ({ page }) => {
+test("production release smoke request centre loads HR tracking and personal approval inbox", async ({
+  page,
+}) => {
+  test.skip(
+    !portalSecret || process.env["PORTAL_SSO_ENABLED"] !== "true",
+    "Requires isolated portal SSO configuration",
+  );
   await signInAs(page, "rana.nair@via-int.com", "Rana Nair", "/staff/requests?view=organisation");
   await expect(
     page.getByRole("heading", { name: "Organisation Tracker", exact: true }),

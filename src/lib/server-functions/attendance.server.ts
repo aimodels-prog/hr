@@ -235,6 +235,7 @@ const CorrectionDecision = z
   .object({
     actor: Actor,
     correctionId: z.string().uuid(),
+    expectedVersion: z.number().int().positive(),
     decision: z.enum(["approve", "reject"]),
     notes: z.string().trim().max(2000).optional(),
   })
@@ -249,6 +250,7 @@ export const decideAttendanceCorrectionFn = createServerFn({ method: "POST" })
       data.decision,
       data.notes,
       v.actor,
+      data.expectedVersion,
     );
     return { ok: true };
   });

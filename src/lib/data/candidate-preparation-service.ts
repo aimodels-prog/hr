@@ -1,4 +1,11 @@
 import { LocalCvExtractionProvider, type CvExtractionProvider } from "../integrations/index.ts";
+import { readPreviewCvText } from "../integrations/cv-extraction.ts";
+import {
+  assessPreliminaryCriterion,
+  candidateScreeningFacts,
+  currentPreliminaryRules,
+  PRELIMINARY_RULES_VERSION,
+} from "../recruitment/preliminary-evidence.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { recordAccessDenied } from "./audit-service.ts";
 import { LocalRepository } from "./repository.ts";
@@ -53,14 +60,6 @@ function tokens(value: string): string[] {
 
 function unique(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-}
-
-function includesCriterion(candidateText: string, criterion: string): boolean {
-  const criterionTokens = tokens(criterion);
-  if (criterionTokens.length === 0) return false;
-  const textTokens = new Set(tokens(candidateText));
-  const matched = criterionTokens.filter((token) => textTokens.has(token)).length;
-  return matched / criterionTokens.length >= 0.75;
 }
 
 function documentRoute(mimeType: string, extractionFound: boolean) {
@@ -163,6 +162,11 @@ export class CandidatePreparationService {
     vacancyId: string,
     context: ActorContext,
   ): Promise<CandidatePreparationRun[]> {
+    const { refreshPreliminaryScreeningFn } =
+      await import("../server-functions/candidate.server.ts");
+    await refreshPreliminaryScreeningFn({
+      data: { actor: this.serverActor(context), vacancyId: this.databaseVacancyId(vacancyId) },
+    });
     await this.refreshFromDatabase(context);
     return this.getRunsForVacancy(vacancyId, context);
   }
@@ -337,6 +341,7 @@ export class CandidatePreparationService {
               (item) =>
                 item.id !== run!.id &&
                 item.cvChecksum === metadata.checksum &&
+                currentPreliminaryRules(item.rankingModel) &&
                 (item.status === "Ready" || item.status === "Needs Review"),
             )
             .sort((a, b) => b.completedAt?.localeCompare(a.completedAt || "") || 0)[0]
@@ -348,6 +353,7 @@ export class CandidatePreparationService {
             confidence: reusable.fieldConfidence,
             warnings: [...reusable.warnings],
             method: "Local Preview" as const,
+            semanticText: await readPreviewCvText(blob),
           }
         : await this.extractor.extract({ file: blob, fileName: metadata.name });
 
@@ -360,7 +366,7 @@ export class CandidatePreparationService {
         location: candidate.location,
         currentCompany: candidate.currentCompany || extraction.fields.currentCompany,
         currentTitle: candidate.currentTitle || extraction.fields.currentTitle,
-        yearsOfExperience: candidate.yearsOfExperience,
+        yearsOfExperience: extraction.fields.yearsOfExperience ?? candidate.yearsOfExperience,
       };
       const profileText = [
         candidate.currentTitle,
@@ -375,32 +381,41 @@ export class CandidatePreparationService {
         ...(extraction.fields.education ?? []),
         ...(extraction.fields.certifications ?? []),
         ...(extraction.fields.languages ?? []),
-        ...application.screeningAnswers.flatMap((answer) => [answer.question, answer.answer]),
+        ...application.screeningAnswers.map((answer) => answer.answer),
       ]
         .filter(Boolean)
         .join(" ");
+      const facts = candidateScreeningFacts(
+        candidate,
+        extraction.fields as Record<string, unknown>,
+      );
+      // Screening questions are requirements, not evidence of a candidate's qualifications.
+      const cvText = [
+        extraction.semanticText,
+        ...application.screeningAnswers.map((answer) => answer.answer),
+      ]
+        .filter(Boolean)
+        .join("\n");
       const compulsoryChecks: CandidateCriterionCheck[] = (vacancy.mandatoryCriteria ?? []).map(
-        (criterion) => ({
-          criterion,
-          status: includesCriterion(profileText, criterion) ? "Confirmed" : "Needs Review",
-          ...(includesCriterion(profileText, criterion)
-            ? { evidence: "Matched in the prepared CV or application information." }
-            : {}),
-        }),
+        (criterion) => assessPreliminaryCriterion(criterion, facts, { cvText }),
       );
       const requiredSkills = vacancy.skills.required;
       const preparedSkills = unique([
         ...(candidate.skills ?? []),
         ...(extraction.fields.skills ?? []),
       ]);
-      const matchedSkills = requiredSkills.filter((required) =>
-        preparedSkills.some((skill) => includesCriterion(skill, required)),
+      const matchedSkills = requiredSkills.filter(
+        (required) =>
+          assessPreliminaryCriterion(required, facts, { cvText }).status === "Confirmed",
       );
       const missingRequiredSkills = requiredSkills.filter(
         (required) => !matchedSkills.includes(required),
       );
-      const requiredYears = Number(vacancy.minimumExperience.match(/\d+/)?.[0] || 0);
-      const actualYears = candidate.yearsOfExperience || extraction.fields.yearsOfExperience || 0;
+      const requiredYears = Number(vacancy.minimumExperience.match(/\d+(?:\.\d+)?/)?.[0] || 0);
+      const actualYears = extraction.fields.yearsOfExperience ?? candidate.yearsOfExperience ?? 0;
+      const experienceConflict =
+        extraction.fields.yearsOfExperience !== undefined &&
+        extraction.fields.yearsOfExperience !== candidate.yearsOfExperience;
       const experienceScore =
         requiredYears > 0 ? Math.min(100, Math.round((actualYears / requiredYears) * 100)) : 100;
       const compulsoryScore =
@@ -447,7 +462,13 @@ export class CandidatePreparationService {
       let band: CandidatePreparationBand;
       if (route === "OCR Required" && preparedSkills.length === 0) band = "Processing Problem";
       else if (unconfirmed) band = "Compulsory Criterion Not Confirmed";
-      else if (warnings.length > 0 || missingRequiredSkills.length > 0) band = "Needs HR Review";
+      else if (
+        warnings.length > 0 ||
+        missingRequiredSkills.length > 0 ||
+        experienceScore < 100 ||
+        experienceConflict
+      )
+        band = "Needs HR Review";
       else if (preliminaryScore >= 80) band = "Strong Match";
       else if (preliminaryScore >= 55) band = "Potential Match";
       else band = "Needs HR Review";
@@ -471,12 +492,16 @@ export class CandidatePreparationService {
             yearsOfExperience: 1,
           },
           preliminaryScore,
+          rankingModel: `${PRELIMINARY_RULES_VERSION} | Local Preview`,
           band,
           compulsoryChecks,
           matchedSkills,
           missingRequiredSkills,
           evidence: unique([
             `${actualYears} years of experience recorded against ${vacancy.minimumExperience}.`,
+            ...(experienceConflict
+              ? ["CV experience differs from the candidate profile; HR confirmation is required."]
+              : []),
             ...(matchedSkills.length > 0
               ? [`Matched required skills: ${matchedSkills.join(", ")}.`]
               : []),

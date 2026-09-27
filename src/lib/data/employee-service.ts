@@ -15,6 +15,12 @@ import type {
 import { getRolePermissions, type CurrentUserContext } from "../auth/permissions.ts";
 import { redactEmployee } from "../auth/redaction.ts";
 import { getScopedEmployeesWithAncestors } from "../auth/record-scope.ts";
+import {
+  employmentCalendarDate,
+  validateEmploymentEffectiveDate,
+  type EmploymentChangeResult,
+} from "./employment-change-policy.ts";
+import { SettingsService } from "./settings-service.ts";
 
 const PERSONAL_PROFILE_FIELDS = new Set<keyof Employee>([
   "preferredName",
@@ -149,7 +155,10 @@ export class EmployeeService {
    * Loads the PostgreSQL Core HR snapshot and keeps legacy IDs only as a temporary compatibility
    * bridge for modules that have not completed their own H3.5 cutover.
    */
-  async hydrateCompatibilityCache(actorContext: ActorContext): Promise<void> {
+  async hydrateCompatibilityCache(
+    actorContext: ActorContext,
+    canCommit = () => true,
+  ): Promise<void> {
     if (typeof window === "undefined") return;
     const actorEmail =
       actorContext.actor.workspaceEmail ??
@@ -166,6 +175,7 @@ export class EmployeeService {
         activeRole: actorContext.actor.activeRole ?? actorContext.actor.roles[0] ?? "Employee",
       },
     });
+    if (!canCommit()) return;
     const { storage } = getApplicationDataServices();
     const existingEmployees = storage.readCollection<Employee>("employees");
     const existingUsers = storage.readCollection<User>("users");
@@ -1019,6 +1029,13 @@ export class EmployeeService {
     if (!reason.trim() || !effectiveDate) {
       throw new Error("An effective date and reason are required.");
     }
+    validateEmploymentEffectiveDate(effectiveDate);
+    if (
+      effectiveDate > employmentCalendarDate(new SettingsService().getAppSettingsSync().timezone)
+    ) {
+      // Scheduling is durable server work, never a browser/local-storage timer.
+      throw new Error("Future employment changes must be scheduled through the connected HR app.");
+    }
     if (changes.salary) {
       if (changes.salary.baseMonthly <= 0 || !changes.salary.currency.trim()) {
         throw new Error("Compensation requires a positive base salary and currency.");
@@ -1128,9 +1145,10 @@ export class EmployeeService {
     effectiveDate: string,
     reason: string,
     actorContext: ActorContext,
-  ): Promise<Employee> {
+  ): Promise<EmploymentChangeResult> {
     if (typeof window === "undefined") {
-      return this.updateEmploymentRecord(employeeId, changes, effectiveDate, reason, actorContext);
+      this.updateEmploymentRecord(employeeId, changes, effectiveDate, reason, actorContext);
+      return { status: "Applied", effectiveDate };
     }
     const employee = this.employeeRepo.getById(employeeId, { includeArchived: true });
     if (!employee?.databaseId) {
@@ -1192,7 +1210,7 @@ export class EmployeeService {
         salary: changes.salary,
       }).filter(([, value]) => value !== undefined),
     );
-    await updateEmploymentRecordFn({
+    const result = await updateEmploymentRecordFn({
       data: {
         actor: {
           actorId: actorContext.actor.userId,
@@ -1208,7 +1226,7 @@ export class EmployeeService {
     await this.hydrateCompatibilityCache(actorContext);
     const refreshed = this.employeeRepo.getById(employeeId, { includeArchived: true });
     if (!refreshed) throw new Error("The updated employee could not be reloaded.");
-    return refreshed;
+    return result;
   }
 
   private ensureSupervisorAccess(supervisorEmployeeId: string, context: ActorContext): void {

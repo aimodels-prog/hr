@@ -38,6 +38,7 @@ import {
   createAssessmentBatchInDatabase,
   finaliseShortlistInDatabase,
   includeCandidateInAssessmentInDatabase,
+  refreshPreliminaryScreeningInDatabase,
   runDetailedAssessmentInDatabase,
   saveShortlistDraftInDatabase,
   updateAssessmentSelectionInDatabase,
@@ -555,6 +556,19 @@ export const includeCandidateInAssessmentFn = createServerFn({ method: "POST" })
         source: data.source,
         reason: data.reason,
       },
+      verified.actor,
+    );
+  });
+
+export const refreshPreliminaryScreeningFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z.object({ actor: RecruitmentActor, vacancyId: z.string().uuid() }).strict().parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await verifyRecruitmentActor(data.actor);
+    return refreshPreliminaryScreeningInDatabase(
+      verified.organisationId,
+      data.vacancyId,
       verified.actor,
     );
   });

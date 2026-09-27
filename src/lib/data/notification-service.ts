@@ -41,8 +41,11 @@ export class NotificationService {
     return this.listForUser(context.actor.userId, includeDismissed);
   }
 
-  async hydrateCompatibilityCache(context: ActorContext): Promise<Notification[]> {
-    return hydrateNotificationCache(context);
+  async hydrateCompatibilityCache(
+    context: ActorContext,
+    canCommit = () => true,
+  ): Promise<Notification[]> {
+    return hydrateNotificationCache(context, canCommit);
   }
 
   private async setStatusAsync(

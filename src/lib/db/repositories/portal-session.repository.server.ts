@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { restoreConfirmedSupervisorAccess } from "./supervisor-access.repository.server.ts";
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { and, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
@@ -666,26 +667,37 @@ async function findOrCreatePortalUser(
         riskLevel: "High",
       });
     }
-    const linkedReports = await tx
-      .update(employees)
-      .set({
-        lineManagerId: employee.id,
-        proposedLineManagerEmail: null,
-        updatedAt: new Date(),
-        updatedBy: activeUser.id,
-        recordVersion: sql`${employees.recordVersion} + 1`,
-      })
-      .where(
-        and(
-          eq(employees.organisationId, organisationId),
-          eq(employees.proposedLineManagerEmail, identity.email),
-          eq(employees.employmentConfirmationStatus, "Confirmed"),
-          isNull(employees.lineManagerId),
-          sql`${employees.id} <> ${employee.id}`,
-        ),
-      )
-      .returning({ id: employees.id });
+    // Do not make a newly registering, still-onboarding person an approver.
+    // Keep these HR-confirmed email links pending until their account is eligible.
+    const linkedReports = ["Active", "Probation", "Notice"].includes(employee.status)
+      ? await tx
+          .update(employees)
+          .set({
+            lineManagerId: employee.id,
+            proposedLineManagerEmail: null,
+            updatedAt: new Date(),
+            updatedBy: activeUser.id,
+            recordVersion: sql`${employees.recordVersion} + 1`,
+          })
+          .where(
+            and(
+              eq(employees.organisationId, organisationId),
+              eq(employees.proposedLineManagerEmail, identity.email),
+              eq(employees.employmentConfirmationStatus, "Confirmed"),
+              isNull(employees.lineManagerId),
+              sql`${employees.id} <> ${employee.id}`,
+            ),
+          )
+          .returning({ id: employees.id })
+      : [];
     if (linkedReports.length) {
+      await restoreConfirmedSupervisorAccess(tx, organisationId, employee.id, {
+        userId: activeUser.id,
+        employeeId: employee.id,
+        displayName: identity.name,
+        activeRole: "Employee",
+        roles: ["Employee"],
+      });
       await tx.insert(auditEvents).values({
         organisationId,
         actorUserId: activeUser.id,

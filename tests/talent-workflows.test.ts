@@ -109,6 +109,49 @@ function setup() {
   return { audit, notifications };
 }
 
+test("an omitted deadline or legacy status cannot skip objectives in the employee view", () => {
+  setup();
+  const performance = new PerformanceService();
+  const cycle = performance.createCycle(
+    {
+      name: "Objective gate without deadline",
+      templateId: performance.getTemplates(hr)[0]!.id,
+      status: "Active",
+      departments: ["Operations"],
+      employmentTypes: [],
+      selfAssessmentDeadline: "2027-02-28",
+      managerReviewDeadline: "2027-03-31",
+      discussionDeadline: "2027-04-30",
+      requiresModeration: false,
+    },
+    hr,
+  );
+  const review = performance
+    .getReviewsForEmployee("employee-omar", employee)
+    .find((item) => item.cycleId === cycle.id)!;
+  assert.equal(review.status, "Objectives Pending");
+  assert.throws(
+    () => performance.submitSelfAssessment(review.id, review.sections, employee),
+    /approve objectives totalling 100%/,
+  );
+  const { storage } = getApplicationDataServices();
+  storage.writeCollection(
+    "performanceReviews",
+    storage
+      .readCollection<import("../src/lib/data/performance-types.ts").PerformanceReview>(
+        "performanceReviews",
+      )
+      .map((item) =>
+        item.id === review.id ? { ...item, status: "Self Assessment Pending" } : item,
+      ),
+  );
+  assert.equal(performance.getReviewById(review.id, employee)!.status, "Objectives Pending");
+  assert.throws(
+    () => performance.submitSelfAssessment(review.id, review.sections, employee),
+    /approve objectives totalling 100%/,
+  );
+});
+
 test("objectives require self-service, 100% weighting and the assigned supervisor", async () => {
   const { audit, notifications } = setup();
   const performance = new PerformanceService();

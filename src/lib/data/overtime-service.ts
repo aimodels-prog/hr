@@ -59,7 +59,7 @@ export class OvertimeService {
     return databaseId;
   }
 
-  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+  async hydrateCompatibilityCache(context: ActorContext, canCommit = () => true): Promise<void> {
     if (typeof window === "undefined") return;
     const { storage } = getApplicationDataServices();
     const relation = new Map<string, string>();
@@ -77,6 +77,7 @@ export class OvertimeService {
     }
     const { getOvertimeClaimsFn } = await import("../server-functions/overtime.server.ts");
     const claims = await getOvertimeClaimsFn({ data: { actor: await this.serverActor(context) } });
+    if (!canCommit()) return;
     storage.writeCollection(
       "overtimeClaims",
       claims.map((claim) => ({

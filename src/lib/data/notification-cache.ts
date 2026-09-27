@@ -18,7 +18,10 @@ export async function notificationServerActor(context: ActorContext) {
   } as const;
 }
 
-export async function hydrateNotificationCache(context: ActorContext): Promise<Notification[]> {
+export async function hydrateNotificationCache(
+  context: ActorContext,
+  canCommit = () => true,
+): Promise<Notification[]> {
   if (typeof window === "undefined") return [];
   const { storage } = getApplicationDataServices();
   const users = storage.readCollection<{ id: string; databaseId?: string }>("users");
@@ -27,6 +30,7 @@ export async function hydrateNotificationCache(context: ActorContext): Promise<N
   const rows = await getMyNotificationsFn({
     data: { actor: await notificationServerActor(context) },
   });
+  if (!canCommit()) return [];
   const records: Notification[] = rows.map((row) => ({
     id: row.id,
     createdAt: row.createdAt.toISOString(),

@@ -337,6 +337,48 @@
       "when": 1790100001000,
       "tag": "0047_request_owner_notifications",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1790467200000,
+      "tag": "0048_scheduled_employment_changes",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1790467201000,
+      "tag": "0049_supervisor_approval_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1790467202000,
+      "tag": "0050_payslip_replacement_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1790467203000,
+      "tag": "0051_asset_current_assignment",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1790467204000,
+      "tag": "0052_payroll_period_overlap",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1790467205000,
+      "tag": "0053_scheduled_employment_record_guard",
+      "breakpoints": true
     }
   ]
 }

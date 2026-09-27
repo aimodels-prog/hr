@@ -63,7 +63,7 @@ export class TravelService {
     return value;
   }
 
-  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+  async hydrateCompatibilityCache(context: ActorContext, canCommit = () => true): Promise<void> {
     if (typeof window === "undefined") return;
     const { storage } = getApplicationDataServices();
     const relation = new Map<string, string>();
@@ -72,6 +72,7 @@ export class TravelService {
         if (item.databaseId) relation.set(item.databaseId, item.id);
     const { getTravelRequestsFn } = await import("../server-functions/travel.server.ts");
     const rows = await getTravelRequestsFn({ data: { actor: await this.serverActor(context) } });
+    if (!canCommit()) return;
     storage.writeCollection(
       "travelRequests",
       rows.map((request) => ({

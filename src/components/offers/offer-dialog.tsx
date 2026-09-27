@@ -27,6 +27,9 @@ import { toast } from "sonner";
 import { FileText, Send, CheckCircle, XCircle } from "lucide-react";
 import { VacancyService } from "@/lib/data/vacancy-service";
 import { listOfferManagersFn } from "@/lib/server-functions/offer.server";
+import { CandidateService } from "@/lib/data/candidate-service";
+import { HireIdentityFields } from "./hire-identity-fields";
+import type { HireIdentityInput } from "@/lib/recruitment/hire-identity";
 
 interface OfferDialogProps {
   open: boolean;
@@ -75,6 +78,20 @@ export function OfferDialog({
   const [deliveryTime, setDeliveryTime] = useState("");
   const [deliveryEvidence, setDeliveryEvidence] = useState("");
   const [deliveryConfirmed, setDeliveryConfirmed] = useState(false);
+  const [hireIdentity, setHireIdentity] = useState<HireIdentityInput>({});
+  const candidateService = useMemo(() => new CandidateService(), []);
+  const linkedEmployeeId =
+    candidateService
+      .getApplicationRepository()
+      .list()
+      .find((item) => item.candidateId === candidateId && item.vacancyId === vacancyId)
+      ?.internalApplicantEmployeeId ??
+    candidateService.getCandidate(candidateId, currentUser.getActorContext())
+      ?.convertedToEmployeeId;
+
+  useEffect(() => {
+    setHireIdentity({});
+  }, [candidateId, vacancyId, open]);
 
   const canViewComp = currentUser.activeRole === "Super Admin" || currentUser.activeRole === "HR";
 
@@ -229,6 +246,7 @@ export function OfferDialog({
               confirmed: deliveryConfirmed,
             }
           : undefined,
+        newStatus === "Accepted" ? hireIdentity : undefined,
       );
       setOffer(updated);
       setIsDeclining(false);
@@ -468,6 +486,14 @@ export function OfferDialog({
           </TabsContent>
         </Tabs>
 
+        {offer?.status === "Sent" && (
+          <HireIdentityFields
+            linkedEmployeeId={linkedEmployeeId}
+            value={hireIdentity}
+            onChange={setHireIdentity}
+            disabled={isSaving}
+          />
+        )}
         <DialogFooter className="mt-6 border-t pt-4 sm:justify-between">
           <div>
             {offer?.status === "Draft" && (
@@ -563,11 +589,19 @@ export function OfferDialog({
                   <XCircle className="h-4 w-4" /> Candidate Declined
                 </Button>
                 <Button
-                  disabled={isSaving}
+                  disabled={
+                    isSaving ||
+                    (!linkedEmployeeId &&
+                      (!hireIdentity.identityConfirmed ||
+                        (!hireIdentity.existingEmployeeId && !hireIdentity.workspaceEmail?.trim())))
+                  }
                   className="bg-emerald-600 hover:bg-emerald-700 gap-2"
                   onClick={() => void handleStatusChange("Accepted")}
                 >
-                  <CheckCircle className="h-4 w-4" /> Accept & Start Onboarding
+                  <CheckCircle className="h-4 w-4" />{" "}
+                  {linkedEmployeeId || hireIdentity.existingEmployeeId
+                    ? "Accept Internal Move"
+                    : "Accept & Start Onboarding"}
                 </Button>
               </>
             )}
@@ -634,7 +668,7 @@ export function OfferDialog({
         </DialogFooter>
         {offer?.convertedToEmployeeId && (
           <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
-            Onboarding started automatically.{" "}
+            Employee profile linked.{" "}
             <a
               className="font-medium underline"
               href={`/staff/employees/${offer.convertedToEmployeeId}`}

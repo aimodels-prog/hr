@@ -5,6 +5,7 @@ import { getApplicationDataServices } from "./application-data.ts";
 import { recordAccessDenied } from "./audit-service.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { GoalService, type EmployeeGoal } from "./goal-service.ts";
+import { objectivesReadyForAppraisal } from "./performance-objectives.ts";
 import type {
   PerformanceReview,
   ReviewCycle,
@@ -53,8 +54,8 @@ export class PerformanceService {
     this.seedDefaultTemplate();
   }
 
-  async hydrateCompatibilityCache(context: ActorContext) {
-    await hydratePerformanceCache(context);
+  async hydrateCompatibilityCache(context: ActorContext, canCommit = () => true) {
+    await hydratePerformanceCache(context, canCommit);
   }
 
   async saveTemplateAsync(
@@ -553,9 +554,18 @@ export class PerformanceService {
     if (context.actor.employeeId !== review.employeeId) {
       this.deny(context, "submit this self-assessment", "performance-review", review.id);
     }
-    if (review.status !== "Self Assessment Pending") {
+    if (!["Objectives Pending", "Self Assessment Pending"].includes(review.status)) {
       throw new Error("This review is not awaiting a self-assessment.");
     }
+    const goals = new GoalService().getGoalsForEmployee(
+      review.employeeId,
+      SYSTEM_CONTEXT,
+      review.cycleId,
+    );
+    if (!objectivesReadyForAppraisal(goals))
+      throw new Error(
+        "Your supervisor must approve objectives totalling 100% before self-assessment.",
+      );
     const template = this.requireTemplate(review.templateId);
     const resolved = this.resolveReviewGoals(review);
     resolved.sections = this.mergeAssessment(
@@ -801,30 +811,29 @@ export class PerformanceService {
           !existingEmployeeIds.has(employee.id),
       );
     for (const employee of employees) {
-      const activeGoals = new GoalService()
+      const goals = new GoalService()
         .getGoalsForEmployee(employee.id, SYSTEM_CONTEXT, cycle.id)
-        .filter((goal) => goal.status === "Active" || goal.status === "Completed");
+        .filter((goal) => goal.status !== "Cancelled");
+      const ready = objectivesReadyForAppraisal(goals);
       const review = this.reviewsRepo.create(
         {
           employeeId: employee.id,
           cycleId: cycle.id,
           templateId: template.id,
-          status: cycle.objectiveSettingDeadline ? "Objectives Pending" : "Self Assessment Pending",
+          status: ready ? "Self Assessment Pending" : "Objectives Pending",
           sections: template.sections.map((section) =>
-            this.buildSectionInstance(section, activeGoals),
+            this.buildSectionInstance(section, ready ? goals : []),
           ),
         },
         context,
       );
       this.notifyEmployee(
         employee.id,
-        cycle.objectiveSettingDeadline ? "Objectives ready to set" : "Performance review opened",
-        cycle.objectiveSettingDeadline
-          ? `${cycle.name} is open. Submit your weighted objectives by ${cycle.objectiveSettingDeadline}.`
-          : `${cycle.name} is ready for your self-assessment by ${cycle.selfAssessmentDeadline}.`,
-        cycle.objectiveSettingDeadline
-          ? "/staff/me/performance"
-          : `/staff/performance/reviews/${review.id}`,
+        ready ? "Performance review opened" : "Objectives ready to set",
+        ready
+          ? `${cycle.name} is ready for your self-assessment by ${cycle.selfAssessmentDeadline}.`
+          : `${cycle.name} is open. Submit your weighted objectives for supervisor approval${cycle.objectiveSettingDeadline ? ` by ${cycle.objectiveSettingDeadline}` : ""}.`,
+        ready ? `/staff/performance/reviews/${review.id}` : "/staff/me/performance",
         `performance-cycle-employee-${cycle.id}-${employee.id}`,
         context,
       );
@@ -835,17 +844,19 @@ export class PerformanceService {
     if (!["Objectives Pending", "Self Assessment Pending"].includes(review.status)) return review;
     const template = this.templatesRepo.getById(review.templateId);
     if (!template) return review;
-    const activeGoals = new GoalService()
+    const goals = new GoalService()
       .getGoalsForEmployee(review.employeeId, SYSTEM_CONTEXT, review.cycleId)
-      .filter((goal) => goal.status === "Active" || goal.status === "Completed");
+      .filter((goal) => goal.status !== "Cancelled");
+    const ready = objectivesReadyForAppraisal(goals);
     return {
       ...review,
+      status: ready ? "Self Assessment Pending" : "Objectives Pending",
       sections: review.sections.map((section) => {
         if (!this.isGoalsSection(section.title)) return section;
         const source = template.sections.find(
           (candidate) => candidate.id === section.templateSectionId,
         );
-        return source ? this.buildSectionInstance(source, activeGoals) : section;
+        return source ? this.buildSectionInstance(source, ready ? goals : []) : section;
       }),
     };
   }

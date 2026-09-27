@@ -6,6 +6,11 @@ import { and, eq, sql } from "drizzle-orm";
 
 import type { CandidateConsentStatus, CandidateCvSource } from "../../data/types.ts";
 import {
+  assessPreliminaryCriterion,
+  candidateScreeningFacts,
+  PRELIMINARY_RULES_VERSION,
+} from "../../recruitment/preliminary-evidence.ts";
+import {
   CV_PROCESSOR_VERSION,
   calculateCvSemanticSimilarity,
   extractCandidateCv,
@@ -58,24 +63,6 @@ function normalizedConcepts(value: string): Set<string> {
   return result;
 }
 
-function termMatches(term: string, profile: string, concepts: Set<string>): boolean {
-  const normalizedTerm = term.toLowerCase().trim();
-  const normalizedProfile = profile.toLowerCase();
-  if (normalizedProfile.includes(normalizedTerm)) return true;
-  for (const group of CONCEPT_GROUPS) {
-    if (
-      group.some((phrase) => normalizedTerm.includes(phrase)) &&
-      group.some((phrase) => concepts.has(phrase))
-    )
-      return true;
-  }
-  const ignored = new Set(["and", "the", "with", "for", "required", "minimum", "must", "have"]);
-  const meaningful = words(normalizedTerm).filter((item) => !ignored.has(item));
-  if (!meaningful.length) return false;
-  const matched = meaningful.filter((item) => concepts.has(item)).length;
-  return matched / meaningful.length >= 0.65;
-}
-
 export function buildCvSemanticTexts(
   candidate: typeof candidates.$inferSelect,
   vacancy: typeof vacancies.$inferSelect,
@@ -113,6 +100,7 @@ export function buildCandidatePreliminaryAssessment(
   extractedFields: Record<string, unknown>,
   semanticMatch?: { score: number; model: string },
   documentConfidence?: number,
+  cvText?: string,
 ) {
   const extractedSkills = Array.isArray(extractedFields["skills"])
     ? extractedFields["skills"].filter((item): item is string => typeof item === "string")
@@ -143,25 +131,33 @@ export function buildCandidatePreliminaryAssessment(
     .filter(Boolean)
     .join(" ");
   const profileWords = normalizedConcepts(profile);
-  const criterionChecks = (vacancy.mandatoryCriteria ?? []).map((criterion) => {
-    const confirmed = termMatches(criterion, profile, profileWords);
-    return {
-      criterion,
-      status: confirmed ? ("Confirmed" as const) : ("Needs Review" as const),
-      ...(confirmed ? { evidence: `Relevant evidence was found for "${criterion}".` } : {}),
-    };
-  });
+  const facts = candidateScreeningFacts(candidate, extractedFields);
+  const criterionChecks = (vacancy.mandatoryCriteria ?? []).map((criterion) =>
+    assessPreliminaryCriterion(criterion, facts, { cvText }),
+  );
   const preparedSkills = [...new Set([...(candidate.skills ?? []), ...extractedSkills])];
-  const matches = vacancy.skills.required.filter((required) =>
-    termMatches(required, profile, profileWords),
+  const matches = vacancy.skills.required.filter(
+    (required) => assessPreliminaryCriterion(required, facts, { cvText }).status === "Confirmed",
   );
   const missing = vacancy.skills.required.filter((required) => !matches.includes(required));
-  const requiredYears = Number(vacancy.minimumExperience.match(/\d+/)?.[0] ?? 0);
+  const requiredYears = Number(vacancy.minimumExperience.match(/\d+(?:\.\d+)?/)?.[0] ?? 0);
   const extractedYears =
-    typeof extractedFields["yearsOfExperience"] === "number"
+    typeof extractedFields["yearsOfExperience"] === "number" &&
+    Number.isFinite(extractedFields["yearsOfExperience"]) &&
+    extractedFields["yearsOfExperience"] >= 0
       ? extractedFields["yearsOfExperience"]
-      : 0;
-  const actualYears = Math.max(candidate.yearsOfExperience, extractedYears);
+      : undefined;
+  const candidateYears =
+    Number.isFinite(candidate.yearsOfExperience) && candidate.yearsOfExperience >= 0
+      ? candidate.yearsOfExperience
+      : undefined;
+  const experienceConflict =
+    extractedYears !== undefined &&
+    candidateYears !== undefined &&
+    extractedYears !== candidateYears;
+  // Rank using the current CV, not whichever source happens to claim more experience.
+  // Conflicts remain for HR to resolve; confirmed candidate fields are not overwritten.
+  const actualYears = extractedYears ?? candidateYears ?? 0;
   const experienceScore = requiredYears ? Math.min(100, (actualYears / requiredYears) * 100) : 100;
   const compulsoryScore = criterionChecks.length
     ? (criterionChecks.filter((item) => item.status === "Confirmed").length /
@@ -191,7 +187,7 @@ export function buildCandidatePreliminaryAssessment(
     ? "Compulsory Criterion Not Confirmed"
     : documentConfidence !== undefined && documentConfidence < 0.6
       ? "Needs HR Review"
-      : missing.length
+      : missing.length || experienceScore < 100 || experienceConflict
         ? "Needs HR Review"
         : score >= 80
           ? "Strong Match"
@@ -200,7 +196,7 @@ export function buildCandidatePreliminaryAssessment(
             : "Needs HR Review";
   return {
     extractedProfile: { ...extractedFields, skills: preparedSkills },
-    rankingModel: semanticMatch?.model ?? "VIA structured matching 2",
+    rankingModel: `${PRELIMINARY_RULES_VERSION} | ${semanticMatch?.model ?? "structured matching"}`,
     preliminaryScore: score,
     band,
     compulsoryChecks: criterionChecks,
@@ -208,6 +204,9 @@ export function buildCandidatePreliminaryAssessment(
     missingRequiredSkills: missing,
     evidence: [
       `${actualYears} years of experience assessed against ${vacancy.minimumExperience}.`,
+      ...(experienceConflict
+        ? ["CV experience differs from the candidate profile; HR confirmation is required."]
+        : []),
       ...(matches.length ? [`Matched required skills: ${matches.join(", ")}.`] : []),
       `Role relevance is ${Math.round(semanticScore)}% based on the CV and vacancy.`,
     ],
@@ -520,6 +519,7 @@ export async function processNextCandidateCvJob(
         extraction.fields as Record<string, unknown>,
         semanticMatch,
         extraction.textQuality,
+        extraction.semanticText,
       );
     }
     await db.transaction(async (tx) => {
@@ -870,17 +870,20 @@ export async function finaliseCandidateCvIntakeInDatabase(
             )
             .limit(1)
         : [];
+      const cvText = cached?.semanticTextEncrypted
+        ? decryptSensitiveJson<string>(cached.semanticTextEncrypted)
+        : undefined;
       const semanticMatch = await calculateCvSemanticSimilarity({
         ...semanticTexts,
-        ...(cached?.semanticTextEncrypted
-          ? { candidateText: decryptSensitiveJson<string>(cached.semanticTextEncrypted) }
-          : {}),
+        ...(cvText ? { candidateText: cvText } : {}),
       });
       const result = buildCandidatePreliminaryAssessment(
         preparedCandidate,
         preparedVacancy,
         cv.extractedFields as Record<string, unknown>,
         semanticMatch,
+        undefined,
+        cvText,
       );
       preparationRunId = randomUUID();
       await tx.insert(candidatePreparationRuns).values({

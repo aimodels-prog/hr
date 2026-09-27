@@ -54,8 +54,8 @@ export class TrainingService {
     );
   }
 
-  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
-    await hydrateTrainingCache(context);
+  async hydrateCompatibilityCache(context: ActorContext, canCommit = () => true): Promise<void> {
+    await hydrateTrainingCache(context, canCommit);
   }
 
   private async refreshAfter<T>(operation: Promise<T>, context: ActorContext): Promise<T> {

@@ -246,6 +246,7 @@ export const payrollPeriodStatus = pgEnum("payroll_period_status", [
 ]);
 
 export const payrollPeriods = pgTable(
+  // Migration 0052 owns the PostgreSQL partial GiST exclusion constraint on active date ranges.
   "payroll_periods",
   {
     ...mutableRecordColumns,
@@ -362,6 +363,11 @@ export const employeePayslips = pgTable(
     fileId: uuid("file_id")
       .notNull()
       .references(() => fileMetadata.id),
+    revision: integer("revision").notNull().default(1),
+    replacesPayslipId: uuid("replaces_payslip_id").references(
+      (): import("drizzle-orm/pg-core").AnyPgColumn => employeePayslips.id,
+    ),
+    replacementReason: text("replacement_reason"),
   },
   (table) => [
     index("employee_payslips_org_employee_month_idx").on(
@@ -370,6 +376,13 @@ export const employeePayslips = pgTable(
       table.payMonth,
     ),
     check("employee_payslips_month_valid", sql`${table.payMonth} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`),
+    check(
+      "employee_payslips_revision_valid",
+      sql`(${table.revision} = 1 AND ${table.replacesPayslipId} IS NULL AND ${table.replacementReason} IS NULL)
+        OR (${table.revision} > 1 AND ${table.replacesPayslipId} IS NOT NULL
+          AND ${table.replacementReason} IS NOT NULL AND length(btrim(${table.replacementReason})) BETWEEN 5 AND 1000)`,
+    ),
+    uniqueIndex("employee_payslips_replacement_unique").on(table.replacesPayslipId),
     uniqueIndex("employee_payslips_active_month_unique")
       .on(table.organisationId, table.employeeId, table.payMonth)
       .where(sql`${table.archivedAt} IS NULL`),

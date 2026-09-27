@@ -4,6 +4,10 @@ import { getRolePermissions } from "../auth/permissions.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { recordAccessDenied } from "./audit-service.ts";
 import { EmployeeService } from "./employee-service.ts";
+import {
+  APPROVED_OBJECTIVE_STATUSES,
+  objectivesReadyForAppraisal,
+} from "./performance-objectives.ts";
 import type { PerformanceReview } from "./performance-types.ts";
 import { LocalRepository } from "./repository.ts";
 import { SYSTEM_CONTEXT, type ActorContext, type BaseRecord, type User } from "./types.ts";
@@ -368,6 +372,7 @@ export class GoalService {
 
   createGoal(input: GoalDraftInput, context: ActorContext): EmployeeGoal {
     this.requireSelf(input.employeeId, context, "create objectives");
+    this.requireEditableObjectives(input.employeeId, input.cycleId);
     this.validateGoal(input);
     const cycle = this.requireOpenCycle(input.cycleId);
     this.validateGoalDates(input, cycle);
@@ -390,6 +395,7 @@ export class GoalService {
   ): EmployeeGoal {
     const goal = this.requireGoal(goalId);
     this.requireSelf(goal.employeeId, context, "edit this objective", goal.id);
+    this.requireEditableObjectives(goal.employeeId, goal.cycleId);
     if (goal.status !== "Draft" && goal.status !== "Changes Requested") {
       throw new Error("Only draft objectives or objectives returned for changes can be edited.");
     }
@@ -415,6 +421,7 @@ export class GoalService {
     context: ActorContext,
   ): EmployeeGoal[] {
     this.requireSelf(employeeId, context, "submit objectives");
+    this.requireEditableObjectives(employeeId, cycleId);
     this.requireOpenCycle(cycleId);
     const employee = this.employeeService.getById(employeeId, SYSTEM_CONTEXT);
     if (!employee?.lineManagerId) {
@@ -441,7 +448,12 @@ export class GoalService {
       ["Draft", "Changes Requested"].includes(goal.status),
     );
     if (submittable.length === 0) throw new Error("There are no draft objectives ready to submit.");
-    if (goals.some((goal) => !["Draft", "Changes Requested", "Active"].includes(goal.status))) {
+    if (
+      goals.some(
+        (goal) =>
+          !["Draft", "Changes Requested", ...APPROVED_OBJECTIVE_STATUSES].includes(goal.status),
+      )
+    ) {
       throw new Error("Resolve outstanding objective updates before submitting this set.");
     }
 
@@ -485,6 +497,7 @@ export class GoalService {
   approveGoal(goalId: string, context: ActorContext): EmployeeGoal {
     const goal = this.requireGoal(goalId);
     this.requireAssignedManager(goal.employeeId, context, "approve this objective", goal.id);
+    this.requireEditableObjectives(goal.employeeId, goal.cycleId);
     if (goal.status !== "Pending Approval") {
       throw new Error("Only objectives awaiting approval can be approved.");
     }
@@ -512,15 +525,20 @@ export class GoalService {
   returnGoal(goalId: string, feedback: string, context: ActorContext): EmployeeGoal {
     const goal = this.requireGoal(goalId);
     this.requireAssignedManager(goal.employeeId, context, "return this objective", goal.id);
-    if (goal.status !== "Pending Approval") {
+    if (!["Pending Approval", "Completion Pending"].includes(goal.status)) {
       throw new Error("Only objectives awaiting approval can be returned.");
     }
+    if (goal.status === "Pending Approval")
+      this.requireEditableObjectives(goal.employeeId, goal.cycleId);
     if (feedback.trim().length < 5) {
       throw new Error("Explain what the employee needs to change.");
     }
     const returned = this.repo.update(
       goal.id,
-      { status: "Changes Requested", managerFeedback: feedback.trim() },
+      {
+        status: goal.status === "Completion Pending" ? "Active" : "Changes Requested",
+        managerFeedback: feedback.trim(),
+      },
       context,
     );
     this.notifyEmployee(
@@ -631,6 +649,7 @@ export class GoalService {
   deleteGoal(goalId: string, context: ActorContext): void {
     const goal = this.requireGoal(goalId);
     this.requireSelf(goal.employeeId, context, "remove this objective", goal.id);
+    this.requireEditableObjectives(goal.employeeId, goal.cycleId);
     if (goal.status !== "Draft" && goal.status !== "Changes Requested") {
       throw new Error("Only draft objectives or objectives returned for changes can be removed.");
     }
@@ -752,11 +771,7 @@ export class GoalService {
         (goal) =>
           goal.employeeId === employeeId && goal.cycleId === cycleId && goal.status !== "Cancelled",
       );
-    if (
-      goals.length === 0 ||
-      goals.reduce((sum, goal) => sum + goal.weight, 0) !== 100 ||
-      goals.some((goal) => goal.status !== "Active" && goal.status !== "Completed")
-    ) {
+    if (!objectivesReadyForAppraisal(goals)) {
       return;
     }
     const review = this.reviewsRepo
@@ -765,7 +780,7 @@ export class GoalService {
         (item) =>
           item.employeeId === employeeId &&
           item.cycleId === cycleId &&
-          item.status === "Objectives Pending",
+          ["Objectives Pending", "Self Assessment Pending"].includes(item.status),
       );
     if (!review) return;
     const updated = this.reviewsRepo.update(
@@ -790,6 +805,15 @@ export class GoalService {
     const goal = this.repo.getById(goalId);
     if (!goal) throw new Error("Objective not found.");
     return this.normalizeGoal(goal);
+  }
+
+  private requireEditableObjectives(employeeId: string, cycleId: string) {
+    const review = this.reviewsRepo
+      .list()
+      .find((item) => item.employeeId === employeeId && item.cycleId === cycleId);
+    if (!review) throw new Error("This employee is not included in the performance cycle.");
+    if (!["Objectives Pending", "Self Assessment Pending"].includes(review.status))
+      throw new Error("Objectives cannot change after self-assessment has been submitted.");
   }
 
   private requireSelf(

@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogTrigger,
   DialogFooter,
 } from "@/components/ui/dialog";
@@ -34,6 +36,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { AssetService } from "@/lib/data/asset-service";
 import { useCurrentUser } from "@/lib/auth";
@@ -42,7 +45,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { toast } from "sonner";
 import { Plus, Laptop } from "lucide-react";
-import type { AssetType, AssetCondition } from "@/lib/data/asset-types";
+import type { AssetType, AssetCondition, AvailableCompanyAsset } from "@/lib/data/asset-types";
 
 const ASSET_TYPES: AssetType[] = [
   "Laptop",
@@ -67,10 +70,10 @@ const assignSchema = z.object({
     "Vehicle",
     "Other",
   ]),
-  assetTag: z.string().min(2, "Asset tag or serial number is required"),
-  description: z.string().min(1, "Description is required"),
-  assignedDate: z.string().min(1),
-  conditionAtAssignment: z.enum(["New", "Good", "Fair", "Damaged"]),
+  assetTag: z.string().trim().min(2, "Asset tag or serial number is required").max(100),
+  description: z.string().trim().min(3, "Enter at least 3 characters").max(500),
+  assignedDate: z.string().date(),
+  conditionAtAssignment: z.enum(["New", "Good", "Fair"]),
 });
 
 const returnSchema = z.object({
@@ -79,13 +82,17 @@ const returnSchema = z.object({
 });
 
 export function EquipmentTab({ employeeId }: { employeeId: string }) {
-  const { can, activeRole, getActorContext } = useCurrentUser();
+  const { id: userId, can, activeRole, getActorContext } = useCurrentUser();
   const [assetService] = useState(() => new AssetService());
   const [, setRefresh] = useState(0);
   const [isAssignOpen, setIsAssignOpen] = useState(false);
   const [returningId, setReturningId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [selectedAsset, setSelectedAsset] = useState<AvailableCompanyAsset | null>(null);
+  const [saving, setSaving] = useState(false);
+  const inFlight = useRef(false);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     let active = true;
@@ -112,6 +119,12 @@ export function EquipmentTab({ employeeId }: { employeeId: string }) {
   const active = assets.filter((a) => a.status === "Assigned");
 
   const canManage = can("employee:manage_all") && ["HR", "Super Admin"].includes(activeRole);
+  const available = useQuery({
+    queryKey: ["available-equipment", userId, activeRole],
+    queryFn: () => assetService.listAvailableAssetsAsync(getActorContext()),
+    enabled: canManage && isAssignOpen,
+    retry: false,
+  });
 
   const assignForm = useForm<z.infer<typeof assignSchema>>({
     resolver: zodResolver(assignSchema),
@@ -130,6 +143,9 @@ export function EquipmentTab({ employeeId }: { employeeId: string }) {
   });
 
   const onAssign = async (values: z.infer<typeof assignSchema>) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setSaving(true);
     try {
       await assetService.assignAssetAsync(
         {
@@ -146,13 +162,49 @@ export function EquipmentTab({ employeeId }: { employeeId: string }) {
       setIsAssignOpen(false);
       assignForm.reset();
       setRefresh((r) => r + 1);
+      await queryClient.invalidateQueries({ queryKey: ["available-equipment"] });
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Failed to assign asset");
+    } finally {
+      inFlight.current = false;
+      setSaving(false);
+    }
+  };
+
+  const onAssignAvailable = async () => {
+    if (!selectedAsset || inFlight.current) return;
+    inFlight.current = true;
+    setSaving(true);
+    try {
+      await assetService.assignAvailableAssetAsync(
+        {
+          employeeId,
+          assetId: selectedAsset.id,
+          expectedVersion: selectedAsset.recordVersion,
+          assignedDate: assignForm.getValues("assignedDate"),
+        },
+        getActorContext(),
+      );
+      toast.success("Equipment reassigned. Previous history kept.");
+      setIsAssignOpen(false);
+      setSelectedAsset(null);
+      assignForm.reset();
+      setRefresh((value) => value + 1);
+      await queryClient.invalidateQueries({ queryKey: ["available-equipment"] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Equipment could not be assigned.");
+      setSelectedAsset(null);
+      await available.refetch();
+    } finally {
+      inFlight.current = false;
+      setSaving(false);
     }
   };
 
   const onReturn = async (values: z.infer<typeof returnSchema>) => {
-    if (!returningId) return;
+    if (!returningId || inFlight.current) return;
+    inFlight.current = true;
+    setSaving(true);
     try {
       await assetService.closeAssignmentAsync(
         returningId,
@@ -165,8 +217,12 @@ export function EquipmentTab({ employeeId }: { employeeId: string }) {
       setReturningId(null);
       returnForm.reset();
       setRefresh((r) => r + 1);
+      await queryClient.invalidateQueries({ queryKey: ["available-equipment"] });
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Failed to record return");
+    } finally {
+      inFlight.current = false;
+      setSaving(false);
     }
   };
 
@@ -180,68 +236,144 @@ export function EquipmentTab({ employeeId }: { employeeId: string }) {
             <Laptop className="h-4 w-4" /> Equipment & Assets
           </CardTitle>
           {canManage && (
-            <Dialog open={isAssignOpen} onOpenChange={setIsAssignOpen}>
+            <Dialog
+              open={isAssignOpen}
+              onOpenChange={(open) => {
+                if (saving) return;
+                setIsAssignOpen(open);
+                setSelectedAsset(null);
+                assignForm.reset();
+              }}
+            >
               <DialogTrigger asChild>
-                <Button size="sm">
+                <Button size="sm" disabled={saving || loading || !!loadError}>
                   <Plus className="w-4 h-4 mr-2" /> Assign Asset
                 </Button>
               </DialogTrigger>
-              <DialogContent>
+              <DialogContent className="max-h-[90dvh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>Assign Equipment</DialogTitle>
+                  <DialogDescription>
+                    Choose returned equipment or register a new item.
+                  </DialogDescription>
                 </DialogHeader>
                 <Form {...assignForm}>
-                  <form onSubmit={assignForm.handleSubmit(onAssign)} className="space-y-4">
-                    <FormField
-                      control={assignForm.control}
-                      name="assetType"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Asset Type</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {ASSET_TYPES.map((t) => (
-                                <SelectItem key={t} value={t}>
-                                  {t}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
+                  <form
+                    onSubmit={(event) => {
+                      if (selectedAsset) {
+                        event.preventDefault();
+                        void onAssignAvailable();
+                      } else void assignForm.handleSubmit(onAssign)(event);
+                    }}
+                    className="space-y-4"
+                  >
+                    <div className="space-y-2">
+                      <Label htmlFor="available-equipment">Equipment</Label>
+                      <select
+                        id="available-equipment"
+                        className="h-10 w-full min-w-0 rounded-md border bg-background px-3"
+                        disabled={saving}
+                        value={selectedAsset?.id ?? "new"}
+                        onChange={(event) =>
+                          setSelectedAsset(
+                            available.data?.find((item) => item.id === event.target.value) ?? null,
+                          )
+                        }
+                      >
+                        <option value="new">Register new equipment</option>
+                        {available.data?.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.assetTag} — {item.description}
+                          </option>
+                        ))}
+                      </select>
+                      {available.isPending && (
+                        <p role="status" className="text-sm text-muted-foreground">
+                          Loading available equipment…
+                        </p>
                       )}
-                    />
-                    <FormField
-                      control={assignForm.control}
-                      name="description"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Description</FormLabel>
-                          <FormControl>
-                            <Input placeholder="e.g. Dell Latitude 5440" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
+                      {available.isError && (
+                        <p role="alert" className="text-sm">
+                          Available equipment could not be loaded.{" "}
+                          <Button
+                            type="button"
+                            variant="link"
+                            onClick={() => void available.refetch()}
+                          >
+                            Retry
+                          </Button>
+                        </p>
                       )}
-                    />
-                    <FormField
-                      control={assignForm.control}
-                      name="assetTag"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Asset Tag / Serial Number</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
+                      {available.data?.length === 0 && (
+                        <p className="text-sm text-muted-foreground">
+                          No equipment is available for reassignment.
+                        </p>
                       )}
-                    />
+                    </div>
+                    {selectedAsset ? (
+                      <div className="rounded-md border p-3 text-sm">
+                        <p className="font-medium break-words">{selectedAsset.description}</p>
+                        <p>
+                          {selectedAsset.assetType} · {selectedAsset.currentCondition}
+                        </p>
+                        {selectedAsset.lastReturnedDate && (
+                          <p>Returned {selectedAsset.lastReturnedDate}</p>
+                        )}
+                      </div>
+                    ) : (
+                      <>
+                        <FormField
+                          control={assignForm.control}
+                          name="assetType"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Asset Type</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {ASSET_TYPES.map((t) => (
+                                    <SelectItem key={t} value={t}>
+                                      {t}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={assignForm.control}
+                          name="description"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Description</FormLabel>
+                              <FormControl>
+                                <Input placeholder="e.g. Dell Latitude 5440" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={assignForm.control}
+                          name="assetTag"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Asset Tag / Serial Number</FormLabel>
+                              <FormControl>
+                                <Input {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </>
+                    )}
                     <div className="grid grid-cols-2 gap-3">
                       <FormField
                         control={assignForm.control}
@@ -250,39 +382,55 @@ export function EquipmentTab({ employeeId }: { employeeId: string }) {
                           <FormItem>
                             <FormLabel>Assigned Date</FormLabel>
                             <FormControl>
-                              <Input type="date" {...field} />
+                              <Input
+                                type="date"
+                                required
+                                disabled={saving}
+                                min={selectedAsset?.lastReturnedDate ?? undefined}
+                                max={
+                                  selectedAsset ? new Date().toISOString().slice(0, 10) : undefined
+                                }
+                                {...field}
+                              />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
                         )}
                       />
-                      <FormField
-                        control={assignForm.control}
-                        name="conditionAtAssignment"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Condition</FormLabel>
-                            <Select onValueChange={field.onChange} value={field.value}>
-                              <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                {CONDITIONS.map((c) => (
-                                  <SelectItem key={c} value={c}>
-                                    {c}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                      {!selectedAsset && (
+                        <FormField
+                          control={assignForm.control}
+                          name="conditionAtAssignment"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Condition</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {CONDITIONS.filter((c) => c !== "Damaged").map((c) => (
+                                    <SelectItem key={c} value={c}>
+                                      {c}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
                     </div>
                     <DialogFooter>
-                      <Button type="submit">Assign</Button>
+                      <Button
+                        type="submit"
+                        disabled={saving || (selectedAsset !== null && available.isError)}
+                      >
+                        {saving ? "Assigning…" : "Assign"}
+                      </Button>
                     </DialogFooter>
                   </form>
                 </Form>
@@ -331,22 +479,35 @@ export function EquipmentTab({ employeeId }: { employeeId: string }) {
                       >
                         {a.status}
                       </Badge>
+                      {a.returnedDate && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {a.returnedDate} · {a.returnCondition}
+                        </p>
+                      )}
                     </TableCell>
                     {canManage && (
                       <TableCell className="text-right">
                         {a.status === "Assigned" && (
                           <Dialog
                             open={returningId === a.id}
-                            onOpenChange={(o) => setReturningId(o ? a.id : null)}
+                            onOpenChange={(o) => {
+                              if (!saving) {
+                                setReturningId(o ? a.id : null);
+                                returnForm.reset();
+                              }
+                            }}
                           >
                             <DialogTrigger asChild>
-                              <Button size="sm" variant="outline">
+                              <Button size="sm" variant="outline" disabled={saving}>
                                 Return
                               </Button>
                             </DialogTrigger>
                             <DialogContent>
                               <DialogHeader>
                                 <DialogTitle>Record Asset Return</DialogTitle>
+                                <DialogDescription>
+                                  Undamaged returns become available for reassignment.
+                                </DialogDescription>
                               </DialogHeader>
                               <Form {...returnForm}>
                                 <form
@@ -391,7 +552,9 @@ export function EquipmentTab({ employeeId }: { employeeId: string }) {
                                     )}
                                   />
                                   <DialogFooter>
-                                    <Button type="submit">Confirm Return</Button>
+                                    <Button type="submit" disabled={saving}>
+                                      {saving ? "Saving…" : "Confirm Return"}
+                                    </Button>
                                   </DialogFooter>
                                 </form>
                               </Form>

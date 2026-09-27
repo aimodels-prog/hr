@@ -193,10 +193,11 @@ export class AttendanceService {
     return databaseId;
   }
 
-  async hydrateFromDatabase(context: ActorContext): Promise<void> {
+  async hydrateFromDatabase(context: ActorContext, canCommit = () => true): Promise<void> {
     if (typeof window === "undefined") return;
     const { listAttendanceFn } = await import("../server-functions/attendance.server.ts");
     const snapshot = await listAttendanceFn({ data: { actor: this.serverActor(context) } });
+    if (!canCommit()) return;
     const { storage } = getApplicationDataServices();
     const employeeMap = new Map(
       storage
@@ -665,8 +666,11 @@ export class AttendanceService {
     approve: boolean,
     notes: string,
     context: ActorContext,
+    expectedVersion: number,
   ): Promise<void> {
     const storedCorrection = this.correctionRepo.getById(correctionId);
+    if (!storedCorrection || storedCorrection.recordVersion !== expectedVersion)
+      throw new Error("This correction has changed. Refresh and review the latest version.");
     if (!storedCorrection?.databaseId && import.meta.env.DEV) {
       if (storedCorrection?.status === "Pending Manager") {
         if (approve) this.managerApproveCorrection(correctionId, context, notes);
@@ -680,6 +684,7 @@ export class AttendanceService {
       data: {
         actor: this.serverActor(context),
         correctionId: this.localAttendanceDatabaseId("attendanceCorrections", correctionId),
+        expectedVersion,
         decision: approve ? "approve" : "reject",
         ...(notes.trim() ? { notes } : {}),
       },

@@ -356,6 +356,9 @@ export const assetAssignments = pgTable(
       table.assetId,
       table.status,
     ),
+    uniqueIndex("asset_assignments_one_current_unique")
+      .on(table.assetId)
+      .where(sql`${table.status} = 'Assigned' AND ${table.archivedAt} IS NULL`),
     check(
       "asset_assignments_return_consistency",
       sql`${table.status} <> 'Returned' OR (${table.returnedDate} IS NOT NULL AND ${table.returnCondition} IS NOT NULL)`,

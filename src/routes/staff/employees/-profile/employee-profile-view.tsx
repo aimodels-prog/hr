@@ -35,7 +35,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  PageSections as Tabs,
+  SectionPanel as TabsContent,
+  SectionNavigation as TabsList,
+  SectionLink as TabsTrigger,
+} from "@/components/ui/page-sections";
 import {
   Select,
   SelectContent,
@@ -61,6 +66,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { EmployeeService } from "@/lib/data/employee-service";
+import { ScheduledEmploymentChanges } from "@/components/employees/scheduled-employment-changes";
 import { OffboardingService } from "@/lib/data/offboarding-service";
 import type { EmployeeSalary, MasterRecord } from "@/lib/data/types";
 import {
@@ -192,11 +198,19 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
     "payroll",
     "audit",
   ];
-  const activeTab = sections.includes(profileLocation.hash) ? profileLocation.hash : "overview";
+  // Accept existing #employment links as well as the shared sidebar's #section=employment.
+  const requestedSection =
+    new URLSearchParams(profileLocation.hash).get("section") ?? profileLocation.hash;
+  const activeTab = sections.includes(requestedSection) ? requestedSection : "overview";
   const setActiveTab = (section: string) => {
-    void navigate({ to: ".", hash: section, search: (previous) => previous, replace: true });
+    void navigate({
+      to: ".",
+      hash: "section=" + encodeURIComponent(section),
+      search: (previous) => previous,
+      replace: true,
+    });
   };
-  const [, setProfileVersion] = useState(0);
+  const [profileVersion, setProfileVersion] = useState(0);
   const [employmentReviewNote, setEmploymentReviewNote] = useState("");
   const [employmentDecisionPending, setEmploymentDecisionPending] = useState(false);
   const [statusAction, setStatusAction] = useState<
@@ -377,7 +391,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
     try {
       if (!currentUser) return;
       const { effectiveDate, reason, ...changes } = values;
-      await employeeService.updateEmploymentRecordAsync(
+      const result = await employeeService.updateEmploymentRecordAsync(
         employeeId,
         {
           ...changes,
@@ -396,7 +410,11 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
         reason,
         getActorContext(reason),
       );
-      toast.success("Employment details saved");
+      toast.success(
+        result.status === "Scheduled"
+          ? `Employment change scheduled for ${result.effectiveDate}`
+          : "Employment details saved",
+      );
       setQuickSelectedValues({});
       setIsEditOpen(false);
       setProfileVersion((value) => value + 1);
@@ -530,14 +548,18 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
           : {}),
       };
 
-      await employeeService.updateEmploymentRecordAsync(
+      const result = await employeeService.updateEmploymentRecordAsync(
         employeeId,
         { salary },
         values.effectiveDate,
         values.reason,
         getActorContext(values.reason),
       );
-      toast.success("Salary details saved");
+      toast.success(
+        result.status === "Scheduled"
+          ? `Salary change scheduled for ${result.effectiveDate}`
+          : "Salary details saved",
+      );
       setIsSalaryEditOpen(false);
       setProfileVersion((value) => value + 1);
     } catch (err) {
@@ -994,1316 +1016,1189 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <div className="hidden overflow-x-auto pb-2 mb-4 scrollbar-thin">
-          <TabsList className="w-max inline-flex">
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="employment">Employment</TabsTrigger>
-            <TabsTrigger value="personal">Personal</TabsTrigger>
-            <TabsTrigger value="emergency_contacts">Emergency Contacts</TabsTrigger>
-            <TabsTrigger value="dependants">Dependants</TabsTrigger>
-            <TabsTrigger value="documents">Documents</TabsTrigger>
-            <TabsTrigger value="leave">Leave</TabsTrigger>
-            <TabsTrigger value="timesheets">Timesheets</TabsTrigger>
-            <TabsTrigger value="attendance">Attendance/Overtime</TabsTrigger>
-            <TabsTrigger value="travel">Travel</TabsTrigger>
-            <TabsTrigger value="payroll">Payroll Inputs</TabsTrigger>
-            <TabsTrigger value="performance">Performance</TabsTrigger>
-            <TabsTrigger value="training">Training</TabsTrigger>
-            <TabsTrigger value="equipment">Equipment</TabsTrigger>
-            <TabsTrigger value="onboarding">Onboarding/Offboarding</TabsTrigger>
-            <TabsTrigger value="activity">Job History</TabsTrigger>
-            <TabsTrigger value="audit">Audit Log</TabsTrigger>
-          </TabsList>
-        </div>
+        <TabsList>
+          <p className="px-3 pb-2 pt-1 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
+            Profile
+          </p>
+          <>
+            <TabsTrigger value="overview">
+              <UserRound /> Overview
+            </TabsTrigger>
+            <TabsTrigger value="employment">
+              <BriefcaseBusiness /> Employment
+            </TabsTrigger>
+            <TabsTrigger value="personal">
+              <FileText /> Personal details
+            </TabsTrigger>
+            <TabsTrigger value="emergency_contacts">
+              <Users /> Emergency contacts
+            </TabsTrigger>
+            <TabsTrigger value="dependants">
+              <Users /> Dependants
+            </TabsTrigger>
+          </>
+          <div className="my-3 border-t" />
+          <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
+            Work & development
+          </p>
+          <>
+            <TabsTrigger value="documents">
+              <FileText /> Documents
+            </TabsTrigger>
+            <TabsTrigger value="leave">
+              <CalendarDays /> Leave
+            </TabsTrigger>
+            <TabsTrigger value="timesheets">
+              <ClipboardCheck /> Timesheets
+            </TabsTrigger>
+            <TabsTrigger value="attendance">
+              <Clock3 /> Attendance & overtime
+            </TabsTrigger>
+            <TabsTrigger value="travel">
+              <Plane /> Travel
+            </TabsTrigger>
+            <TabsTrigger value="performance">
+              <TrendingUp /> Performance
+            </TabsTrigger>
+            <TabsTrigger value="training">
+              <GraduationCap /> Training
+            </TabsTrigger>
+            <TabsTrigger value="equipment">
+              <Laptop /> Equipment
+            </TabsTrigger>
+            <TabsTrigger value="onboarding">
+              <ClipboardCheck /> Employee lifecycle
+            </TabsTrigger>
+          </>
+          <div className="my-3 border-t" />
+          <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
+            History & controls
+          </p>
+          <>
+            <TabsTrigger value="activity">
+              <History /> Job history
+            </TabsTrigger>
+            {canViewPayroll && (
+              <TabsTrigger value="payroll">
+                <ShieldCheck /> Payroll inputs
+              </TabsTrigger>
+            )}
+            {canViewAudit && (
+              <TabsTrigger value="audit">
+                <ShieldCheck /> Audit log
+              </TabsTrigger>
+            )}
+          </>
+        </TabsList>
+        <div className="min-w-0">
+          <TabsContent value="overview" className="space-y-6 mt-0">
+            <OverviewTab employee={employee} userMapping={userMapping} />
+            {isHROrSuperAdmin && (
+              <DashboardCharts
+                scope="hr"
+                employeeId={rawEmployee?.databaseId ?? employeeId}
+                profileId={employeeId}
+              />
+            )}
+          </TabsContent>
 
-        <div className="mb-4 lg:hidden">
-          <label
-            htmlFor="profile-section"
-            className="mb-2 block text-xs font-bold uppercase tracking-[0.12em] text-muted-foreground"
-          >
-            Profile section
-          </label>
-          <Select value={activeTab} onValueChange={setActiveTab}>
-            <SelectTrigger id="profile-section" className="h-12 rounded-xl bg-card">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="overview">Overview</SelectItem>
-              <SelectItem value="employment">Employment</SelectItem>
-              <SelectItem value="personal">Personal details</SelectItem>
-              <SelectItem value="emergency_contacts">Emergency contacts</SelectItem>
-              <SelectItem value="dependants">Dependants</SelectItem>
-              <SelectItem value="documents">Documents</SelectItem>
-              <SelectItem value="leave">Leave</SelectItem>
-              <SelectItem value="timesheets">Timesheets</SelectItem>
-              <SelectItem value="attendance">Attendance & overtime</SelectItem>
-              <SelectItem value="travel">Travel</SelectItem>
-              <SelectItem value="performance">Performance</SelectItem>
-              <SelectItem value="training">Training & certifications</SelectItem>
-              <SelectItem value="equipment">Equipment</SelectItem>
-              <SelectItem value="onboarding">Employee lifecycle</SelectItem>
-              <SelectItem value="activity">Job history</SelectItem>
-              {canViewPayroll && <SelectItem value="payroll">Payroll inputs</SelectItem>}
-              {canViewAudit && <SelectItem value="audit">Audit log</SelectItem>}
-            </SelectContent>
-          </Select>
-        </div>
+          <TabsContent value="personal" className="space-y-6 mt-0">
+            {!canViewPersonalDetails ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Personal Details</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground">
+                    Restricted. Personal details (date of birth, address, marital status,
+                    dependants, and emergency contacts) are visible and editable only by the
+                    employee themselves, HR, and Super Admin.
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <PersonalTab
+                employee={employee}
+                onChanged={() => setProfileVersion((value) => value + 1)}
+              />
+            )}
+          </TabsContent>
 
-        <div className="grid items-start gap-6 lg:grid-cols-[250px_minmax(0,1fr)]">
-          <aside className="sticky top-24 hidden max-h-[calc(100vh-7rem)] overflow-y-auto rounded-2xl border border-border/80 bg-card p-3 shadow-sm lg:block">
-            <p className="px-3 pb-2 pt-1 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
-              Profile
-            </p>
-            <TabsList className="flex h-auto w-full flex-col gap-1 bg-transparent p-0">
-              <TabsTrigger
-                value="overview"
-                className="w-full justify-start gap-3 px-3 py-2.5 data-[state=active]:bg-primary/8 data-[state=active]:text-primary data-[state=active]:shadow-none"
-              >
-                <UserRound /> Overview
-              </TabsTrigger>
-              <TabsTrigger
-                value="employment"
-                className="w-full justify-start gap-3 px-3 py-2.5 data-[state=active]:bg-primary/8 data-[state=active]:text-primary data-[state=active]:shadow-none"
-              >
-                <BriefcaseBusiness /> Employment
-              </TabsTrigger>
-              <TabsTrigger
-                value="personal"
-                className="w-full justify-start gap-3 px-3 py-2.5 data-[state=active]:bg-primary/8 data-[state=active]:text-primary data-[state=active]:shadow-none"
-              >
-                <FileText /> Personal details
-              </TabsTrigger>
-              <TabsTrigger
-                value="emergency_contacts"
-                className="w-full justify-start gap-3 px-3 py-2.5 data-[state=active]:bg-primary/8 data-[state=active]:text-primary data-[state=active]:shadow-none"
-              >
-                <Users /> Emergency contacts
-              </TabsTrigger>
-              <TabsTrigger
-                value="dependants"
-                className="w-full justify-start gap-3 px-3 py-2.5 data-[state=active]:bg-primary/8 data-[state=active]:text-primary data-[state=active]:shadow-none"
-              >
-                <Users /> Dependants
-              </TabsTrigger>
-            </TabsList>
-            <div className="my-3 border-t" />
-            <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
-              Work & development
-            </p>
-            <TabsList className="flex h-auto w-full flex-col gap-1 bg-transparent p-0">
-              <TabsTrigger
-                value="documents"
-                className="w-full justify-start gap-3 px-3 py-2.5 data-[state=active]:bg-primary/8 data-[state=active]:text-primary data-[state=active]:shadow-none"
-              >
-                <FileText /> Documents
-              </TabsTrigger>
-              <TabsTrigger
-                value="leave"
-                className="w-full justify-start gap-3 px-3 py-2.5 data-[state=active]:bg-primary/8 data-[state=active]:text-primary data-[state=active]:shadow-none"
-              >
-                <CalendarDays /> Leave
-              </TabsTrigger>
-              <TabsTrigger
-                value="timesheets"
-                className="w-full justify-start gap-3 px-3 py-2.5 data-[state=active]:bg-primary/8 data-[state=active]:text-primary data-[state=active]:shadow-none"
-              >
-                <ClipboardCheck /> Timesheets
-              </TabsTrigger>
-              <TabsTrigger
-                value="attendance"
-                className="w-full justify-start gap-3 px-3 py-2.5 data-[state=active]:bg-primary/8 data-[state=active]:text-primary data-[state=active]:shadow-none"
-              >
-                <Clock3 /> Attendance & overtime
-              </TabsTrigger>
-              <TabsTrigger
-                value="travel"
-                className="w-full justify-start gap-3 px-3 py-2.5 data-[state=active]:bg-primary/8 data-[state=active]:text-primary data-[state=active]:shadow-none"
-              >
-                <Plane /> Travel
-              </TabsTrigger>
-              <TabsTrigger
-                value="performance"
-                className="w-full justify-start gap-3 px-3 py-2.5 data-[state=active]:bg-primary/8 data-[state=active]:text-primary data-[state=active]:shadow-none"
-              >
-                <TrendingUp /> Performance
-              </TabsTrigger>
-              <TabsTrigger
-                value="training"
-                className="w-full justify-start gap-3 px-3 py-2.5 data-[state=active]:bg-primary/8 data-[state=active]:text-primary data-[state=active]:shadow-none"
-              >
-                <GraduationCap /> Training
-              </TabsTrigger>
-              <TabsTrigger
-                value="equipment"
-                className="w-full justify-start gap-3 px-3 py-2.5 data-[state=active]:bg-primary/8 data-[state=active]:text-primary data-[state=active]:shadow-none"
-              >
-                <Laptop /> Equipment
-              </TabsTrigger>
-              <TabsTrigger
-                value="onboarding"
-                className="w-full justify-start gap-3 px-3 py-2.5 data-[state=active]:bg-primary/8 data-[state=active]:text-primary data-[state=active]:shadow-none"
-              >
-                <ClipboardCheck /> Employee lifecycle
-              </TabsTrigger>
-            </TabsList>
-            <div className="my-3 border-t" />
-            <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
-              History & controls
-            </p>
-            <TabsList className="flex h-auto w-full flex-col gap-1 bg-transparent p-0">
-              <TabsTrigger
-                value="activity"
-                className="w-full justify-start gap-3 px-3 py-2.5 data-[state=active]:bg-primary/8 data-[state=active]:text-primary data-[state=active]:shadow-none"
-              >
-                <History /> Job history
-              </TabsTrigger>
-              {canViewPayroll && (
-                <TabsTrigger
-                  value="payroll"
-                  className="w-full justify-start gap-3 px-3 py-2.5 data-[state=active]:bg-primary/8 data-[state=active]:text-primary data-[state=active]:shadow-none"
-                >
-                  <ShieldCheck /> Payroll inputs
-                </TabsTrigger>
-              )}
-              {canViewAudit && (
-                <TabsTrigger
-                  value="audit"
-                  className="w-full justify-start gap-3 px-3 py-2.5 data-[state=active]:bg-primary/8 data-[state=active]:text-primary data-[state=active]:shadow-none"
-                >
-                  <ShieldCheck /> Audit log
-                </TabsTrigger>
-              )}
-            </TabsList>
-          </aside>
-
-          <div className="min-w-0">
-            <TabsContent value="overview" className="space-y-6 mt-0">
-              <OverviewTab employee={employee} userMapping={userMapping} />
-              {isHROrSuperAdmin && (
-                <DashboardCharts
-                  scope="hr"
-                  employeeId={rawEmployee?.databaseId ?? employeeId}
-                  profileId={employeeId}
-                />
-              )}
-            </TabsContent>
-
-            <TabsContent value="personal" className="space-y-6 mt-0">
-              {!canViewPersonalDetails ? (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Personal Details</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground">
-                      Restricted. Personal details (date of birth, address, marital status,
-                      dependants, and emergency contacts) are visible and editable only by the
-                      employee themselves, HR, and Super Admin.
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : (
-                <PersonalTab
-                  employee={employee}
-                  onChanged={() => setProfileVersion((value) => value + 1)}
-                />
-              )}
-            </TabsContent>
-
-            <TabsContent value="employment" className="space-y-6 mt-0">
-              {!canEditEmployment && employee.employmentConfirmationStatus !== "Confirmed" ? (
-                <p className="text-sm text-muted-foreground">
-                  HR will add your employment details. You can continue completing your personal
-                  information.
-                </p>
-              ) : (
-                <>
-                  {canEditEmployment && employee.employmentConfirmationStatus && (
-                    <Card>
-                      <CardHeader>
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <CardTitle>Employment information review</CardTitle>
-                            <p className="mt-1 text-sm text-muted-foreground">
-                              Employment dates, assignment and reporting line become confirmed only
-                              after HR review.
-                            </p>
-                          </div>
-                          <StatusBadge status={employee.employmentConfirmationStatus} />
-                        </div>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        {employee.proposedEmploymentDetails && (
-                          <div className="grid gap-3 rounded-xl border bg-muted/25 p-4 sm:grid-cols-2 lg:grid-cols-3">
-                            {[
-                              ["Employee type", employee.proposedEmploymentDetails.staffEntryType],
-                              ["Start date", employee.proposedEmploymentDetails.startDate],
-                              [
-                                "Department",
-                                departments.find(
-                                  (item) =>
-                                    item.id === employee.proposedEmploymentDetails?.departmentId,
-                                )?.name ?? "Unavailable",
-                              ],
-                              [
-                                "Position",
-                                positions.find(
-                                  (item) =>
-                                    item.id === employee.proposedEmploymentDetails?.positionId,
-                                )?.name ?? "Unavailable",
-                              ],
-                              [
-                                "Location",
-                                locations.find(
-                                  (item) =>
-                                    item.id === employee.proposedEmploymentDetails?.locationId,
-                                )?.name ?? "Unavailable",
-                              ],
-                              [
-                                "Employment type",
-                                employmentTypes.find(
-                                  (item) =>
-                                    item.id ===
-                                    employee.proposedEmploymentDetails?.employmentTypeId,
-                                )?.name ?? "Unavailable",
-                              ],
-                              [
-                                "Supervisor",
-                                allEmployees.find(
-                                  (item) =>
-                                    item.id === employee.proposedEmploymentDetails?.lineManagerId,
-                                )?.preferredName ??
-                                  employee.proposedEmploymentDetails.lineManagerEmail,
-                              ],
-                              [
-                                "Visa or work permit needed",
-                                employee.proposedEmploymentDetails.visaRequired === false
-                                  ? "No"
-                                  : "Yes",
-                              ],
-                            ].map(([label, value]) => (
-                              <div key={label}>
-                                <p className="text-xs font-medium text-muted-foreground">{label}</p>
-                                <p className="mt-1 text-sm font-semibold">{value}</p>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {employee.employmentReviewNote && (
-                          <p className="rounded-lg border bg-muted/40 p-3 text-sm">
-                            {employee.employmentReviewNote}
+          <TabsContent value="employment" className="space-y-6 mt-0">
+            {(canEditEmployment || canEditCompensation) && employee.databaseId && (
+              <ScheduledEmploymentChanges
+                employeeId={employee.databaseId}
+                refreshVersion={profileVersion}
+              />
+            )}
+            {!canEditEmployment && employee.employmentConfirmationStatus !== "Confirmed" ? (
+              <p className="text-sm text-muted-foreground">
+                HR will add your employment details. You can continue completing your personal
+                information.
+              </p>
+            ) : (
+              <>
+                {canEditEmployment && employee.employmentConfirmationStatus && (
+                  <Card>
+                    <CardHeader>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <CardTitle>Employment information review</CardTitle>
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            Employment dates, assignment and reporting line become confirmed only
+                            after HR review.
                           </p>
+                        </div>
+                        <StatusBadge status={employee.employmentConfirmationStatus} />
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {employee.proposedEmploymentDetails && (
+                        <div className="grid gap-3 rounded-xl border bg-muted/25 p-4 sm:grid-cols-2 lg:grid-cols-3">
+                          {[
+                            ["Employee type", employee.proposedEmploymentDetails.staffEntryType],
+                            ["Start date", employee.proposedEmploymentDetails.startDate],
+                            [
+                              "Department",
+                              departments.find(
+                                (item) =>
+                                  item.id === employee.proposedEmploymentDetails?.departmentId,
+                              )?.name ?? "Unavailable",
+                            ],
+                            [
+                              "Position",
+                              positions.find(
+                                (item) =>
+                                  item.id === employee.proposedEmploymentDetails?.positionId,
+                              )?.name ?? "Unavailable",
+                            ],
+                            [
+                              "Location",
+                              locations.find(
+                                (item) =>
+                                  item.id === employee.proposedEmploymentDetails?.locationId,
+                              )?.name ?? "Unavailable",
+                            ],
+                            [
+                              "Employment type",
+                              employmentTypes.find(
+                                (item) =>
+                                  item.id === employee.proposedEmploymentDetails?.employmentTypeId,
+                              )?.name ?? "Unavailable",
+                            ],
+                            [
+                              "Supervisor",
+                              allEmployees.find(
+                                (item) =>
+                                  item.id === employee.proposedEmploymentDetails?.lineManagerId,
+                              )?.preferredName ??
+                                employee.proposedEmploymentDetails.lineManagerEmail,
+                            ],
+                            [
+                              "Visa or work permit needed",
+                              employee.proposedEmploymentDetails.visaRequired === false
+                                ? "No"
+                                : "Yes",
+                            ],
+                          ].map(([label, value]) => (
+                            <div key={label}>
+                              <p className="text-xs font-medium text-muted-foreground">{label}</p>
+                              <p className="mt-1 text-sm font-semibold">{value}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {employee.employmentReviewNote && (
+                        <p className="rounded-lg border bg-muted/40 p-3 text-sm">
+                          {employee.employmentReviewNote}
+                        </p>
+                      )}
+                      {canEditEmployment &&
+                        employee.employmentConfirmationStatus === "Pending HR Review" && (
+                          <div className="space-y-3">
+                            <Textarea
+                              value={employmentReviewNote}
+                              onChange={(event) => setEmploymentReviewNote(event.target.value)}
+                              placeholder="Optional confirmation note, or explain what needs correcting"
+                              aria-label="Employment review note"
+                            />
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                type="button"
+                                onClick={() => decideEmploymentDetails("Confirmed")}
+                                disabled={employmentDecisionPending}
+                              >
+                                <ShieldCheck className="h-4 w-4" /> Confirm details
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => decideEmploymentDetails("Changes Requested")}
+                                disabled={employmentDecisionPending}
+                              >
+                                Reopen for HR correction
+                              </Button>
+                            </div>
+                          </div>
                         )}
-                        {canEditEmployment &&
-                          employee.employmentConfirmationStatus === "Pending HR Review" && (
-                            <div className="space-y-3">
-                              <Textarea
-                                value={employmentReviewNote}
-                                onChange={(event) => setEmploymentReviewNote(event.target.value)}
-                                placeholder="Optional confirmation note, or explain what needs correcting"
-                                aria-label="Employment review note"
-                              />
-                              <div className="flex flex-wrap gap-2">
-                                <Button
-                                  type="button"
-                                  onClick={() => decideEmploymentDetails("Confirmed")}
-                                  disabled={employmentDecisionPending}
-                                >
-                                  <ShieldCheck className="h-4 w-4" /> Confirm details
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  onClick={() => decideEmploymentDetails("Changes Requested")}
-                                  disabled={employmentDecisionPending}
-                                >
-                                  Reopen for HR correction
-                                </Button>
+                    </CardContent>
+                  </Card>
+                )}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <Card>
+                    <CardHeader className="flex flex-row items-center justify-between">
+                      <CardTitle>Employment Details</CardTitle>
+                      {canEditEmployment && employee.status !== "Archived" && (
+                        <Dialog
+                          open={isEditOpen}
+                          onOpenChange={(open) => {
+                            setIsEditOpen(open);
+                            if (open) {
+                              setQuickSelectedValues({});
+                              form.reset({
+                                department: employee.department,
+                                position: employee.position,
+                                grade: employee.grade || "",
+                                location: employee.location,
+                                projectId: employee.projectId || "",
+                                employmentType: employee.employmentType,
+                                staffEntryType: employee.staffEntryType || "Existing Employee",
+                                visaRequired: employee.visaRequired,
+                                startDate: employee.startDate,
+                                lineManagerId: employee.lineManagerId || "",
+                                effectiveDate: new Date().toISOString().slice(0, 10),
+                                reason: "",
+                              });
+                            }
+                          }}
+                        >
+                          <DialogTrigger asChild>
+                            <Button variant="ghost" size="sm" aria-label="Edit employment details">
+                              <Edit2 className="h-4 w-4" />
+                            </Button>
+                          </DialogTrigger>
+                          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                            <DialogHeader>
+                              <DialogTitle>Update Employment Records</DialogTitle>
+                              <DialogDescription>
+                                Future-dated changes stay pending until the effective date.
+                              </DialogDescription>
+                            </DialogHeader>
+                            <Form {...form}>
+                              <form
+                                onSubmit={form.handleSubmit(onEditSubmit)}
+                                className="space-y-4 pt-4"
+                              >
+                                <div className="rounded-xl border bg-muted/25 p-4">
+                                  <p className="text-sm font-medium">Need a new option?</p>
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    Add it here and it will be selected immediately. You do not need
+                                    to leave this employee record.
+                                  </p>
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    {(
+                                      [
+                                        ["departments", "Department"],
+                                        ["positions", "Position"],
+                                        ["locations", "Work location"],
+                                        ["employmentTypes", "Employment type"],
+                                      ] as const
+                                    ).map(([collection, label]) => (
+                                      <Button
+                                        key={collection}
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => {
+                                          setQuickAddCollection(collection);
+                                          setQuickAddName("");
+                                        }}
+                                      >
+                                        <Plus className="h-3.5 w-3.5" /> Add {label.toLowerCase()}
+                                      </Button>
+                                    ))}
+                                  </div>
+                                  {quickAddCollection && (
+                                    <div className="mt-4 flex flex-col gap-2 rounded-lg border bg-background p-3 sm:flex-row sm:items-end">
+                                      <div className="flex-1 space-y-1.5">
+                                        <Label htmlFor="quick-add-employment-option">
+                                          New {quickAddLabels[quickAddCollection]}
+                                        </Label>
+                                        <Input
+                                          id="quick-add-employment-option"
+                                          value={quickAddName}
+                                          autoFocus
+                                          onChange={(event) => setQuickAddName(event.target.value)}
+                                          onKeyDown={(event) => {
+                                            if (event.key === "Enter") {
+                                              event.preventDefault();
+                                              void createEmploymentOption();
+                                            }
+                                          }}
+                                        />
+                                      </div>
+                                      <div className="flex gap-2">
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          onClick={() => setQuickAddCollection(null)}
+                                        >
+                                          Cancel
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          disabled={quickAddBusy || !quickAddName.trim()}
+                                          onClick={() => void createEmploymentOption()}
+                                        >
+                                          {quickAddBusy ? "Adding..." : "Add and select"}
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                  <FormField
+                                    control={form.control}
+                                    name="department"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>Department</FormLabel>
+                                        <Select
+                                          onValueChange={(value) => {
+                                            if (!value) return;
+                                            setQuickSelectedValues((current) => ({
+                                              ...current,
+                                              departments: undefined,
+                                            }));
+                                            field.onChange(value);
+                                          }}
+                                          value={quickSelectedValues.departments ?? field.value}
+                                        >
+                                          <FormControl>
+                                            <SelectTrigger>
+                                              <SelectValue>
+                                                {quickSelectedValues.departments ?? field.value}
+                                              </SelectValue>
+                                            </SelectTrigger>
+                                          </FormControl>
+                                          <SelectContent>
+                                            {departments.map((d) => (
+                                              <SelectItem key={d.id} value={d.name}>
+                                                {d.name}
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={form.control}
+                                    name="position"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>Position</FormLabel>
+                                        <Select
+                                          onValueChange={(value) => {
+                                            if (!value) return;
+                                            setQuickSelectedValues((current) => ({
+                                              ...current,
+                                              positions: undefined,
+                                            }));
+                                            field.onChange(value);
+                                          }}
+                                          value={quickSelectedValues.positions ?? field.value}
+                                        >
+                                          <FormControl>
+                                            <SelectTrigger>
+                                              <SelectValue>
+                                                {quickSelectedValues.positions ?? field.value}
+                                              </SelectValue>
+                                            </SelectTrigger>
+                                          </FormControl>
+                                          <SelectContent>
+                                            {positions.map((d) => (
+                                              <SelectItem key={d.id} value={d.name}>
+                                                {d.name}
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={form.control}
+                                    name="grade"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>Grade</FormLabel>
+                                        <Select
+                                          onValueChange={field.onChange}
+                                          value={field.value as string}
+                                        >
+                                          <FormControl>
+                                            <SelectTrigger>
+                                              <SelectValue placeholder="None" />
+                                            </SelectTrigger>
+                                          </FormControl>
+                                          <SelectContent>
+                                            <SelectItem value="none">None</SelectItem>
+                                            {grades.map((d) => (
+                                              <SelectItem key={d.id} value={d.name}>
+                                                {d.name}
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={form.control}
+                                    name="location"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>Location</FormLabel>
+                                        <Select
+                                          onValueChange={(value) => {
+                                            if (!value) return;
+                                            setQuickSelectedValues((current) => ({
+                                              ...current,
+                                              locations: undefined,
+                                            }));
+                                            field.onChange(value);
+                                          }}
+                                          value={quickSelectedValues.locations ?? field.value}
+                                        >
+                                          <FormControl>
+                                            <SelectTrigger>
+                                              <SelectValue>
+                                                {quickSelectedValues.locations ?? field.value}
+                                              </SelectValue>
+                                            </SelectTrigger>
+                                          </FormControl>
+                                          <SelectContent>
+                                            {locations.map((d) => (
+                                              <SelectItem key={d.id} value={d.name}>
+                                                {d.name}
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={form.control}
+                                    name="employmentType"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>Employment Type</FormLabel>
+                                        <Select
+                                          onValueChange={(value) => {
+                                            if (!value) return;
+                                            setQuickSelectedValues((current) => ({
+                                              ...current,
+                                              employmentTypes: undefined,
+                                            }));
+                                            field.onChange(value);
+                                          }}
+                                          value={quickSelectedValues.employmentTypes ?? field.value}
+                                        >
+                                          <FormControl>
+                                            <SelectTrigger>
+                                              <SelectValue>
+                                                {quickSelectedValues.employmentTypes ?? field.value}
+                                              </SelectValue>
+                                            </SelectTrigger>
+                                          </FormControl>
+                                          <SelectContent>
+                                            {employmentTypes.map((d) => (
+                                              <SelectItem key={d.id} value={d.name}>
+                                                {d.name}
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={form.control}
+                                    name="visaRequired"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>Do you need a visa?</FormLabel>
+                                        <Select
+                                          value={
+                                            field.value === undefined
+                                              ? ""
+                                              : field.value
+                                                ? "yes"
+                                                : "no"
+                                          }
+                                          onValueChange={(value) => field.onChange(value === "yes")}
+                                        >
+                                          <FormControl>
+                                            <SelectTrigger>
+                                              <SelectValue placeholder="Select visa requirement" />
+                                            </SelectTrigger>
+                                          </FormControl>
+                                          <SelectContent>
+                                            <SelectItem value="yes">Yes</SelectItem>
+                                            <SelectItem value="no">No</SelectItem>
+                                          </SelectContent>
+                                        </Select>
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={form.control}
+                                    name="staffEntryType"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>Staff Category</FormLabel>
+                                        <Select onValueChange={field.onChange} value={field.value}>
+                                          <FormControl>
+                                            <SelectTrigger>
+                                              <SelectValue />
+                                            </SelectTrigger>
+                                          </FormControl>
+                                          <SelectContent>
+                                            <SelectItem value="New Employee">
+                                              New employee
+                                            </SelectItem>
+                                            <SelectItem value="Existing Employee">
+                                              Existing employee
+                                            </SelectItem>
+                                          </SelectContent>
+                                        </Select>
+                                        <FormMessage />
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={form.control}
+                                    name="startDate"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>VIA Start Date</FormLabel>
+                                        <FormControl>
+                                          <Input type="date" {...field} />
+                                        </FormControl>
+                                        <FormMessage />
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={form.control}
+                                    name="lineManagerId"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>Supervisor</FormLabel>
+                                        <Select
+                                          onValueChange={field.onChange}
+                                          defaultValue={field.value as string}
+                                        >
+                                          <FormControl>
+                                            <SelectTrigger>
+                                              <SelectValue placeholder="None" />
+                                            </SelectTrigger>
+                                          </FormControl>
+                                          <SelectContent>
+                                            <SelectItem value="none">None</SelectItem>
+                                            {allEmployees.map((d) => (
+                                              <SelectItem key={d.id} value={d.id}>
+                                                {d.preferredName} ({d.position})
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={form.control}
+                                    name="projectId"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>Project</FormLabel>
+                                        <Select
+                                          onValueChange={field.onChange}
+                                          defaultValue={field.value as string}
+                                        >
+                                          <FormControl>
+                                            <SelectTrigger>
+                                              <SelectValue placeholder="None" />
+                                            </SelectTrigger>
+                                          </FormControl>
+                                          <SelectContent>
+                                            <SelectItem value="none">None</SelectItem>
+                                            {projects.map((d) => (
+                                              <SelectItem key={d.id} value={d.id}>
+                                                {d.name}
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                      </FormItem>
+                                    )}
+                                  />
+                                </div>
+
+                                <div className="pt-4 border-t">
+                                  <FormField
+                                    control={form.control}
+                                    name="effectiveDate"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>Effective Date *</FormLabel>
+                                        <FormControl>
+                                          <Input type="date" {...field} />
+                                        </FormControl>
+                                        <FormMessage />
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={form.control}
+                                    name="reason"
+                                    render={({ field }) => (
+                                      <FormItem className="mt-4">
+                                        <FormLabel>Reason for Change *</FormLabel>
+                                        <FormControl>
+                                          <Textarea
+                                            placeholder="e.g. Annual promotion, Department restructure"
+                                            {...field}
+                                          />
+                                        </FormControl>
+                                        <FormMessage />
+                                      </FormItem>
+                                    )}
+                                  />
+                                </div>
+
+                                <DialogFooter>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() => setIsEditOpen(false)}
+                                  >
+                                    Cancel
+                                  </Button>
+                                  <Button type="submit">Save Changes</Button>
+                                </DialogFooter>
+                              </form>
+                            </Form>
+                          </DialogContent>
+                        </Dialog>
+                      )}
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <div className="text-muted-foreground">Department</div>
+                          <div className="font-medium">{employee.department}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground">Position</div>
+                          <div className="font-medium">{employee.position}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground">Grade</div>
+                          <div className="font-medium">{employee.grade || "-"}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground">Location</div>
+                          <div className="font-medium">{employee.location}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground">Employment Type</div>
+                          <div className="font-medium">{employee.employmentType}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground">Start Date</div>
+                          <div className="font-medium">{employee.startDate}</div>
+                        </div>
+                        <div>
+                          {employee.visaRequired !== undefined && (
+                            <div className="mb-4">
+                              <div className="text-muted-foreground">Do you need a visa?</div>
+                              <div className="font-medium">
+                                {employee.visaRequired ? "Yes" : "No"}
                               </div>
                             </div>
                           )}
-                      </CardContent>
-                    </Card>
-                  )}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between">
-                        <CardTitle>Employment Details</CardTitle>
-                        {canEditEmployment && employee.status !== "Archived" && (
-                          <Dialog
-                            open={isEditOpen}
-                            onOpenChange={(open) => {
-                              setIsEditOpen(open);
-                              if (open) {
-                                setQuickSelectedValues({});
-                                form.reset({
-                                  department: employee.department,
-                                  position: employee.position,
-                                  grade: employee.grade || "",
-                                  location: employee.location,
-                                  projectId: employee.projectId || "",
-                                  employmentType: employee.employmentType,
-                                  staffEntryType: employee.staffEntryType || "Existing Employee",
-                                  visaRequired: employee.visaRequired,
-                                  startDate: employee.startDate,
-                                  lineManagerId: employee.lineManagerId || "",
-                                  effectiveDate: new Date().toISOString().slice(0, 10),
-                                  reason: "",
-                                });
-                              }
-                            }}
-                          >
-                            <DialogTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                aria-label="Edit employment details"
-                              >
-                                <Edit2 className="h-4 w-4" />
-                              </Button>
-                            </DialogTrigger>
-                            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                              <DialogHeader>
-                                <DialogTitle>Update Employment Records</DialogTitle>
-                                <DialogDescription>
-                                  Every change requires an effective date and reason for the audit
-                                  log.
-                                </DialogDescription>
-                              </DialogHeader>
-                              <Form {...form}>
-                                <form
-                                  onSubmit={form.handleSubmit(onEditSubmit)}
-                                  className="space-y-4 pt-4"
-                                >
-                                  <div className="rounded-xl border bg-muted/25 p-4">
-                                    <p className="text-sm font-medium">Need a new option?</p>
-                                    <p className="mt-1 text-xs text-muted-foreground">
-                                      Add it here and it will be selected immediately. You do not
-                                      need to leave this employee record.
-                                    </p>
-                                    <div className="mt-3 flex flex-wrap gap-2">
-                                      {(
-                                        [
-                                          ["departments", "Department"],
-                                          ["positions", "Position"],
-                                          ["locations", "Work location"],
-                                          ["employmentTypes", "Employment type"],
-                                        ] as const
-                                      ).map(([collection, label]) => (
-                                        <Button
-                                          key={collection}
-                                          type="button"
-                                          size="sm"
-                                          variant="outline"
-                                          onClick={() => {
-                                            setQuickAddCollection(collection);
-                                            setQuickAddName("");
-                                          }}
-                                        >
-                                          <Plus className="h-3.5 w-3.5" /> Add {label.toLowerCase()}
-                                        </Button>
-                                      ))}
-                                    </div>
-                                    {quickAddCollection && (
-                                      <div className="mt-4 flex flex-col gap-2 rounded-lg border bg-background p-3 sm:flex-row sm:items-end">
-                                        <div className="flex-1 space-y-1.5">
-                                          <Label htmlFor="quick-add-employment-option">
-                                            New {quickAddLabels[quickAddCollection]}
-                                          </Label>
-                                          <Input
-                                            id="quick-add-employment-option"
-                                            value={quickAddName}
-                                            autoFocus
-                                            onChange={(event) =>
-                                              setQuickAddName(event.target.value)
-                                            }
-                                            onKeyDown={(event) => {
-                                              if (event.key === "Enter") {
-                                                event.preventDefault();
-                                                void createEmploymentOption();
-                                              }
-                                            }}
-                                          />
-                                        </div>
-                                        <div className="flex gap-2">
-                                          <Button
-                                            type="button"
-                                            variant="ghost"
-                                            onClick={() => setQuickAddCollection(null)}
-                                          >
-                                            Cancel
-                                          </Button>
-                                          <Button
-                                            type="button"
-                                            disabled={quickAddBusy || !quickAddName.trim()}
-                                            onClick={() => void createEmploymentOption()}
-                                          >
-                                            {quickAddBusy ? "Adding..." : "Add and select"}
-                                          </Button>
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-4">
-                                    <FormField
-                                      control={form.control}
-                                      name="department"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Department</FormLabel>
-                                          <Select
-                                            onValueChange={(value) => {
-                                              if (!value) return;
-                                              setQuickSelectedValues((current) => ({
-                                                ...current,
-                                                departments: undefined,
-                                              }));
-                                              field.onChange(value);
-                                            }}
-                                            value={quickSelectedValues.departments ?? field.value}
-                                          >
-                                            <FormControl>
-                                              <SelectTrigger>
-                                                <SelectValue>
-                                                  {quickSelectedValues.departments ?? field.value}
-                                                </SelectValue>
-                                              </SelectTrigger>
-                                            </FormControl>
-                                            <SelectContent>
-                                              {departments.map((d) => (
-                                                <SelectItem key={d.id} value={d.name}>
-                                                  {d.name}
-                                                </SelectItem>
-                                              ))}
-                                            </SelectContent>
-                                          </Select>
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <FormField
-                                      control={form.control}
-                                      name="position"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Position</FormLabel>
-                                          <Select
-                                            onValueChange={(value) => {
-                                              if (!value) return;
-                                              setQuickSelectedValues((current) => ({
-                                                ...current,
-                                                positions: undefined,
-                                              }));
-                                              field.onChange(value);
-                                            }}
-                                            value={quickSelectedValues.positions ?? field.value}
-                                          >
-                                            <FormControl>
-                                              <SelectTrigger>
-                                                <SelectValue>
-                                                  {quickSelectedValues.positions ?? field.value}
-                                                </SelectValue>
-                                              </SelectTrigger>
-                                            </FormControl>
-                                            <SelectContent>
-                                              {positions.map((d) => (
-                                                <SelectItem key={d.id} value={d.name}>
-                                                  {d.name}
-                                                </SelectItem>
-                                              ))}
-                                            </SelectContent>
-                                          </Select>
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <FormField
-                                      control={form.control}
-                                      name="grade"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Grade</FormLabel>
-                                          <Select
-                                            onValueChange={field.onChange}
-                                            value={field.value as string}
-                                          >
-                                            <FormControl>
-                                              <SelectTrigger>
-                                                <SelectValue placeholder="None" />
-                                              </SelectTrigger>
-                                            </FormControl>
-                                            <SelectContent>
-                                              <SelectItem value="none">None</SelectItem>
-                                              {grades.map((d) => (
-                                                <SelectItem key={d.id} value={d.name}>
-                                                  {d.name}
-                                                </SelectItem>
-                                              ))}
-                                            </SelectContent>
-                                          </Select>
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <FormField
-                                      control={form.control}
-                                      name="location"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Location</FormLabel>
-                                          <Select
-                                            onValueChange={(value) => {
-                                              if (!value) return;
-                                              setQuickSelectedValues((current) => ({
-                                                ...current,
-                                                locations: undefined,
-                                              }));
-                                              field.onChange(value);
-                                            }}
-                                            value={quickSelectedValues.locations ?? field.value}
-                                          >
-                                            <FormControl>
-                                              <SelectTrigger>
-                                                <SelectValue>
-                                                  {quickSelectedValues.locations ?? field.value}
-                                                </SelectValue>
-                                              </SelectTrigger>
-                                            </FormControl>
-                                            <SelectContent>
-                                              {locations.map((d) => (
-                                                <SelectItem key={d.id} value={d.name}>
-                                                  {d.name}
-                                                </SelectItem>
-                                              ))}
-                                            </SelectContent>
-                                          </Select>
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <FormField
-                                      control={form.control}
-                                      name="employmentType"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Employment Type</FormLabel>
-                                          <Select
-                                            onValueChange={(value) => {
-                                              if (!value) return;
-                                              setQuickSelectedValues((current) => ({
-                                                ...current,
-                                                employmentTypes: undefined,
-                                              }));
-                                              field.onChange(value);
-                                            }}
-                                            value={
-                                              quickSelectedValues.employmentTypes ?? field.value
-                                            }
-                                          >
-                                            <FormControl>
-                                              <SelectTrigger>
-                                                <SelectValue>
-                                                  {quickSelectedValues.employmentTypes ??
-                                                    field.value}
-                                                </SelectValue>
-                                              </SelectTrigger>
-                                            </FormControl>
-                                            <SelectContent>
-                                              {employmentTypes.map((d) => (
-                                                <SelectItem key={d.id} value={d.name}>
-                                                  {d.name}
-                                                </SelectItem>
-                                              ))}
-                                            </SelectContent>
-                                          </Select>
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <FormField
-                                      control={form.control}
-                                      name="visaRequired"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Do you need a visa?</FormLabel>
-                                          <Select
-                                            value={
-                                              field.value === undefined
-                                                ? ""
-                                                : field.value
-                                                  ? "yes"
-                                                  : "no"
-                                            }
-                                            onValueChange={(value) =>
-                                              field.onChange(value === "yes")
-                                            }
-                                          >
-                                            <FormControl>
-                                              <SelectTrigger>
-                                                <SelectValue placeholder="Select visa requirement" />
-                                              </SelectTrigger>
-                                            </FormControl>
-                                            <SelectContent>
-                                              <SelectItem value="yes">Yes</SelectItem>
-                                              <SelectItem value="no">No</SelectItem>
-                                            </SelectContent>
-                                          </Select>
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <FormField
-                                      control={form.control}
-                                      name="staffEntryType"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Staff Category</FormLabel>
-                                          <Select
-                                            onValueChange={field.onChange}
-                                            value={field.value}
-                                          >
-                                            <FormControl>
-                                              <SelectTrigger>
-                                                <SelectValue />
-                                              </SelectTrigger>
-                                            </FormControl>
-                                            <SelectContent>
-                                              <SelectItem value="New Employee">
-                                                New employee
-                                              </SelectItem>
-                                              <SelectItem value="Existing Employee">
-                                                Existing employee
-                                              </SelectItem>
-                                            </SelectContent>
-                                          </Select>
-                                          <FormMessage />
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <FormField
-                                      control={form.control}
-                                      name="startDate"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>VIA Start Date</FormLabel>
-                                          <FormControl>
-                                            <Input type="date" {...field} />
-                                          </FormControl>
-                                          <FormMessage />
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <FormField
-                                      control={form.control}
-                                      name="lineManagerId"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Supervisor</FormLabel>
-                                          <Select
-                                            onValueChange={field.onChange}
-                                            defaultValue={field.value as string}
-                                          >
-                                            <FormControl>
-                                              <SelectTrigger>
-                                                <SelectValue placeholder="None" />
-                                              </SelectTrigger>
-                                            </FormControl>
-                                            <SelectContent>
-                                              <SelectItem value="none">None</SelectItem>
-                                              {allEmployees.map((d) => (
-                                                <SelectItem key={d.id} value={d.id}>
-                                                  {d.preferredName} ({d.position})
-                                                </SelectItem>
-                                              ))}
-                                            </SelectContent>
-                                          </Select>
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <FormField
-                                      control={form.control}
-                                      name="projectId"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Project</FormLabel>
-                                          <Select
-                                            onValueChange={field.onChange}
-                                            defaultValue={field.value as string}
-                                          >
-                                            <FormControl>
-                                              <SelectTrigger>
-                                                <SelectValue placeholder="None" />
-                                              </SelectTrigger>
-                                            </FormControl>
-                                            <SelectContent>
-                                              <SelectItem value="none">None</SelectItem>
-                                              {projects.map((d) => (
-                                                <SelectItem key={d.id} value={d.id}>
-                                                  {d.name}
-                                                </SelectItem>
-                                              ))}
-                                            </SelectContent>
-                                          </Select>
-                                        </FormItem>
-                                      )}
-                                    />
-                                  </div>
-
-                                  <div className="pt-4 border-t">
-                                    <FormField
-                                      control={form.control}
-                                      name="effectiveDate"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Effective Date *</FormLabel>
-                                          <FormControl>
-                                            <Input type="date" {...field} />
-                                          </FormControl>
-                                          <FormMessage />
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <FormField
-                                      control={form.control}
-                                      name="reason"
-                                      render={({ field }) => (
-                                        <FormItem className="mt-4">
-                                          <FormLabel>Reason for Change *</FormLabel>
-                                          <FormControl>
-                                            <Textarea
-                                              placeholder="e.g. Annual promotion, Department restructure"
-                                              {...field}
-                                            />
-                                          </FormControl>
-                                          <FormMessage />
-                                        </FormItem>
-                                      )}
-                                    />
-                                  </div>
-
-                                  <DialogFooter>
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      onClick={() => setIsEditOpen(false)}
-                                    >
-                                      Cancel
-                                    </Button>
-                                    <Button type="submit">Save Changes</Button>
-                                  </DialogFooter>
-                                </form>
-                              </Form>
-                            </DialogContent>
-                          </Dialog>
-                        )}
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="grid grid-cols-2 gap-4 text-sm">
-                          <div>
-                            <div className="text-muted-foreground">Department</div>
-                            <div className="font-medium">{employee.department}</div>
-                          </div>
-                          <div>
-                            <div className="text-muted-foreground">Position</div>
-                            <div className="font-medium">{employee.position}</div>
-                          </div>
-                          <div>
-                            <div className="text-muted-foreground">Grade</div>
-                            <div className="font-medium">{employee.grade || "-"}</div>
-                          </div>
-                          <div>
-                            <div className="text-muted-foreground">Location</div>
-                            <div className="font-medium">{employee.location}</div>
-                          </div>
-                          <div>
-                            <div className="text-muted-foreground">Employment Type</div>
-                            <div className="font-medium">{employee.employmentType}</div>
-                          </div>
-                          <div>
-                            <div className="text-muted-foreground">Start Date</div>
-                            <div className="font-medium">{employee.startDate}</div>
-                          </div>
-                          <div>
-                            {employee.visaRequired !== undefined && (
-                              <div className="mb-4">
-                                <div className="text-muted-foreground">Do you need a visa?</div>
-                                <div className="font-medium">
-                                  {employee.visaRequired ? "Yes" : "No"}
-                                </div>
-                              </div>
-                            )}
-                            <div className="text-muted-foreground">Staff Category</div>
-                            <div className="font-medium">
-                              {employee.staffEntryType || "Not recorded"}
-                            </div>
-                          </div>
-                          <div>
-                            <div className="text-muted-foreground">Supervisor</div>
-                            <div className="font-medium">
-                              {employee.lineManagerId
-                                ? manager?.preferredName || "Unknown"
-                                : "None"}
-                            </div>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>Identity</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="grid grid-cols-2 gap-4 text-sm">
-                          <div>
-                            <div className="text-muted-foreground">Legal Name</div>
-                            <div className="font-medium">{employee.legalName}</div>
-                          </div>
-                          <div>
-                            <div className="text-muted-foreground">Employee Number</div>
-                            <div className="font-medium">{employee.employeeNumber}</div>
-                          </div>
-                          <div>
-                            <div className="text-muted-foreground">Work Email</div>
-                            <div className="font-medium">{employee.workEmail}</div>
-                          </div>
-                          <div>
-                            <div className="text-muted-foreground">Phone</div>
-                            <div className="font-medium">{employee.phone || "-"}</div>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    {canViewPayroll && employee.status !== "Archived" && (
-                      <Card className="md:col-span-2">
-                        <CardHeader className="flex flex-row items-center justify-between">
-                          <CardTitle>Compensation</CardTitle>
-                          <Dialog
-                            open={isSalaryEditOpen}
-                            onOpenChange={(open) => {
-                              setIsSalaryEditOpen(open);
-                              if (open) {
-                                salaryForm.reset({
-                                  baseMonthly: employee.salary?.baseMonthly
-                                    ? String(employee.salary.baseMonthly)
-                                    : "",
-                                  currency: employee.salary?.currency || "OMR",
-                                  housingAllowance: employee.salary?.housingAllowance
-                                    ? String(employee.salary.housingAllowance)
-                                    : "",
-                                  transportAllowance: employee.salary?.transportAllowance
-                                    ? String(employee.salary.transportAllowance)
-                                    : "",
-                                  payFrequency: employee.salary?.payFrequency || "Monthly",
-                                  effectiveDate: new Date().toISOString().slice(0, 10),
-                                  reason: "",
-                                });
-                              }
-                            }}
-                          >
-                            {canEditCompensation && (
-                              <DialogTrigger asChild>
-                                <Button variant="ghost" size="sm">
-                                  <Edit2 className="h-4 w-4" />
-                                </Button>
-                              </DialogTrigger>
-                            )}
-                            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-                              <DialogHeader>
-                                <DialogTitle>Update Salary</DialogTitle>
-                                <DialogDescription>
-                                  Every change requires an effective date and reason for the audit
-                                  log.
-                                </DialogDescription>
-                              </DialogHeader>
-                              <Form {...salaryForm}>
-                                <form
-                                  onSubmit={salaryForm.handleSubmit(onSalarySubmit)}
-                                  className="space-y-4 pt-4"
-                                >
-                                  <div className="grid grid-cols-2 gap-4">
-                                    <FormField
-                                      control={salaryForm.control}
-                                      name="baseMonthly"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Base Monthly Salary *</FormLabel>
-                                          <FormControl>
-                                            <Input type="number" step="0.01" min="0" {...field} />
-                                          </FormControl>
-                                          <FormMessage />
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <FormField
-                                      control={salaryForm.control}
-                                      name="currency"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Currency *</FormLabel>
-                                          <FormControl>
-                                            <Input placeholder="OMR" {...field} />
-                                          </FormControl>
-                                          <FormMessage />
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <FormField
-                                      control={salaryForm.control}
-                                      name="housingAllowance"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Housing Allowance</FormLabel>
-                                          <FormControl>
-                                            <Input type="number" step="0.01" min="0" {...field} />
-                                          </FormControl>
-                                          <FormMessage />
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <FormField
-                                      control={salaryForm.control}
-                                      name="transportAllowance"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Transport Allowance</FormLabel>
-                                          <FormControl>
-                                            <Input type="number" step="0.01" min="0" {...field} />
-                                          </FormControl>
-                                          <FormMessage />
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <FormField
-                                      control={salaryForm.control}
-                                      name="payFrequency"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Pay Frequency</FormLabel>
-                                          <Select
-                                            onValueChange={field.onChange}
-                                            defaultValue={field.value as string}
-                                          >
-                                            <FormControl>
-                                              <SelectTrigger>
-                                                <SelectValue />
-                                              </SelectTrigger>
-                                            </FormControl>
-                                            <SelectContent>
-                                              <SelectItem value="Monthly">Monthly</SelectItem>
-                                              <SelectItem value="Biweekly">Biweekly</SelectItem>
-                                              <SelectItem value="Weekly">Weekly</SelectItem>
-                                            </SelectContent>
-                                          </Select>
-                                        </FormItem>
-                                      )}
-                                    />
-                                  </div>
-
-                                  <div className="pt-4 border-t">
-                                    <FormField
-                                      control={salaryForm.control}
-                                      name="effectiveDate"
-                                      render={({ field }) => (
-                                        <FormItem>
-                                          <FormLabel>Effective Date *</FormLabel>
-                                          <FormControl>
-                                            <Input type="date" {...field} />
-                                          </FormControl>
-                                          <FormMessage />
-                                        </FormItem>
-                                      )}
-                                    />
-                                    <FormField
-                                      control={salaryForm.control}
-                                      name="reason"
-                                      render={({ field }) => (
-                                        <FormItem className="mt-4">
-                                          <FormLabel>Reason for Change *</FormLabel>
-                                          <FormControl>
-                                            <Textarea
-                                              placeholder="e.g. Annual increment, Promotion, Market adjustment"
-                                              {...field}
-                                            />
-                                          </FormControl>
-                                          <FormMessage />
-                                        </FormItem>
-                                      )}
-                                    />
-                                  </div>
-
-                                  <DialogFooter>
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      onClick={() => setIsSalaryEditOpen(false)}
-                                    >
-                                      Cancel
-                                    </Button>
-                                    <Button type="submit">Save Changes</Button>
-                                  </DialogFooter>
-                                </form>
-                              </Form>
-                            </DialogContent>
-                          </Dialog>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                          <div className="grid grid-cols-2 gap-4 text-sm">
-                            <div>
-                              <div className="text-muted-foreground">Base Monthly Salary</div>
-                              <div className="font-medium">
-                                {employee.salary
-                                  ? `${employee.salary.baseMonthly.toLocaleString()} ${employee.salary.currency}`
-                                  : "Restricted"}
-                              </div>
-                            </div>
-                            <div>
-                              <div className="text-muted-foreground">Pay Frequency</div>
-                              <div className="font-medium">
-                                {employee.salary?.payFrequency || "-"}
-                              </div>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    )}
-                  </div>
-                </>
-              )}
-            </TabsContent>
-
-            <TabsContent value="documents" className="mt-0">
-              <DocumentsTab employeeId={employeeId} />
-            </TabsContent>
-
-            <TabsContent value="leave" className="mt-0">
-              <LeaveTab employeeId={employeeId} />
-            </TabsContent>
-
-            <TabsContent value="timesheets" className="mt-0">
-              <TimesheetsTab employeeId={employeeId} />
-            </TabsContent>
-
-            <TabsContent value="attendance" className="mt-0">
-              <AttendanceTab employeeId={employeeId} />
-            </TabsContent>
-
-            <TabsContent value="travel" className="mt-0">
-              <TravelTab employeeId={employeeId} />
-            </TabsContent>
-
-            <TabsContent value="performance" className="mt-0">
-              <PerformanceTab employeeId={employeeId} />
-            </TabsContent>
-
-            <TabsContent value="training" className="mt-0">
-              <TrainingTab employeeId={employeeId} />
-            </TabsContent>
-
-            <TabsContent value="equipment" className="mt-0">
-              <EquipmentTab employeeId={employeeId} />
-            </TabsContent>
-
-            <TabsContent value="emergency_contacts" className="mt-0">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Emergency Contacts</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {!canViewPersonalDetails ? (
-                    <p className="text-sm text-muted-foreground">
-                      Restricted. Emergency contact details are visible only to the employee
-                      themselves, HR, and Super Admin.
-                    </p>
-                  ) : (employee?.emergencyContacts?.length ?? 0) === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      No emergency contacts on record. Add these from the Personal tab.
-                    </p>
-                  ) : (
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {employee!.emergencyContacts!.map((c, i) => (
-                        <div key={i} className="border rounded-md p-3 text-sm">
-                          <div className="font-medium">{c.name}</div>
-                          <div className="text-muted-foreground">{c.relationship}</div>
-                          <div>{c.phone}</div>
-                          {c.email && <div className="text-muted-foreground">{c.email}</div>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="dependants" className="mt-0">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Dependants</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {!canViewPersonalDetails ? (
-                    <p className="text-sm text-muted-foreground">
-                      Restricted. Dependant details are visible only to the employee themselves, HR,
-                      and Super Admin.
-                    </p>
-                  ) : (employee?.dependants?.length ?? 0) === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      No dependants on record. Add these from the Personal tab.
-                    </p>
-                  ) : (
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {employee!.dependants!.map((d, i) => (
-                        <div key={i} className="border rounded-md p-3 text-sm">
-                          <div className="font-medium">{d.name}</div>
-                          <div className="text-muted-foreground">{d.relationship}</div>
-                          <div>{d.dateOfBirth}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {canViewPayroll && (
-              <TabsContent value="payroll" className="mt-0">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Compensation & Payroll</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {employee?.salary ||
-                    employee?.bankDetails ||
-                    employee?.socialInsuranceNumber ? (
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <div className="text-muted-foreground">Base Monthly Salary</div>
+                          <div className="text-muted-foreground">Staff Category</div>
                           <div className="font-medium">
-                            {employee.salary
-                              ? `${employee.salary.baseMonthly.toLocaleString()} ${employee.salary.currency}`
-                              : "Restricted"}
+                            {employee.staffEntryType || "Not recorded"}
                           </div>
                         </div>
                         <div>
-                          <div className="text-muted-foreground">Pay Frequency</div>
-                          <div className="font-medium">{employee.salary?.payFrequency || "-"}</div>
-                        </div>
-                        <div>
-                          <div className="text-muted-foreground">Housing Allowance</div>
+                          <div className="text-muted-foreground">Supervisor</div>
                           <div className="font-medium">
-                            {employee.salary?.housingAllowance?.toLocaleString() ?? "-"}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-muted-foreground">Transport Allowance</div>
-                          <div className="font-medium">
-                            {employee.salary?.transportAllowance?.toLocaleString() ?? "-"}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-muted-foreground">Weekly Hours (FTE)</div>
-                          <div className="font-medium">{employee.weeklyHours ?? "-"}</div>
-                        </div>
-                        <div>
-                          <div className="text-muted-foreground">Social Insurance Number</div>
-                          <div className="font-medium">{employee.socialInsuranceNumber || "-"}</div>
-                        </div>
-                        <div className="col-span-2 border-t pt-4">
-                          <div className="text-muted-foreground mb-2 font-medium">Bank Details</div>
-                        </div>
-                        <div>
-                          <div className="text-muted-foreground">Bank Name</div>
-                          <div className="font-medium">
-                            {employee.bankDetails?.bankName || "Restricted"}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-muted-foreground">Branch</div>
-                          <div className="font-medium">{employee.bankDetails?.branch || "-"}</div>
-                        </div>
-                        <div>
-                          <div className="text-muted-foreground">IBAN</div>
-                          <div className="font-medium font-mono text-xs">
-                            {employee.bankDetails?.iban || "Restricted"}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-muted-foreground">Account Number</div>
-                          <div className="font-medium font-mono text-xs">
-                            {employee.bankDetails?.accountNumber || "Restricted"}
+                            {employee.lineManagerId ? manager?.preferredName || "Unknown" : "None"}
                           </div>
                         </div>
                       </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">
-                        No compensation data on record, or you don't have permission to view it.
-                        Salary and bank details are visible only to the employee themselves,
-                        Accounts, and Super Admin.
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
-              </TabsContent>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Identity</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <div className="text-muted-foreground">Legal Name</div>
+                          <div className="font-medium">{employee.legalName}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground">Employee Number</div>
+                          <div className="font-medium">{employee.employeeNumber}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground">Work Email</div>
+                          <div className="font-medium">{employee.workEmail}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground">Phone</div>
+                          <div className="font-medium">{employee.phone || "-"}</div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {canViewPayroll && employee.status !== "Archived" && (
+                    <Card className="md:col-span-2">
+                      <CardHeader className="flex flex-row items-center justify-between">
+                        <CardTitle>Compensation</CardTitle>
+                        <Dialog
+                          open={isSalaryEditOpen}
+                          onOpenChange={(open) => {
+                            setIsSalaryEditOpen(open);
+                            if (open) {
+                              salaryForm.reset({
+                                baseMonthly: employee.salary?.baseMonthly
+                                  ? String(employee.salary.baseMonthly)
+                                  : "",
+                                currency: employee.salary?.currency || "OMR",
+                                housingAllowance: employee.salary?.housingAllowance
+                                  ? String(employee.salary.housingAllowance)
+                                  : "",
+                                transportAllowance: employee.salary?.transportAllowance
+                                  ? String(employee.salary.transportAllowance)
+                                  : "",
+                                payFrequency: employee.salary?.payFrequency || "Monthly",
+                                effectiveDate: new Date().toISOString().slice(0, 10),
+                                reason: "",
+                              });
+                            }
+                          }}
+                        >
+                          {canEditCompensation && (
+                            <DialogTrigger asChild>
+                              <Button variant="ghost" size="sm">
+                                <Edit2 className="h-4 w-4" />
+                              </Button>
+                            </DialogTrigger>
+                          )}
+                          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+                            <DialogHeader>
+                              <DialogTitle>Update Salary</DialogTitle>
+                              <DialogDescription>
+                                Future-dated salary changes stay pending until the effective date.
+                              </DialogDescription>
+                            </DialogHeader>
+                            <Form {...salaryForm}>
+                              <form
+                                onSubmit={salaryForm.handleSubmit(onSalarySubmit)}
+                                className="space-y-4 pt-4"
+                              >
+                                <div className="grid grid-cols-2 gap-4">
+                                  <FormField
+                                    control={salaryForm.control}
+                                    name="baseMonthly"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>Base Monthly Salary *</FormLabel>
+                                        <FormControl>
+                                          <Input type="number" step="0.01" min="0" {...field} />
+                                        </FormControl>
+                                        <FormMessage />
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={salaryForm.control}
+                                    name="currency"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>Currency *</FormLabel>
+                                        <FormControl>
+                                          <Input placeholder="OMR" {...field} />
+                                        </FormControl>
+                                        <FormMessage />
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={salaryForm.control}
+                                    name="housingAllowance"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>Housing Allowance</FormLabel>
+                                        <FormControl>
+                                          <Input type="number" step="0.01" min="0" {...field} />
+                                        </FormControl>
+                                        <FormMessage />
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={salaryForm.control}
+                                    name="transportAllowance"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>Transport Allowance</FormLabel>
+                                        <FormControl>
+                                          <Input type="number" step="0.01" min="0" {...field} />
+                                        </FormControl>
+                                        <FormMessage />
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={salaryForm.control}
+                                    name="payFrequency"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>Pay Frequency</FormLabel>
+                                        <Select
+                                          onValueChange={field.onChange}
+                                          defaultValue={field.value as string}
+                                        >
+                                          <FormControl>
+                                            <SelectTrigger>
+                                              <SelectValue />
+                                            </SelectTrigger>
+                                          </FormControl>
+                                          <SelectContent>
+                                            <SelectItem value="Monthly">Monthly</SelectItem>
+                                            <SelectItem value="Biweekly">Biweekly</SelectItem>
+                                            <SelectItem value="Weekly">Weekly</SelectItem>
+                                          </SelectContent>
+                                        </Select>
+                                      </FormItem>
+                                    )}
+                                  />
+                                </div>
+
+                                <div className="pt-4 border-t">
+                                  <FormField
+                                    control={salaryForm.control}
+                                    name="effectiveDate"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>Effective Date *</FormLabel>
+                                        <FormControl>
+                                          <Input type="date" {...field} />
+                                        </FormControl>
+                                        <FormMessage />
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={salaryForm.control}
+                                    name="reason"
+                                    render={({ field }) => (
+                                      <FormItem className="mt-4">
+                                        <FormLabel>Reason for Change *</FormLabel>
+                                        <FormControl>
+                                          <Textarea
+                                            placeholder="e.g. Annual increment, Promotion, Market adjustment"
+                                            {...field}
+                                          />
+                                        </FormControl>
+                                        <FormMessage />
+                                      </FormItem>
+                                    )}
+                                  />
+                                </div>
+
+                                <DialogFooter>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() => setIsSalaryEditOpen(false)}
+                                  >
+                                    Cancel
+                                  </Button>
+                                  <Button type="submit">Save Changes</Button>
+                                </DialogFooter>
+                              </form>
+                            </Form>
+                          </DialogContent>
+                        </Dialog>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <div className="text-muted-foreground">Base Monthly Salary</div>
+                            <div className="font-medium">
+                              {employee.salary
+                                ? `${employee.salary.baseMonthly.toLocaleString()} ${employee.salary.currency}`
+                                : "Restricted"}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-muted-foreground">Pay Frequency</div>
+                            <div className="font-medium">
+                              {employee.salary?.payFrequency || "-"}
+                            </div>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              </>
             )}
+          </TabsContent>
 
-            <TabsContent value="onboarding" className="mt-0">
-              <OnboardingOffboardingTab employeeId={employeeId} />
-            </TabsContent>
+          <TabsContent value="documents" className="mt-0">
+            <DocumentsTab employeeId={employeeId} />
+          </TabsContent>
 
-            <TabsContent value="activity" className="mt-0">
+          <TabsContent value="leave" className="mt-0">
+            <LeaveTab employeeId={employeeId} />
+          </TabsContent>
+
+          <TabsContent value="timesheets" className="mt-0">
+            <TimesheetsTab employeeId={employeeId} />
+          </TabsContent>
+
+          <TabsContent value="attendance" className="mt-0">
+            <AttendanceTab employeeId={employeeId} />
+          </TabsContent>
+
+          <TabsContent value="travel" className="mt-0">
+            <TravelTab employeeId={employeeId} />
+          </TabsContent>
+
+          <TabsContent value="performance" className="mt-0">
+            <PerformanceTab employeeId={employeeId} />
+          </TabsContent>
+
+          <TabsContent value="training" className="mt-0">
+            <TrainingTab employeeId={employeeId} />
+          </TabsContent>
+
+          <TabsContent value="equipment" className="mt-0">
+            <EquipmentTab employeeId={employeeId} />
+          </TabsContent>
+
+          <TabsContent value="emergency_contacts" className="mt-0">
+            <Card>
+              <CardHeader>
+                <CardTitle>Emergency Contacts</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {!canViewPersonalDetails ? (
+                  <p className="text-sm text-muted-foreground">
+                    Restricted. Emergency contact details are visible only to the employee
+                    themselves, HR, and Super Admin.
+                  </p>
+                ) : (employee?.emergencyContacts?.length ?? 0) === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No emergency contacts on record. Add these from the Personal tab.
+                  </p>
+                ) : (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {employee!.emergencyContacts!.map((c, i) => (
+                      <div key={i} className="border rounded-md p-3 text-sm">
+                        <div className="font-medium">{c.name}</div>
+                        <div className="text-muted-foreground">{c.relationship}</div>
+                        <div>{c.phone}</div>
+                        {c.email && <div className="text-muted-foreground">{c.email}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="dependants" className="mt-0">
+            <Card>
+              <CardHeader>
+                <CardTitle>Dependants</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {!canViewPersonalDetails ? (
+                  <p className="text-sm text-muted-foreground">
+                    Restricted. Dependant details are visible only to the employee themselves, HR,
+                    and Super Admin.
+                  </p>
+                ) : (employee?.dependants?.length ?? 0) === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No dependants on record. Add these from the Personal tab.
+                  </p>
+                ) : (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {employee!.dependants!.map((d, i) => (
+                      <div key={i} className="border rounded-md p-3 text-sm">
+                        <div className="font-medium">{d.name}</div>
+                        <div className="text-muted-foreground">{d.relationship}</div>
+                        <div>{d.dateOfBirth}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {canViewPayroll && (
+            <TabsContent value="payroll" className="mt-0">
               <Card>
                 <CardHeader>
-                  <CardTitle>Employment History</CardTitle>
+                  <CardTitle>Compensation & Payroll</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Effective Date</TableHead>
-                        <TableHead>Field Changed</TableHead>
-                        <TableHead>Previous Value</TableHead>
-                        <TableHead>New Value</TableHead>
-                        <TableHead>Reason</TableHead>
-                        <TableHead>Recorded</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {visibleHistory.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                            No historical changes recorded.
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        visibleHistory.map((record) => (
-                          <TableRow key={record.id}>
-                            <TableCell className="font-medium">
-                              {format(new Date(record.effectiveDate), "MMM d, yyyy")}
-                            </TableCell>
-                            <TableCell className="capitalize">
-                              {record.field.replace(/([A-Z])/g, " $1").trim()}
-                            </TableCell>
-                            <TableCell className="text-muted-foreground line-through decoration-muted-foreground/30">
-                              {record.oldValue || "-"}
-                            </TableCell>
-                            <TableCell>{record.newValue || "-"}</TableCell>
-                            <TableCell className="text-sm">{record.reason}</TableCell>
-                            <TableCell className="text-xs text-muted-foreground">
-                              {format(new Date(record.createdAt), "MMM d, yyyy HH:mm")}
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
+                  {employee?.salary || employee?.bankDetails || employee?.socialInsuranceNumber ? (
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <div className="text-muted-foreground">Base Monthly Salary</div>
+                        <div className="font-medium">
+                          {employee.salary
+                            ? `${employee.salary.baseMonthly.toLocaleString()} ${employee.salary.currency}`
+                            : "Restricted"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Pay Frequency</div>
+                        <div className="font-medium">{employee.salary?.payFrequency || "-"}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Housing Allowance</div>
+                        <div className="font-medium">
+                          {employee.salary?.housingAllowance?.toLocaleString() ?? "-"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Transport Allowance</div>
+                        <div className="font-medium">
+                          {employee.salary?.transportAllowance?.toLocaleString() ?? "-"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Weekly Hours (FTE)</div>
+                        <div className="font-medium">{employee.weeklyHours ?? "-"}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Social Insurance Number</div>
+                        <div className="font-medium">{employee.socialInsuranceNumber || "-"}</div>
+                      </div>
+                      <div className="col-span-2 border-t pt-4">
+                        <div className="text-muted-foreground mb-2 font-medium">Bank Details</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Bank Name</div>
+                        <div className="font-medium">
+                          {employee.bankDetails?.bankName || "Restricted"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Branch</div>
+                        <div className="font-medium">{employee.bankDetails?.branch || "-"}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">IBAN</div>
+                        <div className="font-medium font-mono text-xs">
+                          {employee.bankDetails?.iban || "Restricted"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Account Number</div>
+                        <div className="font-medium font-mono text-xs">
+                          {employee.bankDetails?.accountNumber || "Restricted"}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      No compensation data on record, or you don't have permission to view it.
+                      Salary and bank details are visible only to the employee themselves, Accounts,
+                      and Super Admin.
+                    </p>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>
+          )}
 
-            {canViewAudit && (
-              <TabsContent value="audit" className="mt-0 min-h-[500px]">
-                <AuditViewer
-                  entityId={rawEmployee?.databaseId ?? employeeId}
-                  entityType="employee"
-                />
-              </TabsContent>
-            )}
-          </div>
+          <TabsContent value="onboarding" className="mt-0">
+            <OnboardingOffboardingTab employeeId={employeeId} />
+          </TabsContent>
+
+          <TabsContent value="activity" className="mt-0">
+            <Card>
+              <CardHeader>
+                <CardTitle>Employment History</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Effective Date</TableHead>
+                      <TableHead>Field Changed</TableHead>
+                      <TableHead>Previous Value</TableHead>
+                      <TableHead>New Value</TableHead>
+                      <TableHead>Reason</TableHead>
+                      <TableHead>Recorded</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {visibleHistory.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                          No historical changes recorded.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      visibleHistory.map((record) => (
+                        <TableRow key={record.id}>
+                          <TableCell className="font-medium">
+                            {format(new Date(record.effectiveDate), "MMM d, yyyy")}
+                          </TableCell>
+                          <TableCell className="capitalize">
+                            {record.field.replace(/([A-Z])/g, " $1").trim()}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground line-through decoration-muted-foreground/30">
+                            {record.oldValue || "-"}
+                          </TableCell>
+                          <TableCell>{record.newValue || "-"}</TableCell>
+                          <TableCell className="text-sm">{record.reason}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {format(new Date(record.createdAt), "MMM d, yyyy HH:mm")}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {canViewAudit && (
+            <TabsContent value="audit" className="mt-0 min-h-[500px]">
+              <AuditViewer entityId={rawEmployee?.databaseId ?? employeeId} entityType="employee" />
+            </TabsContent>
+          )}
         </div>
       </Tabs>
     </div>

@@ -7,6 +7,10 @@ import {
   payslipEmployee,
   publishPayslip,
   readPayslip,
+  listPayslipHistory,
+  payslipForReplacement,
+  replacePayslip,
+  removeUnassignedPayslipFile,
 } from "../db/repositories/payslip.repository.server.ts";
 import { deleteObjectFile, saveObjectFile } from "../db/object-storage.server.ts";
 import {
@@ -113,14 +117,60 @@ export const uploadPayslipFn = createServerFn({ method: "POST" })
         v.actor,
       );
     } catch (error) {
-      await deleteObjectFile(
-        v.organisationId,
-        file.id,
-        v.actor,
-        "Removed unassigned payslip after publication failed",
-      ).catch(() => undefined);
+      await removeUnassignedPayslipFile(v.organisationId, file.id, v.actor).catch(() => undefined);
       throw error;
     }
+  });
+export const replacePayslipFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: Actor,
+        id: z.string().uuid(),
+        expectedVersion: z.number().int().positive(),
+        reason: z.string().trim().min(5).max(1000),
+        file: Evidence.extend({ mimeType: z.literal("application/pdf") }),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    const previous = await payslipForReplacement(
+      v.organisationId,
+      data.id,
+      data.expectedVersion,
+      v.actor,
+    );
+    const file = await saveObjectFile({
+      organisationId: v.organisationId,
+      bytes: verifiedEvidence(data.file),
+      name: data.file.fileName,
+      mimeType: "application/pdf",
+      owner: { entityType: "employee-payslip", entityId: previous.employeeId },
+      actor: v.actor,
+    });
+    try {
+      return await replacePayslip(
+        v.organisationId,
+        {
+          id: data.id,
+          expectedVersion: data.expectedVersion,
+          fileId: file.id,
+          reason: data.reason,
+        },
+        v.actor,
+      );
+    } catch (error) {
+      await removeUnassignedPayslipFile(v.organisationId, file.id, v.actor).catch(() => undefined);
+      throw error;
+    }
+  });
+export const getPayslipHistoryFn = createServerFn({ method: "GET" })
+  .validator((input) => z.object({ actor: Actor, id: z.string().uuid() }).strict().parse(input))
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    return listPayslipHistory(v.organisationId, data.id, v.actor);
   });
 export const downloadPayslipFn = createServerFn({ method: "GET" })
   .validator((input) => z.object({ actor: Actor, id: z.string().uuid() }).strict().parse(input))

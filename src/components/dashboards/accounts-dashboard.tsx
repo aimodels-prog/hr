@@ -19,7 +19,18 @@ import {
   type PulseMetric,
 } from "@/components/dashboards/dashboard-kit";
 
+import { StaffDataBoundary } from "@/components/layout/staff-data-boundary";
+import { DASHBOARD_MODULES } from "@/lib/data/staff-module-plan";
+
 export function AccountsDashboard() {
+  return (
+    <StaffDataBoundary modules={DASHBOARD_MODULES.accounts}>
+      <AccountsDashboardDetails />
+    </StaffDataBoundary>
+  );
+}
+
+function AccountsDashboardDetails() {
   const currentUser = useCurrentUser();
   const actorContext = currentUser.getActorContext();
   const travelService = useMemo(() => new TravelService(), []);

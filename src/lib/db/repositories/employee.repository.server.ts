@@ -1,8 +1,20 @@
 import "@tanstack/react-start/server-only";
 
-import { and, asc, eq, inArray, isNull, ne, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, ne, notInArray, sql } from "drizzle-orm";
+import {
+  canManageEmploymentFields,
+  employmentCalendarDate,
+  sameEmploymentValue,
+  validateEmploymentEffectiveDate,
+  type EmploymentChangeResult,
+  type ScheduledEmploymentChangeView,
+} from "../../data/employment-change-policy.ts";
 
 import type { AuditActorContext } from "./master-data.repository.server.ts";
+import {
+  assignSupervisorApprovalAccess,
+  validateSupervisorAccount,
+} from "./supervisor-access.repository.server.ts";
 import type {
   BankDetails,
   Employee,
@@ -37,6 +49,13 @@ import {
 } from "../schema/master-data.ts";
 import { auditEvents, notifications } from "../schema/system.ts";
 import { encryptSensitiveJson } from "../encryption.server.ts";
+import { scheduledEmploymentChanges } from "../schema/employment-schedule.ts";
+import { appSettings, organisations } from "../schema/organisation.ts";
+
+type EmploymentTransaction = Parameters<
+  Parameters<ReturnType<typeof getDatabaseClient>["transaction"]>[0]
+>[0];
+type ScheduledEmploymentChange = typeof scheduledEmploymentChanges.$inferSelect;
 
 function iso(value: Date | string | null | undefined): string | undefined {
   if (!value) return undefined;
@@ -734,7 +753,8 @@ export async function updateUserAccessInDatabase(
       .select()
       .from(users)
       .where(and(eq(users.organisationId, organisationId), eq(users.id, targetUserId)))
-      .limit(1);
+      .limit(1)
+      .for("update");
     if (!target) throw new Error("User not found.");
     if (target.id === actor.userId) {
       throw new Error("Ask another authorised administrator to change your access.");
@@ -934,217 +954,256 @@ export async function updateEmploymentRecordInDatabase(
   effectiveDate: string,
   reason: string,
   actor: AuditActorContext,
-): Promise<void> {
-  const db = getDatabaseClient();
-  await db.transaction(async (tx) => {
-    const [current] = await tx
-      .select()
-      .from(employees)
-      .where(and(eq(employees.organisationId, organisationId), eq(employees.id, employeeId)))
+  now = new Date(),
+): Promise<EmploymentChangeResult> {
+  return getDatabaseClient().transaction((tx) =>
+    applyEmploymentRecord(
+      tx,
+      organisationId,
+      employeeId,
+      changes,
+      effectiveDate,
+      reason,
+      actor,
+      now,
+    ),
+  );
+}
+
+async function applyEmploymentRecord(
+  tx: EmploymentTransaction,
+  organisationId: string,
+  employeeId: string,
+  changes: EmploymentRecordChanges,
+  effectiveDate: string,
+  reason: string,
+  actor: AuditActorContext,
+  now: Date,
+  scheduled?: ScheduledEmploymentChange,
+): Promise<EmploymentChangeResult> {
+  validateEmploymentEffectiveDate(effectiveDate);
+  if (reason.trim().length < 5) throw new Error("Give a reason of at least five characters.");
+  // Also serialises reporting-line checks across employees, and schedule cancellation/application.
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${`employment:${organisationId}`}, 0))`,
+  );
+  const [current] = await tx
+    .select()
+    .from(employees)
+    .where(and(eq(employees.organisationId, organisationId), eq(employees.id, employeeId)))
+    .for("update")
+    .limit(1);
+  if (!current) throw new Error("Employee not found.");
+  if (current.archivedAt || ["Archived", "Inactive"].includes(current.status))
+    throw new Error("Employment changes cannot be applied to an inactive or archived employee.");
+
+  let fields = Object.keys(changes).filter(
+    (field) => changes[field as keyof EmploymentRecordChanges] !== undefined,
+  ) as Array<keyof EmploymentRecordChanges>;
+  if (fields.length === 0) throw new Error("Select at least one employment detail to change.");
+  const changesSalary = fields.includes("salary");
+  const changesEmployment = fields.some((field) => field !== "salary");
+  if (changesSalary && actor.activeRole !== "Accounts" && actor.activeRole !== "Super Admin") {
+    throw new Error("Only Accounts or a Super Admin can change compensation.");
+  }
+  if (changesEmployment && actor.activeRole !== "HR" && actor.activeRole !== "Super Admin") {
+    throw new Error("Only HR or a Super Admin can change employment details.");
+  }
+  if (!canManageEmploymentFields(actor.activeRole, fields))
+    throw new Error("This workflow can change employment details only.");
+  const [settings] = await tx
+    .select({ timezone: appSettings.timezone })
+    .from(appSettings)
+    .where(eq(appSettings.organisationId, organisationId))
+    .limit(1);
+  if (!settings)
+    throw new Error("Configure the organisation timezone before changing employment details.");
+  const today = employmentCalendarDate(settings.timezone, now);
+  if (scheduled && effectiveDate > today) throw new Error("This employment change is not due yet.");
+
+  const resolveNamedMaster = async (
+    table:
+      | typeof departments
+      | typeof positions
+      | typeof grades
+      | typeof locations
+      | typeof employmentTypes,
+    name: string | undefined,
+    label: string,
+  ): Promise<string | null | undefined> => {
+    if (name === undefined) return undefined;
+    if (!name.trim()) {
+      if (label === "grade") return null;
+      throw new Error(`Select an active ${label}.`);
+    }
+    const [record] = await tx
+      .select({ id: table.id })
+      .from(table)
+      .where(
+        and(
+          eq(table.organisationId, organisationId),
+          eq(table.name, name),
+          eq(table.isActive, true),
+          isNull(table.archivedAt),
+        ),
+      )
       .limit(1);
-    if (!current) throw new Error("Employee not found.");
+    if (!record) throw new Error(`Select an active ${label}.`);
+    return record.id;
+  };
 
-    const fields = Object.keys(changes) as Array<keyof EmploymentRecordChanges>;
-    if (fields.length === 0) throw new Error("Select at least one employment detail to change.");
-    const changesSalary = fields.includes("salary");
-    const changesEmployment = fields.some((field) => field !== "salary");
-    if (changesSalary && actor.activeRole !== "Accounts" && actor.activeRole !== "Super Admin") {
-      throw new Error("Only Accounts or a Super Admin can change compensation.");
-    }
-    if (changesEmployment && actor.activeRole !== "HR" && actor.activeRole !== "Super Admin") {
-      throw new Error("Only HR or a Super Admin can change employment details.");
-    }
+  const departmentId = await resolveNamedMaster(departments, changes.department, "department");
+  const positionId = await resolveNamedMaster(positions, changes.position, "position");
+  const gradeId = await resolveNamedMaster(grades, changes.grade, "grade");
+  const locationId = await resolveNamedMaster(locations, changes.location, "location");
+  const employmentTypeId = await resolveNamedMaster(
+    employmentTypes,
+    changes.employmentType,
+    "employment type",
+  );
 
-    const resolveNamedMaster = async (
-      table:
-        | typeof departments
-        | typeof positions
-        | typeof grades
-        | typeof locations
-        | typeof employmentTypes,
-      name: string | undefined,
-      label: string,
-    ): Promise<string | null | undefined> => {
-      if (name === undefined) return undefined;
-      if (!name.trim()) {
-        if (label === "grade") return null;
-        throw new Error(`Select an active ${label}.`);
-      }
-      const [record] = await tx
-        .select({ id: table.id })
-        .from(table)
-        .where(
-          and(
-            eq(table.organisationId, organisationId),
-            eq(table.name, name),
-            eq(table.isActive, true),
-            isNull(table.archivedAt),
-          ),
-        )
-        .limit(1);
-      if (!record) throw new Error(`Select an active ${label}.`);
-      return record.id;
-    };
-
-    const departmentId = await resolveNamedMaster(departments, changes.department, "department");
-    const positionId = await resolveNamedMaster(positions, changes.position, "position");
-    const gradeId = await resolveNamedMaster(grades, changes.grade, "grade");
-    const locationId = await resolveNamedMaster(locations, changes.location, "location");
-    const employmentTypeId = await resolveNamedMaster(
-      employmentTypes,
-      changes.employmentType,
-      "employment type",
+  if (changes.lineManagerId !== undefined && changes.lineManagerId !== null) {
+    await validateSupervisorAccount(
+      tx,
+      organisationId,
+      employeeId,
+      changes.lineManagerId,
+      "update",
     );
-
-    if (changes.lineManagerId !== undefined && changes.lineManagerId !== null) {
-      if (changes.lineManagerId === employeeId)
-        throw new Error("An employee cannot report to themselves.");
-      const organisationEmployees = await tx
-        .select({ id: employees.id, managerId: employees.lineManagerId, status: employees.status })
-        .from(employees)
-        .where(eq(employees.organisationId, organisationId));
-      const manager = organisationEmployees.find((row) => row.id === changes.lineManagerId);
-      if (!manager || manager.status === "Archived") {
-        throw new Error("Selected supervisor is invalid or archived.");
-      }
-      const managerByEmployee = new Map(
-        organisationEmployees.map((row) => [row.id, row.managerId]),
-      );
-      let cursor: string | null | undefined = changes.lineManagerId;
-      const visited = new Set<string>();
-      while (cursor) {
-        if (cursor === employeeId)
-          throw new Error("The selected supervisor creates a reporting cycle.");
-        if (visited.has(cursor))
-          throw new Error("The existing reporting structure contains a cycle.");
-        visited.add(cursor);
-        cursor = managerByEmployee.get(cursor);
-      }
+    if (changes.lineManagerId === employeeId)
+      throw new Error("An employee cannot report to themselves.");
+    const organisationEmployees = await tx
+      .select({ id: employees.id, managerId: employees.lineManagerId, status: employees.status })
+      .from(employees)
+      .where(eq(employees.organisationId, organisationId));
+    const manager = organisationEmployees.find((row) => row.id === changes.lineManagerId);
+    if (!manager || manager.status === "Archived") {
+      throw new Error("Selected supervisor is invalid or archived.");
     }
+    const managerByEmployee = new Map(organisationEmployees.map((row) => [row.id, row.managerId]));
+    let cursor: string | null | undefined = changes.lineManagerId;
+    const visited = new Set<string>();
+    while (cursor) {
+      if (cursor === employeeId)
+        throw new Error("The selected supervisor creates a reporting cycle.");
+      if (visited.has(cursor))
+        throw new Error("The existing reporting structure contains a cycle.");
+      visited.add(cursor);
+      cursor = managerByEmployee.get(cursor);
+    }
+  }
 
-    for (const [id, table, label] of [
-      [changes.projectId, projects, "project"],
-      [changes.costCentreId, costCentres, "cost centre"],
-    ] as const) {
-      if (id === undefined) continue;
-      if (!id) continue;
-      const [record] = await tx
-        .select({ id: table.id })
-        .from(table)
+  for (const [id, table, label] of [
+    [changes.projectId, projects, "project"],
+    [changes.costCentreId, costCentres, "cost centre"],
+  ] as const) {
+    if (id === undefined) continue;
+    if (!id) continue;
+    const [record] = await tx
+      .select({ id: table.id })
+      .from(table)
+      .where(
+        and(
+          eq(table.organisationId, organisationId),
+          eq(table.id, id),
+          eq(table.isActive, true),
+          isNull(table.archivedAt),
+        ),
+      )
+      .limit(1);
+    if (!record) throw new Error(`Select an active ${label}.`);
+  }
+
+  if (changes.salary) {
+    if (changes.salary.baseMonthly <= 0 || !changes.salary.currency.trim()) {
+      throw new Error("Compensation requires a positive base salary and currency.");
+    }
+  }
+  const [compensation] = changes.salary
+    ? await tx
+        .select()
+        .from(employeeCompensation)
         .where(
           and(
-            eq(table.organisationId, organisationId),
-            eq(table.id, id),
-            eq(table.isActive, true),
-            isNull(table.archivedAt),
+            eq(employeeCompensation.organisationId, organisationId),
+            eq(employeeCompensation.employeeId, employeeId),
           ),
         )
-        .limit(1);
-      if (!record) throw new Error(`Select an active ${label}.`);
-    }
-
-    if (changes.salary) {
-      if (changes.salary.baseMonthly <= 0 || !changes.salary.currency.trim()) {
-        throw new Error("Compensation requires a positive base salary and currency.");
-      }
-      await tx
-        .insert(employeeCompensation)
-        .values({
-          organisationId,
-          employeeId,
-          encryptedPayload: encryptSensitiveJson(changes.salary),
-          createdBy: actor.userId ?? employeeId,
-          updatedBy: actor.userId ?? employeeId,
-        })
-        .onConflictDoUpdate({
-          target: employeeCompensation.employeeId,
-          set: {
-            encryptedPayload: encryptSensitiveJson(changes.salary),
-            updatedAt: new Date(),
-            updatedBy: actor.userId ?? employeeId,
-            recordVersion: sql`${employeeCompensation.recordVersion} + 1`,
-          },
-        });
-    }
-
-    const updateValues: Partial<typeof employees.$inferInsert> = {
-      updatedAt: new Date(),
+    : [];
+  const previous: Record<string, unknown> = {
+    ...current,
+    department: current.departmentId,
+    position: current.positionId,
+    location: current.locationId,
+    grade: current.gradeId,
+    employmentType: current.employmentTypeId,
+    weeklyHours: current.weeklyHours === null ? null : Number(current.weeklyHours),
+    salary: compensation ? decryptSensitiveJson(compensation.encryptedPayload) : null,
+  };
+  const proposed: Record<string, unknown> = {
+    ...changes,
+    department: departmentId,
+    position: positionId,
+    grade: gradeId,
+    location: locationId,
+    employmentType: employmentTypeId,
+  };
+  if (scheduled) {
+    const payload = decryptSensitiveJson<{ baseline: Record<string, unknown> }>(
+      scheduled.encryptedPayload,
+    );
+    if (fields.some((field) => !sameEmploymentValue(previous[field], payload.baseline[field])))
+      throw new Error(
+        "The employee details have changed since this change was scheduled. Review and schedule a new change.",
+      );
+  }
+  if (changes.lineManagerId && effectiveDate <= today) {
+    await assignSupervisorApprovalAccess(
+      tx,
+      organisationId,
+      employeeId,
+      changes.lineManagerId,
+      actor,
+    );
+  }
+  fields = fields.filter((field) => !sameEmploymentValue(previous[field], proposed[field]));
+  if (fields.length === 0) return { status: "Applied", effectiveDate };
+  changes = Object.fromEntries(
+    fields.map((field) => [field, changes[field]]),
+  ) as EmploymentRecordChanges;
+  const pending = await tx
+    .select({ id: scheduledEmploymentChanges.id, fields: scheduledEmploymentChanges.fields })
+    .from(scheduledEmploymentChanges)
+    .where(
+      and(
+        eq(scheduledEmploymentChanges.organisationId, organisationId),
+        eq(scheduledEmploymentChanges.employeeId, employeeId),
+        eq(scheduledEmploymentChanges.status, "Pending"),
+      ),
+    );
+  if (
+    pending.some(
+      (entry) => entry.id !== scheduled?.id && fields.some((field) => entry.fields.includes(field)),
+    )
+  )
+    throw new Error(
+      "A pending change already covers these details. Cancel that scheduled change before replacing it.",
+    );
+  if (effectiveDate > today) {
+    await tx.insert(scheduledEmploymentChanges).values({
+      organisationId,
+      employeeId,
+      effectiveDate,
+      fields,
+      encryptedPayload: encryptSensitiveJson({
+        changes,
+        baseline: Object.fromEntries(fields.map((field) => [field, previous[field] ?? null])),
+      }),
+      reason: reason.trim(),
+      authorRole: actor.activeRole,
+      createdBy: actor.userId ?? employeeId,
       updatedBy: actor.userId ?? employeeId,
-      recordVersion: sql`${employees.recordVersion} + 1` as never,
-    };
-    if (departmentId) updateValues.departmentId = departmentId;
-    if (positionId) updateValues.positionId = positionId;
-    if (gradeId !== undefined) updateValues.gradeId = gradeId;
-    if (locationId) updateValues.locationId = locationId;
-    if (employmentTypeId) updateValues.employmentTypeId = employmentTypeId;
-    if (changes.staffEntryType !== undefined) updateValues.staffEntryType = changes.staffEntryType;
-    if (changes.visaRequired !== undefined) updateValues.visaRequired = changes.visaRequired;
-    if (changes.lineManagerId !== undefined) updateValues.lineManagerId = changes.lineManagerId;
-    if (changes.projectId !== undefined) updateValues.projectId = changes.projectId || null;
-    if (changes.costCentreId !== undefined)
-      updateValues.costCentreId = changes.costCentreId || null;
-    if (changes.startDate !== undefined) updateValues.startDate = changes.startDate;
-    if (changes.probationEndDate !== undefined)
-      updateValues.probationEndDate = changes.probationEndDate || null;
-    if (changes.weeklyHours !== undefined) updateValues.weeklyHours = String(changes.weeklyHours);
-    if (changesEmployment) {
-      await tx
-        .update(employees)
-        .set(updateValues)
-        .where(and(eq(employees.organisationId, organisationId), eq(employees.id, employeeId)));
-    }
-
-    if (changes.lineManagerId !== undefined && changes.lineManagerId !== current.lineManagerId) {
-      await tx
-        .update(employeeReportingLines)
-        .set({
-          effectiveTo: effectiveDate,
-          updatedAt: new Date(),
-          updatedBy: actor.userId ?? employeeId,
-          recordVersion: sql`${employeeReportingLines.recordVersion} + 1`,
-        })
-        .where(
-          and(
-            eq(employeeReportingLines.organisationId, organisationId),
-            eq(employeeReportingLines.employeeId, employeeId),
-            eq(employeeReportingLines.isPrimary, true),
-            isNull(employeeReportingLines.effectiveTo),
-            isNull(employeeReportingLines.archivedAt),
-          ),
-        );
-      if (changes.lineManagerId) {
-        await tx.insert(employeeReportingLines).values({
-          organisationId,
-          employeeId,
-          supervisorId: changes.lineManagerId,
-          effectiveFrom: effectiveDate,
-          isPrimary: true,
-          reason,
-          createdBy: actor.userId ?? employeeId,
-          updatedBy: actor.userId ?? employeeId,
-        });
-      }
-    }
-
-    for (const field of fields) {
-      const oldValue =
-        field === "salary"
-          ? "Compensation on file"
-          : String(current[field as keyof typeof current] ?? "");
-      const nextValue = field === "salary" ? "Compensation updated" : String(changes[field] ?? "");
-      if (oldValue === nextValue) continue;
-      await tx.insert(employmentChanges).values({
-        organisationId,
-        employeeId,
-        effectiveDate,
-        field,
-        oldValue,
-        newValue: nextValue,
-        reason,
-        createdBy: actor.userId ?? employeeId,
-        updatedBy: actor.userId ?? employeeId,
-      });
-    }
+    });
     await tx.insert(auditEvents).values({
       organisationId,
       actorUserId: actor.userId,
@@ -1152,16 +1211,407 @@ export async function updateEmploymentRecordInDatabase(
       actorDisplayName: actor.displayName,
       activeRole: actor.activeRole,
       actorRoles: actor.roles ?? [actor.activeRole],
-      action: "update",
+      action: "schedule",
       module: "core-hr",
       entityType: "employee",
       entityId: employeeId,
-      beforeSummary: { changedFields: fields },
-      afterSummary: { changedFields: fields, effectiveDate },
-      reason,
+      afterSummary: { changedFields: fields, effectiveDate, status: "Pending" },
+      reason: reason.trim(),
       riskLevel: changesSalary ? "Critical" : "High",
     });
+    return { status: "Scheduled", effectiveDate };
+  }
+
+  if (changes.salary) {
+    await tx
+      .insert(employeeCompensation)
+      .values({
+        organisationId,
+        employeeId,
+        encryptedPayload: encryptSensitiveJson(changes.salary),
+        createdBy: actor.userId ?? employeeId,
+        updatedBy: actor.userId ?? employeeId,
+      })
+      .onConflictDoUpdate({
+        target: employeeCompensation.employeeId,
+        set: {
+          encryptedPayload: encryptSensitiveJson(changes.salary),
+          updatedAt: new Date(),
+          updatedBy: actor.userId ?? employeeId,
+          recordVersion: sql`${employeeCompensation.recordVersion} + 1`,
+        },
+      });
+  }
+
+  const updateValues: Partial<typeof employees.$inferInsert> = {
+    updatedAt: new Date(),
+    updatedBy: actor.userId ?? employeeId,
+    recordVersion: sql`${employees.recordVersion} + 1` as never,
+  };
+  if (departmentId) updateValues.departmentId = departmentId;
+  if (positionId) updateValues.positionId = positionId;
+  if (gradeId !== undefined) updateValues.gradeId = gradeId;
+  if (locationId) updateValues.locationId = locationId;
+  if (employmentTypeId) updateValues.employmentTypeId = employmentTypeId;
+  if (changes.staffEntryType !== undefined) updateValues.staffEntryType = changes.staffEntryType;
+  if (changes.visaRequired !== undefined) updateValues.visaRequired = changes.visaRequired;
+  if (changes.lineManagerId !== undefined) updateValues.lineManagerId = changes.lineManagerId;
+  if (changes.projectId !== undefined) updateValues.projectId = changes.projectId || null;
+  if (changes.costCentreId !== undefined) updateValues.costCentreId = changes.costCentreId || null;
+  if (changes.startDate !== undefined) updateValues.startDate = changes.startDate;
+  if (changes.probationEndDate !== undefined)
+    updateValues.probationEndDate = changes.probationEndDate || null;
+  if (changes.weeklyHours !== undefined) updateValues.weeklyHours = String(changes.weeklyHours);
+  if (changesEmployment) {
+    await tx
+      .update(employees)
+      .set(updateValues)
+      .where(and(eq(employees.organisationId, organisationId), eq(employees.id, employeeId)));
+  }
+
+  if (changes.lineManagerId !== undefined && changes.lineManagerId !== current.lineManagerId) {
+    await tx
+      .update(employeeReportingLines)
+      .set({
+        effectiveTo: effectiveDate,
+        updatedAt: new Date(),
+        updatedBy: actor.userId ?? employeeId,
+        recordVersion: sql`${employeeReportingLines.recordVersion} + 1`,
+      })
+      .where(
+        and(
+          eq(employeeReportingLines.organisationId, organisationId),
+          eq(employeeReportingLines.employeeId, employeeId),
+          eq(employeeReportingLines.isPrimary, true),
+          isNull(employeeReportingLines.effectiveTo),
+          isNull(employeeReportingLines.archivedAt),
+        ),
+      );
+    if (changes.lineManagerId) {
+      await tx.insert(employeeReportingLines).values({
+        organisationId,
+        employeeId,
+        supervisorId: changes.lineManagerId,
+        effectiveFrom: effectiveDate,
+        isPrimary: true,
+        reason,
+        createdBy: actor.userId ?? employeeId,
+        updatedBy: actor.userId ?? employeeId,
+      });
+    }
+  }
+
+  for (const field of fields) {
+    const oldValue = field === "salary" ? "Compensation on file" : String(previous[field] ?? "");
+    const nextValue = field === "salary" ? "Compensation updated" : String(changes[field] ?? "");
+    if (oldValue === nextValue) continue;
+    await tx.insert(employmentChanges).values({
+      organisationId,
+      employeeId,
+      effectiveDate,
+      field,
+      oldValue,
+      newValue: nextValue,
+      reason,
+      createdBy: actor.userId ?? employeeId,
+      updatedBy: actor.userId ?? employeeId,
+    });
+  }
+  await tx.insert(auditEvents).values({
+    organisationId,
+    actorUserId: actor.userId,
+    actorEmployeeId: actor.employeeId,
+    actorDisplayName: actor.displayName,
+    activeRole: actor.activeRole,
+    actorRoles: actor.roles ?? [actor.activeRole],
+    action: "update",
+    module: "core-hr",
+    entityType: "employee",
+    entityId: employeeId,
+    beforeSummary: { changedFields: fields },
+    afterSummary: { changedFields: fields, effectiveDate },
+    reason,
+    riskLevel: changesSalary ? "Critical" : "High",
   });
+  return { status: "Applied", effectiveDate };
+}
+
+export async function listScheduledEmploymentChangesInDatabase(
+  organisationId: string,
+  employeeId: string,
+  actor: AuditActorContext,
+): Promise<ScheduledEmploymentChangeView[]> {
+  if (!["HR", "Accounts", "Super Admin"].includes(actor.activeRole))
+    throw new Error("You do not have access to scheduled employment changes.");
+  const rows = await getDatabaseClient()
+    .select()
+    .from(scheduledEmploymentChanges)
+    .where(
+      and(
+        eq(scheduledEmploymentChanges.organisationId, organisationId),
+        eq(scheduledEmploymentChanges.employeeId, employeeId),
+        inArray(scheduledEmploymentChanges.status, ["Pending", "Needs Review"]),
+      ),
+    )
+    .orderBy(
+      asc(scheduledEmploymentChanges.effectiveDate),
+      asc(scheduledEmploymentChanges.createdAt),
+    );
+  return rows
+    .filter((row) => canManageEmploymentFields(actor.activeRole, row.fields))
+    .map((row) => ({
+      id: row.id,
+      effectiveDate: row.effectiveDate,
+      fields: row.fields,
+      changes: decryptSensitiveJson<{ changes: ScheduledEmploymentChangeView["changes"] }>(
+        row.encryptedPayload,
+      ).changes,
+      reason: row.reason,
+      status: row.status as "Pending" | "Needs Review",
+      reviewNote: row.reviewNote,
+    }));
+}
+
+export async function cancelScheduledEmploymentChangeInDatabase(
+  organisationId: string,
+  id: string,
+  reason: string,
+  actor: AuditActorContext,
+): Promise<void> {
+  if (reason.trim().length < 5)
+    throw new Error("Give a cancellation reason of at least five characters.");
+  await getDatabaseClient().transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`employment:${organisationId}`}, 0))`,
+    );
+    const [row] = await tx
+      .select()
+      .from(scheduledEmploymentChanges)
+      .where(
+        and(
+          eq(scheduledEmploymentChanges.organisationId, organisationId),
+          eq(scheduledEmploymentChanges.id, id),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!row) throw new Error("Scheduled change not found.");
+    if (!canManageEmploymentFields(actor.activeRole, row.fields))
+      throw new Error("You do not have permission to cancel this scheduled change.");
+    if (row.status !== "Pending" && row.status !== "Needs Review")
+      throw new Error("This scheduled change has already been applied or cancelled.");
+    await tx
+      .update(scheduledEmploymentChanges)
+      .set({
+        status: "Cancelled",
+        updatedAt: new Date(),
+        updatedBy: actor.userId,
+        recordVersion: sql`${scheduledEmploymentChanges.recordVersion} + 1`,
+      })
+      .where(eq(scheduledEmploymentChanges.id, id));
+    await tx.insert(auditEvents).values({
+      organisationId,
+      actorUserId: actor.userId,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [actor.activeRole],
+      action: "cancel",
+      module: "core-hr",
+      entityType: "scheduled-employment-change",
+      entityId: id,
+      afterSummary: { employeeId: row.employeeId, effectiveDate: row.effectiveDate },
+      reason: reason.trim(),
+      riskLevel: row.fields.includes("salary") ? "Critical" : "High",
+    });
+  });
+}
+
+/** Worker-only entry point; never accepts a browser-supplied clock or authority. */
+export async function processScheduledEmploymentChanges(
+  now = new Date(),
+  organisationId?: string,
+): Promise<{ applied: number; needsReview: number }> {
+  const db = getDatabaseClient();
+  const orgs = await db
+    .select({ id: organisations.id, timezone: appSettings.timezone })
+    .from(organisations)
+    .innerJoin(appSettings, eq(appSettings.organisationId, organisations.id))
+    .where(
+      and(
+        eq(organisations.isActive, true),
+        organisationId ? eq(organisations.id, organisationId) : undefined,
+      ),
+    );
+  let applied = 0;
+  let needsReview = 0;
+  for (const org of orgs) {
+    const today = employmentCalendarDate(org.timezone, now);
+    const due = await db
+      .select({ id: scheduledEmploymentChanges.id })
+      .from(scheduledEmploymentChanges)
+      .where(
+        and(
+          eq(scheduledEmploymentChanges.organisationId, org.id),
+          eq(scheduledEmploymentChanges.status, "Pending"),
+          lte(scheduledEmploymentChanges.effectiveDate, today),
+        ),
+      )
+      .orderBy(
+        asc(scheduledEmploymentChanges.effectiveDate),
+        asc(scheduledEmploymentChanges.createdAt),
+      )
+      .limit(100);
+    for (const entry of due) {
+      const outcome = await db.transaction(async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtextextended(${`employment:${org.id}`}, 0))`,
+        );
+        const [row] = await tx
+          .select()
+          .from(scheduledEmploymentChanges)
+          .where(
+            and(
+              eq(scheduledEmploymentChanges.organisationId, org.id),
+              eq(scheduledEmploymentChanges.id, entry.id),
+            ),
+          )
+          .for("update")
+          .limit(1);
+        if (!row || row.status !== "Pending" || row.effectiveDate > today) return "Skipped";
+        let reviewNote: string | null = null;
+        try {
+          // Savepoint ensures a failed application cannot leave a partial employee/payroll update.
+          await tx.transaction(async (work) => {
+            const [author] = await work
+              .select()
+              .from(users)
+              .where(
+                and(
+                  eq(users.organisationId, org.id),
+                  eq(users.id, row.createdBy),
+                  eq(users.status, "Active"),
+                  isNull(users.archivedAt),
+                ),
+              )
+              .limit(1);
+            const authorRoles = await work
+              .select({ code: roles.code })
+              .from(userRoles)
+              .innerJoin(roles, eq(userRoles.roleId, roles.id))
+              .where(
+                and(eq(userRoles.organisationId, org.id), eq(userRoles.userId, row.createdBy)),
+              );
+            if (!author || !authorRoles.some((role) => role.code === row.authorRole))
+              throw new Error(
+                "The person who scheduled this change no longer has the required access.",
+              );
+            const { changes } = decryptSensitiveJson<{ changes: EmploymentRecordChanges }>(
+              row.encryptedPayload,
+            );
+            await applyEmploymentRecord(
+              work,
+              org.id,
+              row.employeeId,
+              changes,
+              row.effectiveDate,
+              row.reason,
+              {
+                userId: author.id,
+                employeeId: author.employeeId,
+                displayName: author.displayName,
+                activeRole: row.authorRole,
+                roles: authorRoles.map((role) => role.code),
+              },
+              now,
+              row,
+            );
+          });
+        } catch (error) {
+          // Only expose controlled validation messages, never SQL errors containing parameters.
+          const message = error instanceof Error ? error.message : "";
+          reviewNote =
+            message.startsWith("The employee details have changed") ||
+            message.startsWith("The person who scheduled") ||
+            message.startsWith("Employment changes cannot be applied") ||
+            /^Select an active (department|position|grade|location|employment type|project|cost centre)\.$/.test(
+              message,
+            )
+              ? message
+              : "Not applied. Review the employee's details, selected references and scheduler access, then cancel and create a corrected change.";
+        }
+        await tx
+          .update(scheduledEmploymentChanges)
+          .set({
+            status: reviewNote ? "Needs Review" : "Applied",
+            appliedAt: reviewNote ? null : now,
+            reviewNote,
+            updatedAt: now,
+            recordVersion: sql`${scheduledEmploymentChanges.recordVersion} + 1`,
+          })
+          .where(eq(scheduledEmploymentChanges.id, row.id));
+        if (reviewNote) {
+          const recipients = await tx
+            .selectDistinct({ id: users.id })
+            .from(users)
+            .innerJoin(userRoles, eq(userRoles.userId, users.id))
+            .innerJoin(roles, eq(roles.id, userRoles.roleId))
+            .where(
+              and(
+                eq(users.organisationId, org.id),
+                eq(users.status, "Active"),
+                isNull(users.archivedAt),
+                inArray(
+                  roles.code,
+                  (["HR", "Accounts", "Super Admin"] as const).filter((role) =>
+                    canManageEmploymentFields(role, row.fields),
+                  ),
+                ),
+              ),
+            );
+          for (const recipient of recipients) {
+            await tx
+              .insert(notifications)
+              .values({
+                organisationId: org.id,
+                recipientUserId: recipient.id,
+                type: "employment.scheduled_change_review",
+                title: "Scheduled employment change needs review",
+                message: reviewNote,
+                priority: "High",
+                status: "Unread",
+                deduplicationKey: `employment-change-review:${row.id}:${recipient.id}`,
+                link: {
+                  entityType: "employee",
+                  entityId: row.employeeId,
+                  path: `/staff/employees/${row.employeeId}`,
+                },
+                createdBy: row.createdBy,
+                updatedBy: row.createdBy,
+              })
+              .onConflictDoNothing();
+          }
+          await tx.insert(auditEvents).values({
+            organisationId: org.id,
+            actorDisplayName: "Employment scheduler",
+            activeRole: row.authorRole,
+            actorRoles: [row.authorRole],
+            action: "needs-review",
+            module: "core-hr",
+            entityType: "scheduled-employment-change",
+            entityId: row.id,
+            afterSummary: { employeeId: row.employeeId, effectiveDate: row.effectiveDate },
+            reason: reviewNote,
+            riskLevel: "High",
+          });
+        }
+        return reviewNote ? "Needs Review" : "Applied";
+      });
+      if (outcome === "Applied") applied++;
+      if (outcome === "Needs Review") needsReview++;
+    }
+  }
+  return { applied, needsReview };
 }
 
 export async function createEmployeeInDatabase(
@@ -1395,26 +1845,13 @@ export async function createEmployeeInDatabase(
         createdBy: actor.userId ?? organisationId,
         updatedBy: actor.userId ?? organisationId,
       });
-      const [managerUser] = await tx
-        .select({ id: users.id })
-        .from(users)
-        .where(eq(users.employeeId, input.lineManagerId));
-      const [managerRole] = await tx
-        .select({ id: roles.id })
-        .from(roles)
-        .where(eq(roles.code, "Line Manager"));
-      if (managerUser && managerRole) {
-        await tx
-          .insert(userRoles)
-          .values({
-            organisationId,
-            userId: managerUser.id,
-            roleId: managerRole.id,
-            assignedBy: actor.userId ?? user.id,
-            reason: "Assigned a direct report",
-          })
-          .onConflictDoNothing();
-      }
+      await assignSupervisorApprovalAccess(
+        tx,
+        organisationId,
+        employee.id,
+        input.lineManagerId,
+        actor,
+      );
     }
     await tx.insert(employmentChanges).values({
       organisationId,

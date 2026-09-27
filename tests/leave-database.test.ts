@@ -281,6 +281,8 @@ test(
       let snapshot = await listLeaveSnapshotForActor(organisationId, employeeActor);
       const submitted = snapshot.requests.find((item) => item.id === requestId);
       assert.equal(submitted?.workingDaysRequested, 4, "the public holiday must not count");
+      assert.equal(submitted?.policySnapshot.workingDates?.length, 4);
+      assert.ok(!submitted?.policySnapshot.workingDates?.includes(isoDate(holiday)));
       assert.equal(submitted?.status, "Pending Line Manager");
       const submissionNotices = await sql`
         SELECT recipient_user_id, type, message, priority, link FROM notifications
@@ -288,9 +290,14 @@ test(
       `;
       assert.deepEqual(
         submissionNotices.map((item) => item.recipient_user_id).sort(),
-        [managerUserId, hrUserId, secondHrUserId].sort(),
-        "Notify the manager and every active HR user in this organisation only",
+        [employeeUserId, managerUserId, hrUserId, secondHrUserId].sort(),
+        "Acknowledge the employee and notify only the assigned manager and this organisation's active HR users",
       );
+      const ownerNotice = submissionNotices.find(
+        (item) => item.recipient_user_id === employeeUserId,
+      );
+      assert.equal(ownerNotice?.type, "workflow.request_update");
+      assert.equal(ownerNotice?.link.path, "/staff/requests?view=my");
       assert.equal(
         submissionNotices.find((item) => item.recipient_user_id === managerUserId)?.type,
         "leave_approval",
@@ -375,6 +382,39 @@ test(
       );
       const worker = await processScheduledLeaveRollover(new Date());
       assert.ok(worker.organisations >= 1);
+
+      const amendedEnd = new Date(start);
+      amendedEnd.setUTCDate(amendedEnd.getUTCDate() + 1);
+      await requestLeaveChangeInDatabase(
+        organisationId,
+        requestId,
+        {
+          kind: "amend",
+          startDate: isoDate(start),
+          endDate: isoDate(amendedEnd),
+          reason: "Shorter family travel",
+        },
+        employeeActor,
+      );
+      const pending = (
+        await listLeaveSnapshotForActor(organisationId, employeeActor)
+      ).requests.find((item) => item.id === requestId)!;
+      assert.equal(
+        pending.policySnapshot.workingDates?.length,
+        4,
+        "Proposals must not change approved dates",
+      );
+      assert.deepEqual(pending.pendingAmendment?.proposedWorkingDates, [
+        isoDate(start),
+        isoDate(amendedEnd),
+      ]);
+      await approveLeaveRequestInDatabase(organisationId, requestId, managerActor, "approve");
+      await approveLeaveRequestInDatabase(organisationId, requestId, hrActor, "approve");
+      const amended = (
+        await listLeaveSnapshotForActor(organisationId, employeeActor)
+      ).requests.find((item) => item.id === requestId)!;
+      assert.deepEqual(amended.policySnapshot.workingDates, [isoDate(start), isoDate(amendedEnd)]);
+      assert.equal(amended.workingDaysRequested, 2);
 
       await requestLeaveChangeInDatabase(
         organisationId,

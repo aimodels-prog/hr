@@ -13,7 +13,7 @@ async function previewAs(page: Page, userId: string, activeRole: PreviewRole, pa
     { selectedUser: userId, selectedRole: activeRole },
   );
   await page.goto(path);
-  await expect(page.getByText("Loading your VIA profile and permissions")).toHaveCount(0, {
+  await expect(page.getByText("VIA HR System is loading.", { exact: true })).toHaveCount(0, {
     timeout: 30_000,
   });
 }
@@ -64,7 +64,7 @@ test("sensitive direct URLs enforce the active VIA role", async ({ page }) => {
     await previewAs(page, example.userId, example.role, example.path);
     await expect(
       page.getByText(`You do not have permission to view ${example.resource}.`),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 30_000 });
   }
 
   await previewAs(page, "user-super-admin", "Super Admin", "/staff/users");
@@ -137,7 +137,9 @@ test("staff bootstrap recovers from one interrupted organisation-data request", 
   });
 
   await page.goto("/staff");
-  await expect(page.getByText(/Welcome back/i)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: "People overview", exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
   expect(interrupted).toBe(true);
   await expect(page.getByText("Organisation data is unavailable", { exact: true })).toHaveCount(0);
 });

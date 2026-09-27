@@ -1,5 +1,5 @@
 import { LocalRepository, type NewRecord } from "./repository.ts";
-import type { AssetAssignment, AssetCondition } from "./asset-types.ts";
+import type { AssetAssignment, AssetCondition, AvailableCompanyAsset } from "./asset-types.ts";
 import type { ActorContext } from "./types.ts";
 import type { Employee, User } from "./types.ts";
 import { getApplicationDataServices } from "./application-data.ts";
@@ -75,6 +75,31 @@ export class AssetService {
     const created = this.repo.getById(id);
     if (!created) throw new Error("Equipment was assigned but could not be reloaded.");
     return created;
+  }
+
+  async listAvailableAssetsAsync(context: ActorContext): Promise<AvailableCompanyAsset[]> {
+    const { getAvailableCompanyAssetsFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    return getAvailableCompanyAssetsFn({ data: { actor: await this.serverActor(context) } });
+  }
+
+  async assignAvailableAssetAsync(
+    input: { employeeId: string; assetId: string; expectedVersion: number; assignedDate: string },
+    context: ActorContext,
+  ): Promise<void> {
+    const employee = getApplicationDataServices()
+      .storage.readCollection<Employee & { databaseId?: string }>("employees")
+      .find((item) => item.id === input.employeeId);
+    const { assignAvailableCompanyAssetFn } =
+      await import("../server-functions/core-hr-lifecycle.server.ts");
+    await assignAvailableCompanyAssetFn({
+      data: {
+        ...input,
+        employeeId: employee?.databaseId ?? input.employeeId,
+        actor: await this.serverActor(context),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
   }
 
   async closeAssignmentAsync(

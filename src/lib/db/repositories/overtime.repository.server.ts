@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
 import { organisationLeaveYear } from "./leave-year.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
@@ -19,6 +20,7 @@ import {
 } from "../schema/time.ts";
 import { payrollPeriods } from "../schema/travel-payroll.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
+import { lockPayrollSourceAllocation } from "./payroll-allocation-lock.server.ts";
 import { readObjectFile } from "../object-storage.server.ts";
 
 function activeRole(actor: AuditActorContext) {
@@ -141,6 +143,7 @@ export async function createOvertimeClaimInDatabase(
       );
     if (input.projectId)
       await activeMaster(tx, projects, organisationId, input.projectId, "project");
+    await requireEmployeeSupervisor(tx, organisationId, input.employeeId);
     await activeMaster(tx, costCentres, organisationId, input.costCentreId, "cost centre");
     await activeMaster(tx, activityCodes, organisationId, input.activityCodeId, "activity");
     await activeMaster(tx, locations, organisationId, input.locationId, "work location");
@@ -581,6 +584,7 @@ export async function confirmPlannedOvertimeInDatabase(
       throw new Error(`Actual overtime exceeds the monthly limit of ${monthlyLimit} hours.`);
     const authorisedHours = Number(claim.authorisedHours ?? claim.hours);
     const exceeded = actualHours > authorisedHours;
+    if (exceeded) await requireEmployeeSupervisor(tx, organisationId, claim.employeeId);
     if (exceeded && note.trim().length < 5)
       throw new Error("Explain why actual overtime exceeded the pre-authorised hours.");
 
@@ -893,6 +897,7 @@ export async function correctOvertimeClaimInDatabase(
       reason: input.reason.trim(),
       riskLevel: "Critical",
     } as typeof auditEvents.$inferInsert);
+    await requireEmployeeSupervisor(tx, organisationId, original.employeeId);
     const [claimEmployee] = await tx
       .select({ lineManagerId: employees.lineManagerId })
       .from(employees)
@@ -1162,6 +1167,7 @@ export async function assignOvertimeToPayrollInDatabase(
   if (!uniqueIds.length) throw new Error("Select at least one overtime claim.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
+    await lockPayrollSourceAllocation(tx, organisationId);
     await tx.execute(
       sql`SELECT id FROM payroll_periods WHERE id = ${payrollPeriodId} AND organisation_id = ${organisationId} FOR UPDATE`,
     );
@@ -1175,7 +1181,11 @@ export async function assignOvertimeToPayrollInDatabase(
         ),
       )
       .limit(1);
-    if (!period || !["Draft", "Collecting Inputs", "Exceptions"].includes(period.status))
+    if (
+      !period ||
+      period.archivedAt ||
+      !["Draft", "Collecting Inputs", "Exceptions"].includes(period.status)
+    )
       throw new Error("Select a payroll period that is still collecting inputs.");
     for (const claimId of uniqueIds)
       await tx.execute(

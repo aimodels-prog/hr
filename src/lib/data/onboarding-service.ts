@@ -49,7 +49,7 @@ export class OnboardingService {
    * PostgreSQL is authoritative in production. The browser collections are retained only as a
    * compatibility projection while the existing screens are moved to async queries.
    */
-  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+  async hydrateCompatibilityCache(context: ActorContext, canCommit = () => true): Promise<void> {
     if (typeof window === "undefined") return;
     const { storage } = getApplicationDataServices();
     const users = storage.readCollection<User & { databaseId?: string }>("users");
@@ -68,6 +68,7 @@ export class OnboardingService {
         },
       },
     });
+    if (!canCommit()) return;
     const employeeIdMap = new Map(
       employees.filter((item) => item.databaseId).map((item) => [item.databaseId!, item.id]),
     );

@@ -91,6 +91,11 @@ test(
       }
       await sql`INSERT INTO app_settings (organisation_id,timezone,base_currency,working_days,standard_daily_hours,standard_weekly_hours,leave_year_start,leave_year_end,document_reminder_days,employee_number_format,candidate_reference_format,created_by,updated_by) VALUES (${organisationId},'Asia/Dubai','AED',${[1, 2, 3, 4, 5]},8,40,'01-01','12-31',${[60, 30, 14, 7]},'VIA-{SEQ}','CAN-{SEQ}',${hrUserId},${hrUserId})`;
 
+      for (const userId of [managerUserId, otherManagerUserId]) {
+        await sql`INSERT INTO user_roles (organisation_id,user_id,role_id,assigned_by,reason)
+          SELECT ${organisationId},${userId},id,${hrUserId},'Assigned test supervisor'
+          FROM roles WHERE code='Line Manager' ON CONFLICT DO NOTHING`;
+      }
       const employeeActor = actor(employeeUserId, employeeId, "Employee");
       const managerActor = actor(managerUserId, managerEmployeeId, "Line Manager");
       const otherManagerActor = actor(otherManagerUserId, otherManagerEmployeeId, "Line Manager");

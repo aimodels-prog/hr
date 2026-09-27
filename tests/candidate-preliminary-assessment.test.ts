@@ -52,6 +52,56 @@ test("missing CV evidence is sent to HR review rather than treated as a rejectio
   assert.equal(result.compulsoryChecks[0]?.status, "Needs Review");
 });
 
+test("negated licence evidence cannot produce a strong compulsory match", () => {
+  const result = buildCandidatePreliminaryAssessment(
+    candidate({ certifications: ["No valid Oman driving licence"] }),
+    vacancy({ mandatoryCriteria: ["Valid Oman driving licence"] }),
+    {},
+    { score: 100, model: "test" },
+  );
+  assert.equal(result.compulsoryChecks[0]?.status, "Needs Review");
+  assert.equal(result.status, "Needs Review");
+  assert.equal(result.band, "Compulsory Criterion Not Confirmed");
+  assert.match(result.compulsoryChecks[0]!.evidence, /No valid Oman driving licence/);
+});
+
+test("current CV text is checked even when the parser extracts positive keywords", () => {
+  const result = buildCandidatePreliminaryAssessment(
+    candidate(),
+    vacancy(),
+    {},
+    { score: 100, model: "test" },
+    1,
+    "I have no experience in customs clearance.",
+  );
+  assert.ok(result.missingRequiredSkills.includes("Customs clearance"));
+  assert.equal(result.compulsoryChecks[1]?.status, "Needs Review");
+  assert.equal(result.status, "Needs Review");
+});
+
+test("new lower experience supersedes the older higher number without editing candidate details", () => {
+  const original = candidate({ yearsOfExperience: 15 });
+  const lower = buildCandidatePreliminaryAssessment(original, vacancy(), { yearsOfExperience: 2 });
+  const higher = buildCandidatePreliminaryAssessment(original, vacancy(), {
+    yearsOfExperience: 15,
+  });
+  assert.ok(lower.preliminaryScore < higher.preliminaryScore);
+  assert.equal(lower.band, "Needs HR Review");
+  assert.match(lower.evidence.join(" "), /2 years.*differs/);
+  assert.equal(original.yearsOfExperience, 15);
+});
+
+test("experience below the minimum requires review even with a high semantic score", () => {
+  const result = buildCandidatePreliminaryAssessment(
+    candidate({ yearsOfExperience: 1 }),
+    vacancy(),
+    { yearsOfExperience: 1 },
+    { score: 100, model: "test" },
+  );
+  assert.equal(result.band, "Needs HR Review");
+  assert.equal(result.status, "Needs Review");
+});
+
 test("HR receives the requested number in ranking order", () => {
   const result = selectCandidateAssessmentGroup(
     ["rank-1", "rank-2", "rank-3", "rank-4"],

@@ -981,7 +981,11 @@ test("failed accepted-offer provisioning rolls back every local conversion recor
   });
 
   await assert.rejects(
-    () => offers.transitionOffer(offer.id, "Accepted", undefined, hr),
+    () =>
+      offers.transitionOffer(offer.id, "Accepted", undefined, hr, {
+        workspaceEmail: "rollback.hire@via-int.com",
+        identityConfirmed: true,
+      }),
     /Simulated provisioning failure/,
   );
   assert.equal(new OfferService().getOfferById(offer.id, hr)?.status, "Sent");
@@ -1315,7 +1319,15 @@ test("accepted offer automatically creates the employee, source linkage, onboard
     "Sent",
     "Accepted",
   ] as const) {
-    offer = await offers.transitionOffer(offer.id, status, undefined, hr);
+    offer = await offers.transitionOffer(
+      offer.id,
+      status,
+      undefined,
+      hr,
+      status === "Accepted"
+        ? { workspaceEmail: "confirmed.hire@via-int.com", identityConfirmed: true }
+        : undefined,
+    );
   }
 
   const convertedCandidate = candidateService.getCandidate(candidate.id, hr)!;

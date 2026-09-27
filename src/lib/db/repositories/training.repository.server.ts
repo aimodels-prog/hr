@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
@@ -693,6 +694,7 @@ export async function createTrainingRequestInDatabase(
         : input.origin === "Supervisor Assignment" || !employee.lineManagerId
           ? "Pending HR"
           : "Pending Supervisor";
+    if (status === "Pending Supervisor") await requireEmployeeSupervisor(tx, org, input.employeeId);
     const now = new Date().toISOString();
     await tx.insert(trainingRequests).values({
       id: requestId,

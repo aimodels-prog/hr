@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { PulseStrip } from "./dashboard-kit";
+import { DashboardInfo, PulseStrip } from "./dashboard-kit";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import {
@@ -11,6 +11,7 @@ import {
   CartesianGrid,
   ComposedChart,
   Legend,
+  Label,
   Line,
   Tooltip,
   XAxis,
@@ -37,6 +38,17 @@ const chartConfig = Object.fromEntries(
   Object.entries(colors).map(([key, color]) => [key, { color }]),
 );
 const shortDate = (date: string) => `${date.slice(8, 10)}/${date.slice(5, 7)}`;
+const donutColors = [
+  "#0d9488",
+  "#2563eb",
+  "#6366f1",
+  "#d97706",
+  "#64748b",
+  "#0891b2",
+  "#a855f7",
+  "#be185d",
+  "#78716c",
+];
 const hours = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 1 });
 
 function Panel({
@@ -72,16 +84,15 @@ function Panel({
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h3 className="font-semibold">{title}</h3>
-          <details className="mt-1 text-xs text-muted-foreground">
-            <summary className="cursor-pointer">About these figures</summary>
-            <p className="mt-2 max-w-prose leading-relaxed">{description}</p>
-          </details>
         </div>
-        {link && (
-          <Link to={link} className="shrink-0 text-xs font-medium text-primary hover:underline">
-            View details
-          </Link>
-        )}
+        <div className="flex items-center gap-2">
+          <DashboardInfo label={`About ${title}`}>{description}</DashboardInfo>
+          {link && (
+            <Link to={link} className="shrink-0 text-xs font-medium text-primary hover:underline">
+              View details
+            </Link>
+          )}
+        </div>
       </div>
       {children}
     </section>
@@ -92,10 +103,12 @@ function CountChart({
   data,
   label,
   donut = false,
+  centerLabel = "Employees",
 }: {
   data: { name: string; count: number }[];
   label: string;
   donut?: boolean;
+  centerLabel?: string;
 }) {
   if (!data.length)
     return (
@@ -123,11 +136,28 @@ function CountChart({
                 outerRadius={85}
                 isAnimationActive={false}
               >
+                <Label
+                  position="center"
+                  content={({ viewBox }) => {
+                    if (!viewBox || !("cx" in viewBox) || !("cy" in viewBox)) return null;
+                    return (
+                      <text x={viewBox.cx} y={viewBox.cy} textAnchor="middle">
+                        <tspan
+                          x={viewBox.cx}
+                          dy="-2"
+                          className="fill-foreground text-2xl font-semibold"
+                        >
+                          {hours(data.reduce((sum, row) => sum + row.count, 0))}
+                        </tspan>
+                        <tspan x={viewBox.cx} dy="22" className="fill-muted-foreground text-xs">
+                          {centerLabel}
+                        </tspan>
+                      </text>
+                    );
+                  }}
+                />
                 {data.map((row, index) => (
-                  <Cell
-                    key={row.name}
-                    fill={[colors.recorded, colors.review, colors.missing, colors.count][index % 4]}
-                  />
+                  <Cell key={row.name} fill={donutColors[index % donutColors.length]} />
                 ))}
               </Pie>
             </PieChart>
@@ -142,9 +172,7 @@ function CountChart({
                   aria-hidden="true"
                   className="h-3 w-3 rounded-full"
                   style={{
-                    backgroundColor: [colors.recorded, colors.review, colors.missing, colors.count][
-                      index % 4
-                    ],
+                    backgroundColor: donutColors[index % donutColors.length],
                   }}
                 />
                 {row.name}: {row.count}
@@ -214,7 +242,7 @@ function CountChart({
   );
 }
 
-function LeaveChart({ rows }: { rows: LeaveChartRow[] }) {
+function LeaveChart({ rows, donut = false }: { rows: LeaveChartRow[]; donut?: boolean }) {
   if (!rows.length)
     return (
       <p className="py-10 text-sm text-muted-foreground">
@@ -224,44 +252,56 @@ function LeaveChart({ rows }: { rows: LeaveChartRow[] }) {
     );
   return (
     <>
-      <ChartContainer
-        config={chartConfig}
-        className="h-64 w-full aspect-auto"
-        role="img"
-        aria-label="Annual leave used booked remaining and carryover"
-      >
-        <BarChart data={rows} margin={{ left: -18, right: 8 }} accessibilityLayer>
-          <CartesianGrid vertical={false} />
-          <XAxis dataKey="name" />
-          <YAxis />
-          <Tooltip />
-          <Legend />
-          <Bar
-            stackId="leave"
-            dataKey="used"
-            name="Used days"
-            fill="#2563eb"
-            isAnimationActive={false}
-          />
-          <Bar
-            stackId="leave"
-            dataKey="booked"
-            name="Booked days"
-            fill="#6366f1"
-            isAnimationActive={false}
-          />
-          <Bar
-            stackId="leave"
-            dataKey="remaining"
-            name="Remaining days"
-            fill="#0d9488"
-            isAnimationActive={false}
-          />
-        </BarChart>
-      </ChartContainer>
+      {donut && rows.every((row) => row.remaining >= 0 && row.used >= 0 && row.booked >= 0) ? (
+        <CountChart
+          donut
+          centerLabel="Days"
+          label="Annual leave used booked and remaining"
+          data={[
+            { name: "Remaining", count: rows.reduce((sum, row) => sum + row.remaining, 0) },
+            { name: "Used", count: rows.reduce((sum, row) => sum + row.used, 0) },
+            { name: "Booked", count: rows.reduce((sum, row) => sum + row.booked, 0) },
+          ]}
+        />
+      ) : (
+        <ChartContainer
+          config={chartConfig}
+          className="h-64 w-full aspect-auto"
+          role="img"
+          aria-label="Annual leave used booked remaining and carryover"
+        >
+          <BarChart data={rows} margin={{ left: -18, right: 8 }} accessibilityLayer>
+            <CartesianGrid vertical={false} />
+            <XAxis dataKey="name" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Bar
+              stackId="leave"
+              dataKey="used"
+              name="Used days"
+              fill="#2563eb"
+              isAnimationActive={false}
+            />
+            <Bar
+              stackId="leave"
+              dataKey="booked"
+              name="Booked days"
+              fill="#6366f1"
+              isAnimationActive={false}
+            />
+            <Bar
+              stackId="leave"
+              dataKey="remaining"
+              name="Remaining days"
+              fill="#0d9488"
+              isAnimationActive={false}
+            />
+          </BarChart>
+        </ChartContainer>
+      )}
       <p className="mt-3 text-sm text-muted-foreground">
-        Estimated carryover within remaining leave:{" "}
-        {hours(rows.reduce((sum, row) => sum + row.carry, 0))} days
+        Carryover estimate: {hours(rows.reduce((sum, row) => sum + row.carry, 0))} days
       </p>
       <details className="mt-3 overflow-x-auto">
         <summary className="cursor-pointer text-xs text-muted-foreground">
@@ -298,7 +338,12 @@ function LeaveChart({ rows }: { rows: LeaveChartRow[] }) {
   );
 }
 
-export default function WorkforceCharts({ scope, employeeId, profileId }: DashboardChartsProps) {
+export default function WorkforceCharts({
+  scope,
+  employeeId,
+  profileId,
+  toolbar,
+}: DashboardChartsProps) {
   const user = useCurrentUser();
   const [distribution, setDistribution] = useState<"department" | "office">("department");
   const location = useLocation();
@@ -353,14 +398,15 @@ export default function WorkforceCharts({ scope, employeeId, profileId }: Dashbo
       : (data?.departments ?? []);
   return (
     <section className="min-w-0 space-y-4" aria-label={label}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">{label}</h2>
-          <p className="text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        {toolbar && <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">{toolbar}</div>}
+        <div className="flex items-center gap-2">
+          <h2 className="sr-only">{label}</h2>
+          <DashboardInfo label="Reporting period and timezone">
             {data
               ? `${data.startDate} to ${data.endDate} · ${data.timezone}`
               : "Completed days only; today is excluded"}
-          </p>
+          </DashboardInfo>
         </div>
         <div className="flex items-center gap-2">
           <label className="sr-only" htmlFor={`chart-period-${scope}`}>
@@ -436,6 +482,7 @@ export default function WorkforceCharts({ scope, employeeId, profileId }: Dashbo
       {data && (
         <>
           <PulseStrip
+            compact
             metrics={
               scope === "hr" && !employeeId
                 ? [
@@ -487,10 +534,13 @@ export default function WorkforceCharts({ scope, employeeId, profileId }: Dashbo
             }
           />
           {data.totals.review + data.totals.missing > 0 && (
-            <p className="text-xs text-muted-foreground">
-              This comparison is incomplete until missing punches and pending records are reviewed.
-              The difference is not a confirmed absence or salary deduction.
-            </p>
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <span>Attendance needs review</span>
+              <DashboardInfo label="About incomplete attendance">
+                Missing punches or pending records make this comparison incomplete. Differences are
+                not confirmed absence or salary deductions.
+              </DashboardInfo>
+            </div>
           )}
           <div className="grid min-w-0 gap-5 xl:grid-cols-2" data-testid="primary-dashboard-charts">
             {(scope === "self" || employeeId) && (
@@ -547,13 +597,16 @@ export default function WorkforceCharts({ scope, employeeId, profileId }: Dashbo
               description={`Leave year starting ${data.priorities.leaveYearStart}; independent of the attendance period. Used means approved days before today; booked means approved days from today onwards. Remaining is the recorded balance, already reduced for approved bookings.`}
               link={detail("leave", scope === "hr" ? "/staff/leave-admin" : "/staff/leave")}
             >
-              <LeaveChart rows={data.priorities.annualLeave} />
-              <p className="mt-3 text-xs text-muted-foreground">
+              <LeaveChart
+                rows={data.priorities.annualLeave}
+                donut={scope === "self" || Boolean(employeeId)}
+              />
+              <DashboardInfo label="About carryover and eligibility">
                 Carryover is an estimated part of remaining leave, not extra days. It uses the same
                 oldest-leave-first calculation as reminders. Plan old leave before May and confirm
                 the applicable deadline with HR. These figures do not grant leave eligibility or
                 change balances.
-              </p>
+              </DashboardInfo>
             </Panel>
             {scope === "hr" && (
               <>
@@ -674,6 +727,7 @@ export default function WorkforceCharts({ scope, employeeId, profileId }: Dashbo
                   </select>
                 </label>
                 <CountChart
+                  donut
                   data={distribution === "department" ? departmentData : data.offices}
                   label={
                     distribution === "department"

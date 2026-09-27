@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
 import {
@@ -791,6 +792,7 @@ export async function requestAttendanceCorrectionInDatabase(
   const id = randomUUID();
   await db.transaction(async (tx) => {
     let record: typeof attendanceRecords.$inferSelect | undefined;
+    await requireEmployeeSupervisor(tx, organisationId, actor.employeeId!);
     if (input.attendanceRecordId) {
       [record] = await tx
         .select()
@@ -1008,7 +1010,10 @@ export async function decideAttendanceCorrectionInDatabase(
   decision: "approve" | "reject",
   notes: string | undefined,
   actor: AuditActorContext,
+  expectedVersion: number,
 ): Promise<void> {
+  if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1)
+    throw new Error("Refresh the correction before making a decision.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
     const [correction] = await tx
@@ -1018,10 +1023,19 @@ export async function decideAttendanceCorrectionInDatabase(
         and(
           eq(attendanceCorrections.organisationId, organisationId),
           eq(attendanceCorrections.id, correctionId),
+          isNull(attendanceCorrections.archivedAt),
         ),
       )
-      .limit(1);
+      .limit(1)
+      .for("update");
     if (!correction) throw new Error("Attendance correction not found.");
+    if (
+      correction.recordVersion !== expectedVersion ||
+      ["Approved", "Rejected"].includes(correction.status)
+    )
+      throw new Error(
+        "This correction has changed or already been decided. Refresh and review the latest version.",
+      );
     const [employee] = await tx
       .select({ lineManagerId: employees.lineManagerId })
       .from(employees)
@@ -1058,6 +1072,7 @@ export async function decideAttendanceCorrectionInDatabase(
               }),
           updatedAt: new Date(),
           updatedBy: actor.userId,
+          recordVersion: sql`${attendanceCorrections.recordVersion} + 1`,
         })
         .where(eq(attendanceCorrections.id, correctionId));
     } else if (managerStage) {
@@ -1070,6 +1085,7 @@ export async function decideAttendanceCorrectionInDatabase(
           managerReviewedAt: new Date().toISOString(),
           updatedAt: new Date(),
           updatedBy: actor.userId,
+          recordVersion: sql`${attendanceCorrections.recordVersion} + 1`,
         })
         .where(eq(attendanceCorrections.id, correctionId));
     } else {
@@ -1086,6 +1102,19 @@ export async function decideAttendanceCorrectionInDatabase(
         .limit(1);
       if (!record)
         throw new Error("The attendance record linked to this correction was not found.");
+      const samePunch = (left: string | null, right: string | null) =>
+        left === null || right === null ? left === right : Date.parse(left) === Date.parse(right);
+      if (
+        record.archivedAt ||
+        record.employeeId !== correction.employeeId ||
+        !samePunch(record.clockInAt, correction.originalClockIn) ||
+        !samePunch(record.clockOutAt, correction.originalClockOut) ||
+        record.status !== correction.originalStatus
+      ) {
+        throw new Error(
+          "Attendance has changed since this correction was requested. Reject this request and ask the employee to submit an updated correction.",
+        );
+      }
       const clockInAt = correction.proposedClockIn ?? correction.originalClockIn;
       const clockOutAt = correction.proposedClockOut ?? correction.originalClockOut;
       const [[settings], [policy]] = await Promise.all([
@@ -1151,6 +1180,7 @@ export async function decideAttendanceCorrectionInDatabase(
           hrReviewedAt: new Date().toISOString(),
           updatedAt: new Date(),
           updatedBy: actor.userId,
+          recordVersion: sql`${attendanceCorrections.recordVersion} + 1`,
         })
         .where(eq(attendanceCorrections.id, correctionId));
     }
@@ -1165,7 +1195,13 @@ export async function decideAttendanceCorrectionInDatabase(
       module: "attendance",
       entityType: "attendance-correction",
       entityId: correctionId,
-      afterSummary: { stage: correction.status, decision },
+      beforeSummary: { status: correction.status, recordVersion: correction.recordVersion },
+      afterSummary: {
+        stage: correction.status,
+        decision,
+        status: decision === "reject" ? "Rejected" : managerStage ? "Pending HR" : "Approved",
+        recordVersion: correction.recordVersion + 1,
+      },
       reason: notes?.trim() ?? "Attendance correction decision",
       riskLevel: "High",
     } as typeof auditEvents.$inferInsert);

@@ -18,99 +18,104 @@ export function maskValue(
   return maskChar.repeat(Math.max(6, String(value).length));
 }
 
-/**
- * Applies field-level redaction on an Employee record based on the user's role and identity.
- * Redacts:
- * - salary
- * - bankDetails
- * - passportNumber
- * - nationalId
- * - performanceNotes
- */
+type EmployeeFieldAccess = "directory" | "personnel" | "supervision" | "payroll" | "performance";
+
+// Classify every Employee field explicitly. New model fields require a deliberate access
+// decision, and unexpected runtime fields are never copied into a browser response.
+// The directory includes the common record/work fields required by the employee cache;
+// confidential personnel, payroll and supervisory data are granted separately below.
+const EMPLOYEE_FIELD_ACCESS = {
+  id: "directory",
+  databaseId: "directory",
+  createdAt: "directory",
+  createdBy: "directory",
+  updatedAt: "directory",
+  updatedBy: "directory",
+  archivedAt: "directory",
+  recordVersion: "directory",
+  employeeNumber: "directory",
+  legalName: "directory",
+  preferredName: "directory",
+  workEmail: "directory",
+  phone: "directory",
+  department: "directory",
+  position: "directory",
+  location: "directory",
+  country: "directory",
+  legalEntity: "directory",
+  employmentType: "directory",
+  startDate: "directory",
+  lineManagerId: "directory",
+  workspaceEmail: "directory",
+  status: "directory",
+  personalEmail: "personnel",
+  address: "personnel",
+  emergencyContacts: "personnel",
+  dependants: "personnel",
+  dateOfBirth: "personnel",
+  gender: "personnel",
+  nationality: "personnel",
+  maritalStatus: "personnel",
+  passportNumber: "personnel",
+  nationalId: "personnel",
+  staffEntryType: "personnel",
+  visaRequired: "personnel",
+  profileSetupStatus: "personnel",
+  profileSetupCompletedAt: "personnel",
+  employmentConfirmationStatus: "personnel",
+  employmentConfirmedAt: "personnel",
+  employmentConfirmedBy: "personnel",
+  employmentReviewNote: "personnel",
+  proposedEmploymentDetails: "personnel",
+  proposedLineManagerEmail: "personnel",
+  terminationReason: "personnel",
+  candidateId: "personnel",
+  offerId: "personnel",
+  recommendationIds: "personnel",
+  grade: "supervision",
+  probationEndDate: "supervision",
+  terminationDate: "supervision",
+  weeklyHours: "supervision",
+  projectId: "supervision",
+  costCentreId: "supervision",
+  salary: "payroll",
+  bankDetails: "payroll",
+  socialInsuranceNumber: "payroll",
+  performanceRating: "performance",
+  performanceNotes: "performance",
+} satisfies Record<keyof Employee, EmployeeFieldAccess>;
+
+/** Server and preview projection: only explicitly authorised field groups leave the HR file. */
 export function redactEmployee(
   employee: Employee,
   userContext: CurrentUserContext | null | undefined,
 ): Employee {
-  if (!userContext) {
-    return {
-      ...employee,
-      salary: undefined,
-      bankDetails: undefined,
-      passportNumber: undefined,
-      nationalId: undefined,
-      socialInsuranceNumber: undefined,
-      personalEmail: undefined,
-      phone: undefined,
-      address: undefined,
-      emergencyContacts: [],
-      dependants: [],
-      dateOfBirth: undefined,
-      gender: undefined,
-      nationality: undefined,
-      maritalStatus: undefined,
-      performanceNotes: undefined,
-      performanceRating: undefined,
-    };
-  }
-
-  // Super Admin has full visibility
-  if (
-    userContext.activeRole === "Super Admin" ||
-    userContext.permissions.has("system:settings_manage")
-  ) {
-    return { ...employee };
-  }
-
-  const isSelf = userContext.employeeId && userContext.employeeId === employee.id;
+  const isSelf = Boolean(userContext?.employeeId && userContext.employeeId === employee.id);
+  const isSuperAdmin = userContext?.activeRole === "Super Admin";
   const isDirectReport =
     can("employee:view_direct_reports", userContext) &&
-    userContext.employeeId &&
+    userContext?.employeeId &&
     employee.lineManagerId === userContext.employeeId;
-  const isAccounts = userContext.activeRole === "Accounts" || can("payroll:view", userContext);
-  const isHR = userContext.activeRole === "HR" || can("employee:manage_all", userContext);
+  const isAccounts = userContext?.activeRole === "Accounts" || can("payroll:view", userContext);
+  const isHR = userContext?.activeRole === "HR" || can("employee:manage_all", userContext);
+  const allowed = new Set<EmployeeFieldAccess>(["directory"]);
+  if (isSelf || isHR || isSuperAdmin) allowed.add("personnel");
+  if (isSelf || isHR || isAccounts || isDirectReport || isSuperAdmin) allowed.add("supervision");
+  if (isSelf || isAccounts || isSuperAdmin) allowed.add("payroll");
+  if (isSelf || isHR || isDirectReport || isSuperAdmin) allowed.add("performance");
 
-  const safe = { ...employee };
-
-  // Personal-file data is never part of the general employee directory. The employee's contact
-  // phone remains available as an internal colleague contact; home address, personal email and
-  // the rest of the HR file remain private.
-  if (!isSelf && !isHR) {
-    safe.personalEmail = undefined;
-    safe.address = undefined;
+  const safe = Object.fromEntries(
+    Object.entries(employee).filter(
+      ([key]) =>
+        Object.hasOwn(EMPLOYEE_FIELD_ACCESS, key) &&
+        allowed.has(EMPLOYEE_FIELD_ACCESS[key as keyof Employee]),
+    ),
+  ) as unknown as Employee;
+  if (!allowed.has("personnel")) {
     safe.emergencyContacts = [];
     safe.dependants = [];
-    safe.dateOfBirth = undefined;
-    safe.gender = undefined;
-    safe.nationality = undefined;
-    safe.maritalStatus = undefined;
   }
-
-  // Salary visibility: Self, Accounts, Super Admin
-  if (!isSelf && !isAccounts) {
-    safe.salary = undefined;
-  }
-
-  // Bank details visibility: Self, Accounts, Super Admin
-  if (!isSelf && !isAccounts) {
-    safe.bankDetails = undefined;
-  }
-
-  // National ID & Passport visibility: Self, HR, Super Admin
-  if (!isSelf && !isHR) {
-    safe.nationalId = undefined;
-    safe.passportNumber = undefined;
-  }
-
-  // Social-insurance identifiers are payroll data, not a directory field.
-  if (!isSelf && !isAccounts) {
-    safe.socialInsuranceNumber = undefined;
-  }
-
-  // Performance notes visibility: Self, Line Manager of direct report, HR, Super Admin (Accounts CANNOT see performance notes)
-  if (!isSelf && !isDirectReport && !isHR) {
-    safe.performanceNotes = undefined;
-    safe.performanceRating = undefined;
-  }
+  if (!userContext) delete safe.phone;
 
   return safe;
 }

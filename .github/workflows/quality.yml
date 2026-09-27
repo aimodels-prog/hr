@@ -187,6 +187,8 @@ jobs:
       VIA_HR_MALWARE_SCANNER_PORT: 3310
       VIA_HR_MALWARE_SCAN_REQUIRED: "true"
       VIA_HR_IMAGE_TAG: ci-browser
+      VIA_HR_RUN_PRODUCTION_SMOKE: "true"
+      VIA_HR_ZKTECO_INGEST_SECRET: ci-only-terminal-signing-secret-not-for-production
       VIA_HR_E2E_WEB_SERVER_COMMAND: npm run build && npm start
       PORTAL_SSO_ENABLED: "true"
       PORTAL_URL: https://portal.via-int.com
@@ -198,6 +200,7 @@ jobs:
       PORTAL_SSO_SECRET: ci-only-portal-sso-secret-at-least-32-bytes
       ALLOWED_EMAIL_DOMAIN: via-int.com
       APP_ORIGIN: http://127.0.0.1:4173
+      VIA_HR_CAREERS_ORIGIN: http://127.0.0.1:4173
       PORTAL_CALLBACK_URL: http://127.0.0.1:4173/auth/portal/callback
       POST_LOGIN_URL: http://127.0.0.1:4173/dashboard
       POST_LOGOUT_URL: https://portal.via-int.com

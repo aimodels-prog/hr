@@ -240,6 +240,31 @@ test("employment and compensation changes enforce separate active roles", () => 
   );
 });
 
+test("local preview cannot apply future employment or salary changes early", () => {
+  setup();
+  const service = new EmployeeService();
+  const employeeBefore = service.getById("employee-omar", SYSTEM_CONTEXT);
+  const historyBefore = service.getEmploymentHistory("employee-omar", hr);
+  for (const [changes, actor] of [
+    [{ position: "Senior Operations Coordinator" }, hr],
+    [{ salary: { baseMonthly: 2000, currency: "AED" } }, accounts],
+  ] as const) {
+    assert.throws(
+      () =>
+        service.updateEmploymentRecord(
+          "employee-omar",
+          changes,
+          "2099-01-01",
+          "Approved future change",
+          actor,
+        ),
+      /must be scheduled/,
+    );
+  }
+  assert.deepEqual(service.getById("employee-omar", SYSTEM_CONTEXT), employeeBefore);
+  assert.deepEqual(service.getEmploymentHistory("employee-omar", hr), historyBefore);
+});
+
 test("training and equipment services reject cross-employee employee actions", () => {
   const { audit } = setup();
   const training = new TrainingService();

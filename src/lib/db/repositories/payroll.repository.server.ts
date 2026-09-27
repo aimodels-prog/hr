@@ -4,6 +4,11 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, lte, notInArray, or, sql } from "drizzle-orm";
 
 import type { PayrollPeriod } from "../../data/payroll-types.ts";
+import { leaveWorkingDates, payrollLeaveDaysInPeriod } from "../../data/leave-working-days.ts";
+import { sickLeavePayrollReductions } from "../../data/sick-leave-payroll.ts";
+import { leaveYearForDate } from "../../data/leave-year.ts";
+import { publicHolidays } from "../schema/master-data.ts";
+import { appSettings } from "../schema/organisation.ts";
 import { decryptSensitiveJson } from "../encryption.server.ts";
 import { getDatabaseClient } from "../client.ts";
 import { readObjectFile } from "../object-storage.server.ts";
@@ -27,6 +32,7 @@ import {
   travelRequests,
 } from "../schema/travel-payroll.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
+import { lockPayrollSourceAllocation } from "./payroll-allocation-lock.server.ts";
 
 function role(actor: AuditActorContext) {
   return actor.activeRole ?? actor.roles?.[0] ?? "Employee";
@@ -191,6 +197,7 @@ export async function createPayrollPeriodInDatabase(
   const id = randomUUID();
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
+    await lockPayrollSourceAllocation(tx, org);
     const [overlap] = await tx
       .select({ id: payrollPeriods.id })
       .from(payrollPeriods)
@@ -264,6 +271,7 @@ export async function addPayrollAdjustmentInDatabase(
       .from(payrollPeriods)
       .where(and(eq(payrollPeriods.organisationId, org), eq(payrollPeriods.id, periodId)))
       .limit(1);
+    if (period?.archivedAt) throw new Error("Archived payroll periods cannot be adjusted.");
     if (
       !period ||
       !["Draft", "Collecting Inputs", "Exceptions", "Corrected"].includes(period.status)
@@ -381,6 +389,7 @@ export async function collectPayrollInputsInDatabase(
   requirePayroll(actor);
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
+    await lockPayrollSourceAllocation(tx, org);
     await tx.execute(
       sql`select id from payroll_periods where organisation_id=${org} and id=${periodId} for update`,
     );
@@ -389,6 +398,7 @@ export async function collectPayrollInputsInDatabase(
       .from(payrollPeriods)
       .where(and(eq(payrollPeriods.organisationId, org), eq(payrollPeriods.id, periodId)))
       .limit(1);
+    if (period?.archivedAt) throw new Error("Archived payroll periods cannot collect inputs.");
     if (
       !period ||
       !["Draft", "Collecting Inputs", "Exceptions", "Corrected"].includes(period.status)
@@ -400,6 +410,7 @@ export async function collectPayrollInputsInDatabase(
         id: employees.id,
         name: employees.preferredName,
         status: employees.status,
+        locationId: employees.locationId,
         startDate: employees.startDate,
         compensation: employeeCompensation.encryptedPayload,
         bank: employeeBankDetails.encryptedPayload,
@@ -410,6 +421,7 @@ export async function collectPayrollInputsInDatabase(
       .where(
         and(
           eq(employees.organisationId, org),
+          isNull(employees.archivedAt),
           inArray(employees.status, ["Active", "Probation", "Notice"]),
         ),
       );
@@ -429,7 +441,12 @@ export async function collectPayrollInputsInDatabase(
       .where(
         and(
           eq(overtimeClaims.organisationId, org),
+          inArray(
+            overtimeClaims.employeeId,
+            staff.map((employee) => employee.id),
+          ),
           eq(overtimeClaims.status, "Approved"),
+          isNull(overtimeClaims.archivedAt),
           eq(overtimeClaims.compensationType, "Payment"),
           lte(overtimeClaims.date, period.endDate),
           or(isNull(overtimeClaims.payrollPeriodId), eq(overtimeClaims.payrollPeriodId, periodId)),
@@ -442,24 +459,151 @@ export async function collectPayrollInputsInDatabase(
       .where(
         and(
           eq(travelRequests.organisationId, org),
+          inArray(
+            travelRequests.employeeId,
+            staff.map((employee) => employee.id),
+          ),
           eq(travelRequests.status, "Closed"),
+          isNull(travelRequests.archivedAt),
+          isNull(reimbursements.archivedAt),
           lte(travelRequests.closedAt, `${period.endDate}T23:59:59.999Z`),
           or(isNull(travelRequests.payrollPeriodId), eq(travelRequests.payrollPeriodId, periodId)),
         ),
       );
-    const unpaid = await tx
-      .select({ employeeId: leaveRequests.employeeId, days: leaveRequests.workingDaysRequested })
+    const leaveRows = await tx
+      .select({ request: leaveRequests, isPaid: leavePolicies.isPaid, type: leavePolicies.type })
       .from(leaveRequests)
       .innerJoin(leavePolicies, eq(leavePolicies.id, leaveRequests.policyId))
       .where(
         and(
           eq(leaveRequests.organisationId, org),
-          inArray(leaveRequests.status, ["Approved", "Taken"]),
-          eq(leavePolicies.isPaid, false),
+          // An amendment/cancellation request does not revoke the original approval.
+          inArray(leaveRequests.status, [
+            "Approved",
+            "Taken",
+            "Cancellation Pending",
+            "Amendment Pending Line Manager",
+            "Amendment Pending HR",
+          ]),
+          isNull(leaveRequests.archivedAt),
           sql`${leaveRequests.startDate} <= ${period.endDate}`,
           sql`${leaveRequests.endDate} >= ${period.startDate}`,
         ),
       );
+    const unpaid = leaveRows
+      .filter(({ request, isPaid }) => {
+        const snapshot = request.policySnapshot as { isPaid?: boolean };
+        return (typeof snapshot?.isPaid === "boolean" ? snapshot.isPaid : isPaid) === false;
+      })
+      .map(({ request }) => request);
+    const needsLegacyCalendar = unpaid.some(
+      (request) =>
+        (request.policySnapshot as { workingDates?: unknown })?.workingDates === undefined &&
+        (request.startDate < period.startDate || request.endDate > period.endDate),
+    );
+    const hasSickLeave = leaveRows.some(
+      ({ request, type }) =>
+        ((request.policySnapshot as { type?: string })?.type ?? type) === "Sick" &&
+        staff.some((employee) => employee.id === request.employeeId),
+    );
+    const settings =
+      needsLegacyCalendar || hasSickLeave
+        ? (
+            await tx
+              .select({
+                workingDays: appSettings.workingDays,
+                leaveYearStart: appSettings.leaveYearStart,
+              })
+              .from(appSettings)
+              .where(and(eq(appSettings.organisationId, org), isNull(appSettings.archivedAt)))
+              .limit(1)
+          )[0]
+        : undefined;
+    const holidays =
+      needsLegacyCalendar || hasSickLeave
+        ? await tx
+            .select({ date: publicHolidays.holidayDate, locationId: publicHolidays.locationId })
+            .from(publicHolidays)
+            .where(
+              and(
+                eq(publicHolidays.organisationId, org),
+                eq(publicHolidays.isActive, true),
+                isNull(publicHolidays.archivedAt),
+              ),
+            )
+        : [];
+    let sickReductions = new Map<string, number>();
+    if (hasSickLeave) {
+      if (!settings?.workingDays.length)
+        throw new Error(
+          "Configure organisation working days and leave year before collecting sick-leave payroll.",
+        );
+      const year = leaveYearForDate(period.startDate, settings.leaveYearStart);
+      const [month, day] = settings.leaveYearStart.split("-").map(Number);
+      const historyStart = new Date(Date.UTC(year, month! - 1, day!)).toISOString().slice(0, 10);
+      const history = await tx
+        .select({
+          request: leaveRequests,
+          isPaid: leavePolicies.isPaid,
+          payTiers: leavePolicies.payTiers,
+        })
+        .from(leaveRequests)
+        .innerJoin(leavePolicies, eq(leavePolicies.id, leaveRequests.policyId))
+        .where(
+          and(
+            eq(leaveRequests.organisationId, org),
+            isNull(leaveRequests.archivedAt),
+            inArray(
+              leaveRequests.employeeId,
+              staff.map((employee) => employee.id),
+            ),
+            inArray(leaveRequests.status, [
+              "Approved",
+              "Taken",
+              "Cancellation Pending",
+              "Amendment Pending Line Manager",
+              "Amendment Pending HR",
+            ]),
+            sql`coalesce(${leaveRequests.policySnapshot}->>'type', ${leavePolicies.type}) = 'Sick'`,
+            sql`${leaveRequests.startDate} <= ${period.endDate}`,
+            sql`${leaveRequests.endDate} >= ${historyStart}`,
+          ),
+        );
+      sickReductions = sickLeavePayrollReductions(
+        history.map(({ request, isPaid, payTiers }) => {
+          const snapshot = request.policySnapshot as {
+            workingDates?: unknown;
+            isPaid?: boolean;
+            payTiers?: unknown;
+          };
+          return {
+            ...request,
+            workingDaysRequested: Number(request.workingDaysRequested),
+            workingDates: snapshot?.workingDates,
+            isPaid: typeof snapshot?.isPaid === "boolean" ? snapshot.isPaid : isPaid,
+            payTiers: snapshot?.payTiers === undefined ? payTiers : snapshot.payTiers,
+          };
+        }),
+        period,
+        settings.leaveYearStart,
+        (request) => {
+          const employee = staff.find((employee) => employee.id === request.employeeId)!;
+          return leaveWorkingDates(
+            request.startDate,
+            request.endDate,
+            new Set(
+              holidays
+                .filter(
+                  (holiday) => !holiday.locationId || holiday.locationId === employee.locationId,
+                )
+                .map((holiday) => holiday.date),
+            ),
+            settings.workingDays,
+            request.isHalfDay,
+          );
+        },
+      );
+    }
     const unresolvedTimesheets = await tx
       .select({ employeeId: timesheets.employeeId })
       .from(timesheets)
@@ -573,7 +717,46 @@ export async function collectPayrollInputsInDatabase(
         (sum, item) => sum + Number(item.hours),
         0,
       );
-      const unpaidLeaveDays = employeeLeave.reduce((sum, item) => sum + Number(item.days), 0);
+      const unpaidLeaveDays = employeeLeave.reduce(
+        (sum, item) => {
+          try {
+            return (
+              sum +
+              payrollLeaveDaysInPeriod(
+                {
+                  ...item,
+                  workingDaysRequested: Number(item.workingDaysRequested),
+                  workingDates: (item.policySnapshot as { workingDates?: unknown })?.workingDates,
+                },
+                period,
+                () => {
+                  if (!settings?.workingDays.length)
+                    throw new Error("Organisation working days are not configured.");
+                  return leaveWorkingDates(
+                    item.startDate,
+                    item.endDate,
+                    new Set(
+                      holidays
+                        .filter(
+                          (holiday) =>
+                            !holiday.locationId || holiday.locationId === employee.locationId,
+                        )
+                        .map((holiday) => holiday.date),
+                    ),
+                    settings.workingDays,
+                    item.isHalfDay,
+                  );
+                },
+              )
+            );
+          } catch (error) {
+            throw new Error(
+              `Cannot allocate unpaid leave for ${employee.name} (${item.startDate} to ${item.endDate}): ${error instanceof Error ? error.message : "Ask HR to review the leave dates."}`,
+            );
+          }
+        },
+        sickReductions.get(employee.id) ?? 0,
+      );
       const reimbursementsTotal = employeeTravel.reduce(
         (sum, item) => sum + Number(item.reimbursement.amount),
         0,
@@ -611,6 +794,12 @@ export async function collectPayrollInputsInDatabase(
             updatedBy: actor.userId,
           } as typeof payrollExceptions.$inferInsert);
       };
+      if ((sickReductions.get(employee.id) ?? 0) > 0)
+        addException(
+          "Sick Leave Pay Adjustment",
+          `Configured sick-pay tiers contribute ${sickReductions.get(employee.id)} unpaid-equivalent day(s) in this period. Review before approving payroll.`,
+          "Medium",
+        );
       if (!employee.bank)
         addException(
           "Missing Bank Data",

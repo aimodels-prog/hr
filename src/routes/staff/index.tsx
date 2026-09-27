@@ -249,7 +249,7 @@ function Dashboard() {
   return (
     <div className="mx-auto max-w-7xl space-y-6 pb-10">
       {/* Header Banner */}
-      <div className="flex flex-wrap items-end justify-between gap-5 border-b border-border/70 pb-6">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-semibold tracking-tight">
@@ -261,39 +261,38 @@ function Dashboard() {
               {activeRole}
             </Badge>
           </div>
-          {currentEmployee && (
-            <p className="mt-2 text-sm text-muted-foreground">
-              {[currentEmployee.position, currentEmployee.department, currentEmployee.location]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          )}
-        </div>
+        </div>{" "}
+        {currentEmployee && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              to="/staff/me/attendance"
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg border bg-card px-4 py-2 text-sm font-medium"
+            >
+              <Clock3 className="h-4 w-4" /> My attendance
+            </Link>
+            <Link
+              to="/staff/me/attendance"
+              search={{ action: "site-visit" }}
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 py-2 font-medium text-primary-foreground"
+            >
+              <Plane className="h-4 w-4" /> Quick visit
+            </Link>
+          </div>
+        )}
       </div>
 
-      {currentEmployee && (
-        <div className="flex flex-wrap items-center gap-3">
-          <Link
-            to="/staff/me/attendance"
-            className="inline-flex min-h-11 items-center gap-2 rounded-lg border bg-card px-4 py-2 text-sm font-medium"
-          >
-            <Clock3 className="h-4 w-4" /> My attendance
-          </Link>
-          <Link
-            to="/staff/me/attendance"
-            search={{ action: "site-visit" }}
-            className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 py-2 font-medium text-primary-foreground"
-          >
-            <Plane className="h-4 w-4" /> Quick visit
-          </Link>
-        </div>
+      {(activeRole === "Employee" || activeRole === "IT") && currentEmployee && (
+        <EmployeeDashboard employee={currentEmployee} userId={currentUserId} />
       )}
-
+      {activeRole === "Line Manager" && currentEmployee && (
+        <ManagerDashboard employee={currentEmployee} userId={currentUserId} />
+      )}
+      {["HR", "Super Admin"].includes(activeRole) && <HrDashboard />}
+      {activeRole === "Accounts" && <AccountsDashboard />}
+      <RequestTrackerSummary />
       {["HR", "Super Admin"].includes(activeRole) && currentEmployee && (
         <details className="rounded-xl border border-border/70 bg-card p-4">
-          <summary className="cursor-pointer text-sm font-medium">
-            My employee tools · Attendance, leave and timesheets
-          </summary>
+          <summary className="cursor-pointer text-sm font-medium">My employee tools</summary>
           <section aria-labelledby="my-day-heading" className="mt-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
@@ -348,20 +347,8 @@ function Dashboard() {
         </details>
       )}
 
-      {(activeRole === "Employee" || activeRole === "IT") && currentEmployee && (
-        <EmployeeDashboard employee={currentEmployee} userId={currentUserId} />
-      )}
-      {activeRole === "Line Manager" && currentEmployee && (
-        <ManagerDashboard employee={currentEmployee} userId={currentUserId} />
-      )}
-      {["HR", "Super Admin"].includes(activeRole) && <HrDashboard />}
-      {activeRole === "Accounts" && <AccountsDashboard />}
-      <RequestTrackerSummary />
-
       <details className="rounded-xl border border-border/70 bg-card p-5">
-        <summary className="cursor-pointer text-sm font-medium">
-          Quick access · My work and administration
-        </summary>
+        <summary className="cursor-pointer text-sm font-medium">Quick access</summary>
         <div className="mb-3 mt-4 flex items-center justify-between">
           <h2 className="text-sm font-bold">Quick access</h2>
           <span className="text-xs text-muted-foreground">Your most-used areas</span>

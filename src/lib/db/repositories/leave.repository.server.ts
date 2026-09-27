@@ -1,10 +1,13 @@
 import "@tanstack/react-start/server-only";
+import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
 import { sickLeaveBackdatePermissions } from "../schema/leave.ts";
 import { siteVisitLocalNow } from "../../data/site-visit.ts";
 import { organisationLeaveYear } from "./leave-year.repository.server.ts";
 import { leaveYearForDate } from "../../data/leave-year.ts";
+import { leaveWorkingDates } from "../../data/leave-working-days.ts";
+import { validateSickPayTiers } from "../../data/sick-leave-payroll.ts";
 import { getLeaveEligibility, isOmaniNationality } from "../../data/leave-eligibility.ts";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 
@@ -31,24 +34,6 @@ import { appSettings, organisations } from "../schema/organisation.ts";
 import { auditEvents, notifications } from "../schema/system.ts";
 import { roles, userRoles, users } from "../schema/employee.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
-
-function workingDays(
-  start: string,
-  end: string,
-  holidays: Set<string>,
-  configuredWorkingDays: number[],
-  halfDay: boolean,
-): number {
-  const from = new Date(`${start}T00:00:00Z`);
-  const to = new Date(`${end}T00:00:00Z`);
-  let days = 0;
-  for (const cursor = new Date(from); cursor <= to; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
-    const weekday = cursor.getUTCDay();
-    const key = cursor.toISOString().slice(0, 10);
-    if (configuredWorkingDays.includes(weekday) && !holidays.has(key)) days += 1;
-  }
-  return halfDay ? 0.5 : days;
-}
 
 function recordFields(row: {
   id: string;
@@ -477,6 +462,7 @@ export async function createLeaveRequestInDatabase(
       throw new Error(`Select a covering colleague for ${policy.name}.`);
     if (!employee.lineManagerId || employee.lineManagerId === employee.id)
       throw new Error("Ask HR to assign a valid supervisor before requesting leave.");
+    await requireEmployeeSupervisor(tx, organisationId, employee.id);
     if (input.handoverContactId) {
       const [handover] = await tx
         .select({ id: employees.id })
@@ -556,13 +542,14 @@ export async function createLeaveRequestInDatabase(
           or(isNull(publicHolidays.locationId), eq(publicHolidays.locationId, employee.locationId)),
         ),
       );
-    const days = workingDays(
+    const workingDates = leaveWorkingDates(
       input.startDate,
       input.endDate,
       new Set(holidays.map((h) => h.date)),
       settings.workingDays,
       input.isHalfDay ?? false,
     );
+    const days = workingDates.length * (input.isHalfDay ? 0.5 : 1);
     if (days <= 0) throw new Error("The selected dates contain no working days.");
     const eligibility = getLeaveEligibility(policy);
     if (eligibility.genderRestriction && employee.gender !== eligibility.genderRestriction)
@@ -700,6 +687,8 @@ export async function createLeaveRequestInDatabase(
         { role: "HR", status: "Pending" },
       ],
       policySnapshot: {
+        workingDates,
+        payTiers: validateSickPayTiers(policy.payTiers),
         ...(backdatePermission
           ? {
               backdatePermissionId: backdatePermission.id,
@@ -1021,6 +1010,11 @@ export async function approveLeaveRequestInDatabase(
           startDate: pendingAmendment.proposedStartDate,
           endDate: pendingAmendment.proposedEndDate,
           workingDaysRequested: String(pendingAmendment.proposedWorkingDays),
+          policySnapshot: {
+            ...(request.policySnapshot as LeaveRequest["policySnapshot"]),
+            // An older pending amendment has no snapshot; do not retain the old dates.
+            workingDates: pendingAmendment.proposedWorkingDates,
+          },
           pendingAmendment: null,
           amendmentHistory: [
             ...((request.amendmentHistory ?? []) as NonNullable<LeaveRequest["amendmentHistory"]>),
@@ -1522,13 +1516,14 @@ export async function requestLeaveChangeInDatabase(
             ),
           ),
         );
-      const proposedDays = workingDays(
+      const proposedWorkingDates = leaveWorkingDates(
         action.startDate,
         action.endDate,
         new Set(holidays.map((item) => item.date)),
         settings?.workingDays ?? [],
         row.request.isHalfDay,
       );
+      const proposedDays = proposedWorkingDates.length * (row.request.isHalfDay ? 0.5 : 1);
       if (proposedDays <= 0) throw new Error("The proposed dates contain no working days.");
       const overlap = await tx
         .select({ id: leaveRequests.id })
@@ -1546,12 +1541,14 @@ export async function requestLeaveChangeInDatabase(
         .limit(1);
       if (overlap.length) throw new Error("The proposed dates overlap another leave request.");
       status = "Amendment Pending Line Manager";
+      await requireEmployeeSupervisor(tx, organisationId, row.request.employeeId);
       values = {
         status,
         pendingAmendment: {
           proposedStartDate: action.startDate,
           proposedEndDate: action.endDate,
           proposedWorkingDays: proposedDays,
+          proposedWorkingDates,
           reason: action.reason.trim(),
           requestedAt: new Date().toISOString(),
           requestedBy: actor.userId,

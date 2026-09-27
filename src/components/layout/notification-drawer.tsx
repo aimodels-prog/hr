@@ -6,7 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Bell, Check, Trash2 } from "lucide-react";
 import { useCurrentUser } from "@/lib/auth";
 import { getApplicationDataServices } from "@/lib/data/application-data";
-import type { Notification } from "@/lib/data/types";
+import type { ActorContext, Notification } from "@/lib/data/types";
 import { formatDistanceToNow } from "date-fns";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
@@ -36,7 +36,8 @@ export function NotificationDrawer() {
   }, []);
 
   const { notifications: notifService } = getApplicationDataServices();
-  const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
+  const actorKey = JSON.stringify(currentUser.getActorContext());
+  const actorContext = useMemo(() => JSON.parse(actorKey) as ActorContext, [actorKey]);
   const notifications = notifService
     .listForContext(actorContext)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -47,7 +48,7 @@ export function NotificationDrawer() {
     let cancelled = false;
     setIsLoading(true);
     notifService
-      .hydrateCompatibilityCache(actorContext)
+      .hydrateCompatibilityCache(actorContext, () => !cancelled)
       .catch((error: unknown) => {
         if (!cancelled)
           toast.error(

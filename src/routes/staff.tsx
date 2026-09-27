@@ -3,26 +3,20 @@ import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
 import { ClipboardCheck, Sparkles } from "lucide-react";
 
 import { HrSidebar } from "@/components/hr-sidebar";
+import { SidebarSectionsProvider } from "@/components/layout/sidebar-sections-provider";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { NotificationDrawer } from "@/components/layout/notification-drawer";
 import { ApplicationBootScreen } from "@/components/layout/application-boot-screen";
 import { DevRoleSwitcher } from "@/components/dev-role-switcher";
 import { useCurrentUser } from "@/lib/auth";
-import { OnboardingService } from "@/lib/data/onboarding-service";
 import { SettingsService } from "@/lib/data/settings-service";
 import { MasterDataService } from "@/lib/data/master-data";
-import { LeaveService } from "@/lib/data/leave-service";
-import { TimesheetService } from "@/lib/data/timesheet-service";
-import { OvertimeService } from "@/lib/data/overtime-service";
-import { TravelService } from "@/lib/data/travel-service";
-import { PayrollService } from "@/lib/data/payroll-service";
-import { PerformanceService } from "@/lib/data/performance-service";
-import { TrainingService } from "@/lib/data/training-service";
 import { EmployeeService } from "@/lib/data/employee-service";
-import { VacancyService } from "@/lib/data/vacancy-service";
-import { CandidateService } from "@/lib/data/candidate-service";
-import { getApplicationDataServices } from "@/lib/data/application-data";
-import { type Role } from "@/lib/data/types";
+import { type ActorContext } from "@/lib/data/types";
+import { StaffModuleLoader } from "@/lib/data/staff-module-loader";
+import { hydrateStaffModule } from "@/lib/data/staff-module-hydration";
+import { StaffPageBoundary } from "@/components/layout/staff-data-boundary";
+import { StaffDataContext } from "@/components/layout/staff-data-context";
 import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/staff")({
@@ -49,70 +43,50 @@ async function retryTransientFetch<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 function StaffLayout() {
-  const { currentEmployee, currentUser, activeRole, getActorContext, isDevelopmentPreview } =
-    useCurrentUser();
-  const [obService] = useState(() => new OnboardingService());
+  const { getActorContext } = useCurrentUser();
+  const actor = getActorContext();
+  // Remount before showing another identity/role: old module responses must never become its cache.
+  const scope = JSON.stringify(actor.actor);
+  return <StaffWorkspace key={scope} actor={actor} />;
+}
+
+function StaffWorkspace({ actor }: { actor: ActorContext }) {
+  const { currentEmployee, isDevelopmentPreview } = useCurrentUser();
+  const [actorContext] = useState(actor);
   const [settingsService] = useState(() => new SettingsService());
   const [masterDataService] = useState(() => new MasterDataService());
   const [employeeService] = useState(() => new EmployeeService());
-  const [vacancyService] = useState(() => new VacancyService());
-  const [candidateService] = useState(() => new CandidateService());
-  const [leaveService] = useState(() => new LeaveService());
-  const [timesheetService] = useState(() => new TimesheetService());
-  const [overtimeService] = useState(() => new OvertimeService());
-  const [travelService] = useState(() => new TravelService());
-  const [payrollService] = useState(() => new PayrollService());
-  const [performanceService] = useState(() => new PerformanceService());
-  const [trainingService] = useState(() => new TrainingService());
-  const [notificationService] = useState(() => getApplicationDataServices().notifications);
+  const [moduleLoader, setModuleLoader] = useState<StaffModuleLoader | null>(null);
   const [settings, setSettings] = useState<Awaited<
     ReturnType<SettingsService["getAppSettings"]>
   > | null>(null);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
-  const currentUserId = currentUser?.id ?? "user-rana";
-  const currentEmployeeId = currentUser?.employeeId ?? "employee-rana";
-  const currentDisplayName = currentUser?.displayName ?? "Rana Nair";
-  const currentWorkspaceEmail = currentUser?.workspaceEmail ?? "rana.nair@via-int.com";
-  const currentRolesKey = currentUser?.roles.join("|") ?? "Employee|HR";
 
   useEffect(() => {
     let cancelled = false;
     setBootstrapError(null);
+    const loader = new StaffModuleLoader((module, canCommit) =>
+      hydrateStaffModule(module, actorContext, canCommit),
+    );
+    const timeout = setTimeout(() => {
+      cancelled = true;
+      setBootstrapError("The workspace took too long to load. Try again.");
+    }, 20_000);
     retryTransientFetch(async () => {
       const [loadedSettings] = await Promise.all([
         settingsService.getAppSettings(),
         masterDataService.hydrateCompatibilityCache(),
       ]);
-      const actorContext = {
-        actor: {
-          userId: currentUserId,
-          employeeId: currentEmployeeId,
-          displayName: currentDisplayName,
-          workspaceEmail: currentWorkspaceEmail,
-          roles: currentRolesKey.split("|") as Role[],
-          activeRole,
-        },
-      };
-      await employeeService.hydrateCompatibilityCache(actorContext);
-      await obService.hydrateCompatibilityCache(actorContext);
-      await leaveService.hydrateCompatibilityCache(actorContext);
-      await timesheetService.hydrateCompatibilityCache(actorContext);
-      await overtimeService.hydrateCompatibilityCache(actorContext);
-      await travelService.hydrateCompatibilityCache(actorContext);
-      await performanceService.hydrateCompatibilityCache(actorContext);
-      await trainingService.hydrateCompatibilityCache(actorContext);
-      await notificationService.hydrateCompatibilityCache(actorContext);
-      if (activeRole === "Accounts" || activeRole === "Super Admin")
-        await payrollService.hydrateCompatibilityCache(actorContext);
-      if (activeRole === "HR" || activeRole === "Super Admin") {
-        await vacancyService.hydrateCompatibilityCache(actorContext);
-        await candidateService.hydrateCompatibilityCache(actorContext);
-      }
+      if (!cancelled)
+        await employeeService.hydrateCompatibilityCache(actorContext, () => !cancelled);
       return loadedSettings;
     })
       .then((loadedSettings) => {
-        if (!cancelled) setSettings(loadedSettings);
+        if (!cancelled) {
+          setSettings(loadedSettings);
+          setModuleLoader(loader);
+        }
       })
       .catch((error: unknown) => {
         if (!cancelled) {
@@ -120,33 +94,14 @@ function StaffLayout() {
             error instanceof Error ? error.message : "VIA HR could not load organisation data.",
           );
         }
-      });
+      })
+      .finally(() => clearTimeout(timeout));
     return () => {
       cancelled = true;
+      clearTimeout(timeout);
+      loader.dispose();
     };
-  }, [
-    activeRole,
-    bootstrapAttempt,
-    candidateService,
-    currentDisplayName,
-    currentEmployeeId,
-    currentRolesKey,
-    currentUserId,
-    currentWorkspaceEmail,
-    employeeService,
-    leaveService,
-    masterDataService,
-    notificationService,
-    obService,
-    overtimeService,
-    payrollService,
-    performanceService,
-    settingsService,
-    timesheetService,
-    travelService,
-    trainingService,
-    vacancyService,
-  ]);
+  }, [actorContext, bootstrapAttempt, employeeService, masterDataService, settingsService]);
 
   const setupNeedsAttention =
     currentEmployee?.profileSetupStatus === "In Progress" ||
@@ -171,70 +126,76 @@ function StaffLayout() {
     );
   }
 
-  if (!settings) {
+  if (!settings || !moduleLoader) {
     return <ApplicationBootScreen />;
   }
 
   return (
-    <SidebarProvider>
-      <div className="flex min-h-screen w-full bg-background">
-        <HrSidebar />
-        <div className="min-w-0 flex flex-1 flex-col">
-          <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border/70 bg-card/90 px-4 shadow-[0_1px_12px_oklch(0.3_0.08_253/0.04)] backdrop-blur-xl sm:px-6">
-            <SidebarTrigger className="h-9 w-9 rounded-xl border border-border/70 bg-background shadow-sm" />
-            <div className="hidden items-center gap-2 md:flex">
-              <span className="font-display text-[15px] font-bold tracking-[-0.02em]">
-                VIA HR System
-              </span>
-              <span className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-success">
-                People operations
-              </span>
-            </div>
+    <StaffDataContext.Provider value={moduleLoader}>
+      <SidebarProvider>
+        <SidebarSectionsProvider>
+          <div className="flex min-h-screen w-full bg-background">
+            <HrSidebar />
+            <div className="min-w-0 flex flex-1 flex-col">
+              <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border/70 bg-card/90 px-4 shadow-[0_1px_12px_oklch(0.3_0.08_253/0.04)] backdrop-blur-xl sm:px-6">
+                <SidebarTrigger className="h-9 w-9 rounded-xl border border-border/70 bg-background shadow-sm" />
+                <div className="hidden items-center gap-2 md:flex">
+                  <span className="font-display text-[15px] font-bold tracking-[-0.02em]">
+                    VIA HR System
+                  </span>
+                  <span className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-success">
+                    People operations
+                  </span>
+                </div>
 
-            <div className="ml-auto flex items-center gap-2">
-              {isDevelopmentPreview && (
-                <div className="hidden items-center gap-1.5 rounded-full border border-primary/10 bg-primary/5 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-primary xl:flex">
-                  <Sparkles className="h-3 w-3" /> Demo workspace
+                <div className="ml-auto flex items-center gap-2">
+                  {isDevelopmentPreview && (
+                    <div className="hidden items-center gap-1.5 rounded-full border border-primary/10 bg-primary/5 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-primary xl:flex">
+                      <Sparkles className="h-3 w-3" /> Demo workspace
+                    </div>
+                  )}
+                  <NotificationDrawer />
+                  <DevRoleSwitcher />
                 </div>
-              )}
-              <NotificationDrawer />
-              <DevRoleSwitcher />
-            </div>
-          </header>
-          <main className="flex-1 bg-background p-4 sm:p-6 lg:p-8">
-            {setupNeedsAttention && (
-              <div className="mx-auto mb-5 flex max-w-7xl flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex gap-3">
-                  <ClipboardCheck className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
-                  <div>
-                    <p className="font-medium">
-                      {employmentChangesRequested
-                        ? "Update your employment information"
-                        : awaitingEmploymentConfirmation &&
-                            currentEmployee?.profileSetupStatus === "Completed"
-                          ? "Your employment information is with HR"
-                          : "Complete your employee record"}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {employmentChangesRequested
-                        ? currentEmployee?.employmentReviewNote ||
-                          "HR requested changes before confirming your employment information."
-                        : awaitingEmploymentConfirmation &&
-                            currentEmployee?.profileSetupStatus === "Completed"
-                          ? "Your details are saved. Leave, timesheets, travel and overtime become available after HR confirms your employment information."
-                          : "You can continue using essential work services while you finish your details and documents. Leave becomes available after HR confirms your employment information."}
-                    </p>
+              </header>
+              <main className="flex-1 bg-background p-4 sm:p-6 lg:p-8">
+                {setupNeedsAttention && (
+                  <div className="mx-auto mb-5 flex max-w-7xl flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex gap-3">
+                      <ClipboardCheck className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+                      <div>
+                        <p className="font-medium">
+                          {employmentChangesRequested
+                            ? "Update your employment information"
+                            : awaitingEmploymentConfirmation &&
+                                currentEmployee?.profileSetupStatus === "Completed"
+                              ? "Your employment information is with HR"
+                              : "Complete your employee record"}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          {employmentChangesRequested
+                            ? currentEmployee?.employmentReviewNote ||
+                              "HR requested changes before confirming your employment information."
+                            : awaitingEmploymentConfirmation &&
+                                currentEmployee?.profileSetupStatus === "Completed"
+                              ? "Your details are saved. Leave, timesheets, travel and overtime become available after HR confirms your employment information."
+                              : "You can continue using essential work services while you finish your details and documents. Leave becomes available after HR confirms your employment information."}
+                        </p>
+                      </div>
+                    </div>
+                    <Button asChild size="sm" className="shrink-0">
+                      <Link to="/staff/me/onboarding">Continue setup</Link>
+                    </Button>
                   </div>
-                </div>
-                <Button asChild size="sm" className="shrink-0">
-                  <Link to="/staff/me/onboarding">Continue setup</Link>
-                </Button>
-              </div>
-            )}
-            <Outlet />
-          </main>
-        </div>
-      </div>
-    </SidebarProvider>
+                )}
+                <StaffPageBoundary>
+                  <Outlet />
+                </StaffPageBoundary>
+              </main>
+            </div>
+          </div>
+        </SidebarSectionsProvider>
+      </SidebarProvider>
+    </StaffDataContext.Provider>
   );
 }

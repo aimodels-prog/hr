@@ -63,7 +63,10 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
   // HR can create a missing dropdown option while editing employment details, without leaving
   // the employee workflow or opening the wider system-settings area.
   await page.goto(`/staff/employees/${newHire.id}`);
-  await page.getByRole("tab", { name: /Employment/ }).click();
+  await page
+    .getByRole("navigation", { name: "Page sections" })
+    .getByRole("link", { name: "Employment", exact: true })
+    .click();
   await page.getByRole("button", { name: "Edit employment details" }).click();
   const employmentDialog = page.getByRole("dialog", { name: "Update Employment Records" });
   await employmentDialog.getByRole("button", { name: "Add department" }).click();
@@ -140,7 +143,7 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
     .locator("..")
     .getByRole("combobox");
   await offboardingEmployeeSelect.click();
-  await page.getByRole("option", { name: /Omar/ }).click();
+  await page.getByRole("option", { name: new RegExp(`Newhire${unique}`) }).click();
 
   const offboardingTemplateSelect = offboardingDialog
     .getByText("Offboarding Template", { exact: true })
@@ -187,13 +190,15 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
     "Offboarding case started",
   );
   await expect(offboardingDialog).toBeHidden();
-  const omarRow = page.getByRole("row", { name: /Omar Rahman/ });
-  await expect(omarRow).toBeVisible();
-  await expect(omarRow.getByText("In Progress", { exact: true })).toBeVisible();
+  const offboardingRow = page.getByRole("row", { name: new RegExp(newHire.legalName) });
+  await expect(offboardingRow).toBeVisible();
+  await expect(offboardingRow.getByText("In Progress", { exact: true })).toBeVisible();
 
   // Open the offboarding case detail page - this is exactly the read path that must confirm
   // access and redact confidentialNotes before the case ever lands in component state.
-  await omarRow.getByRole("link", { name: "Open Case" }).click();
-  await expect(page.getByText(/Offboarding: Omar/)).toBeVisible({ timeout: 20_000 });
+  await offboardingRow.getByRole("link", { name: "Open Case" }).click();
+  await expect(page.getByText(`Offboarding: ${newHire.legalName}`, { exact: true })).toBeVisible({
+    timeout: 20_000,
+  });
   await expect(page.getByText("Restricted", { exact: true })).toBeVisible();
 });

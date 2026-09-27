@@ -167,6 +167,7 @@ export const reportSavedViews = pgTable(
         dateTo: string;
         department: string;
         status: string;
+        leaveYear?: number | "current" | "all";
       }>()
       .notNull(),
   },

@@ -136,6 +136,28 @@ function seedRecord(service: AttendanceService, date: string) {
   );
 }
 
+test("a correction decision keeps the version originally opened by the reviewer", async () => {
+  const { service } = harness();
+  const record = seedRecord(service, "2026-08-24");
+  const opened = await service.requestCorrection(
+    record.id,
+    "09:00",
+    "17:30",
+    "Correct the clock-out time",
+    employee,
+  );
+  const advanced = service.managerApproveCorrection(opened.id, manager, "Reviewed by manager");
+  assert.equal(advanced.recordVersion, opened.recordVersion + 1);
+  await assert.rejects(
+    service.decideCorrectionAsync(opened.id, true, "Stale HR review", hr, opened.recordVersion),
+    /has changed/,
+  );
+  assert.equal(
+    service.getAllCorrections(hr).find((item) => item.id === opened.id)?.status,
+    "Pending HR",
+  );
+});
+
 test("only HR/Super Admin can export attendance CSV, and the export is audited", () => {
   const { service, audit } = harness();
   seedRecord(service, "2026-08-24");

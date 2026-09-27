@@ -51,6 +51,15 @@ test(
       const accounts = actorFor("Accounts");
       const admin = actorFor("Super Admin");
 
+      await assert.rejects(
+        () => generateReportInDatabase(organisation.id, "payroll", noFilters, hr),
+        /permission/i,
+      );
+      await assert.rejects(
+        () => exportReportCsvInDatabase(organisation.id, "payroll", noFilters, hr),
+        /permission/i,
+      );
+
       for (const report of listAvailableReportsForActor(admin)) {
         const data = await generateReportInDatabase(organisation.id, report.id, noFilters, admin);
         assert.equal(data.id, report.id);

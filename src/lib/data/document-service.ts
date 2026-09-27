@@ -74,13 +74,14 @@ export class DocumentService {
     } as const;
   }
 
-  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+  async hydrateCompatibilityCache(context: ActorContext, canCommit = () => true): Promise<void> {
     if (typeof window === "undefined") return;
     const { getEmployeeDocumentsFn } =
       await import("../server-functions/core-hr-lifecycle.server.ts");
     const documents = await getEmployeeDocumentsFn({
       data: { actor: await this.serverActor(context) },
     });
+    if (!canCommit()) return;
     const { storage } = getApplicationDataServices();
     const employees = storage.readCollection<Employee & { databaseId?: string }>("employees");
     const employeeIdMap = new Map(

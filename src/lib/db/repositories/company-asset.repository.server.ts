@@ -1,8 +1,13 @@
 import "@tanstack/react-start/server-only";
 
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, ne, notExists, sql } from "drizzle-orm";
 
-import type { AssetAssignment, AssetCondition, AssetType } from "../../data/asset-types.ts";
+import type {
+  AssetAssignment,
+  AssetCondition,
+  AssetType,
+  AvailableCompanyAsset,
+} from "../../data/asset-types.ts";
 import { getDatabaseClient } from "../client.ts";
 import { assetAssignments, companyAssets } from "../schema/documents.ts";
 import { employees } from "../schema/employee.ts";
@@ -22,9 +27,53 @@ const assetTypes = new Set<AssetType>([
 const conditions = new Set<AssetCondition>(["New", "Good", "Fair", "Damaged"]);
 
 function requireManager(actor: AuditActorContext) {
+  if (!actor.userId) throw new Error("Sign in first.");
   if (actor.activeRole !== "HR" && actor.activeRole !== "Super Admin") {
     throw new Error("Only HR or a Super Admin can manage company equipment.");
   }
+}
+
+export async function listAvailableCompanyAssets(
+  organisationId: string,
+  actor: AuditActorContext,
+): Promise<AvailableCompanyAsset[]> {
+  requireManager(actor);
+  const db = getDatabaseClient();
+  const rows = await db
+    .select({
+      id: companyAssets.id,
+      recordVersion: companyAssets.recordVersion,
+      assetType: companyAssets.assetType,
+      assetTag: companyAssets.assetTag,
+      description: companyAssets.description,
+      currentCondition: companyAssets.currentCondition,
+      // Keep the outer-table qualifier: single-table projections otherwise strip Drizzle's column qualifier.
+      lastReturnedDate: sql<string | null>`(SELECT max(returned_date)::text FROM asset_assignments
+      WHERE asset_id = "company_assets"."id" AND organisation_id = ${organisationId} AND status = 'Returned')`,
+    })
+    .from(companyAssets)
+    .where(
+      and(
+        eq(companyAssets.organisationId, organisationId),
+        isNull(companyAssets.archivedAt),
+        eq(companyAssets.status, "Available"),
+        ne(companyAssets.currentCondition, "Damaged"),
+        notExists(
+          db
+            .select({ id: assetAssignments.id })
+            .from(assetAssignments)
+            .where(
+              and(
+                eq(assetAssignments.assetId, companyAssets.id),
+                eq(assetAssignments.status, "Assigned"),
+                isNull(assetAssignments.archivedAt),
+              ),
+            ),
+        ),
+      ),
+    )
+    .orderBy(asc(companyAssets.assetTag));
+  return rows.map((row) => ({ ...row, assetType: row.assetType as AssetType }));
 }
 
 export async function listCompanyAssetAssignmentsForActor(
@@ -38,8 +87,20 @@ export async function listCompanyAssetAssignmentsForActor(
       managerId: employees.lineManagerId,
     })
     .from(assetAssignments)
-    .innerJoin(companyAssets, eq(assetAssignments.assetId, companyAssets.id))
-    .innerJoin(employees, eq(assetAssignments.employeeId, employees.id))
+    .innerJoin(
+      companyAssets,
+      and(
+        eq(assetAssignments.assetId, companyAssets.id),
+        eq(companyAssets.organisationId, organisationId),
+      ),
+    )
+    .innerJoin(
+      employees,
+      and(
+        eq(assetAssignments.employeeId, employees.id),
+        eq(employees.organisationId, organisationId),
+      ),
+    )
     .where(
       and(eq(assetAssignments.organisationId, organisationId), isNull(assetAssignments.archivedAt)),
     )
@@ -61,6 +122,7 @@ export async function listCompanyAssetAssignmentsForActor(
       ...(assignment.archivedAt ? { archivedAt: assignment.archivedAt.toISOString() } : {}),
       recordVersion: assignment.recordVersion,
       employeeId: assignment.employeeId,
+      assetId: asset.id,
       assetType: asset.assetType as AssetType,
       assetTag: asset.assetTag,
       description: asset.description,
@@ -77,24 +139,38 @@ export async function assignCompanyAssetInDatabase(
   organisationId: string,
   input: {
     employeeId: string;
-    assetType: AssetType;
-    assetTag: string;
-    description: string;
     assignedDate: string;
-    conditionAtAssignment: AssetCondition;
     notes?: string;
-  },
+  } & (
+    | { assetId: string; expectedVersion: number }
+    | {
+        assetType: AssetType;
+        assetTag: string;
+        description: string;
+        conditionAtAssignment: AssetCondition;
+      }
+  ),
   actor: AuditActorContext,
 ): Promise<string> {
   requireManager(actor);
-  if (!assetTypes.has(input.assetType) || !conditions.has(input.conditionAtAssignment))
-    throw new Error("Select a valid equipment type and condition.");
-  if (input.assetTag.trim().length < 2 || input.description.trim().length < 3)
-    throw new Error("Asset tag and description are required.");
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(input.assignedDate) ||
+    !Number.isFinite(Date.parse(input.assignedDate)) ||
+    new Date(input.assignedDate).toISOString().slice(0, 10) !== input.assignedDate
+  )
+    throw new Error("Choose a valid assignment date.");
+  if (!("assetId" in input)) {
+    if (!assetTypes.has(input.assetType) || !conditions.has(input.conditionAtAssignment))
+      throw new Error("Select a valid equipment type and condition.");
+    if (input.conditionAtAssignment === "Damaged")
+      throw new Error("Damaged equipment cannot be assigned.");
+    if (input.assetTag.trim().length < 2 || input.description.trim().length < 3)
+      throw new Error("Asset tag and description are required.");
+  }
   const db = getDatabaseClient();
   return db.transaction(async (tx) => {
     const [employee] = await tx
-      .select({ id: employees.id })
+      .select({ id: employees.id, status: employees.status })
       .from(employees)
       .where(
         and(
@@ -104,31 +180,88 @@ export async function assignCompanyAssetInDatabase(
         ),
       )
       .limit(1);
-    if (!employee) throw new Error("Employee not found.");
-    const [existing] = await tx
-      .select({ id: companyAssets.id })
-      .from(companyAssets)
-      .where(
-        and(
-          eq(companyAssets.organisationId, organisationId),
-          eq(companyAssets.assetTag, input.assetTag.trim()),
-        ),
-      )
-      .limit(1);
-    if (existing) throw new Error("This asset tag is already registered.");
-    const [asset] = await tx
-      .insert(companyAssets)
-      .values({
-        organisationId,
-        assetType: input.assetType,
-        assetTag: input.assetTag.trim(),
-        description: input.description.trim(),
-        currentCondition: input.conditionAtAssignment,
-        status: "Assigned",
-        createdBy: actor.userId,
-        updatedBy: actor.userId,
-      } as typeof companyAssets.$inferInsert)
-      .returning({ id: companyAssets.id });
+    if (!employee || employee.status === "Inactive" || employee.status === "Archived")
+      throw new Error("Choose a current employee in your organisation.");
+    let asset: typeof companyAssets.$inferSelect;
+    if ("assetId" in input) {
+      const [existing] = await tx
+        .select()
+        .from(companyAssets)
+        .where(
+          and(
+            eq(companyAssets.organisationId, organisationId),
+            eq(companyAssets.id, input.assetId),
+            isNull(companyAssets.archivedAt),
+          ),
+        )
+        .for("update");
+      if (!existing) throw new Error("Equipment was not found in your organisation.");
+      if (existing.recordVersion !== input.expectedVersion)
+        throw new Error(
+          "This equipment has changed. Refresh available equipment and select it again.",
+        );
+      if (existing.status !== "Available" || existing.currentCondition === "Damaged")
+        throw new Error("Only available, undamaged equipment can be assigned.");
+      const [current] = await tx
+        .select({ id: assetAssignments.id })
+        .from(assetAssignments)
+        .where(
+          and(
+            eq(assetAssignments.assetId, existing.id),
+            eq(assetAssignments.status, "Assigned"),
+            isNull(assetAssignments.archivedAt),
+          ),
+        )
+        .limit(1);
+      if (current) throw new Error("This equipment is already assigned. Record its return first.");
+      const [lastReturn] = await tx
+        .select({ date: assetAssignments.returnedDate })
+        .from(assetAssignments)
+        .where(
+          and(
+            eq(assetAssignments.organisationId, organisationId),
+            eq(assetAssignments.assetId, existing.id),
+            eq(assetAssignments.status, "Returned"),
+          ),
+        )
+        .orderBy(desc(assetAssignments.returnedDate))
+        .limit(1);
+      if (lastReturn?.date && input.assignedDate < lastReturn.date)
+        throw new Error("The assignment date cannot be before the equipment's latest return.");
+      if (input.assignedDate > new Date().toISOString().slice(0, 10))
+        throw new Error("Assign available equipment on the handover date, not a future date.");
+      const [updated] = await tx
+        .update(companyAssets)
+        .set({
+          status: "Assigned",
+          updatedAt: new Date(),
+          updatedBy: actor.userId!,
+          recordVersion: sql`${companyAssets.recordVersion} + 1`,
+        })
+        .where(eq(companyAssets.id, existing.id))
+        .returning();
+      asset = updated!;
+    } else {
+      const [created] = await tx
+        .insert(companyAssets)
+        .values({
+          organisationId,
+          assetType: input.assetType,
+          assetTag: input.assetTag.trim(),
+          description: input.description.trim(),
+          currentCondition: input.conditionAtAssignment,
+          status: "Assigned",
+          createdBy: actor.userId,
+          updatedBy: actor.userId,
+        } as typeof companyAssets.$inferInsert)
+        .onConflictDoNothing()
+        .returning();
+      if (!created)
+        throw new Error(
+          "This asset tag is already registered. Select it from available equipment after its return.",
+        );
+      asset = created;
+    }
     const [assignment] = await tx
       .insert(assetAssignments)
       .values({
@@ -136,7 +269,7 @@ export async function assignCompanyAssetInDatabase(
         assetId: asset!.id,
         employeeId: input.employeeId,
         assignedDate: input.assignedDate,
-        conditionAtAssignment: input.conditionAtAssignment,
+        conditionAtAssignment: asset.currentCondition,
         status: "Assigned",
         ...(input.notes?.trim() ? { notes: input.notes.trim() } : {}),
         createdBy: actor.userId,
@@ -157,10 +290,16 @@ export async function assignCompanyAssetInDatabase(
       afterSummary: {
         assignmentId: assignment!.id,
         employeeId: input.employeeId,
-        assetType: input.assetType,
-        assetTag: input.assetTag.trim(),
+        assetType: asset.assetType,
+        assetTag: asset.assetTag,
+        reusedExistingAsset: "assetId" in input,
+        assignedDate: input.assignedDate,
+        conditionAtAssignment: asset.currentCondition,
       },
-      reason: "Assigned company equipment",
+      reason:
+        "assetId" in input
+          ? "Assigned available company equipment; previous handovers retained"
+          : "Assigned new company equipment",
       riskLevel: "High",
     } as typeof auditEvents.$inferInsert);
     return assignment!.id;
@@ -193,8 +332,21 @@ export async function closeCompanyAssetAssignmentInDatabase(
       )
       .for("update")
       .limit(1);
-    if (!assignment || assignment.status !== "Assigned")
+    if (!assignment || assignment.archivedAt || assignment.status !== "Assigned")
       throw new Error("Only assigned equipment can be closed.");
+    const [asset] = await tx
+      .select()
+      .from(companyAssets)
+      .where(
+        and(
+          eq(companyAssets.id, assignment.assetId),
+          eq(companyAssets.organisationId, organisationId),
+          isNull(companyAssets.archivedAt),
+        ),
+      )
+      .for("update");
+    if (!asset || asset.status !== "Assigned")
+      throw new Error("Equipment is no longer assigned. Refresh and try again.");
     const today = new Date().toISOString().slice(0, 10);
     await tx
       .update(assetAssignments)
@@ -211,7 +363,8 @@ export async function closeCompanyAssetAssignmentInDatabase(
     await tx
       .update(companyAssets)
       .set({
-        status: outcome === "Returned" ? "Available" : outcome,
+        status:
+          outcome === "Returned" ? (condition === "Damaged" ? "Damaged" : "Available") : outcome,
         currentCondition:
           outcome === "Returned"
             ? condition!

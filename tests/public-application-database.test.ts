@@ -18,6 +18,7 @@ import {
 } from "../src/lib/db/repositories/candidate-mutation.repository.server.ts";
 import {
   createAssessmentBatchInDatabase,
+  refreshPreliminaryScreeningInDatabase,
   finaliseShortlistInDatabase,
   runDetailedAssessmentInDatabase,
 } from "../src/lib/db/repositories/recruitment-screening.repository.server.ts";
@@ -30,6 +31,7 @@ import {
   updateInterviewWorkflowInDatabase,
 } from "../src/lib/db/repositories/recruitment-interview.repository.server.ts";
 import {
+  convertAcceptedJobOfferInDatabase,
   finaliseHiringDecisionInDatabase,
   generateJobOfferDocumentInDatabase,
   prepareManualInterviewHireInDatabase,
@@ -304,6 +306,44 @@ test(
       assert.ok(assessmentTarget <= 10);
       assert.ok(Number(assessmentAvailability.prepared_count) >= assessmentTarget);
       const obsoleteRunId = randomUUID();
+      const [oldPreparation] = await sql`SELECT id FROM candidate_preparation_runs
+        WHERE application_id=${result.applicationId} ORDER BY created_at DESC LIMIT 1`;
+      await sql`UPDATE candidate_preparation_runs SET ranking_model='legacy-unsafe-rules'
+        WHERE id=${oldPreparation.id}`;
+      await assert.rejects(
+        createAssessmentBatchInDatabase(
+          String(vacancy.organisation_id),
+          String(vacancy.id),
+          assessmentTarget,
+          actor,
+        ),
+        /current screening results.*Prepare candidates/,
+      );
+      const rescored = await refreshPreliminaryScreeningInDatabase(
+        String(vacancy.organisation_id),
+        String(vacancy.id),
+        actor,
+      );
+      assert.ok(rescored >= 1);
+      assert.equal(
+        await refreshPreliminaryScreeningInDatabase(
+          String(vacancy.organisation_id),
+          String(vacancy.id),
+          actor,
+        ),
+        0,
+        "repeat refresh must not create duplicate results",
+      );
+      const [preserved] =
+        await sql`SELECT ranking_model FROM candidate_preparation_runs WHERE id=${oldPreparation.id}`;
+      assert.equal(
+        preserved.ranking_model,
+        "legacy-unsafe-rules",
+        "historical assessment remains unchanged",
+      );
+      const [refreshedApplication] =
+        await sql`SELECT preparation_run_id FROM candidate_applications WHERE id=${result.applicationId}`;
+      assert.notEqual(refreshedApplication.preparation_run_id, oldPreparation.id);
       await sql`INSERT INTO candidate_preparation_runs
         SELECT (jsonb_populate_record(NULL::candidate_preparation_runs,
           to_jsonb(r) || jsonb_build_object('id', ${obsoleteRunId}::text, 'preliminary_score', '100',
@@ -755,6 +795,21 @@ test(
             : undefined,
         );
       }
+      const versionBeforeIdentity = await version();
+      await assert.rejects(
+        () =>
+          transitionJobOfferInDatabase(
+            String(vacancy.organisation_id),
+            offerId,
+            "Accepted",
+            undefined,
+            actor,
+            versionBeforeIdentity,
+          ),
+        /Confirm the existing employee/,
+      );
+      const [notAccepted] = await sql`SELECT status FROM job_offers WHERE id=${offerId}`;
+      assert.equal(notAccepted.status, "Sent", "missing identity must roll back acceptance");
       const conversion = await transitionJobOfferInDatabase(
         String(vacancy.organisation_id),
         offerId,
@@ -762,6 +817,11 @@ test(
         "Candidate accepted the database-backed offer",
         actor,
         await version(),
+        undefined,
+        {
+          workspaceEmail: `hire.${unique}@${process.env["ALLOWED_EMAIL_DOMAIN"] || "via-int.com"}`,
+          identityConfirmed: true,
+        },
       );
       assert.ok(conversion.employeeId && conversion.userId && conversion.onboardingCaseId);
       const offerDocument = await generateJobOfferDocumentInDatabase(
@@ -817,6 +877,47 @@ test(
         ["Hired", 1, 1],
       );
       assert.ok(Number(mutations.exports) >= 1);
+
+      // Simulate an accepted internal offer whose durable application already identifies staff.
+      const internalOfferId = randomUUID();
+      await sql`INSERT INTO job_offers
+        SELECT (jsonb_populate_record(NULL::job_offers, to_jsonb(o) ||
+          jsonb_build_object('id', ${internalOfferId}::text, 'converted_to_employee_id', NULL))).*
+        FROM job_offers o WHERE o.id=${offerId}`;
+      await sql`UPDATE candidate_applications SET internal_applicant_employee_id=${conversion.employeeId}, source='Internal Application' WHERE id=${result.applicationId}`;
+      await sql`UPDATE candidates SET converted_to_employee_id=NULL WHERE id=${result.candidateId}`;
+      const [employeeBefore] =
+        await sql`SELECT to_jsonb(e) AS record FROM employees e WHERE id=${conversion.employeeId}`;
+      const [accountBefore] =
+        await sql`SELECT to_jsonb(u) AS record FROM users u WHERE id=${conversion.userId}`;
+      const internalResult = await convertAcceptedJobOfferInDatabase(
+        String(vacancy.organisation_id),
+        internalOfferId,
+        actor,
+      );
+      assert.equal(internalResult.employeeId, conversion.employeeId);
+      assert.equal(internalResult.userId, conversion.userId);
+      assert.equal(internalResult.kind, "Internal Move");
+      assert.equal(internalResult.onboardingCaseId, undefined);
+      const [employeeAfter] =
+        await sql`SELECT to_jsonb(e) AS record FROM employees e WHERE id=${conversion.employeeId}`;
+      const [accountAfter] =
+        await sql`SELECT to_jsonb(u) AS record FROM users u WHERE id=${conversion.userId}`;
+      assert.deepEqual(employeeAfter.record, employeeBefore.record);
+      assert.deepEqual(accountAfter.record, accountBefore.record);
+      const [internalCounts] = await sql`SELECT
+        (SELECT count(*)::int FROM employees WHERE candidate_id=${result.candidateId}) AS employees,
+        (SELECT count(*)::int FROM onboarding_cases WHERE employee_id=${conversion.employeeId}) AS onboardings`;
+      assert.deepEqual(internalCounts, { employees: 1, onboardings: 1 });
+      await assert.rejects(
+        () =>
+          convertAcceptedJobOfferInDatabase(
+            String(vacancy.organisation_id),
+            internalOfferId,
+            actor,
+          ),
+        /already been converted/,
+      );
 
       const duplicateId = randomUUID();
       await sql`

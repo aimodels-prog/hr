@@ -1,7 +1,12 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { AccessDenied, useCurrentUser } from "@/lib/auth";
-import { ReportService, type ReportData, type ReportSavedView } from "@/lib/data/report-service";
+import {
+  ReportService,
+  type ReportData,
+  type ReportSavedView,
+  type ReportFilters,
+} from "@/lib/data/report-service";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -79,6 +84,9 @@ function ReportsDashboard() {
   const [dateTo, setDateTo] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [departmentFilter, setDepartmentFilter] = useState("all");
+  const [leaveYear, setLeaveYear] = useState<NonNullable<ReportFilters["leaveYear"]>>("current");
+  const [appliedFilters, setAppliedFilters] = useState<ReportFilters | null>(null);
+  const reportRequest = useRef(0);
   const [loadError, setLoadError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
@@ -123,14 +131,23 @@ function ReportsDashboard() {
       dateTo,
       department: departmentFilter,
       status: statusFilter,
+      leaveYear,
     }),
-    [dateFrom, dateTo, departmentFilter, filterQuery, statusFilter],
+    [dateFrom, dateTo, departmentFilter, filterQuery, statusFilter, leaveYear],
   );
 
   const loadReport = async (
     id: string,
-    filters = { search: "", dateFrom: "", dateTo: "", department: "all", status: "all" },
+    filters: ReportFilters = {
+      search: "",
+      dateFrom: "",
+      dateTo: "",
+      department: "all",
+      status: "all",
+      leaveYear: "current",
+    },
   ) => {
+    const request = ++reportRequest.current;
     try {
       setIsLoading(true);
       setLoadError("");
@@ -139,13 +156,21 @@ function ReportsDashboard() {
         reportService.generateReportFromDatabase(id, filters),
         reportService.getSavedViewsFromDatabase(id),
       ]);
+      if (request !== reportRequest.current) return;
       setReportData(data);
+      // Export the displayed period, even if filters have been edited but not applied,
+      // or the organisation moves into its next leave year before export.
+      setAppliedFilters({
+        ...filters,
+        ...(data.leaveYears ? { leaveYear: data.leaveYears.selectedYear } : {}),
+      });
       setSavedViews(views);
     } catch (error) {
+      if (request !== reportRequest.current) return;
       setReportData(null);
       setLoadError(error instanceof Error ? error.message : "The report could not be loaded.");
     } finally {
-      setIsLoading(false);
+      if (request === reportRequest.current) setIsLoading(false);
     }
   };
 
@@ -155,6 +180,7 @@ function ReportsDashboard() {
     setDateTo(view.filters.dateTo);
     setDepartmentFilter(view.filters.department);
     setStatusFilter(view.filters.status);
+    setLeaveYear(view.filters.leaveYear ?? "current");
     await loadReport(view.reportId, view.filters);
   };
 
@@ -182,13 +208,10 @@ function ReportsDashboard() {
   };
 
   const handleExport = async () => {
-    if (!reportData || !activeReportId) return;
+    if (!reportData || !activeReportId || !appliedFilters) return;
     try {
       setIsExporting(true);
-      const exported = await reportService.exportReportFromDatabase(
-        activeReportId,
-        currentFilters(),
-      );
+      const exported = await reportService.exportReportFromDatabase(activeReportId, appliedFilters);
       const url = URL.createObjectURL(new Blob([exported.csv], { type: "text/csv;charset=utf-8" }));
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -245,6 +268,7 @@ function ReportsDashboard() {
     setDateTo("");
     setStatusFilter("all");
     setDepartmentFilter("all");
+    setLeaveYear("current");
     await loadReport(id);
   };
 
@@ -255,6 +279,7 @@ function ReportsDashboard() {
     setDateTo("");
     setStatusFilter("all");
     setDepartmentFilter("all");
+    setLeaveYear("current");
     await loadReport(activeReportId);
   };
 
@@ -390,6 +415,32 @@ function ReportsDashboard() {
                   </div>
                 </div>
                 <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                  {reportData.leaveYears && (
+                    <Select
+                      value={String(leaveYear)}
+                      onValueChange={(value) =>
+                        setLeaveYear(value === "current" || value === "all" ? value : Number(value))
+                      }
+                    >
+                      <SelectTrigger aria-label="Leave year">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="current">
+                          Current leave year ({reportData.leaveYears.currentYear})
+                        </SelectItem>
+                        {reportData.leaveYears.availableYears.map((year) => (
+                          <SelectItem key={year} value={String(year)}>
+                            Leave year {year}
+                            {reportData.leaveYears?.startMonthDay !== "01-01"
+                              ? ` / ${year + 1}`
+                              : ""}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value="all">All leave years</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
                   <div className="relative w-full">
                     <Filter className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input
@@ -515,9 +566,7 @@ function ReportsDashboard() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Save this report view</DialogTitle>
-            <DialogDescription>
-              Save the current search, date, department and status filters for your own use.
-            </DialogDescription>
+            <DialogDescription>Save these report filters for your own use.</DialogDescription>
           </DialogHeader>
           <Input
             autoFocus

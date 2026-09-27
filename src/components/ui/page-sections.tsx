@@ -1,4 +1,6 @@
 import * as React from "react";
+import { createPortal } from "react-dom";
+import { useSidebarSections } from "@/components/layout/sidebar-sections-context";
 import { ChevronDown, ChevronRight, List } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -15,7 +17,7 @@ function useSections() {
   return value;
 }
 
-/** In-page navigation, deliberately separate from the application's main sidebar. */
+/** In the staff workspace, sections are nested within the single main sidebar. */
 export function PageSections({
   value,
   defaultValue = "",
@@ -29,6 +31,7 @@ export function PageSections({
   onValueChange?: (value: string) => void;
 }) {
   const [selected, setSelected] = React.useState(defaultValue);
+  const sidebar = useSidebarSections();
   const id = React.useId();
   const root = React.useRef<HTMLDivElement>(null);
   const select = React.useCallback(
@@ -57,7 +60,9 @@ export function PageSections({
         {...props}
         className={cn(
           className,
-          "grid min-w-0 items-start gap-5 space-y-0 lg:grid-cols-[190px_minmax(0,1fr)] [&>[data-section-content]]:lg:col-start-2 [&>[data-section-content]]:lg:row-start-1",
+          "grid min-w-0 items-start gap-5 space-y-0",
+          !sidebar &&
+            "lg:grid-cols-[190px_minmax(0,1fr)] [&>[data-section-content]]:lg:col-start-2 [&>[data-section-content]]:lg:row-start-1",
         )}
       >
         {children}
@@ -83,8 +88,14 @@ function sectionItems(
   });
 }
 
-export function SectionNavigation({ children, className, ...props }: React.ComponentProps<"div">) {
+export function SectionNavigation({
+  children,
+  className,
+  restoreHash = true,
+  ...props
+}: React.ComponentProps<"div"> & { restoreHash?: boolean }) {
   const { value, select } = useSections();
+  const sidebar = useSidebarSections();
   const items = sectionItems(children);
   const current = items.find((item) => item.value === value);
   const initial = React.useRef(value);
@@ -97,6 +108,7 @@ export function SectionNavigation({ children, className, ...props }: React.Compo
     .map((item) => item.value)
     .join("|");
   React.useEffect(() => {
+    if (!restoreHash) return;
     const restore = () => {
       const requested = new URLSearchParams(window.location.hash.slice(1)).get("section");
       if (requested && available.split("|").includes(requested)) selectRef.current(requested);
@@ -106,10 +118,22 @@ export function SectionNavigation({ children, className, ...props }: React.Compo
     restore();
     window.addEventListener("hashchange", restore);
     return () => window.removeEventListener("hashchange", restore);
-  }, [available]);
+  }, [available, restoreHash]);
   React.useEffect(() => {
     if (!current && items[0]) select(items[0].value);
   }, [current, items, select]);
+  if (sidebar) {
+    return sidebar.target
+      ? createPortal(
+          <div {...props} className={cn(className, "py-1")}>
+            <nav aria-label="Page sections" className="space-y-0.5">
+              {children}
+            </nav>
+          </div>,
+          sidebar.target,
+        )
+      : null;
+  }
   return (
     <aside className="min-w-0 lg:sticky lg:top-20">
       <details data-section-menu className="group rounded-xl border bg-card lg:hidden">
@@ -151,6 +175,7 @@ export function SectionLink({
   ...props
 }: Omit<React.ComponentProps<"a">, "href"> & { value: string; disabled?: boolean }) {
   const context = useSections();
+  const sidebar = useSidebarSections();
   const active = context.value === value;
   return (
     <a
@@ -166,6 +191,7 @@ export function SectionLink({
         }
         context.select(value);
         context.closeMenu();
+        sidebar?.closeMobile();
         // Preserve focus when collapsing the mobile menu.
         if (window.matchMedia("(max-width: 1023px)").matches)
           event.currentTarget.closest("details")?.querySelector("summary")?.focus();
@@ -180,7 +206,9 @@ export function SectionLink({
         disabled && "pointer-events-none opacity-50",
       )}
     >
-      <span className="min-w-0 flex-1">{children}</span>
+      <span className="flex min-w-0 flex-1 items-center gap-2 [&>svg]:size-4 [&>svg]:shrink-0">
+        {children}
+      </span>
       {active && <ChevronRight className="h-4 w-4 shrink-0" />}
     </a>
   );

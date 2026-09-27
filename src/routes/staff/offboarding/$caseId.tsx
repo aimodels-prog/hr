@@ -37,6 +37,7 @@ import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { LifecycleTaskService } from "@/lib/data/lifecycle-task-service";
 import { OffboardingService } from "@/lib/data/offboarding-service";
+import { isOffboardingCaseActive } from "@/lib/data/offboarding-policy";
 import type { OffboardingTask, OffboardingTaskGroup } from "@/lib/data/offboarding-types";
 import { toast } from "sonner";
 
@@ -162,6 +163,7 @@ function OffboardingCaseRoute() {
     );
   }
 
+  const isActiveCase = isOffboardingCaseActive(offboardingCase.status);
   const canWaive = currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
   const canFinance =
     currentUser.activeRole === "Accounts" || currentUser.activeRole === "Super Admin";
@@ -172,6 +174,7 @@ function OffboardingCaseRoute() {
   const canSeeAudit = currentUser.can("system:audit_view");
 
   const canComplete = (task: OffboardingTask) => {
+    if (!isActiveCase) return false;
     if (currentUser.activeRole === "Super Admin") return true;
     if (
       task.assignedUserId === currentUser.userId ||
@@ -308,13 +311,11 @@ function OffboardingCaseRoute() {
                   <Lock className="h-3 w-3" /> Restricted
                 </Badge>
               )}
-              {canLegal &&
-                offboardingCase.status !== "Completed" &&
-                offboardingCase.status !== "Cancelled" && (
-                  <Button variant="outline" size="sm" onClick={() => setCancelOpen(true)}>
-                    <Ban className="h-4 w-4" /> Cancel offboarding
-                  </Button>
-                )}
+              {canLegal && isActiveCase && (
+                <Button variant="outline" size="sm" onClick={() => setCancelOpen(true)}>
+                  <Ban className="h-4 w-4" /> Cancel offboarding
+                </Button>
+              )}
             </div>
           }
         />
@@ -338,10 +339,12 @@ function OffboardingCaseRoute() {
                 detail={
                   offboardingCase.financialClearanceAt
                     ? `Confirmed ${format(new Date(offboardingCase.financialClearanceAt), "d MMM yyyy")}`
-                    : "Waiting for Accounts"
+                    : isActiveCase
+                      ? "Waiting for Accounts"
+                      : "Not granted"
                 }
                 action={
-                  canFinance && !offboardingCase.financialClearanceAt ? (
+                  isActiveCase && canFinance && !offboardingCase.financialClearanceAt ? (
                     <Button
                       size="sm"
                       variant="outline"
@@ -370,10 +373,12 @@ function OffboardingCaseRoute() {
                 detail={
                   offboardingCase.legalClearanceAt
                     ? `Confirmed ${format(new Date(offboardingCase.legalClearanceAt), "d MMM yyyy")}`
-                    : "Waiting for HR"
+                    : isActiveCase
+                      ? "Waiting for HR"
+                      : "Not granted"
                 }
                 action={
-                  canLegal && !offboardingCase.legalClearanceAt ? (
+                  isActiveCase && canLegal && !offboardingCase.legalClearanceAt ? (
                     <Button
                       size="sm"
                       variant="outline"
@@ -402,10 +407,12 @@ function OffboardingCaseRoute() {
                 detail={
                   offboardingCase.status === "Completed"
                     ? "Employee access is inactive"
-                    : "Waiting for all clearances"
+                    : isActiveCase
+                      ? "Waiting for all clearances"
+                      : "Cancelled — no further action"
                 }
                 action={
-                  canFinalize && offboardingCase.status !== "Completed" ? (
+                  canFinalize && isActiveCase ? (
                     <Button
                       size="sm"
                       disabled={
@@ -448,7 +455,8 @@ function OffboardingCaseRoute() {
                 </div>
                 {groupTasks.map((task) => {
                   const done = task.status === "Completed" || task.status === "Waived";
-                  const overdue = !done && task.dueDate < new Date().toISOString().slice(0, 10);
+                  const overdue =
+                    isActiveCase && !done && task.dueDate < new Date().toISOString().slice(0, 10);
                   return (
                     <Card key={task.id} className={overdue ? "border-rose-200" : ""}>
                       <CardContent className="flex flex-col gap-4 p-5 md:flex-row md:items-center">
@@ -494,7 +502,7 @@ function OffboardingCaseRoute() {
                             </p>
                           )}
                         </div>
-                        {canWaive && !done && (
+                        {isActiveCase && canWaive && !done && (
                           <div className="w-full md:w-56">
                             <label className="text-xs font-medium">
                               Named owner

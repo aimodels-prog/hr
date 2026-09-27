@@ -155,6 +155,7 @@ export interface LeaveAmendmentRequest {
   proposedStartDate: string;
   proposedEndDate: string;
   proposedWorkingDays: number;
+  proposedWorkingDates?: string[];
   reason: string;
   requestedAt: string;
   requestedBy: RecordId;
@@ -198,10 +199,9 @@ export interface LeaveRequest extends BaseRecord {
   pendingAmendment?: LeaveAmendmentRequest;
   amendmentHistory?: LeaveAmendmentHistory[];
   // Sick-leave pay-percentage tier breakdown at the time this request was submitted, from
-  // LeaveService.getSickLeavePayBreakdown. Only populated for requests against a policy that
-  // defines payTiers (i.e. Sick Leave). Consumed by payroll to apply the correct declining
-  // pay percentage per day rather than recomputing it (which would drift once later requests
-  // shift how many sick days had "already been taken" at submission time).
+  // LeaveService.getSickLeavePayBreakdown. This is a submission-time preview only;
+  // payroll uses approved dates in chronological order and policySnapshot.payTiers,
+  // so pending, cancelled and backdated requests do not leave stale pay allocations.
   sickPayTiers?: SickPayTierBreakdown[];
   chainApprovals: Array<{
     role: string;
@@ -210,6 +210,9 @@ export interface LeaveRequest extends BaseRecord {
     status: "Pending" | "Approved" | "Declined";
   }>;
   policySnapshot: {
+    /** Dates used to calculate the approved total; unchanged by later calendar edits. */
+    workingDates?: string[];
+    payTiers?: SickPayTier[];
     name: string;
     type: string;
     isPaid: boolean;

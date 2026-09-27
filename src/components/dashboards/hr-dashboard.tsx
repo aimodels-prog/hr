@@ -1,6 +1,8 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { DashboardCharts } from "./dashboard-charts";
+import { StaffDataBoundary } from "@/components/layout/staff-data-boundary";
+import { DASHBOARD_MODULES } from "@/lib/data/staff-module-plan";
 import {
   FileWarning,
   FileClock,
@@ -55,49 +57,49 @@ export function HrDashboard() {
     setTerm("");
     void navigate({ to: "/staff", search: { employeeId, days: search.days ?? 30 } });
   };
-  return (
-    <div className="space-y-5">
-      <section
-        className="relative flex flex-wrap items-center gap-3"
-        aria-label="Employee dashboard filter"
-      >
-        <label htmlFor="hr-employee-search" className="sr-only">
-          Find an employee
-        </label>
-        <input
-          id="hr-employee-search"
-          type="search"
-          placeholder="Search name or VIA email"
-          value={term}
-          onChange={(event) => setTerm(event.target.value)}
-          className="h-11 w-full rounded-lg border bg-background px-3 sm:max-w-md"
-        />
-        {term.trim() && (
-          <ul
-            aria-label="Matching employees"
-            className="absolute top-12 left-0 z-20 max-h-64 w-full max-w-md overflow-y-auto divide-y rounded-xl border bg-card shadow-lg"
-          >
-            {matches.map((person) => (
-              <li key={person.id}>
-                <button
-                  type="button"
-                  className="w-full p-3 text-left hover:bg-muted focus-visible:outline-primary"
-                  onClick={() => select(person.id)}
-                >
-                  {person.preferredName || person.legalName}
-                  <span className="block break-all text-xs text-muted-foreground">
-                    {person.workEmail}
-                  </span>
-                </button>
-              </li>
-            ))}
-            {!matches.length && <li className="p-3 text-sm">No matching employees.</li>}
-          </ul>
-        )}
+  const employeeFilter = (
+    <section
+      className="relative flex flex-wrap items-center gap-3"
+      aria-label="Employee dashboard filter"
+    >
+      <label htmlFor="hr-employee-search" className="sr-only">
+        Find an employee
+      </label>
+      <input
+        id="hr-employee-search"
+        type="search"
+        placeholder="Search name or VIA email"
+        value={term}
+        onChange={(event) => setTerm(event.target.value)}
+        className="h-11 w-full rounded-lg border bg-background px-3 sm:max-w-md"
+      />
+      {term.trim() && (
+        <ul
+          aria-label="Matching employees"
+          className="absolute top-12 left-0 z-20 max-h-64 w-full max-w-md overflow-y-auto divide-y rounded-xl border bg-card shadow-lg"
+        >
+          {matches.map((person) => (
+            <li key={person.id}>
+              <button
+                type="button"
+                className="w-full p-3 text-left hover:bg-muted focus-visible:outline-primary"
+                onClick={() => select(person.id)}
+              >
+                {person.preferredName || person.legalName}
+                <span className="block break-all text-xs text-muted-foreground">
+                  {person.workEmail}
+                </span>
+              </button>
+            </li>
+          ))}
+          {!matches.length && <li className="p-3 text-sm">No matching employees.</li>}
+        </ul>
+      )}
+      {search.employeeId && (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p role="status" className="text-xs text-muted-foreground">
             {selected
-              ? `Viewing: ${selected.preferredName || selected.legalName} — Individual overview`
+              ? `${selected.preferredName || selected.legalName}`
               : search.employeeId
                 ? "This employee is unavailable. Clear the selection to see the organisation."
                 : "Viewing: All employees — Organisation overview"}
@@ -108,7 +110,13 @@ export function HrDashboard() {
             </button>
           )}
         </div>
-      </section>
+      )}
+    </section>
+  );
+  return (
+    <div className="space-y-5">
+      {search.employeeId && !selected && employeeFilter}
+
       {selected ? (
         <>
           <nav
@@ -142,19 +150,31 @@ export function HrDashboard() {
             ))}
           </nav>
           <DashboardCharts
+            toolbar={employeeFilter}
             scope="hr"
             employeeId={selected.databaseId ?? selected.id}
             profileId={selected.id}
           />
         </>
       ) : (
-        !search.employeeId && <OrganisationHrDashboard />
+        !search.employeeId && <OrganisationHrDashboard toolbar={employeeFilter} />
       )}
     </div>
   );
 }
 
-function OrganisationHrDashboard() {
+function OrganisationHrDashboard({ toolbar }: { toolbar: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <DashboardCharts scope="hr" toolbar={toolbar} />
+      <StaffDataBoundary modules={DASHBOARD_MODULES.hr}>
+        <OrganisationHrDashboardDetails />
+      </StaffDataBoundary>
+    </div>
+  );
+}
+
+function OrganisationHrDashboardDetails() {
   const currentUser = useCurrentUser();
   const empService = useMemo(() => new EmployeeService(), []);
   const recService = useMemo(() => new RecruitmentService(), []);
@@ -419,7 +439,6 @@ function OrganisationHrDashboard() {
 
   return (
     <div className="flex flex-col gap-4">
-      <DashboardCharts scope="hr" />
       <section
         aria-labelledby="hr-attention-heading"
         className="rounded-xl border border-border/70 bg-card p-5"
@@ -428,7 +447,6 @@ function OrganisationHrDashboard() {
           <h2 id="hr-attention-heading" className="text-sm font-bold">
             Needs my attention
           </h2>
-          <p className="text-xs text-muted-foreground">The most important HR work to move today</p>
         </div>
         <AttentionQueue items={attentionItems.slice(0, 5)} />
         {attentionItems.length > 5 ? (
@@ -439,88 +457,93 @@ function OrganisationHrDashboard() {
         ) : null}
       </section>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <DashboardPanel
-          title="People on leave today"
-          viewAllLabel="Open Leave Admin"
-          viewAllTo="/staff/leave-admin"
-        >
-          {onLeaveToday.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No employees are on approved leave.</p>
-          ) : (
-            <div className="flex flex-col divide-y divide-border">
-              {onLeaveToday.slice(0, 5).map((r) => (
-                <div
-                  key={r.id}
-                  className="flex items-center justify-between py-2 text-sm first:pt-0 last:pb-0"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate font-medium">{nameFor(r.employeeId)}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {r.policySnapshot.name}
+      <details className="rounded-xl border border-border/70 bg-card p-4">
+        <summary className="cursor-pointer text-sm font-medium">
+          Leave, onboarding & recruitment details
+        </summary>
+        <div className="mt-4 grid gap-4 lg:grid-cols-3">
+          <DashboardPanel
+            title="People on leave today"
+            viewAllLabel="Open Leave Admin"
+            viewAllTo="/staff/leave-admin"
+          >
+            {onLeaveToday.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No employees are on approved leave.</p>
+            ) : (
+              <div className="flex flex-col divide-y divide-border">
+                {onLeaveToday.slice(0, 5).map((r) => (
+                  <div
+                    key={r.id}
+                    className="flex items-center justify-between py-2 text-sm first:pt-0 last:pb-0"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{nameFor(r.employeeId)}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {r.policySnapshot.name}
+                      </p>
+                    </div>
+                    <p className="shrink-0 text-xs text-muted-foreground">
+                      {new Date(r.startDate).toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                      })}
+                      {" - "}
+                      {new Date(r.endDate).toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                      })}
                     </p>
                   </div>
-                  <p className="shrink-0 text-xs text-muted-foreground">
-                    {new Date(r.startDate).toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                    })}
-                    {" - "}
-                    {new Date(r.endDate).toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                    })}
+                ))}
+              </div>
+            )}
+          </DashboardPanel>
+
+          <DashboardPanel
+            title="Onboarding readiness"
+            description={`${activeCases.length} active · ${stalledCases.length} needing intervention`}
+            viewAllLabel="Open Onboarding"
+            viewAllTo="/staff/onboarding"
+          >
+            <div className="flex flex-col gap-4">
+              <ProgressRing value={averageOnboardingProgress} label="Active case progress" />
+              <div className="grid grid-cols-2 gap-3 text-center">
+                <div className="rounded-lg bg-muted/60 p-3">
+                  <p className="text-xl font-bold tabular-nums">{activeCases.length}</p>
+                  <p className="text-xs text-muted-foreground">In progress</p>
+                </div>
+                <div className="rounded-lg bg-destructive/8 p-3">
+                  <p className="text-xl font-bold tabular-nums text-destructive">
+                    {stalledCases.length}
                   </p>
+                  <p className="text-xs text-muted-foreground">Need intervention</p>
+                </div>
+              </div>
+            </div>
+          </DashboardPanel>
+
+          <DashboardPanel
+            title="Recruitment"
+            description="Current hiring work"
+            viewAllLabel="Open Vacancies"
+            viewAllTo="/staff/vacancies"
+          >
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                ["Open vacancies", vacancies.length],
+                ["Active applicants", applicants],
+                ["Upcoming interviews", upcomingInterviews.length],
+                ["Active offers", activeOffers.length],
+              ].map(([label, value]) => (
+                <div key={String(label)} className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xl font-bold tabular-nums">{value}</p>
+                  <p className="text-xs text-muted-foreground">{label}</p>
                 </div>
               ))}
             </div>
-          )}
-        </DashboardPanel>
-
-        <DashboardPanel
-          title="Onboarding readiness"
-          description={`${activeCases.length} active · ${stalledCases.length} needing intervention`}
-          viewAllLabel="Open Onboarding"
-          viewAllTo="/staff/onboarding"
-        >
-          <div className="flex flex-col gap-4">
-            <ProgressRing value={averageOnboardingProgress} label="Active case progress" />
-            <div className="grid grid-cols-2 gap-3 text-center">
-              <div className="rounded-lg bg-muted/60 p-3">
-                <p className="text-xl font-bold tabular-nums">{activeCases.length}</p>
-                <p className="text-xs text-muted-foreground">In progress</p>
-              </div>
-              <div className="rounded-lg bg-destructive/8 p-3">
-                <p className="text-xl font-bold tabular-nums text-destructive">
-                  {stalledCases.length}
-                </p>
-                <p className="text-xs text-muted-foreground">Need intervention</p>
-              </div>
-            </div>
-          </div>
-        </DashboardPanel>
-
-        <DashboardPanel
-          title="Recruitment"
-          description="Current hiring work"
-          viewAllLabel="Open Vacancies"
-          viewAllTo="/staff/vacancies"
-        >
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              ["Open vacancies", vacancies.length],
-              ["Active applicants", applicants],
-              ["Upcoming interviews", upcomingInterviews.length],
-              ["Active offers", activeOffers.length],
-            ].map(([label, value]) => (
-              <div key={String(label)} className="rounded-lg border bg-muted/20 p-3">
-                <p className="text-xl font-bold tabular-nums">{value}</p>
-                <p className="text-xs text-muted-foreground">{label}</p>
-              </div>
-            ))}
-          </div>
-        </DashboardPanel>
-      </div>
+          </DashboardPanel>
+        </div>
+      </details>
     </div>
   );
 }

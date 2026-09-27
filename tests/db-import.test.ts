@@ -119,10 +119,26 @@ describe(
         (await db.select().from(schema.trainingAssignments)).length,
         seeds.training_enrollments.length,
       );
+      const notices = await db.select().from(schema.notifications);
+      const seededNoticeIds = new Set(
+        seeds.notifications.map((item) => generateDeterministicUuid("notifications", item.id)),
+      );
       assert.equal(
-        (await db.select().from(schema.notifications)).length,
+        notices.filter((item) => seededNoticeIds.has(item.id)).length,
         seeds.notifications.length,
       );
+      const ownerNotices = notices.filter((item) => !seededNoticeIds.has(item.id));
+      assert.equal(ownerNotices.length, seeds.training_requests.length);
+      for (const notice of ownerNotices) {
+        assert.equal(notice.type, "workflow.request_update");
+        const link = notice.link as { entityType: string; entityId: string };
+        assert.equal(link.entityType, "training-request");
+        assert.ok(
+          seeds.training_requests.some(
+            (item) => generateDeterministicUuid("training_requests", item.id) === link.entityId,
+          ),
+        );
+      }
 
       const compensation = (await db.select().from(schema.employeeCompensation))[0]!;
       assert.match(compensation.encryptedPayload, /^via1\./);

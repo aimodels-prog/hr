@@ -847,6 +847,78 @@ test("full lifecycle: start, complete every mandatory task, clear both sides, fi
   assert.equal(employeeService.getById(employee2.id, SYSTEM_CONTEXT)?.status, "Active");
 });
 
+for (const closedStatus of ["Cancelled", "Completed"] as const) {
+  test(`${closedStatus} offboarding cannot be completed, cleared, reassigned or reopened`, async () => {
+    setup();
+    const employeeService = new EmployeeService();
+    const offboardingService = new OffboardingService();
+    const employee = await addEmployee(employeeService, { lineManagerId: "employee-layla" });
+    const c = offboardingService.startCase(
+      employee.id,
+      "Resignation",
+      "2020-01-01",
+      "2020-01-31",
+      true,
+      undefined,
+      hr,
+    );
+    // All other completion prerequisites are met: cancellation must be a hard stop itself.
+    await completeAllMandatoryTasks(offboardingService, employeeService, c.id, employee.id);
+    offboardingService.grantFinancialClearance(c.id, accounts);
+    offboardingService.grantLegalClearance(c.id, hr);
+    if (closedStatus === "Cancelled") {
+      offboardingService.cancelCase(c.id, "Employee decided to stay", hr);
+    } else {
+      offboardingService.finalizeCase(c.id, hr);
+    }
+
+    const { storage } = getApplicationDataServices();
+    const before = storage.exportState();
+    const closedError = new RegExp(closedStatus);
+    assert.throws(() => offboardingService.finalizeCase(c.id, hr), closedError);
+    assert.throws(() => offboardingService.grantFinancialClearance(c.id, accounts), closedError);
+    assert.throws(() => offboardingService.grantLegalClearance(c.id, hr), closedError);
+    assert.throws(
+      () => offboardingService.cancelCase(c.id, "Duplicate cancellation", hr),
+      closedError,
+    );
+    assert.throws(
+      () => offboardingService.assignTaskOwner(c.id, c.tasks[0]!.id, undefined, hr),
+      closedError,
+    );
+    assert.throws(() => offboardingService.recalculateCaseProgress(c.id, hr), closedError);
+    await assert.rejects(
+      offboardingService.updateTaskStatus(
+        c.id,
+        c.tasks[0]!.id,
+        "Waived",
+        hr,
+        undefined,
+        "Duplicate waiver",
+      ),
+      closedError,
+    );
+    assert.deepEqual(
+      storage.exportState(),
+      before,
+      "Closed case, employee, access and history must remain unchanged",
+    );
+    assert.equal(offboardingService.getCaseById(c.id, SYSTEM_CONTEXT)?.status, closedStatus);
+    assert.equal(
+      employeeService.getById(employee.id, SYSTEM_CONTEXT)?.status,
+      closedStatus === "Cancelled" ? "Active" : "Inactive",
+    );
+    const employeeUser = employeeService
+      .getUserRepository(SYSTEM_CONTEXT)
+      .list()
+      .find((user) => user.employeeId === employee.id)!;
+    if (closedStatus === "Cancelled") {
+      assert.equal(employeeUser.status, "Active");
+      assert.equal(offboardingService.getCaseById(c.id, SYSTEM_CONTEXT)?.finalizedAt, undefined);
+    }
+  });
+}
+
 /** Completes (or waives, where evidence would otherwise be required) every mandatory task on
  * the default seeded template, in an order that respects the o3->o4 and o6+o7->o8 dependencies. */
 async function completeAllMandatoryTasks(

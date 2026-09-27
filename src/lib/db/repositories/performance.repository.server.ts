@@ -1,4 +1,9 @@
 import "@tanstack/react-start/server-only";
+import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
+import {
+  APPROVED_OBJECTIVE_STATUSES,
+  objectivesReadyForAppraisal,
+} from "../../data/performance-objectives.ts";
 
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
@@ -287,7 +292,25 @@ export async function listPerformanceForActor(
         createdBy: item.createdBy,
       })),
   }));
-  const safeReviews = reviews.map((review) => {
+  const safeReviews = reviews.map((storedReview) => {
+    // Older cycles may have skipped the objectives stage. Present the real gate
+    // without rewriting submitted or finalised appraisal history during a read.
+    let review = storedReview;
+    if (["Objectives Pending", "Self Assessment Pending"].includes(review.status)) {
+      const employeeGoals = goalRows.filter(
+        (goal) =>
+          goal.employeeId === review.employeeId &&
+          goal.cycleId === review.cycleId &&
+          goal.status !== "Cancelled",
+      );
+      const ready = objectivesReadyForAppraisal(employeeGoals);
+      const template = templateRows.find((item) => item.id === review.templateId);
+      review = {
+        ...review,
+        status: ready ? "Self Assessment Pending" : "Objectives Pending",
+        ...(ready && template ? { sections: cycleSections(template, employeeGoals) } : {}),
+      };
+    }
     if (
       review.employeeId !== actor.employeeId ||
       ["Acknowledgement Pending", "Acknowledged", "Locked", "Corrected"].includes(review.status)
@@ -553,7 +576,7 @@ async function launchCycle(
       and(
         eq(employeeGoals.organisationId, org),
         eq(employeeGoals.cycleId, cycle.id),
-        inArray(employeeGoals.status, ["Active", "Completed"]),
+        sql`${employeeGoals.status} <> 'Cancelled'`,
         isNull(employeeGoals.archivedAt),
       ),
     );
@@ -567,9 +590,11 @@ async function launchCycle(
             employeeId: employee.id,
             cycleId: cycle.id,
             templateId: template.id,
-            status: cycle.objectiveSettingDeadline
-              ? "Objectives Pending"
-              : "Self Assessment Pending",
+            status: objectivesReadyForAppraisal(
+              cycleGoals.filter((goal) => goal.employeeId === employee.id),
+            )
+              ? "Self Assessment Pending"
+              : "Objectives Pending",
             sections: cycleSections(
               template,
               cycleGoals.filter((goal) => goal.employeeId === employee.id),
@@ -843,10 +868,32 @@ export async function actOnPerformanceReviewInDatabase(
   const db = getDatabaseClient();
   let resultingId = reviewId;
   await db.transaction(async (tx) => {
+    if (action.type === "self") {
+      const [identity] = await tx
+        .select()
+        .from(performanceReviews)
+        .where(
+          and(
+            eq(performanceReviews.organisationId, org),
+            eq(performanceReviews.id, reviewId),
+            isNull(performanceReviews.archivedAt),
+          ),
+        )
+        .limit(1);
+      if (!identity || actor.employeeId !== identity.employeeId)
+        throw new Error("Only the employee can submit this self-assessment now.");
+      await lockObjectiveReview(tx, org, identity.employeeId, identity.cycleId, true);
+    }
     const [review] = await tx
       .select()
       .from(performanceReviews)
-      .where(and(eq(performanceReviews.organisationId, org), eq(performanceReviews.id, reviewId)))
+      .where(
+        and(
+          eq(performanceReviews.organisationId, org),
+          eq(performanceReviews.id, reviewId),
+          isNull(performanceReviews.archivedAt),
+        ),
+      )
       .for("update")
       .limit(1);
     if (!review || review.recordVersion !== expectedVersion)
@@ -879,10 +926,16 @@ export async function actOnPerformanceReviewInDatabase(
       recordVersion: sql`${performanceReviews.recordVersion} + 1`,
     };
     if (action.type === "self") {
-      if (!self || review.status !== "Self Assessment Pending")
+      if (!self || !["Objectives Pending", "Self Assessment Pending"].includes(review.status))
         throw new Error("Only the employee can submit this self-assessment now.");
+      const goals = await objectiveSet(tx, org, review.employeeId, review.cycleId);
+      if (!objectivesReadyForAppraisal(goals))
+        throw new Error(
+          "Your supervisor must approve objectives totalling 100% before self-assessment.",
+        );
+      await requireEmployeeSupervisor(tx, org, review.employeeId);
       const sections = mergeReviewAssessment(
-        review.sections as PerformanceReview["sections"],
+        cycleSections(template, goals),
         action.sections,
         "self",
         template.maxRating,
@@ -1134,6 +1187,90 @@ async function requireSelfOrManager(
     throw new Error("Only the employee's assigned supervisor can take this action.");
 }
 
+type PerformanceTransaction = Parameters<
+  Parameters<ReturnType<typeof getDatabaseClient>["transaction"]>[0]
+>[0];
+
+async function objectiveSet(
+  tx: PerformanceTransaction,
+  org: string,
+  employeeId: string,
+  cycleId: string,
+) {
+  return tx
+    .select()
+    .from(employeeGoals)
+    .where(
+      and(
+        eq(employeeGoals.organisationId, org),
+        eq(employeeGoals.employeeId, employeeId),
+        eq(employeeGoals.cycleId, cycleId),
+        isNull(employeeGoals.archivedAt),
+        sql`${employeeGoals.status} <> 'Cancelled'`,
+      ),
+    );
+}
+
+async function lockObjectiveReview(
+  tx: PerformanceTransaction,
+  org: string,
+  employeeId: string,
+  cycleId: string,
+  editable: boolean,
+) {
+  // Lock the whole set, including when it is empty: row locks alone cannot stop
+  // concurrent inserts or two final approvals from missing each other's changes.
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${`performance-objectives:${org}:${employeeId}:${cycleId}`}, 0))`,
+  );
+  const [cycle] = await tx
+    .select()
+    .from(performanceCycles)
+    .where(
+      and(
+        eq(performanceCycles.organisationId, org),
+        eq(performanceCycles.id, cycleId),
+        eq(performanceCycles.status, "Active"),
+        isNull(performanceCycles.archivedAt),
+      ),
+    )
+    .limit(1);
+  if (!cycle) throw new Error("Select an active performance cycle.");
+  const [review] = await tx
+    .select()
+    .from(performanceReviews)
+    .where(
+      and(
+        eq(performanceReviews.organisationId, org),
+        eq(performanceReviews.employeeId, employeeId),
+        eq(performanceReviews.cycleId, cycleId),
+        isNull(performanceReviews.archivedAt),
+      ),
+    )
+    .for("update")
+    .limit(1);
+  if (!review) throw new Error("This employee is not included in the performance cycle.");
+  if (editable && !["Objectives Pending", "Self Assessment Pending"].includes(review.status))
+    throw new Error("Objectives cannot change after self-assessment has been submitted.");
+  return { cycle, review };
+}
+
+async function goalIdentity(tx: PerformanceTransaction, org: string, goalId: string) {
+  const [goal] = await tx
+    .select()
+    .from(employeeGoals)
+    .where(
+      and(
+        eq(employeeGoals.organisationId, org),
+        eq(employeeGoals.id, goalId),
+        isNull(employeeGoals.archivedAt),
+      ),
+    )
+    .limit(1);
+  if (!goal) throw new Error("Objective not found.");
+  return goal;
+}
+
 function validateGoal(input: GoalDraftInput) {
   if (
     [input.title, input.description, input.successMeasure, input.targetValue].some(
@@ -1158,18 +1295,7 @@ export async function saveGoalInDatabase(
   const db = getDatabaseClient();
   const id = input.goalId ?? randomUUID();
   await db.transaction(async (tx) => {
-    const [cycle] = await tx
-      .select()
-      .from(performanceCycles)
-      .where(
-        and(
-          eq(performanceCycles.organisationId, org),
-          eq(performanceCycles.id, input.cycleId),
-          eq(performanceCycles.status, "Active"),
-        ),
-      )
-      .limit(1);
-    if (!cycle) throw new Error("Select an active performance cycle.");
+    const { cycle } = await lockObjectiveReview(tx, org, input.employeeId, input.cycleId, true);
     if (input.startDate > cycle.discussionDeadline || input.dueDate > cycle.discussionDeadline)
       throw new Error("Objective dates must fall within the performance cycle.");
     const existing = input.goalId
@@ -1177,11 +1303,21 @@ export async function saveGoalInDatabase(
           await tx
             .select()
             .from(employeeGoals)
-            .where(and(eq(employeeGoals.organisationId, org), eq(employeeGoals.id, input.goalId)))
+            .where(
+              and(
+                eq(employeeGoals.organisationId, org),
+                eq(employeeGoals.id, input.goalId),
+                eq(employeeGoals.employeeId, input.employeeId),
+                eq(employeeGoals.cycleId, input.cycleId),
+                isNull(employeeGoals.archivedAt),
+              ),
+            )
             .for("update")
             .limit(1)
         )[0]
       : undefined;
+    if (input.goalId && !existing)
+      throw new Error("This objective does not belong to this employee and cycle.");
     if (existing && !["Draft", "Changes Requested"].includes(existing.status))
       throw new Error("This objective can no longer be edited.");
     if (
@@ -1262,6 +1398,7 @@ export async function submitGoalsInDatabase(
     throw new Error("Employees can submit only their own objectives.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
+    await lockObjectiveReview(tx, org, employeeId, cycleId, true);
     const goals = await tx
       .select()
       .from(employeeGoals)
@@ -1277,14 +1414,24 @@ export async function submitGoalsInDatabase(
       .for("update");
     if (!goals.length || goals.reduce((sum, item) => sum + item.weight, 0) !== 100)
       throw new Error("Objective weights must total 100% before submission.");
-    if (goals.some((item) => !["Draft", "Changes Requested"].includes(item.status)))
+    if (
+      goals.some(
+        (item) =>
+          !["Draft", "Changes Requested", ...APPROVED_OBJECTIVE_STATUSES].includes(item.status),
+      )
+    )
       throw new Error("Only a complete draft objective set can be submitted.");
+    const submittable = goals.filter((goal) =>
+      ["Draft", "Changes Requested"].includes(goal.status),
+    );
+    if (!submittable.length) throw new Error("There are no draft objectives ready to submit.");
     const [employee] = await tx
       .select({ managerId: employees.lineManagerId })
       .from(employees)
       .where(eq(employees.id, employeeId))
       .limit(1);
     if (!employee?.managerId) throw new Error("Assign a supervisor before submitting objectives.");
+    await requireEmployeeSupervisor(tx, org, employeeId);
     const [manager] = await tx
       .select({ userId: users.id })
       .from(users)
@@ -1314,7 +1461,7 @@ export async function submitGoalsInDatabase(
           eq(employeeGoals.cycleId, cycleId),
           inArray(
             employeeGoals.id,
-            goals.map((item) => item.id),
+            submittable.map((item) => item.id),
           ),
         ),
       );
@@ -1329,7 +1476,7 @@ export async function submitGoalsInDatabase(
           message: "A direct report submitted their objectives for review.",
           priority: "High",
           status: "Unread",
-          deduplicationKey: `performance-goals-${employeeId}-${cycleId}`,
+          deduplicationKey: `performance-goals-${employeeId}-${cycleId}-${randomUUID()}`,
           link: {
             entityType: "performance-cycle",
             entityId: cycleId,
@@ -1346,7 +1493,7 @@ export async function submitGoalsInDatabase(
       module: "performance",
       entityType: "objective-set",
       entityId: cycleId,
-      afterSummary: { employeeId, goalCount: goals.length },
+      afterSummary: { employeeId, goalCount: goals.length, submittedGoalCount: submittable.length },
       reason: "Submitted objectives for supervisor approval",
       riskLevel: "High",
     } as typeof auditEvents.$inferInsert);
@@ -1362,10 +1509,24 @@ export async function decideGoalInDatabase(
 ) {
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
+    const identity = await goalIdentity(tx, org, goalId);
+    const { review } = await lockObjectiveReview(
+      tx,
+      org,
+      identity.employeeId,
+      identity.cycleId,
+      decision === "approve" || (decision === "return" && identity.status === "Pending Approval"),
+    );
     const [goal] = await tx
       .select()
       .from(employeeGoals)
-      .where(and(eq(employeeGoals.organisationId, org), eq(employeeGoals.id, goalId)))
+      .where(
+        and(
+          eq(employeeGoals.organisationId, org),
+          eq(employeeGoals.id, goalId),
+          isNull(employeeGoals.archivedAt),
+        ),
+      )
       .for("update")
       .limit(1);
     if (!goal) throw new Error("Objective not found.");
@@ -1385,7 +1546,9 @@ export async function decideGoalInDatabase(
         ? "Active"
         : decision === "complete"
           ? "Completed"
-          : "Changes Requested";
+          : goal.status === "Completion Pending"
+            ? "Active"
+            : "Changes Requested";
     await tx
       .update(employeeGoals)
       .set({
@@ -1407,67 +1570,30 @@ export async function decideGoalInDatabase(
       })
       .where(eq(employeeGoals.id, goalId));
     if (decision === "approve") {
-      const remaining = await tx
-        .select({ id: employeeGoals.id })
-        .from(employeeGoals)
-        .where(
-          and(
-            eq(employeeGoals.organisationId, org),
-            eq(employeeGoals.employeeId, goal.employeeId),
-            eq(employeeGoals.cycleId, goal.cycleId),
-            isNull(employeeGoals.archivedAt),
-            sql`${employeeGoals.id} <> ${goalId}`,
-            sql`${employeeGoals.status} NOT IN ('Active','Completed','Cancelled')`,
-          ),
-        )
-        .limit(1);
-      if (!remaining.length) {
-        const [review] = await tx
+      const goals = await objectiveSet(tx, org, goal.employeeId, goal.cycleId);
+      if (objectivesReadyForAppraisal(goals)) {
+        const [template] = await tx
           .select()
-          .from(performanceReviews)
+          .from(reviewTemplates)
           .where(
             and(
-              eq(performanceReviews.employeeId, goal.employeeId),
-              eq(performanceReviews.cycleId, goal.cycleId),
-              isNull(performanceReviews.archivedAt),
+              eq(reviewTemplates.organisationId, org),
+              eq(reviewTemplates.id, review.templateId),
+              isNull(reviewTemplates.archivedAt),
             ),
           )
-          .for("update")
           .limit(1);
-        if (review?.status === "Objectives Pending") {
-          const [template] = await tx
-            .select()
-            .from(reviewTemplates)
-            .where(eq(reviewTemplates.id, review.templateId))
-            .limit(1);
-          const activeGoals = await tx
-            .select()
-            .from(employeeGoals)
-            .where(
-              and(
-                eq(employeeGoals.employeeId, goal.employeeId),
-                eq(employeeGoals.cycleId, goal.cycleId),
-                isNull(employeeGoals.archivedAt),
-                sql`(${employeeGoals.status} IN ('Active','Completed') OR ${employeeGoals.id} = ${goalId})`,
-              ),
-            );
-          if (template)
-            await tx
-              .update(performanceReviews)
-              .set({
-                status: "Self Assessment Pending",
-                sections: cycleSections(
-                  template,
-                  activeGoals.map((item) =>
-                    item.id === goalId ? { ...item, status: "Active" } : item,
-                  ),
-                ),
-                updatedAt: new Date(),
-                updatedBy: actor.userId,
-                recordVersion: sql`${performanceReviews.recordVersion} + 1`,
-              })
-              .where(eq(performanceReviews.id, review.id));
-        }
+        if (!template) throw new Error("The review template is unavailable.");
+        await tx
+          .update(performanceReviews)
+          .set({
+            status: "Self Assessment Pending",
+            sections: cycleSections(template, goals),
+            updatedAt: new Date(),
+            updatedBy: actor.userId,
+            recordVersion: sql`${performanceReviews.recordVersion} + 1`,
+          })
+          .where(eq(performanceReviews.id, review.id));
       }
     }
     const [recipient] = await tx
@@ -1490,7 +1616,9 @@ export async function decideGoalInDatabase(
           type: "performance-objective-decision",
           title:
             decision === "return"
-              ? "Objective returned for changes"
+              ? goal.status === "Completion Pending"
+                ? "Objective progress returned for more evidence"
+                : "Objective returned for changes"
               : decision === "complete"
                 ? "Objective completion confirmed"
                 : "Objective approved",
@@ -1521,10 +1649,18 @@ export async function decideGoalInDatabase(
 export async function archiveGoalInDatabase(org: string, goalId: string, actor: AuditActorContext) {
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
+    const identity = await goalIdentity(tx, org, goalId);
+    await lockObjectiveReview(tx, org, identity.employeeId, identity.cycleId, true);
     const [goal] = await tx
       .select()
       .from(employeeGoals)
-      .where(and(eq(employeeGoals.organisationId, org), eq(employeeGoals.id, goalId)))
+      .where(
+        and(
+          eq(employeeGoals.organisationId, org),
+          eq(employeeGoals.id, goalId),
+          isNull(employeeGoals.archivedAt),
+        ),
+      )
       .for("update")
       .limit(1);
     if (!goal) throw new Error("Objective not found.");
@@ -1577,6 +1713,7 @@ export async function recordGoalProgressInDatabase(
     if (!goal || goal.status !== "Active")
       throw new Error("Only an active objective can be updated.");
     await requireSelfOrManager(tx, org, goal.employeeId, actor, true);
+    if (progressPercent === 100) await requireEmployeeSupervisor(tx, org, goal.employeeId);
     if (evidenceFileId) {
       const [file] = await tx
         .select()

@@ -83,7 +83,7 @@ export class TimesheetService {
   }
 
   /** PostgreSQL is authoritative; browser collections are a temporary read projection. */
-  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+  async hydrateCompatibilityCache(context: ActorContext, canCommit = () => true): Promise<void> {
     if (typeof window === "undefined") return;
     const { storage } = getApplicationDataServices();
     const employeeMap = new Map(
@@ -108,6 +108,7 @@ export class TimesheetService {
     const snapshot = await getTimesheetSnapshotFn({
       data: { actor: await this.serverActor(context) },
     });
+    if (!canCommit()) return;
     storage.writeCollection(SETTINGS_COLLECTION, [snapshot.settings]);
     storage.writeCollection("timesheetPeriods", snapshot.periods);
     storage.writeCollection(

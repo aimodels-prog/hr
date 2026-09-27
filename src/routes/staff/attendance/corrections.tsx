@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, Download, FileCheck2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
@@ -47,6 +47,8 @@ function AttendanceCorrectionsRoute() {
   const [selected, setSelected] = useState<AttendanceCorrection | null>(null);
   const [reviewMode, setReviewMode] = useState<"manager" | "hr">("manager");
   const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const decisionInFlight = useRef(false);
   const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
   useEffect(() => {
     let active = true;
@@ -87,14 +89,33 @@ function AttendanceCorrectionsRoute() {
   };
 
   const decide = async (approve: boolean) => {
-    if (!selected) return;
+    if (!selected || decisionInFlight.current) return;
+    decisionInFlight.current = true;
+    setSaving(true);
     try {
-      await attendanceService.decideCorrectionAsync(selected.id, approve, notes, actorContext);
+      await attendanceService.decideCorrectionAsync(
+        selected.id,
+        approve,
+        notes,
+        actorContext,
+        selected.recordVersion,
+      );
       setSelected(null);
       setRevision((value) => value + 1);
       toast.success(approve ? "Correction approved." : "Correction rejected.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Decision could not be saved.");
+      // Reopen the latest request explicitly before retrying a stale decision.
+      setSelected(null);
+      try {
+        await attendanceService.hydrateFromDatabase(actorContext);
+        setRevision((value) => value + 1);
+      } catch {
+        toast.error("Corrections could not be refreshed. Reload this page before retrying.");
+      }
+    } finally {
+      decisionInFlight.current = false;
+      setSaving(false);
     }
   };
 
@@ -247,7 +268,10 @@ function AttendanceCorrectionsRoute() {
           <TabsContent value="history">{correctionTable(history, "history")}</TabsContent>
         </Tabs>
 
-        <Dialog open={Boolean(selected)} onOpenChange={(open) => !open && setSelected(null)}>
+        <Dialog
+          open={Boolean(selected)}
+          onOpenChange={(open) => !open && !saving && setSelected(null)}
+        >
           <DialogContent>
             <DialogHeader>
               <DialogTitle>
@@ -293,12 +317,12 @@ function AttendanceCorrectionsRoute() {
             <DialogFooter>
               <Button
                 variant="destructive"
-                disabled={notes.trim().length < 3}
+                disabled={saving || notes.trim().length < 3}
                 onClick={() => decide(false)}
               >
                 <XCircle className="mr-2 h-4 w-4" /> Reject
               </Button>
-              <Button disabled={notes.trim().length < 3} onClick={() => decide(true)}>
+              <Button disabled={saving || notes.trim().length < 3} onClick={() => decide(true)}>
                 {reviewMode === "manager" ? (
                   <FileCheck2 className="mr-2 h-4 w-4" />
                 ) : (

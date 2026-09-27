@@ -2,11 +2,16 @@ import "@tanstack/react-start/server-only";
 
 import { randomUUID } from "node:crypto";
 import { latestPreparationPerCandidate } from "../../data/current-preparation.ts";
+import {
+  currentPreliminaryRules,
+  PRELIMINARY_RULES_VERSION,
+} from "../../recruitment/preliminary-evidence.ts";
 
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 
 import {
   CV_PROCESSOR_VERSION,
+  calculateCvSemanticSimilarities,
   calculateCvSemanticSimilarity,
 } from "../../integrations/cv-processing.server.ts";
 import {
@@ -41,8 +46,9 @@ import {
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 
 /** Never fall back to an old successful run while the current CV is pending or failed. */
-function currentPreparationPredicate() {
+function currentPreparationPredicate(requireCurrentRules = true) {
   return sql`${candidatePreparationRuns.archivedAt} IS NULL
+    AND (${!requireCurrentRules} OR ${candidatePreparationRuns.rankingModel} LIKE ${`${PRELIMINARY_RULES_VERSION} | %`})
     AND EXISTS (SELECT 1 FROM candidate_applications a JOIN candidate_cv_records cv
       ON cv.id=${candidatePreparationRuns.cvRecordId} AND cv.organisation_id=a.organisation_id
       WHERE a.id=${candidatePreparationRuns.applicationId} AND a.organisation_id=${candidatePreparationRuns.organisationId}
@@ -65,6 +71,221 @@ function recruiter(actor: AuditActorContext): void {
 
 function unique(ids: string[]): string[] {
   return [...new Set(ids)];
+}
+
+/** Reuse the original extraction, but never reuse a score from obsolete screening rules. */
+export async function refreshPreliminaryScreeningInDatabase(
+  organisationId: string,
+  vacancyId: string,
+  actor: AuditActorContext,
+): Promise<number> {
+  recruiter(actor);
+  const db = getDatabaseClient();
+  const [vacancy] = await db
+    .select()
+    .from(vacancies)
+    .where(and(eq(vacancies.organisationId, organisationId), eq(vacancies.id, vacancyId)))
+    .limit(1);
+  if (!vacancy || vacancy.archivedAt || ["Archived", "Closed"].includes(vacancy.status))
+    throw new Error("Select an available vacancy to refresh screening.");
+  const rows = await db
+    .select({
+      run: candidatePreparationRuns,
+      candidate: candidates,
+      cv: candidateCvRecords,
+      semanticTextEncrypted: candidateCvExtractions.semanticTextEncrypted,
+      textQuality: candidateCvExtractions.textQuality,
+    })
+    .from(candidatePreparationRuns)
+    .innerJoin(
+      candidates,
+      and(
+        eq(candidates.id, candidatePreparationRuns.candidateId),
+        eq(candidates.organisationId, organisationId),
+      ),
+    )
+    .innerJoin(
+      candidateCvRecords,
+      and(
+        eq(candidateCvRecords.id, candidatePreparationRuns.cvRecordId),
+        eq(candidateCvRecords.organisationId, organisationId),
+      ),
+    )
+    .innerJoin(
+      recruitmentDocuments,
+      and(
+        eq(recruitmentDocuments.id, candidateCvRecords.fileId),
+        eq(recruitmentDocuments.organisationId, organisationId),
+      ),
+    )
+    .leftJoin(
+      candidateCvExtractions,
+      and(
+        eq(candidateCvExtractions.organisationId, organisationId),
+        eq(candidateCvExtractions.checksum, recruitmentDocuments.checksum),
+        eq(candidateCvExtractions.processorVersion, CV_PROCESSOR_VERSION),
+      ),
+    )
+    .where(
+      and(
+        eq(candidatePreparationRuns.organisationId, organisationId),
+        eq(candidatePreparationRuns.vacancyId, vacancyId),
+        eq(candidatePreparationRuns.vacancyRecordVersion, vacancy.recordVersion),
+        inArray(candidatePreparationRuns.status, ["Ready", "Needs Review"]),
+        currentPreparationPredicate(false),
+      ),
+    );
+  const stale = rows.filter((row) => !currentPreliminaryRules(row.run.rankingModel));
+  if (!stale.length) return 0;
+  const inputs = stale.map((row) => {
+    const cvText = row.semanticTextEncrypted
+      ? decryptSensitiveJson<string>(row.semanticTextEncrypted)
+      : undefined;
+    const texts = buildCvSemanticTexts(
+      row.candidate,
+      vacancy,
+      row.cv.extractedFields as Record<string, unknown>,
+    );
+    return { ...row, cvText, texts };
+  });
+  const semanticScores = new Map<string, { score: number; model: string }>();
+  // Same private semantic service as the CV worker; no external calls inside database locks.
+  for (let offset = 0; offset < inputs.length; offset += 500) {
+    const chunk = inputs.slice(offset, offset + 500);
+    const scored = await calculateCvSemanticSimilarities({
+      vacancyText: chunk[0]!.texts.vacancyText,
+      candidates: chunk.map((row) => ({
+        candidateId: row.run.id,
+        candidateText: row.cvText ?? row.texts.candidateText,
+      })),
+    });
+    for (const item of scored.results)
+      semanticScores.set(item.candidateId, { score: item.score, model: scored.model });
+  }
+  return db.transaction(async (tx) => {
+    const [lockedVacancy] = await tx
+      .select()
+      .from(vacancies)
+      .where(and(eq(vacancies.id, vacancyId), eq(vacancies.organisationId, organisationId)))
+      .for("update")
+      .limit(1);
+    if (!lockedVacancy || lockedVacancy.recordVersion !== vacancy.recordVersion)
+      throw new Error("The vacancy changed. Refresh candidate preparation again.");
+    for (const row of inputs) {
+      const [application] = await tx
+        .select()
+        .from(candidateApplications)
+        .where(
+          and(
+            eq(candidateApplications.id, row.run.applicationId),
+            eq(candidateApplications.organisationId, organisationId),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      const [candidate] = await tx
+        .select()
+        .from(candidates)
+        .where(
+          and(eq(candidates.id, row.candidate.id), eq(candidates.organisationId, organisationId)),
+        )
+        .for("update")
+        .limit(1);
+      const [cv] = await tx
+        .select()
+        .from(candidateCvRecords)
+        .where(
+          and(
+            eq(candidateCvRecords.id, row.cv.id),
+            eq(candidateCvRecords.organisationId, organisationId),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      const [stillCurrent] = await tx
+        .select({ id: candidatePreparationRuns.id })
+        .from(candidatePreparationRuns)
+        .where(and(eq(candidatePreparationRuns.id, row.run.id), currentPreparationPredicate(false)))
+        .limit(1);
+      if (
+        !application ||
+        application.cvFileId !== row.run.cvFileId ||
+        application.archivedAt ||
+        !stillCurrent ||
+        !candidate ||
+        candidate.recordVersion !== row.candidate.recordVersion ||
+        candidate.archivedAt ||
+        candidate.mergedIntoId ||
+        !cv ||
+        cv.recordVersion !== row.cv.recordVersion ||
+        cv.processingStatus !== "Ready"
+      )
+        throw new Error("A candidate or CV changed. Refresh candidate preparation again.");
+      const semantic = semanticScores.get(row.run.id);
+      if (!semantic) throw new Error("A candidate's semantic assessment is missing. Try again.");
+      const prepared = buildCandidatePreliminaryAssessment(
+        candidate,
+        vacancy,
+        cv.extractedFields as Record<string, unknown>,
+        semantic,
+        row.textQuality === null ? undefined : Number(row.textQuality),
+        row.cvText,
+      );
+      const id = randomUUID();
+      await tx.insert(candidatePreparationRuns).values({
+        id,
+        organisationId,
+        vacancyId,
+        vacancyRecordVersion: vacancy.recordVersion,
+        candidateId: candidate.id,
+        applicationId: application.id,
+        cvRecordId: cv.id,
+        cvFileId: cv.fileId,
+        cvChecksum: row.run.cvChecksum,
+        ...prepared,
+        preliminaryScore: String(prepared.preliminaryScore),
+        preparationMethod: row.run.preparationMethod,
+        documentRoute: "Reuse Prepared CV",
+        fieldConfidence: cv.fieldConfidence,
+        warnings: cv.extractionWarnings,
+        reusedFromPreparationRunId: row.run.id,
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        createdBy: actor.userId!,
+        updatedBy: actor.userId!,
+      });
+      await tx
+        .update(candidateApplications)
+        .set({
+          preparationRunId: id,
+          preparationStatus: prepared.status,
+          updatedAt: new Date(),
+          updatedBy: actor.userId!,
+          recordVersion: sql`${candidateApplications.recordVersion}+1`,
+        })
+        .where(eq(candidateApplications.id, application.id));
+      await tx.insert(auditEvents).values({
+        organisationId,
+        actorUserId: actor.userId,
+        actorEmployeeId: actor.employeeId,
+        actorDisplayName: actor.displayName,
+        activeRole: actor.activeRole,
+        actorRoles: actor.roles ?? [],
+        action: "create",
+        module: "recruitment",
+        entityType: "candidate-preparation",
+        entityId: id,
+        afterSummary: {
+          previousRunId: row.run.id,
+          rankingModel: prepared.rankingModel,
+          status: prepared.status,
+        },
+        reason: "Reassessed the current CV using updated preliminary screening rules",
+        riskLevel: "Medium",
+      });
+    }
+    return inputs.length;
+  });
 }
 
 interface PreparedAiAssessment {
@@ -326,7 +547,11 @@ export async function includeCandidateInAssessmentInDatabase(
       )
       .orderBy(desc(candidatePreparationRuns.createdAt))
       .limit(1);
-    if (!preparation || !["Ready", "Needs Review"].includes(preparation.status)) {
+    if (
+      !preparation ||
+      !["Ready", "Needs Review"].includes(preparation.status) ||
+      !currentPreliminaryRules(preparation.rankingModel)
+    ) {
       const [savedMatch] = await tx
         .select()
         .from(candidateVacancyMatches)
@@ -341,7 +566,7 @@ export async function includeCandidateInAssessmentInDatabase(
         )
         .limit(1);
       let result: ReturnType<typeof buildCandidatePreliminaryAssessment>;
-      if (savedMatch) {
+      if (savedMatch && currentPreliminaryRules(savedMatch.rankingModel)) {
         const extractedFields = cv.extractedFields as Record<string, unknown>;
         const extractedSkills = Array.isArray(extractedFields["skills"])
           ? extractedFields["skills"].filter((item): item is string => typeof item === "string")
@@ -395,17 +620,20 @@ export async function includeCandidateInAssessmentInDatabase(
               )
               .limit(1)
           : [];
+        const cvText = cached?.semanticTextEncrypted
+          ? decryptSensitiveJson<string>(cached.semanticTextEncrypted)
+          : undefined;
         const semanticMatch = await calculateCvSemanticSimilarity({
           ...semanticTexts,
-          ...(cached?.semanticTextEncrypted
-            ? { candidateText: decryptSensitiveJson<string>(cached.semanticTextEncrypted) }
-            : {}),
+          ...(cvText ? { candidateText: cvText } : {}),
         });
         result = buildCandidatePreliminaryAssessment(
           candidate,
           vacancy,
           cv.extractedFields as Record<string, unknown>,
           semanticMatch,
+          undefined,
+          cvText,
         );
       }
       const preparationId = randomUUID();
@@ -564,7 +792,9 @@ export async function createAssessmentBatchInDatabase(
       (a, b) => Number(b.preliminaryScore ?? -1) - Number(a.preliminaryScore ?? -1),
     );
     if (ranked.length < targetSize)
-      throw new Error(`Only ${ranked.length} prepared candidates are available.`);
+      throw new Error(
+        `Only ${ranked.length} candidates have current screening results. Use Prepare candidates to refresh older assessments.`,
+      );
     const inclusions = await tx
       .select()
       .from(candidateAssessmentInclusions)

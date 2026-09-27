@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { textPdf } from "./pdf-fixture";
 
 test("public application progresses through shortlist, interview, offer and onboarding", async ({
   page,
@@ -33,8 +34,8 @@ test("public application progresses through shortlist, interview, offer and onbo
   await page.locator('input[type="file"]').setInputFiles({
     name: "Browser-Candidate.pdf",
     mimeType: "application/pdf",
-    buffer: Buffer.from(
-      "%PDF-1.4\nBrowser Candidate logistics CargoWise leadership 8 years experience Dubai\n%%EOF",
+    buffer: textPdf(
+      "Browser Candidate. 8 years of experience in logistics, CargoWise and supply chain leadership in Dubai. Managed customs clearance, freight operations, transport planning and regional teams. Education: Bachelor of Business Administration. Skills: logistics, supply chain, customs clearance, leadership, CargoWise. Languages: English.",
     ),
   });
   await page.getByRole("checkbox").click();
@@ -75,7 +76,7 @@ test("public application progresses through shortlist, interview, offer and onbo
         }, candidateEmail),
       { timeout: 15_000 },
     )
-    .toBe("Awaiting HR Review");
+    .toBe("Ready");
   const intake = await page.evaluate(async (email) => {
     const actor = {
       actor: {
@@ -112,7 +113,7 @@ test("public application progresses through shortlist, interview, offer and onbo
     return { candidate, application, cv };
   }, candidateEmail);
   expect(intake.candidate.skills ?? []).toEqual([]);
-  expect(intake.cv.processingStatus).toBe("Awaiting HR Review");
+  expect(intake.cv.processingStatus).toBe("Ready");
   expect(intake.cv.extractedFields.skills).toContain("logistics");
   expect(["Ready", "Needs Review"]).toContain(intake.application.preparationStatus);
 
@@ -135,7 +136,7 @@ test("public application progresses through shortlist, interview, offer and onbo
 
   await page.getByText("Browser Candidate", { exact: true }).last().click();
   await expect(page.getByText("Canonical Details")).toBeVisible();
-  await page.getByRole("link", { name: /^Interviews/ }).click();
+  await page.getByRole("link", { name: /^Interviews \(/ }).click();
   const templateName = await page.evaluate(async (suffix) => {
     const actor = {
       actor: {
@@ -175,7 +176,7 @@ test("public application progresses through shortlist, interview, offer and onbo
   }, unique);
   await page.reload();
   await expect(page.getByText("Canonical Details")).toBeVisible();
-  await page.getByRole("link", { name: /^Interviews/ }).click();
+  await page.getByRole("link", { name: /^Interviews \(/ }).click();
   await page.getByRole("button", { name: "Schedule Interview" }).click();
   const dialog = page.getByRole("dialog", { name: "Schedule Interview" });
   const templateSelect = dialog
@@ -192,7 +193,7 @@ test("public application progresses through shortlist, interview, offer and onbo
     .first()
     .click();
   await dialog.getByRole("button", { name: "Schedule Interview" }).click();
-  await page.getByRole("link", { name: /^Interviews/ }).click();
+  await page.getByRole("link", { name: /^Interviews \(/ }).click();
   await expect(page.getByText("Scheduled", { exact: true })).toBeVisible();
 
   const completion = await page.evaluate(
@@ -258,6 +259,11 @@ test("public application progresses through shortlist, interview, offer and onbo
       });
       const approvalManager = approvalManagers[0];
       if (!approvalManager) throw new Error("Seed an independent Line Manager for offer approval.");
+      // Development identities use seed IDs; approval APIs return database UUIDs.
+      const managerPreview = read<{ id: string; workspaceEmail: string }>("users").find(
+        (user) => user.workspaceEmail === approvalManager.email,
+      );
+      if (!managerPreview) throw new Error("The assigned manager must have a preview identity.");
       const offer = await offers.saveOfferAsync(
         {
           candidateId: candidate.id,
@@ -282,7 +288,7 @@ test("public application progresses through shortlist, interview, offer and onbo
       return {
         candidateId: candidate.id,
         offerId: offer.id,
-        approvalManagerId: approvalManager.id,
+        approvalManagerId: managerPreview.id,
       };
     },
     { email: candidateEmail },
@@ -333,7 +339,14 @@ test("public application progresses through shortlist, interview, offer and onbo
         evidenceReference: `<browser-${offerId}@example.test>`,
         confirmed: true,
       });
-      await service.transitionOfferAsync(offerId, "Accepted", "Accepted in browser journey", actor);
+      await service.transitionOfferAsync(
+        offerId,
+        "Accepted",
+        "Accepted in browser journey",
+        actor,
+        undefined,
+        { workspaceEmail: `hire.${offerId}@via-int.com`, identityConfirmed: true },
+      );
     },
     { offerId: completion.offerId, email: candidateEmail },
   );
@@ -341,6 +354,7 @@ test("public application progresses through shortlist, interview, offer and onbo
   await page.getByRole("link", { name: "Offers", exact: true }).click();
   await expect(page.getByText("Browser Candidate", { exact: true })).toBeVisible();
   await expect(page.getByText("Accepted", { exact: true })).toBeVisible();
-  await page.getByRole("link", { name: "Directory", exact: true }).click();
+  // Core HR navigation is collapsed while working in Recruitment.
+  await page.goto("/staff/employees");
   await expect(page.getByText("Browser Candidate", { exact: true }).first()).toBeVisible();
 });

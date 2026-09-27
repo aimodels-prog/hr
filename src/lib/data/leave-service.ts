@@ -15,7 +15,8 @@ import type {
   SickPayTierBreakdown,
   EmployeeLeaveEntitlementOverride,
 } from "./leave-types.ts";
-import { differenceInCalendarDays, parseISO, eachDayOfInterval, isValid } from "date-fns";
+import { differenceInCalendarDays, parseISO, isValid } from "date-fns";
+import { leaveWorkingDates } from "./leave-working-days.ts";
 import { NotificationService } from "./notification-service.ts";
 import { getMasterDataRepository } from "./master-data.ts";
 import { SettingsService } from "./settings-service.ts";
@@ -430,7 +431,7 @@ export class LeaveService {
   }
 
   /** PostgreSQL is authoritative; these collections are a read-only compatibility projection. */
-  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+  async hydrateCompatibilityCache(context: ActorContext, canCommit = () => true): Promise<void> {
     if (typeof window === "undefined") return;
     const { storage } = getApplicationDataServices();
     const employees = storage.readCollection<Employee & { databaseId?: string }>("employees");
@@ -443,6 +444,7 @@ export class LeaveService {
     );
     const { getLeaveSnapshotFn } = await import("../server-functions/leave.server.ts");
     const snapshot = await getLeaveSnapshotFn({ data: { actor: await this.serverActor(context) } });
+    if (!canCommit()) return;
     const mapEmployee = (id: string) => employeeIdMap.get(id) ?? id;
     storage.writeCollection("leave_policies", snapshot.policies);
     storage.writeCollection(
@@ -1525,15 +1527,11 @@ export class LeaveService {
   }
 
   calculateWorkingDays(startDate: string, endDate: string, isHalfDay: boolean): number {
-    const start = parseISO(startDate);
-    const end = parseISO(endDate);
+    return this.calculateWorkingDates(startDate, endDate, isHalfDay).length * (isHalfDay ? 0.5 : 1);
+  }
 
-    if (start > end) return 0;
-
+  calculateWorkingDates(startDate: string, endDate: string, isHalfDay: boolean): string[] {
     const workingDaysOfWeek = new SettingsService().getAppSettingsSync().workingDays;
-    const isRestDay = (d: Date) => !workingDaysOfWeek.includes(d.getDay());
-
-    let workingDays = 0;
     const publicHolidayDates = new Set(
       getMasterDataRepository("publicHolidays")
         .list()
@@ -1548,23 +1546,7 @@ export class LeaveService {
         })
         .filter((date): date is string => Boolean(date)),
     );
-    if (isHalfDay) {
-      if (startDate !== endDate || isRestDay(start) || publicHolidayDates.has(startDate)) return 0;
-      return 0.5;
-    }
-    const days = eachDayOfInterval({ start, end });
-    for (const d of days) {
-      const dateKey = [
-        d.getFullYear(),
-        String(d.getMonth() + 1).padStart(2, "0"),
-        String(d.getDate()).padStart(2, "0"),
-      ].join("-");
-      if (!isRestDay(d) && !publicHolidayDates.has(dateKey)) {
-        workingDays++;
-      }
-    }
-
-    return workingDays;
+    return leaveWorkingDates(startDate, endDate, publicHolidayDates, workingDaysOfWeek, isHalfDay);
   }
 
   async submitLeaveRequest(
@@ -1817,6 +1799,12 @@ export class LeaveService {
     }
 
     const policySnapshot = {
+      payTiers: structuredClone(policy.payTiers ?? []),
+      workingDates: this.calculateWorkingDates(
+        payload.startDate,
+        payload.endDate,
+        !!payload.isHalfDay,
+      ),
       name: policy.name,
       type: policy.type,
       isPaid: policy.isPaid,
@@ -2146,6 +2134,11 @@ export class LeaveService {
       proposedStartDate,
       proposedEndDate,
       proposedWorkingDays: workingDays,
+      proposedWorkingDates: this.calculateWorkingDates(
+        proposedStartDate,
+        proposedEndDate,
+        req.isHalfDay,
+      ),
       reason: reason.trim(),
       requestedAt: new Date().toISOString(),
       requestedBy: context.actor.userId,
@@ -2325,6 +2318,7 @@ export class LeaveService {
           startDate: amendment.proposedStartDate,
           endDate: amendment.proposedEndDate,
           workingDaysRequested: amendment.proposedWorkingDays,
+          policySnapshot: { ...req.policySnapshot, workingDates: amendment.proposedWorkingDates },
           status: "Approved",
           amendmentHistory: history,
           pendingAmendment: undefined,

@@ -1,5 +1,7 @@
 import "@tanstack/react-start/server-only";
+import { assignSupervisorApprovalAccess } from "./supervisor-access.repository.server.ts";
 import { isHrOwnedSetupTask } from "../../data/hr-owned-fields.ts";
+import { assertOffboardingCaseActive } from "../../data/offboarding-policy.ts";
 
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
@@ -1953,6 +1955,15 @@ export async function decideEmploymentDetailsInDatabase(
       throw new Error("Assign an active supervisor before confirming these employment details.");
     if (confirmedManagerId === employee.id)
       throw new Error("An employee cannot be their own supervisor.");
+    if (input.decision === "Confirmed" && confirmedManagerId) {
+      await assignSupervisorApprovalAccess(
+        tx,
+        organisationId,
+        employee.id,
+        confirmedManagerId,
+        actor,
+      );
+    }
 
     const [settings] = await tx
       .select({ probationDurationMonths: appSettings.probationDurationMonths })
@@ -2352,6 +2363,26 @@ export async function createOffboardingCaseInDatabase(
   });
 }
 
+// Every mutation locks the case before its tasks or employee. A competing cancellation or
+// completion must finish first, then the waiting action re-checks the committed case status.
+async function lockActiveOffboardingCase(tx: Transaction, organisationId: string, caseId: string) {
+  const [lifecycle] = await tx
+    .select()
+    .from(offboardingCases)
+    .where(
+      and(
+        eq(offboardingCases.organisationId, organisationId),
+        eq(offboardingCases.id, caseId),
+        isNull(offboardingCases.archivedAt),
+      ),
+    )
+    .for("update")
+    .limit(1);
+  if (!lifecycle) throw new Error("Offboarding case not found.");
+  assertOffboardingCaseActive(lifecycle.status);
+  return lifecycle;
+}
+
 export async function updateOffboardingTaskInDatabase(
   organisationId: string,
   input: {
@@ -2365,6 +2396,7 @@ export async function updateOffboardingTaskInDatabase(
 ): Promise<void> {
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
+    await lockActiveOffboardingCase(tx, organisationId, input.caseId);
     const [row] = await tx
       .select({ task: offboardingTasks, lifecycle: offboardingCases, employee: employees })
       .from(offboardingTasks)
@@ -2380,8 +2412,6 @@ export async function updateOffboardingTaskInDatabase(
       .for("update")
       .limit(1);
     if (!row) throw new Error("Offboarding task not found.");
-    if (!["In Progress", "Pending Clearance"].includes(row.lifecycle.status))
-      throw new Error("This offboarding case is not active.");
     if (
       actor.employeeId === row.employee.id &&
       ["HR", "Accounts", "Super Admin"].includes(actor.activeRole) &&
@@ -2494,6 +2524,7 @@ export async function assignOffboardingTaskOwnerInDatabase(
     throw new Error("Only HR or a Super Admin can assign offboarding work.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
+    await lockActiveOffboardingCase(tx, organisationId, caseId);
     const [task] = await tx
       .select()
       .from(offboardingTasks)
@@ -2554,15 +2585,7 @@ export async function grantOffboardingClearanceInDatabase(
     throw new Error(`Only ${allowed.join(" or ")} can grant this clearance.`);
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
-    const [lifecycle] = await tx
-      .select()
-      .from(offboardingCases)
-      .where(
-        and(eq(offboardingCases.organisationId, organisationId), eq(offboardingCases.id, caseId)),
-      )
-      .for("update")
-      .limit(1);
-    if (!lifecycle) throw new Error("Offboarding case not found.");
+    const lifecycle = await lockActiveOffboardingCase(tx, organisationId, caseId);
     if (actor.employeeId === lifecycle.employeeId)
       throw new Error("A departing employee cannot approve their own clearance.");
     if (lifecycle.progressPercentage < 100)
@@ -2617,16 +2640,7 @@ export async function cancelOffboardingCaseInDatabase(
   if (reason.trim().length < 5) throw new Error("Explain why offboarding is being cancelled.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
-    const [lifecycle] = await tx
-      .select()
-      .from(offboardingCases)
-      .where(
-        and(eq(offboardingCases.organisationId, organisationId), eq(offboardingCases.id, caseId)),
-      )
-      .for("update")
-      .limit(1);
-    if (!lifecycle || lifecycle.status === "Completed")
-      throw new Error("This offboarding case cannot be cancelled.");
+    const lifecycle = await lockActiveOffboardingCase(tx, organisationId, caseId);
     await tx
       .update(offboardingCases)
       .set({
@@ -2664,15 +2678,7 @@ export async function finaliseOffboardingCaseInDatabase(
   if (actor.activeRole !== "HR") throw new Error("Only HR can complete offboarding.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
-    const [lifecycle] = await tx
-      .select()
-      .from(offboardingCases)
-      .where(
-        and(eq(offboardingCases.organisationId, organisationId), eq(offboardingCases.id, caseId)),
-      )
-      .for("update")
-      .limit(1);
-    if (!lifecycle) throw new Error("Offboarding case not found.");
+    const lifecycle = await lockActiveOffboardingCase(tx, organisationId, caseId);
     if (actor.employeeId === lifecycle.employeeId)
       throw new Error("A departing employee cannot complete their own offboarding.");
     if (today < lifecycle.lastWorkingDate)

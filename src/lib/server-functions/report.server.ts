@@ -33,6 +33,9 @@ const Filters = z
       .default(""),
     department: z.string().max(120).default("all"),
     status: z.string().max(120).default("all"),
+    leaveYear: z
+      .union([z.number().int().min(2000).max(2200), z.enum(["current", "all"])])
+      .default("current"),
   })
   .strict()
   .superRefine((value, context) => {

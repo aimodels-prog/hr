@@ -1,5 +1,7 @@
 import { useMemo } from "react";
 import { DashboardCharts } from "./dashboard-charts";
+import { StaffDataBoundary } from "@/components/layout/staff-data-boundary";
+import { DASHBOARD_MODULES } from "@/lib/data/staff-module-plan";
 import { AlertTriangle, Briefcase, CheckCircle, FileText, Plane } from "lucide-react";
 import { LeaveService } from "@/lib/data/leave-service";
 import { TimesheetService } from "@/lib/data/timesheet-service";
@@ -20,6 +22,17 @@ import {
 } from "@/components/dashboards/dashboard-kit";
 
 export function EmployeeDashboard({ employee, userId }: { employee: Employee; userId: string }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <DashboardCharts scope="self" />
+      <StaffDataBoundary modules={DASHBOARD_MODULES.employee}>
+        <EmployeeDashboardDetails employee={employee} userId={userId} />
+      </StaffDataBoundary>
+    </div>
+  );
+}
+
+function EmployeeDashboardDetails({ employee, userId }: { employee: Employee; userId: string }) {
   const currentUser = useCurrentUser();
   const actorContext = currentUser.getActorContext();
   const leaveService = useMemo(() => new LeaveService(), []);
@@ -187,21 +200,17 @@ export function EmployeeDashboard({ employee, userId }: { employee: Employee; us
 
   return (
     <div className="flex flex-col gap-4">
-      <DashboardCharts scope="self" />
-      <DashboardPanel title="Things that need you">
+      <DashboardPanel title="Needs attention">
         <AttentionQueue items={attentionItems} />
       </DashboardPanel>
       <div className="grid gap-4 lg:grid-cols-2">
         <DashboardPanel
           title="My recent leave requests"
-          description="Latest leave requests and their current decision"
           viewAllLabel="Open Leave"
           viewAllTo="/staff/me/leave-balances"
         >
           {leaveRequests.length === 0 ? (
-            <p className="py-5 text-center text-sm text-muted-foreground">
-              You have not submitted any leave requests.
-            </p>
+            <p className="py-5 text-center text-sm text-muted-foreground">No leave requests yet.</p>
           ) : (
             <div className="divide-y">
               {leaveRequests.slice(0, 4).map((request) => (
@@ -225,8 +234,7 @@ export function EmployeeDashboard({ employee, userId }: { employee: Employee; us
           )}
         </DashboardPanel>
         <DashboardPanel
-          title="Work and Development"
-          description="Your current work and HR information"
+          title="My development"
           viewAllLabel="My Profile"
           viewAllTo="/staff/me/profile"
         >

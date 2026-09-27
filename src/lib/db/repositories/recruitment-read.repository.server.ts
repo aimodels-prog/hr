@@ -43,6 +43,7 @@ import {
   shortlistSnapshots,
 } from "../schema/recruitment.ts";
 import { decryptSensitiveJson } from "../encryption.server.ts";
+import { currentPreliminaryRules } from "../../recruitment/preliminary-evidence.ts";
 
 export interface RecruitmentReadSnapshot {
   candidates: Candidate[];
@@ -345,19 +346,42 @@ export async function listRecruitmentReadSnapshot(
       cvRecordId: row.cvRecordId,
       cvFileId: row.cvFileId,
       ...(row.cvChecksum ? { cvChecksum: row.cvChecksum } : {}),
-      status: row.status as CandidatePreparationRun["status"],
+      status: (["Ready", "Needs Review"].includes(row.status) &&
+      !currentPreliminaryRules(row.rankingModel)
+        ? "Needs Review"
+        : row.status) as CandidatePreparationRun["status"],
       documentRoute: row.documentRoute as CandidatePreparationRun["documentRoute"],
       preparationMethod: row.preparationMethod as CandidatePreparationRun["preparationMethod"],
       ...(row.rankingModel ? { rankingModel: row.rankingModel } : {}),
       extractedProfile: row.extractedProfile as CandidatePreparationRun["extractedProfile"],
       fieldConfidence: row.fieldConfidence as CandidatePreparationRun["fieldConfidence"],
-      ...(row.preliminaryScore !== null ? { preliminaryScore: Number(row.preliminaryScore) } : {}),
-      ...(row.band ? { band: row.band as CandidatePreparationRun["band"] } : {}),
-      compulsoryChecks: row.compulsoryChecks as CandidatePreparationRun["compulsoryChecks"],
-      matchedSkills: row.matchedSkills,
+      ...(currentPreliminaryRules(row.rankingModel) && row.preliminaryScore !== null
+        ? { preliminaryScore: Number(row.preliminaryScore) }
+        : {}),
+      ...(row.band
+        ? {
+            band: (currentPreliminaryRules(row.rankingModel)
+              ? row.band
+              : "Needs HR Review") as CandidatePreparationRun["band"],
+          }
+        : {}),
+      compulsoryChecks: currentPreliminaryRules(row.rankingModel)
+        ? (row.compulsoryChecks as CandidatePreparationRun["compulsoryChecks"])
+        : (row.compulsoryChecks as CandidatePreparationRun["compulsoryChecks"]).map((check) => ({
+            criterion: check.criterion,
+            status: "Needs Review" as const,
+            evidence: "Screening rules updated. Prepare candidates again.",
+          })),
+      matchedSkills: currentPreliminaryRules(row.rankingModel) ? row.matchedSkills : [],
       missingRequiredSkills: row.missingRequiredSkills,
-      evidence: row.evidence,
-      warnings: row.warnings,
+      evidence: currentPreliminaryRules(row.rankingModel) ? row.evidence : [],
+      warnings: [
+        ...row.warnings,
+        ...(["Ready", "Needs Review"].includes(row.status) &&
+        !currentPreliminaryRules(row.rankingModel)
+          ? ["Screening rules updated. Use Prepare candidates to refresh this result."]
+          : []),
+      ],
       ...(row.reusedFromPreparationRunId
         ? { reusedFromPreparationRunId: row.reusedFromPreparationRunId }
         : {}),

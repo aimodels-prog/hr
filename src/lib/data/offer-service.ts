@@ -18,6 +18,7 @@ import { ConversionService } from "./conversion-service.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { IntegrationGateway } from "../integrations/index.ts";
 import { VacancyService } from "./vacancy-service.ts";
+import type { HireIdentityInput } from "../recruitment/hire-identity.ts";
 
 // salary, allowances, and benefits are compensation data - restricted to HR, Accounts, and Super
 // Admin at the data layer itself, not only hidden by whichever screen happens to render it. A
@@ -175,6 +176,7 @@ export class OfferService {
     transitionReason: string | undefined,
     context: ActorContext,
     manualDelivery?: import("../auth/offer-delivery.ts").ManualOfferDelivery,
+    hireIdentity?: HireIdentityInput,
   ): Promise<JobOffer> {
     const { transitionJobOfferFn } = await import("../server-functions/offer.server.ts");
     await transitionJobOfferFn({
@@ -187,6 +189,7 @@ export class OfferService {
           ? { manualDelivery: { ...manualDelivery, confirmed: manualDelivery.confirmed as true } }
           : {}),
         ...(transitionReason ? { reason: transitionReason } : {}),
+        ...(hireIdentity ? { hireIdentity } : {}),
       },
     });
     await this.refresh(context);
@@ -770,6 +773,7 @@ export class OfferService {
     status: JobOfferStatus,
     reason: string | undefined,
     context: ActorContext,
+    hireIdentity?: HireIdentityInput,
   ): Promise<JobOffer> {
     this.requireHr(context);
     const current = this.getOfferById(id, context);
@@ -800,6 +804,9 @@ export class OfferService {
     if (status === "Accepted") {
       const { storage, audit } = getApplicationDataServices();
       const transactionSnapshot = storage.createRawSnapshot();
+      const existingEmployeeIds = new Set(
+        storage.readCollection<{ id: string }>("employees").map((item) => item.id),
+      );
       let updated = this.updateOfferStatus(id, status, reason, context);
       if (deliveryReference) {
         updated = this.offerRepo.update(id, { deliveryReference }, context);
@@ -811,6 +818,7 @@ export class OfferService {
           current.id,
           {},
           { ...context, reason: reason || "Offer accepted; automatic onboarding initiated" },
+          hireIdentity,
         );
         const employeeService = new EmployeeService();
         const employee = employeeService.getById(employeeId, SYSTEM_CONTEXT);
@@ -819,19 +827,20 @@ export class OfferService {
           .list()
           .find((item) => item.employeeId === employeeId);
         if (!employee || !user) throw new Error("Employee access mapping was not created.");
-        await new IntegrationGateway().provisionWorkspaceIdentity(
-          {
-            employeeId,
-            primaryEmail: user.workspaceEmail,
-            displayName: employee.legalName,
-            organisationalUnit: employee.department,
-          },
-          { entityType: "employee", entityId: employeeId },
-          context,
-        );
+        if (!existingEmployeeIds.has(employeeId))
+          await new IntegrationGateway().provisionWorkspaceIdentity(
+            {
+              employeeId,
+              primaryEmail: user.workspaceEmail,
+              displayName: employee.legalName,
+              organisationalUnit: employee.department,
+            },
+            { entityType: "employee", entityId: employeeId },
+            context,
+          );
 
         const candidate = new CandidateService().getCandidate(current.candidateId, context);
-        if (candidate) {
+        if (candidate && !existingEmployeeIds.has(employeeId)) {
           // Best-effort welcome email - the employee already fully exists at this point, so a
           // failure here should not undo the acceptance or roll anything back.
           try {

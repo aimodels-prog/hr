@@ -43,7 +43,7 @@ export function trainingMasterDataId(collection: string, value: string) {
   return id;
 }
 
-export async function hydrateTrainingCache(context: ActorContext) {
+export async function hydrateTrainingCache(context: ActorContext, canCommit = () => true) {
   if (typeof window === "undefined") return;
   const { storage } = getApplicationDataServices();
   const employeeMap = new Map(
@@ -60,6 +60,7 @@ export async function hydrateTrainingCache(context: ActorContext) {
   const snapshot = await getTrainingSnapshotFn({
     data: { actor: await trainingServerActor(context) },
   });
+  if (!canCommit()) return;
   storage.writeCollection(
     "training_courses",
     snapshot.courses.map((item) => ({

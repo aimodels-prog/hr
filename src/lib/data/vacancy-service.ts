@@ -75,7 +75,7 @@ export class VacancyService {
     return this.vacancyRepo;
   }
 
-  async hydrateCompatibilityCache(context?: ActorContext): Promise<void> {
+  async hydrateCompatibilityCache(context?: ActorContext, canCommit = () => true): Promise<void> {
     if (typeof window === "undefined") return;
     const databaseVacancies = context
       ? await (
@@ -93,6 +93,7 @@ export class VacancyService {
           if (!response.ok) throw new Error("Open roles could not be loaded.");
           return (await response.json()) as Vacancy[];
         });
+    if (!canCommit()) return;
     const { storage } = getApplicationDataServices();
     const existing = storage.readCollection<Vacancy>("vacancies");
     const employees = storage.readCollection<{ id: string; databaseId?: string }>("employees");

@@ -161,87 +161,110 @@ function PerformanceReviewPage() {
         </Card>
       </div>
 
-      {sections.map((section, sectionIndex) => (
-        <Card key={section.templateSectionId}>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg">{section.title}</CardTitle>
-              <Badge variant="secondary">{section.weight}%</Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            {section.items.map((item, itemIndex) => (
-              <div key={item.templateItemId} className="rounded-xl border p-4">
-                <div className="mb-4">
-                  <p className="font-medium">{item.title}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">{item.description}</p>
-                  {item.evidencePrompt && (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      Evidence to consider: {item.evidencePrompt}
-                    </p>
-                  )}
-                </div>
-                <div className="grid gap-5 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>Employee rating (1–{template.maxRating})</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={template.maxRating}
-                      disabled={!isEmployee || review.status !== "Self Assessment Pending"}
-                      value={item.selfRating ?? ""}
-                      onChange={(event) =>
-                        updateItem(
-                          sectionIndex,
-                          itemIndex,
-                          "selfRating",
-                          Number(event.target.value),
-                        )
-                      }
-                    />
-                    <Textarea
-                      disabled={!isEmployee || review.status !== "Self Assessment Pending"}
-                      value={item.selfComment ?? ""}
-                      onChange={(event) =>
-                        updateItem(sectionIndex, itemIndex, "selfComment", event.target.value)
-                      }
-                      placeholder="Describe results and evidence"
-                    />
+      {review.status === "Objectives Pending" && (
+        <Card>
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6">
+            <p>
+              Objectives must total 100% and be approved by the supervisor before self-assessment.
+            </p>
+            <Button
+              onClick={() =>
+                navigate({ to: isEmployee ? "/staff/me/performance" : "/staff/performance/team" })
+              }
+            >
+              {isEmployee ? "Set objectives" : "View objectives"}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {review.status !== "Objectives Pending" &&
+        sections.map((section, sectionIndex) => (
+          <Card key={section.templateSectionId}>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg">{section.title}</CardTitle>
+                <Badge variant="secondary">{section.weight}%</Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {section.items.map((item, itemIndex) => (
+                <div key={item.templateItemId} className="rounded-xl border p-4">
+                  <div className="mb-4">
+                    <p className="font-medium">{item.title}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">{item.description}</p>
+                    {item.evidencePrompt && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Evidence to consider: {item.evidencePrompt}
+                      </p>
+                    )}
                   </div>
-                  {showManagerAssessment && (
+                  <div className="grid gap-5 md:grid-cols-2">
                     <div className="space-y-2">
-                      <Label>Supervisor rating (1–{template.maxRating})</Label>
+                      <Label>Employee rating (1–{template.maxRating})</Label>
                       <Input
                         type="number"
                         min={1}
                         max={template.maxRating}
-                        disabled={!isManager || review.status !== "Manager Review Pending"}
-                        value={item.managerRating ?? ""}
+                        disabled={!isEmployee || review.status !== "Self Assessment Pending"}
+                        value={item.selfRating ?? ""}
                         onChange={(event) =>
                           updateItem(
                             sectionIndex,
                             itemIndex,
-                            "managerRating",
+                            "selfRating",
                             Number(event.target.value),
                           )
                         }
                       />
                       <Textarea
-                        disabled={!isManager || review.status !== "Manager Review Pending"}
-                        value={item.managerComment ?? ""}
+                        disabled={!isEmployee || review.status !== "Self Assessment Pending"}
+                        value={item.selfComment ?? ""}
                         onChange={(event) =>
-                          updateItem(sectionIndex, itemIndex, "managerComment", event.target.value)
+                          updateItem(sectionIndex, itemIndex, "selfComment", event.target.value)
                         }
-                        placeholder="Give specific, constructive feedback"
+                        placeholder="Describe results and evidence"
                       />
                     </div>
-                  )}
+                    {showManagerAssessment && (
+                      <div className="space-y-2">
+                        <Label>Supervisor rating (1–{template.maxRating})</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={template.maxRating}
+                          disabled={!isManager || review.status !== "Manager Review Pending"}
+                          value={item.managerRating ?? ""}
+                          onChange={(event) =>
+                            updateItem(
+                              sectionIndex,
+                              itemIndex,
+                              "managerRating",
+                              Number(event.target.value),
+                            )
+                          }
+                        />
+                        <Textarea
+                          disabled={!isManager || review.status !== "Manager Review Pending"}
+                          value={item.managerComment ?? ""}
+                          onChange={(event) =>
+                            updateItem(
+                              sectionIndex,
+                              itemIndex,
+                              "managerComment",
+                              event.target.value,
+                            )
+                          }
+                          placeholder="Give specific, constructive feedback"
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      ))}
+              ))}
+            </CardContent>
+          </Card>
+        ))}
 
       {isEmployee && review.status === "Self Assessment Pending" && (
         <Card>

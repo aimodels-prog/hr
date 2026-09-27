@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, lt, not, or, sql } from "drizzle-orm";
@@ -18,6 +19,7 @@ import {
   travelRequests,
 } from "../schema/travel-payroll.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
+import { lockPayrollSourceAllocation } from "./payroll-allocation-lock.server.ts";
 
 type Tx = Parameters<Parameters<ReturnType<typeof getDatabaseClient>["transaction"]>[0]>[0];
 type MasterTable = typeof projects | typeof costCentres | typeof currencies;
@@ -281,6 +283,7 @@ export async function createTravelRequestInDatabase(
       );
     if (!employee.lineManagerId)
       throw new Error("Ask HR to assign your supervisor before requesting business travel.");
+    await requireEmployeeSupervisor(tx, org, input.employeeId);
     await activeReference(tx, currencies, org, input.currencyId, "currency");
     const [currency] = await tx
       .select({ code: currencies.code })
@@ -986,13 +989,19 @@ export async function assignTravelReimbursementsToPayrollInDatabase(
   if (!uniqueIds.length) throw new Error("Select at least one reimbursement.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
+    await lockPayrollSourceAllocation(tx, org);
     const [period] = await tx
       .select()
       .from(payrollPeriods)
       .where(and(eq(payrollPeriods.organisationId, org), eq(payrollPeriods.id, payrollPeriodId)))
+      .for("update")
       .limit(1);
-    if (!period || ["Locked", "Exported"].includes(period.status))
-      throw new Error("Select an open payroll period.");
+    if (
+      !period ||
+      period.archivedAt ||
+      !["Draft", "Collecting Inputs", "Exceptions"].includes(period.status)
+    )
+      throw new Error("Select a payroll period that is still collecting inputs.");
     await tx.execute(
       sql`select id from travel_requests where organisation_id=${org} and id in ${uniqueIds} for update`,
     );
@@ -1003,11 +1012,23 @@ export async function assignTravelReimbursementsToPayrollInDatabase(
     if (rows.length !== uniqueIds.length)
       throw new Error("A selected reimbursement was not found.");
     for (const request of rows) {
-      if (request.status !== "Closed" || request.actualTotalOmr === null)
+      if (request.archivedAt || request.status !== "Closed" || request.actualTotalOmr === null)
         throw new Error("Only closed reimbursements with a verified OMR total can enter payroll.");
       if (request.payrollPeriodId && request.payrollPeriodId !== payrollPeriodId)
         throw new Error("A reimbursement is already assigned to another payroll period.");
     }
+    const activeReimbursements = await tx
+      .select({ id: reimbursements.travelRequestId })
+      .from(reimbursements)
+      .where(
+        and(
+          eq(reimbursements.organisationId, org),
+          inArray(reimbursements.travelRequestId, uniqueIds),
+          isNull(reimbursements.archivedAt),
+        ),
+      );
+    if (activeReimbursements.length !== uniqueIds.length)
+      throw new Error("A selected reimbursement is missing or archived.");
     await tx
       .update(travelRequests)
       .set({

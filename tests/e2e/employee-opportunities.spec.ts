@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { textPdf } from "./pdf-fixture";
 
 test("an employee applies and recommends someone from the staff dashboard", async ({ page }) => {
   const unique = Date.now().toString();
@@ -10,11 +11,13 @@ test("an employee applies and recommends someone from the staff dashboard", asyn
     );
   });
   await page.goto("/staff");
-  await expect(page.getByText("Loading your VIA profile and permissions")).toHaveCount(0, {
+  await expect(page.getByText("VIA HR System is loading.", { exact: true })).toHaveCount(0, {
     timeout: 30_000,
   });
 
-  await page.getByRole("link", { name: /Apply for a position/ }).click();
+  await page.getByRole("button", { name: "My Workspace", exact: true }).click();
+  await page.getByRole("link", { name: "Opportunities", exact: true }).click();
+  await page.getByRole("button", { name: "Apply for a position", exact: true }).click();
   const applicationDialog = page.getByRole("dialog", { name: "Apply for a position" });
   await expect(applicationDialog).toBeVisible();
   await applicationDialog.getByRole("combobox").click();
@@ -31,7 +34,9 @@ test("an employee applies and recommends someone from the staff dashboard", asyn
   await applicationDialog.locator('input[type="file"]').setInputFiles({
     name: `omar-internal-${unique}.pdf`,
     mimeType: "application/pdf",
-    buffer: Buffer.from("%PDF-1.7\nOmar Rahman internal application\n%%EOF"),
+    buffer: textPdf(
+      "Omar Rahman. Internal application. Logistics operations and team leadership experience.",
+    ),
   });
   await applicationDialog.getByRole("button", { name: "Submit application" }).click();
   await expect(applicationDialog).toBeHidden({ timeout: 20_000 });
@@ -52,7 +57,9 @@ test("an employee applies and recommends someone from the staff dashboard", asyn
   await referralDialog.locator('input[type="file"]').setInputFiles({
     name: `employee-referral-${unique}.pdf`,
     mimeType: "application/pdf",
-    buffer: Buffer.from("%PDF-1.7\nEmployee referral logistics experience\n%%EOF"),
+    buffer: textPdf(
+      "Browser Referral. Logistics operations, customs clearance and supply chain experience.",
+    ),
   });
   await referralDialog
     .getByLabel("The candidate knows I am sharing their CV with VIA for recruitment.")

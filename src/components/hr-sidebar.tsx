@@ -1,33 +1,6 @@
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
-import {
-  LayoutDashboard,
-  FilePlus2,
-  Users,
-  CalendarClock,
-  ClipboardCheck,
-  Calculator,
-  FolderOpen,
-  CalendarDays,
-  Clock,
-  Plane,
-  DoorOpen,
-  TrendingUp,
-  GraduationCap,
-  BarChart,
-  Shield,
-  Settings,
-  UserCheck,
-  HeartHandshake,
-  Activity,
-  Contact,
-  FileBadge,
-  ExternalLink,
-  FileSearch,
-  Network,
-  PartyPopper,
-  BriefcaseBusiness,
-} from "lucide-react";
-
+import { ChevronDown, ExternalLink, Search, X } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
 import {
   Sidebar,
@@ -35,455 +8,180 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { Input } from "@/components/ui/input";
+import { useSidebarSections } from "@/components/layout/sidebar-sections-context";
 import { useCurrentUser } from "@/lib/auth";
-import type { Permission } from "@/lib/auth/permissions";
-import type { Role } from "@/lib/data/types";
-
-interface NavItem {
-  title: string;
-  url: string;
-  icon: typeof LayoutDashboard;
-  requiredPermission?: Permission;
-  /** Visible if the user holds ANY of these permissions (used instead of requiredPermission). */
-  requiredAnyPermission?: Permission[];
-  requiredRoles?: Role[];
-}
-
-interface NavGroup {
-  label: string;
-  items: NavItem[];
-}
-
-const navGroups: NavGroup[] = [
-  {
-    label: "Overview",
-    items: [
-      { title: "Dashboard", url: "/staff", icon: LayoutDashboard },
-      {
-        title: "My Profile",
-        url: "/staff/me/profile",
-        icon: Contact,
-        requiredPermission: "employee:view_self",
-      },
-      { title: "My Tasks", url: "/staff/my-tasks", icon: ClipboardCheck },
-      { title: "Requests & approvals", url: "/staff/requests", icon: ClipboardCheck },
-      { title: "Offer approvals", url: "/staff/offers", icon: ClipboardCheck },
-      { title: "Opportunities", url: "/staff/opportunities", icon: BriefcaseBusiness },
-      {
-        title: "My Employee Setup",
-        url: "/staff/me/onboarding",
-        icon: UserCheck,
-        requiredPermission: "onboarding:view_self",
-      },
-    ],
-  },
-  {
-    label: "Recruitment",
-    items: [
-      {
-        title: "Vacancies",
-        url: "/staff/vacancies",
-        icon: FilePlus2,
-        requiredPermission: "recruitment:manage_vacancies",
-      },
-      {
-        title: "Candidate Pool",
-        url: "/staff/candidates",
-        icon: Users,
-        requiredPermission: "recruitment:view_candidates",
-      },
-      {
-        title: "Incoming CVs",
-        url: "/staff/candidates/intake",
-        icon: FileSearch,
-        requiredPermission: "recruitment:manage_candidates",
-      },
-      {
-        title: "Contact Tracker",
-        url: "/staff/candidates/contacts",
-        icon: Activity,
-        requiredPermission: "recruitment:manage_candidates",
-      },
-      {
-        title: "Recommendations",
-        url: "/staff/recommendations",
-        icon: HeartHandshake,
-        requiredPermission: "recruitment:view_candidates",
-      },
-      {
-        title: "Interviews",
-        url: "/staff/interviews",
-        icon: CalendarClock,
-        requiredPermission: "recruitment:score_interviews_assigned",
-      },
-      {
-        title: "Offers",
-        url: "/staff/offers",
-        icon: UserCheck,
-        requiredPermission: "recruitment:manage_candidates",
-      },
-    ],
-  },
-  {
-    label: "Core HR",
-    items: [
-      {
-        title: "Directory",
-        url: "/staff/employees",
-        icon: Contact,
-        requiredPermission: "employee:view_directory",
-      },
-      {
-        title: "Org Chart",
-        url: "/staff/org-chart",
-        icon: Network,
-        requiredPermission: "employee:view_directory",
-      },
-      {
-        title: "Employee Files",
-        url: "/staff/files",
-        icon: FolderOpen,
-        requiredPermission: "employee:view_all",
-      },
-      {
-        title: "Document Expiry",
-        url: "/staff/document-expiry",
-        icon: FileBadge,
-        requiredPermission: "employee:manage_all",
-      },
-      {
-        title: "Work Anniversaries",
-        url: "/staff/anniversaries",
-        icon: PartyPopper,
-        requiredPermission: "employee:manage_all",
-      },
-      {
-        title: "Onboarding",
-        url: "/staff/onboarding",
-        icon: ClipboardCheck,
-        requiredPermission: "onboarding:manage_all",
-      },
-      {
-        title: "Offboarding",
-        url: "/staff/offboarding",
-        icon: DoorOpen,
-        requiredPermission: "offboarding:manage_all",
-      },
-    ],
-  },
-  {
-    label: "Time & Travel",
-    items: [
-      {
-        title: "My Leave Balances",
-        url: "/staff/me/leave-balances",
-        icon: CalendarDays,
-        requiredPermission: "leave:view_self",
-      },
-      {
-        title: "My Payslips",
-        url: "/staff/payslips",
-        icon: CalendarDays,
-        requiredPermission: "leave:view_self",
-      },
-      {
-        title: "Policies & Documents",
-        url: "/staff/company-library",
-        icon: CalendarDays,
-        requiredPermission: "leave:view_self",
-      },
-      {
-        title: "Leave Approvals",
-        url: "/staff/leave-approvals",
-        icon: ClipboardCheck,
-        requiredPermission: "leave:approve_direct_reports",
-      },
-      {
-        title: "Timesheet Approvals",
-        url: "/staff/timesheet-approvals",
-        icon: ClipboardCheck,
-        requiredPermission: "timesheet:approve_direct_reports",
-      },
-      {
-        title: "Leave Admin",
-        url: "/staff/leave-admin",
-        icon: CalendarClock,
-        requiredPermission: "leave:admin_all",
-      },
-      {
-        title: "My Timesheets",
-        url: "/staff/timesheets",
-        icon: CalendarClock,
-        requiredPermission: "timesheet:view_self",
-      },
-      {
-        title: "Timesheet Monitoring",
-        url: "/staff/timesheet-monitoring",
-        icon: ClipboardCheck,
-        requiredPermission: "timesheet:finance_view",
-      },
-      {
-        title: "My Attendance",
-        url: "/staff/me/attendance",
-        icon: Clock,
-        requiredPermission: "attendance:view_self",
-      },
-      {
-        title: "Quick Visits",
-        url: "/staff/me/attendance?action=site-visit",
-        icon: Clock,
-        requiredPermission: "attendance:view_self",
-      },
-      {
-        title: "Attendance Corrections",
-        url: "/staff/attendance/corrections",
-        icon: ClipboardCheck,
-        requiredPermission: "attendance:approve_direct_reports",
-      },
-      {
-        title: "Attendance Admin",
-        url: "/staff/attendance",
-        icon: Clock,
-        requiredPermission: "attendance:manage_all",
-      },
-      {
-        title: "My Overtime",
-        url: "/staff/me/overtime",
-        icon: Clock,
-        requiredPermission: "timesheet:view_self",
-      },
-      {
-        title: "Overtime Approvals",
-        url: "/staff/overtime-approvals",
-        icon: ClipboardCheck,
-        requiredAnyPermission: ["overtime:approve_direct_reports", "overtime:admin_all"],
-      },
-      {
-        title: "My Travel",
-        url: "/staff/travel",
-        icon: Plane,
-        requiredPermission: "travel:request_self",
-      },
-      {
-        title: "Team Travel Approvals",
-        url: "/staff/travel-approvals",
-        icon: ClipboardCheck,
-        requiredPermission: "travel:manager_review",
-      },
-      {
-        title: "HR Travel Approvals",
-        url: "/staff/travel-hr-approvals",
-        icon: ClipboardCheck,
-        requiredPermission: "travel:hr_review",
-      },
-    ],
-  },
-  {
-    label: "Finance",
-    items: [
-      {
-        title: "Payroll Inputs",
-        url: "/staff/payroll/periods",
-        icon: Calculator,
-        requiredPermission: "payroll:view",
-      },
-      {
-        title: "Overtime Ledger",
-        url: "/staff/payroll/overtime",
-        icon: Calculator,
-        requiredPermission: "payroll:view",
-      },
-      {
-        title: "Accounts Travel Approvals",
-        url: "/staff/travel-accounts-approvals",
-        icon: ClipboardCheck,
-        requiredPermission: "travel:finance_review",
-      },
-      {
-        title: "Reimbursement Settlement",
-        url: "/staff/travel-closures",
-        icon: ClipboardCheck,
-        requiredPermission: "travel:final_close",
-      },
-    ],
-  },
-  {
-    label: "Talent",
-    items: [
-      {
-        title: "My Performance",
-        url: "/staff/me/performance",
-        icon: TrendingUp,
-        requiredPermission: "performance:view_self",
-      },
-      {
-        title: "Team Performance",
-        url: "/staff/performance/team",
-        icon: Users,
-        requiredPermission: "performance:view_direct_reports",
-      },
-      {
-        title: "Performance Cycles",
-        url: "/staff/performance/cycles",
-        icon: ClipboardCheck,
-        requiredPermission: "performance:manage_all",
-      },
-      {
-        title: "My Certifications",
-        url: "/staff/me/training",
-        icon: GraduationCap,
-        requiredPermission: "training:view_self",
-      },
-      {
-        title: "Training Records",
-        url: "/staff/training",
-        icon: GraduationCap,
-        requiredAnyPermission: ["training:manage_all", "training:view_direct_reports"],
-      },
-    ],
-  },
-  {
-    label: "System",
-    items: [
-      {
-        title: "Reports",
-        url: "/staff/reports",
-        icon: BarChart,
-        // HR/Super Admin via full audit access; Accounts via their payroll-scoped
-        // subset of the Reports Centre (see ReportService.getScopedEmployees).
-        requiredAnyPermission: ["system:audit_view", "payroll:view"],
-      },
-      {
-        title: "User Management",
-        url: "/staff/users",
-        icon: Users,
-        requiredPermission: "system:users_manage",
-      },
-      {
-        title: "Audit History",
-        url: "/staff/audit",
-        icon: Shield,
-        requiredRoles: ["Super Admin"],
-      },
-      {
-        title: "Company Setup",
-        url: "/staff/settings",
-        icon: Settings,
-        requiredPermission: "system:settings_manage",
-      },
-      {
-        title: "Leave Policies",
-        url: "/staff/leave-policies",
-        icon: CalendarClock,
-        requiredPermission: "leave:admin_all",
-      },
-      {
-        title: "Timesheet Settings",
-        url: "/staff/timesheet-settings",
-        icon: CalendarClock,
-        requiredAnyPermission: ["timesheet:admin_all", "system:settings_manage"],
-      },
-    ],
-  },
-];
+import {
+  activeNavigationUrl,
+  searchNavigation,
+  staffNavigation,
+} from "@/lib/navigation/staff-navigation";
 
 export function HrSidebar() {
-  const { state, isMobile } = useSidebar();
-  const pathname = useRouterState({ select: (r) => r.location.pathname });
+  const { state, isMobile, openMobile, setOpen, setOpenMobile } = useSidebar();
+  const href = useRouterState({ select: (r) => r.location.href });
   const { displayName, activeRole, can: checkCan, currentEmployee } = useCurrentUser();
+  const sections = useSidebarSections();
+  const id = useId();
+  const activeLink = useRef<HTMLAnchorElement>(null);
+  const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const groups = useMemo(() => staffNavigation(activeRole, checkCan), [activeRole, checkCan]);
+  const activeUrl = activeNavigationUrl(groups, href);
+  const activeGroup = groups.find((group) =>
+    group.items.some((item) => item.url === activeUrl),
+  )?.label;
+  const visibleGroups = searchNavigation(groups, query);
+  useEffect(() => {
+    if (activeGroup) setExpanded((previous) => ({ ...previous, [activeGroup]: true }));
+  }, [activeGroup, activeUrl]);
+  useEffect(() => {
+    if (query) return;
+    const frame = requestAnimationFrame(() =>
+      activeLink.current?.scrollIntoView({ block: "nearest" }),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [activeUrl, query, openMobile, state]);
+  const closeMenu = () => {
+    setQuery("");
+    setOpenMobile(false);
+  };
 
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
-      <SidebarHeader className="border-b border-sidebar-border/70 px-4 py-4 group-data-[collapsible=icon]:px-2">
+      <SidebarHeader className="border-b border-sidebar-border/70 px-3 py-3 group-data-[collapsible=icon]:px-2">
         <Link
           to="/staff"
           aria-label="VIA HR System dashboard"
+          onClick={closeMenu}
           className="flex h-10 items-center overflow-hidden"
         >
           <BrandLogo className="h-10 min-w-[108px] dark:brightness-0 dark:invert group-data-[collapsible=icon]:h-8 group-data-[collapsible=icon]:min-w-[86px]" />
         </Link>
+        {state === "collapsed" && !isMobile ? (
+          <button
+            type="button"
+            aria-label="Search menu"
+            className="flex h-10 items-center justify-center rounded-lg hover:bg-sidebar-accent"
+            onClick={() => {
+              setOpen(true);
+              requestAnimationFrame(() => document.getElementById(id + "-search")?.focus());
+            }}
+          >
+            <Search className="h-4 w-4" />
+          </button>
+        ) : (
+          <div className="relative mt-2">
+            <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+            <Input
+              id={id + "-search"}
+              aria-label="Search menu"
+              placeholder="Search menu"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setQuery("");
+                  event.stopPropagation();
+                }
+              }}
+              className="h-10 rounded-lg pl-9 pr-8"
+            />
+            {query && (
+              <button
+                type="button"
+                aria-label="Clear menu search"
+                onClick={() => setQuery("")}
+                className="absolute right-1 top-1 flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        )}
       </SidebarHeader>
       <SidebarContent className="px-1 py-2">
-        {navGroups.map((group) => {
-          const visibleItems = group.items.filter((item) => {
-            if (item.requiredRoles && !item.requiredRoles.includes(activeRole)) return false;
-            if (item.requiredAnyPermission) {
-              return item.requiredAnyPermission.some((perm) => checkCan(perm));
-            }
-            if (!item.requiredPermission) return true;
-            return checkCan(item.requiredPermission);
-          });
-
-          if (visibleItems.length === 0) return null;
-
-          return (
-            <SidebarGroup key={group.label} className="py-1.5">
-              <details
-                key={`${group.label}:${pathname}:${state}:${isMobile}`}
-                open={
-                  (state === "collapsed" && !isMobile) ||
-                  group.label === "Overview" ||
-                  visibleItems.some(
-                    (item) =>
-                      pathname === item.url ||
-                      (item.url !== "/staff" && pathname.startsWith(item.url + "/")),
-                  )
-                }
-                className="group/nav-section group-data-[collapsible=icon]:[&>div]:block"
-              >
-                <summary className="cursor-pointer rounded-md px-2 py-2 text-xs font-medium text-sidebar-foreground/70 hover:bg-sidebar-accent focus-visible:outline-primary group-data-[collapsible=icon]:hidden">
-                  {group.label}
-                </summary>
-                <SidebarGroupContent>
+        <nav aria-label="Main navigation">
+          {visibleGroups.map((group, index) => {
+            const standalone = group.label === "Home" || group.label === "Reports";
+            const open =
+              standalone ||
+              Boolean(query.trim()) ||
+              (state === "collapsed" && !isMobile) ||
+              expanded[group.label] === true;
+            const sectionId = id + "-group-" + index;
+            return (
+              <SidebarGroup key={group.label} className="py-1">
+                {!standalone && (
+                  <button
+                    type="button"
+                    aria-expanded={open}
+                    aria-controls={sectionId}
+                    onClick={() =>
+                      setExpanded((previous) => ({ ...previous, [group.label]: !open }))
+                    }
+                    className="flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-2.5 text-left text-xs font-semibold text-sidebar-foreground/75 hover:bg-sidebar-accent focus-visible:outline-primary group-data-[collapsible=icon]:hidden"
+                  >
+                    <span>{group.label}</span>
+                    <ChevronDown
+                      className={open ? "h-3.5 w-3.5 shrink-0" : "h-3.5 w-3.5 shrink-0 -rotate-90"}
+                    />
+                  </button>
+                )}
+                <SidebarGroupContent id={sectionId} hidden={!open}>
                   <SidebarMenu>
-                    {visibleItems.map((item) => (
-                      <SidebarMenuItem key={`${item.title}:${item.url}`}>
+                    {group.items.map((item) => (
+                      <SidebarMenuItem key={item.url}>
                         <SidebarMenuButton
                           asChild
-                          isActive={
-                            pathname === item.url ||
-                            (item.url !== "/staff" &&
-                              pathname.startsWith(item.url + "/") &&
-                              !visibleItems.some(
-                                (other) =>
-                                  other.url !== item.url &&
-                                  other.url.startsWith(item.url + "/") &&
-                                  (pathname === other.url || pathname.startsWith(other.url + "/")),
-                              ))
-                          }
+                          isActive={activeUrl === item.url}
                           tooltip={item.title}
-                          className="h-10 rounded-lg px-2.5 text-[13px] text-sidebar-foreground/80 data-[active=true]:bg-sidebar-accent data-[active=true]:font-semibold data-[active=true]:text-sidebar-accent-foreground"
+                          className="h-11 rounded-lg px-2.5 text-[13px] text-sidebar-foreground/80 data-[active=true]:bg-sidebar-accent data-[active=true]:font-semibold data-[active=true]:text-sidebar-accent-foreground"
                         >
-                          <Link to={item.url}>
+                          <Link
+                            ref={activeUrl === item.url ? activeLink : undefined}
+                            to={item.url}
+                            onClick={closeMenu}
+                            aria-current={activeUrl === item.url ? "page" : undefined}
+                          >
                             <item.icon />
                             <span>{item.title}</span>
                           </Link>
                         </SidebarMenuButton>
+                        {activeUrl === item.url && (
+                          <div
+                            ref={sections?.setTarget}
+                            data-sidebar-page-sections
+                            className="ml-4 border-l border-sidebar-border pl-1 group-data-[collapsible=icon]:hidden [&:empty]:hidden"
+                          />
+                        )}
                       </SidebarMenuItem>
                     ))}
                   </SidebarMenu>
                 </SidebarGroupContent>
-              </details>
-            </SidebarGroup>
-          );
-        })}
-
-        <SidebarGroup>
-          <SidebarGroupLabel>Public</SidebarGroupLabel>
-          <SidebarGroupContent>
+              </SidebarGroup>
+            );
+          })}
+          {visibleGroups.length === 0 && (
+            <p role="status" className="px-4 py-6 text-sm text-muted-foreground">
+              No matching pages.
+            </p>
+          )}
+        </nav>
+        {!query && (
+          <SidebarGroup>
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
                   asChild
                   tooltip="Career portal"
-                  className="h-9 rounded-lg px-2.5 text-[13px] text-sidebar-foreground/78"
+                  className="h-11 rounded-lg px-2.5 text-[13px] text-sidebar-foreground/70"
                 >
                   <a href="https://careers.via-int.com">
                     <ExternalLink />
@@ -492,12 +190,12 @@ export function HrSidebar() {
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+          </SidebarGroup>
+        )}
       </SidebarContent>
-      <SidebarFooter className="border-t border-sidebar-border/70 px-4 py-4 text-xs group-data-[collapsible=icon]:hidden">
+      <SidebarFooter className="border-t border-sidebar-border/70 px-4 py-3 text-xs group-data-[collapsible=icon]:hidden">
         <p className="truncate font-semibold text-sidebar-foreground">{displayName}</p>
-        <p className="text-[11px] truncate">
+        <p className="truncate text-[11px]">
           {activeRole} · {currentEmployee?.position || "Staff"}
         </p>
       </SidebarFooter>

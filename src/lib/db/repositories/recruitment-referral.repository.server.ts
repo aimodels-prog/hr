@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { PRELIMINARY_RULES_VERSION } from "../../recruitment/preliminary-evidence.ts";
 
 import { randomUUID } from "node:crypto";
 
@@ -299,17 +300,20 @@ export async function reviewEmployeeReferralInDatabase(
     approvedVacancy,
     cv.cv.extractedFields as Record<string, unknown>,
   );
+  const cvText = extraction?.semanticTextEncrypted
+    ? decryptSensitiveJson<string>(extraction.semanticTextEncrypted)
+    : undefined;
   const semantic = await calculateCvSemanticSimilarity({
     vacancyText: semanticTexts.vacancyText,
-    candidateText: extraction?.semanticTextEncrypted
-      ? decryptSensitiveJson<string>(extraction.semanticTextEncrypted)
-      : semanticTexts.candidateText,
+    candidateText: cvText ?? semanticTexts.candidateText,
   });
   const prepared = buildCandidatePreliminaryAssessment(
     record.candidate,
     approvedVacancy,
     cv.cv.extractedFields as Record<string, unknown>,
     semantic,
+    undefined,
+    cvText,
   );
 
   return db.transaction(async (tx) => {
@@ -629,6 +633,7 @@ export async function listCandidatePoolMatchesInDatabase(
         eq(candidateVacancyMatches.organisationId, organisationId),
         eq(candidateVacancyMatches.vacancyId, vacancyId),
         eq(candidateVacancyMatches.vacancyRecordVersion, vacancy.recordVersion),
+        sql`${candidateVacancyMatches.rankingModel} LIKE ${`${PRELIMINARY_RULES_VERSION} | %`}`,
         eq(candidates.consentStatus, "Confirmed"),
         eq(candidates.doNotContact, false),
         sql`${candidates.archivedAt} IS NULL`,
@@ -755,12 +760,14 @@ export async function scanCandidatePoolForVacancyInDatabase(
       vacancy,
       row.cv.extractedFields as Record<string, unknown>,
     );
+    const cvText = row.semanticTextEncrypted
+      ? decryptSensitiveJson<string>(row.semanticTextEncrypted)
+      : undefined;
     return {
       row,
+      cvText,
       vacancyText: texts.vacancyText,
-      candidateText: row.semanticTextEncrypted
-        ? decryptSensitiveJson<string>(row.semanticTextEncrypted)
-        : texts.candidateText,
+      candidateText: cvText ?? texts.candidateText,
     };
   });
   const semanticScores = new Map<string, { score: number; model: string }>();
@@ -777,7 +784,7 @@ export async function scanCandidatePoolForVacancyInDatabase(
       semanticScores.set(item.candidateId, { score: item.score, model: result.model });
   }
   const generatedAt = new Date().toISOString();
-  const assessments = preparedInputs.map(({ row }) => {
+  const assessments = preparedInputs.map(({ row, cvText }) => {
     const semantic = semanticScores.get(row.candidate.id);
     if (!semantic) throw new Error("A Candidate Pool semantic result is missing.");
     return {
@@ -787,6 +794,8 @@ export async function scanCandidatePoolForVacancyInDatabase(
         vacancy,
         row.cv.extractedFields as Record<string, unknown>,
         semantic,
+        undefined,
+        cvText,
       ),
     };
   });

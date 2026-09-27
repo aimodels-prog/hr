@@ -1,5 +1,11 @@
 import "@tanstack/react-start/server-only";
+import { assignSupervisorApprovalAccess } from "./supervisor-access.repository.server.ts";
 import { isHrOwnedSetupTask } from "../../data/hr-owned-fields.ts";
+import {
+  assertReusableEmployeeIdentity,
+  resolveHireIdentity,
+  type HireIdentityInput,
+} from "../../recruitment/hire-identity.ts";
 
 import { randomUUID } from "node:crypto";
 import { assertIndependentOfferApprover } from "../../auth/offer-approval.ts";
@@ -980,7 +986,13 @@ async function convertAcceptedOffer(
   organisationId: string,
   offer: typeof jobOffers.$inferSelect,
   actor: AuditActorContext,
-): Promise<{ employeeId: string; userId: string; onboardingCaseId: string }> {
+  identityInput?: HireIdentityInput,
+): Promise<{
+  employeeId: string;
+  userId: string;
+  onboardingCaseId?: string;
+  kind: "New Hire" | "Internal Move";
+}> {
   const [[candidate], [vacancy]] = await Promise.all([
     tx
       .select()
@@ -997,31 +1009,131 @@ async function convertAcceptedOffer(
       .limit(1),
   ]);
   if (!candidate || !vacancy) throw new Error("Candidate or vacancy record is missing.");
-  if (candidate.convertedToEmployeeId || offer.convertedToEmployeeId)
+  if (candidate.archivedAt || candidate.mergedIntoId)
+    throw new Error("This candidate is no longer available for conversion.");
+  if (offer.convertedToEmployeeId)
     throw new Error("This accepted offer has already been converted.");
+  const [application] = await tx
+    .select()
+    .from(candidateApplications)
+    .where(
+      and(
+        eq(candidateApplications.organisationId, organisationId),
+        eq(candidateApplications.candidateId, candidate.id),
+        eq(candidateApplications.vacancyId, offer.vacancyId),
+      ),
+    )
+    .for("update")
+    .limit(1);
+  if (application?.archivedAt || application?.status === "Withdrawn")
+    throw new Error("This application is no longer available for conversion.");
+  if (
+    (application?.source === "Internal Application" ||
+      candidate.source === "Internal Application") &&
+    !application?.internalApplicantEmployeeId &&
+    !candidate.convertedToEmployeeId
+  )
+    throw new Error(
+      "The internal application is missing its employee link. Repair the link before accepting the offer.",
+    );
+  if (
+    application?.internalApplicantEmployeeId &&
+    candidate.convertedToEmployeeId &&
+    application.internalApplicantEmployeeId !== candidate.convertedToEmployeeId
+  )
+    throw new Error(
+      "The application and candidate point to different employees. Resolve the identity conflict first.",
+    );
+  const identity = resolveHireIdentity(
+    identityInput,
+    application?.internalApplicantEmployeeId ?? candidate.convertedToEmployeeId,
+    process.env["ALLOWED_EMAIL_DOMAIN"]?.trim() || "via-int.com",
+  );
+  if (identity.kind === "Existing") {
+    const [employee] = await tx
+      .select()
+      .from(employees)
+      .where(
+        and(eq(employees.organisationId, organisationId), eq(employees.id, identity.employeeId)),
+      )
+      .for("update")
+      .limit(1);
+    if (!employee) throw new Error("The selected employee is not in this organisation.");
+    const accounts = await tx
+      .select()
+      .from(users)
+      .where(and(eq(users.organisationId, organisationId), eq(users.employeeId, employee.id)))
+      .for("update");
+    if (accounts.length > 1)
+      throw new Error(
+        "This employee has conflicting account mappings. Resolve them before continuing.",
+      );
+    const account = accounts[0];
+    assertReusableEmployeeIdentity(employee, account);
+    await linkConvertedOffer(tx, organisationId, offer, employee.id, actor);
+    await tx.insert(notifications).values({
+      organisationId,
+      recipientUserId: actor.userId!,
+      type: "Internal Move",
+      title: "Internal move accepted",
+      message: `${employee.legalName} accepted ${offer.position}, effective ${offer.startDate}. Update the existing employment record through HR; their account and current job details have been preserved.`,
+      priority: "High",
+      status: "Unread",
+      deduplicationKey: `internal-move-${offer.id}`,
+      link: { entityType: "employee", entityId: employee.id },
+      createdBy: actor.userId!,
+      updatedBy: actor.userId!,
+    });
+    return { employeeId: employee.id, userId: account!.id, kind: "Internal Move" };
+  }
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(hashtext(${`employee-number:${organisationId}`}))`,
   );
-  const [count] = await tx
-    .select({ value: sql<number>`count(*)::int` })
-    .from(employees)
-    .where(eq(employees.organisationId, organisationId));
   const employeeId = randomUUID();
   const userId = randomUUID();
-  const sequence = Number(count?.value ?? 0) + 1;
-  const emailStem =
-    `${candidate.firstName}.${candidate.lastName}`
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, ".")
-      .replace(/^\.|\.$/g, "") || `employee.${sequence}`;
-  let workspaceEmail = `${emailStem}@via-int.com`;
+  const workspaceEmail = identity.workspaceEmail;
+  const candidateEmail = candidate.email.trim().toLowerCase();
+  const [employeeExists] = await tx
+    .select({ id: employees.id })
+    .from(employees)
+    .where(
+      and(
+        eq(employees.organisationId, organisationId),
+        sql`(lower(trim(${employees.workEmail})) IN (${workspaceEmail}, ${candidateEmail})
+      OR lower(trim(${employees.workspaceEmail})) IN (${workspaceEmail}, ${candidateEmail})
+      OR lower(trim(${employees.personalEmail})) IN (${workspaceEmail}, ${candidateEmail})
+      OR ${employees.candidateId}=${candidate.id})`,
+      ),
+    )
+    .limit(1);
+  if (employeeExists)
+    throw new Error(
+      "An employee already matches this candidate or email. Select their existing employee record instead of creating a duplicate.",
+    );
   const [emailExists] = await tx
     .select({ id: users.id })
     .from(users)
-    .where(and(eq(users.organisationId, organisationId), eq(users.workspaceEmail, workspaceEmail)))
+    .where(
+      and(
+        eq(users.organisationId, organisationId),
+        sql`lower(trim(${users.workspaceEmail})) IN (${workspaceEmail}, ${candidateEmail})`,
+      ),
+    )
     .limit(1);
-  if (emailExists) workspaceEmail = `${emailStem}.${sequence}@via-int.com`;
+  if (emailExists)
+    throw new Error(
+      "This email already belongs to a VIA account. Select the existing employee or resolve the account mapping.",
+    );
   const employeeNumber = workspaceEmail;
+  if (vacancy.hiringManagerId) {
+    await assignSupervisorApprovalAccess(
+      tx,
+      organisationId,
+      employeeId,
+      vacancy.hiringManagerId,
+      actor,
+    );
+  }
   await tx.insert(employees).values({
     id: employeeId,
     organisationId,
@@ -1163,35 +1275,7 @@ async function convertAcceptedOffer(
         updatedBy: actor.userId!,
       })),
     );
-  await tx
-    .update(candidates)
-    .set({
-      stage: "Hired",
-      convertedToEmployeeId: employeeId,
-      updatedAt: new Date(),
-      updatedBy: actor.userId,
-      recordVersion: sql`${candidates.recordVersion} + 1`,
-    })
-    .where(eq(candidates.id, candidate.id));
-  await tx
-    .update(candidateApplications)
-    .set({
-      status: "Hired",
-      updatedAt: new Date(),
-      updatedBy: actor.userId,
-      recordVersion: sql`${candidateApplications.recordVersion} + 1`,
-    })
-    .where(
-      and(
-        eq(candidateApplications.organisationId, organisationId),
-        eq(candidateApplications.vacancyId, offer.vacancyId),
-        eq(candidateApplications.candidateId, candidate.id),
-      ),
-    );
-  await tx
-    .update(jobOffers)
-    .set({ convertedToEmployeeId: employeeId })
-    .where(eq(jobOffers.id, offer.id));
+  await linkConvertedOffer(tx, organisationId, offer, employeeId, actor);
   await tx.insert(notifications).values({
     organisationId,
     recipientUserId: userId,
@@ -1205,7 +1289,52 @@ async function convertAcceptedOffer(
     createdBy: actor.userId!,
     updatedBy: actor.userId!,
   });
-  return { employeeId, userId, onboardingCaseId };
+  return { employeeId, userId, onboardingCaseId, kind: "New Hire" };
+}
+
+async function linkConvertedOffer(
+  tx: Transaction,
+  organisationId: string,
+  offer: typeof jobOffers.$inferSelect,
+  employeeId: string,
+  actor: AuditActorContext,
+): Promise<void> {
+  await tx
+    .update(candidates)
+    .set({
+      stage: "Hired",
+      convertedToEmployeeId: employeeId,
+      updatedAt: new Date(),
+      updatedBy: actor.userId,
+      recordVersion: sql`${candidates.recordVersion} + 1`,
+    })
+    .where(
+      and(eq(candidates.id, offer.candidateId), eq(candidates.organisationId, organisationId)),
+    );
+  await tx
+    .update(candidateApplications)
+    .set({
+      status: "Hired",
+      updatedAt: new Date(),
+      updatedBy: actor.userId,
+      recordVersion: sql`${candidateApplications.recordVersion} + 1`,
+    })
+    .where(
+      and(
+        eq(candidateApplications.organisationId, organisationId),
+        eq(candidateApplications.vacancyId, offer.vacancyId),
+        eq(candidateApplications.candidateId, offer.candidateId),
+      ),
+    );
+  await tx
+    .update(jobOffers)
+    .set({
+      convertedToEmployeeId: employeeId,
+      updatedAt: new Date(),
+      updatedBy: actor.userId!,
+      recordVersion: sql`${jobOffers.recordVersion}+1`,
+    })
+    .where(eq(jobOffers.id, offer.id));
 }
 
 export async function transitionJobOfferInDatabase(
@@ -1216,6 +1345,7 @@ export async function transitionJobOfferInDatabase(
   actor: AuditActorContext,
   expectedRecordVersion?: number,
   manualDelivery?: ManualOfferDelivery,
+  identityInput?: HireIdentityInput,
 ): Promise<{ employeeId?: string; userId?: string; onboardingCaseId?: string }> {
   recruiter(actor);
   if (status === "Accepted") {
@@ -1302,7 +1432,9 @@ export async function transitionJobOfferInDatabase(
       })
       .where(eq(jobOffers.id, offer.id));
     const conversion =
-      status === "Accepted" ? await convertAcceptedOffer(tx, organisationId, offer, actor) : {};
+      status === "Accepted"
+        ? await convertAcceptedOffer(tx, organisationId, offer, actor, identityInput)
+        : {};
     if (status === "Pending Approval" && offer.approverUserId)
       await notifyOfferReview(
         tx,
@@ -1335,7 +1467,13 @@ export async function convertAcceptedJobOfferInDatabase(
   organisationId: string,
   offerId: string,
   actor: AuditActorContext,
-): Promise<{ employeeId: string; userId: string; onboardingCaseId: string }> {
+  identityInput?: HireIdentityInput,
+): Promise<{
+  employeeId: string;
+  userId: string;
+  onboardingCaseId?: string;
+  kind: "New Hire" | "Internal Move";
+}> {
   recruiter(actor);
   await ensureCoreHrLifecycleTemplates(organisationId, actor);
   const db = getDatabaseClient();
@@ -1349,7 +1487,7 @@ export async function convertAcceptedJobOfferInDatabase(
     if (!offer) throw new Error("Offer not found.");
     if (offer.status !== "Accepted")
       throw new Error("Only an accepted offer can be converted to an employee.");
-    const conversion = await convertAcceptedOffer(tx, organisationId, offer, actor);
+    const conversion = await convertAcceptedOffer(tx, organisationId, offer, actor, identityInput);
     await audit(tx, organisationId, actor, {
       action: "convert-accepted-offer",
       entityType: "offer",

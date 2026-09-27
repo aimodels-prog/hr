@@ -123,6 +123,9 @@ test(
           )
         `;
       }
+      await sql`INSERT INTO user_roles (organisation_id,user_id,role_id,assigned_by,reason)
+        SELECT ${organisationId},${managerUserId},id,${hrUserId},'Assigned test supervisor'
+        FROM roles WHERE code='Line Manager' ON CONFLICT DO NOTHING`;
       await saveAttendancePolicyInDatabase(
         organisationId,
         {
@@ -347,6 +350,7 @@ test(
         "approve",
         "Confirmed against the team attendance sheet.",
         actor(managerUserId, managerEmployeeId, "Manager", "Line Manager"),
+        1,
       );
       await decideAttendanceCorrectionInDatabase(
         organisationId,
@@ -354,6 +358,7 @@ test(
         "approve",
         "HR completed the attendance verification.",
         actor(hrUserId, hrEmployeeId, "HR Reviewer", "HR"),
+        2,
       );
       const [corrected] = await sql`
         SELECT c.status, r.status AS record_status, r.calculated_hours, r.is_late, r.is_early_departure

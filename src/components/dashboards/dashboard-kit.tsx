@@ -2,7 +2,8 @@ import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CheckCircle2, type LucideIcon } from "lucide-react";
+import { CheckCircle2, Info, type LucideIcon } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
 // ---------- Attention Queue ----------
@@ -101,7 +102,36 @@ const deltaArrowByDirection: Record<NonNullable<PulseMetric["deltaDirection"]>, 
   flat: "–",
 };
 
-export function PulseStrip({ metrics }: { metrics: PulseMetric[] }) {
+export function DashboardInfo({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={label}
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Info className="h-4 w-4" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="max-w-[calc(100vw-2rem)] text-xs leading-relaxed"
+        side="bottom"
+        align="end"
+      >
+        {children}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+export function PulseStrip({
+  metrics,
+  compact = false,
+}: {
+  metrics: PulseMetric[];
+  compact?: boolean;
+}) {
   const desktopColumns =
     metrics.length === 7
       ? "xl:grid-cols-7"
@@ -112,10 +142,15 @@ export function PulseStrip({ metrics }: { metrics: PulseMetric[] }) {
           : "xl:grid-cols-3";
 
   return (
-    <div className={cn("grid grid-cols-1 gap-4 sm:grid-cols-2", desktopColumns)}>
+    <div className={cn("grid grid-cols-2 gap-3 sm:gap-4", desktopColumns)}>
       {metrics.map((metric, index) => (
         <div key={index} className="rounded-xl border border-border/70 bg-card p-5 sm:p-6">
-          <p className="text-xs font-medium text-muted-foreground">{metric.label}</p>
+          <div className="flex items-center justify-between gap-1">
+            <p className="text-xs font-medium text-muted-foreground">{metric.label}</p>
+            {compact && metric.note && (
+              <DashboardInfo label={`About ${metric.label}`}>{metric.note}</DashboardInfo>
+            )}
+          </div>
           <div className="mt-1 flex items-baseline gap-1.5">
             <span className="text-2xl font-semibold tracking-tight tabular-nums">
               {metric.value}
@@ -128,7 +163,7 @@ export function PulseStrip({ metrics }: { metrics: PulseMetric[] }) {
               </span>
             ) : null}
           </div>
-          {metric.note ? (
+          {metric.note && !compact ? (
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{metric.note}</p>
           ) : null}
         </div>

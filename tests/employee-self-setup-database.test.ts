@@ -235,6 +235,17 @@ test(
         /HR must confirm your employment details/,
       );
 
+      // A newly registered supervisor is not yet eligible to approve requests.
+      await assert.rejects(
+        decideEmploymentDetailsInDatabase(
+          organisationId,
+          { employeeId: employeeSession.employee.id, decision: "Confirmed", note: "Checked" },
+          hrActor,
+        ),
+        /active supervisor/,
+      );
+      await sql`UPDATE employees SET status='Active', employment_confirmation_status='Confirmed'
+        WHERE id=${managerSession.employee.id}`;
       await decideEmploymentDetailsInDatabase(
         organisationId,
         { employeeId: employeeSession.employee.id, decision: "Confirmed", note: "Checked" },
@@ -247,6 +258,11 @@ test(
       `;
       assert.equal(confirmedEmployment?.staff_entry_type, "New Employee");
       assert.equal(confirmedEmployment?.line_manager_id, managerSession.employee.id);
+      const managerRoles =
+        await sql`SELECT r.code FROM user_roles ur JOIN roles r ON r.id=ur.role_id
+        WHERE ur.user_id=${managerSession.user.id}`;
+      assert.ok(managerRoles.some((row) => row.code === "Line Manager"));
+      assert.ok(managerRoles.some((row) => row.code === "Employee"));
       assert.equal(confirmedEmployment?.employment_confirmation_status, "Confirmed");
       assert.equal(confirmedEmployment?.proposed_employment_details, null);
       assert.equal(confirmedEmployment?.proposed_line_manager_email, null);
@@ -319,10 +335,12 @@ test(
       `;
       assert.equal(Number(completionAudit?.count), 1);
 
+      // The eligible request is 100 days ahead and may fall in the next leave year.
+      const requestYear = Number(dateAfter(100).slice(0, 4));
       assert.equal(
         await rolloverLeaveBalancesInDatabase(
           organisationId,
-          new Date().getUTCFullYear(),
+          requestYear,
           actor,
           employeeSession.employee.id,
         ),
@@ -331,7 +349,7 @@ test(
       assert.equal(
         await rolloverLeaveBalancesInDatabase(
           organisationId,
-          new Date().getUTCFullYear(),
+          requestYear,
           actor,
           employeeSession.employee.id,
         ),

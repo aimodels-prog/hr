@@ -11,7 +11,7 @@ async function previewAs(page: Page, userId: string, activeRole: "Employee" | "S
     { selectedUser: userId, selectedRole: activeRole },
   );
   await page.goto("/staff/audit");
-  await expect(page.getByText("Loading your VIA profile and permissions")).toHaveCount(0, {
+  await expect(page.getByText("VIA HR System is loading.", { exact: true })).toHaveCount(0, {
     timeout: 30_000,
   });
 }

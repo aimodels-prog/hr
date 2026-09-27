@@ -1,4 +1,6 @@
 import { useMemo } from "react";
+import { StaffDataBoundary } from "@/components/layout/staff-data-boundary";
+import { DASHBOARD_MODULES } from "@/lib/data/staff-module-plan";
 import {
   CalendarCheck,
   Clock,
@@ -41,6 +43,14 @@ function formatDate(iso: string): string {
 }
 
 export function ManagerDashboard({ employee, userId }: { employee: Employee; userId: string }) {
+  return (
+    <StaffDataBoundary modules={DASHBOARD_MODULES.manager}>
+      <ManagerDashboardDetails employee={employee} userId={userId} />
+    </StaffDataBoundary>
+  );
+}
+
+function ManagerDashboardDetails({ employee, userId }: { employee: Employee; userId: string }) {
   const currentUser = useCurrentUser();
   const empService = useMemo(() => new EmployeeService(), []);
   const leaveService = useMemo(() => new LeaveService(), []);
@@ -105,7 +115,7 @@ export function ManagerDashboard({ employee, userId }: { employee: Employee; use
 
   // Performance reviews awaiting this manager's input
   const pendingReviews = perfService
-    .getReviews(currentUser.getActorContext())
+    .getReviewsForTeam(currentUser.getActorContext())
     .filter((r) => teamIds.has(r.employeeId) && r.status === "Manager Review Pending");
 
   // ---------- Attention Queue ----------

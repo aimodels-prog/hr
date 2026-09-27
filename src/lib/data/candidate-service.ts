@@ -86,7 +86,7 @@ export class CandidateService {
     });
   }
 
-  async hydrateCompatibilityCache(context: ActorContext): Promise<void> {
+  async hydrateCompatibilityCache(context: ActorContext, canCommit = () => true): Promise<void> {
     if (typeof window === "undefined") return;
     const { getRecruitmentSnapshotFn } = await import("../server-functions/candidate.server.ts");
     const users = getApplicationDataServices().storage.readCollection<{
@@ -108,6 +108,7 @@ export class CandidateService {
         activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
       },
     });
+    if (!canCommit()) return;
     const employeeIdMap = new Map(
       employees.filter((item) => item.databaseId).map((item) => [item.databaseId!, item.id]),
     );
