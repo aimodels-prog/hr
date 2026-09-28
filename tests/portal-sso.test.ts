@@ -287,7 +287,7 @@ test("logout still clears the browser session when database revocation fails", a
   }
 });
 
-test("signed-out page is accessible without SSO and offers an explicit portal link", async () => {
+test("signed-out landing automatically opens the portal without relaunching SSO", async () => {
   const response = await resolvePortalAuthenticationRequest(
     new Request("https://hr.via-int.com/auth/signed-out"),
     dependencies({}),
@@ -296,9 +296,8 @@ test("signed-out page is accessible without SSO and offers an explicit portal li
   assert.equal(response?.headers.get("location"), null);
   assert.match(response?.headers.get("cache-control") ?? "", /no-store/);
   const html = await response!.text();
-  assert.match(html, /You are signed out of VIA HR/);
-  assert.match(html, /href="https:\/\/portal.via-int.com\/"/);
-  assert.doesNotMatch(html, /http-equiv="refresh"|<script|sso\/launch/);
+  assert.match(html, /http-equiv="refresh" content="0;url=https:\/\/portal.via-int.com\/"/);
+  assert.doesNotMatch(html, /You are signed out|Continue to VIA Portal|<script|sso\/launch/);
 });
 
 test("an authenticated dashboard request enters the clean staff dashboard", async () => {

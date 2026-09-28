@@ -209,14 +209,14 @@ test("production release smoke signs out without a blocked cross-origin form red
       securityErrors.push(message.text());
   });
   await signInAs(page, "rana.nair@via-int.com", "Rana Nair", "/staff");
+  // Keep this regression test independent of the external portal service.
+  await page.route("https://portal.via-int.com/", (route) =>
+    route.fulfill({ contentType: "text/html", body: "<h1>VIA Portal</h1>" }),
+  );
   await page.getByRole("button", { name: /Rana Nair,/ }).click();
   await page.getByRole("button", { name: "Sign out of VIA HR" }).click();
-  await expect(page).toHaveURL(/\/auth\/signed-out$/);
-  await expect(page.getByRole("heading", { name: "You are signed out of VIA HR" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Continue to VIA Portal" })).toHaveAttribute(
-    "href",
-    "https://portal.via-int.com/",
-  );
+  await expect(page).toHaveURL("https://portal.via-int.com/");
+  await expect(page.getByRole("heading", { name: "VIA Portal" })).toBeVisible();
   expect(
     (await page.context().cookies()).some((cookie) => cookie.name === "__Host-via_hr_session"),
   ).toBe(false);
