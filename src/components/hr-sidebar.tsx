@@ -17,6 +17,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { useSidebarSections } from "@/components/layout/sidebar-sections-context";
 import { useCurrentUser } from "@/lib/auth";
+import { cn } from "@/lib/utils";
 import {
   activeNavigationUrl,
   searchNavigation,
@@ -126,7 +127,10 @@ export function HrSidebar() {
                     onClick={() =>
                       setExpanded((previous) => ({ ...previous, [group.label]: !open }))
                     }
-                    className="flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-2.5 text-left text-xs font-semibold text-sidebar-foreground/75 hover:bg-sidebar-accent focus-visible:outline-primary group-data-[collapsible=icon]:hidden"
+                    className={cn(
+                      "flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-2.5 text-left text-sm font-semibold transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-data-[collapsible=icon]:hidden",
+                      group.label === activeGroup ? "text-primary" : "text-sidebar-foreground",
+                    )}
                   >
                     <span>{group.label}</span>
                     <ChevronDown
@@ -134,7 +138,14 @@ export function HrSidebar() {
                     />
                   </button>
                 )}
-                <SidebarGroupContent id={sectionId} hidden={!open}>
+                <SidebarGroupContent
+                  id={sectionId}
+                  hidden={!open}
+                  className={cn(
+                    !standalone &&
+                      "ml-3 mt-1 w-auto rounded-r-lg border-l border-sidebar-border bg-sidebar-accent/25 py-1 pl-2 group-data-[collapsible=icon]:m-0 group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0",
+                  )}
+                >
                   <SidebarMenu>
                     {group.items.map((item) => (
                       <SidebarMenuItem key={item.url}>
@@ -142,7 +153,7 @@ export function HrSidebar() {
                           asChild
                           isActive={activeUrl === item.url}
                           tooltip={item.title}
-                          className="h-11 rounded-lg px-2.5 text-[13px] text-sidebar-foreground/80 data-[active=true]:bg-sidebar-accent data-[active=true]:font-semibold data-[active=true]:text-sidebar-accent-foreground"
+                          className="relative min-h-11 h-auto rounded-lg px-2.5 py-2 text-[13px] font-normal text-sidebar-foreground/80 hover:bg-primary/5 hover:text-primary active:bg-primary/10 active:text-primary data-[active=true]:bg-primary/10 data-[active=true]:font-semibold data-[active=true]:text-primary data-[active=true]:before:absolute data-[active=true]:before:inset-y-2.5 data-[active=true]:before:left-0 data-[active=true]:before:w-0.5 data-[active=true]:before:rounded-full data-[active=true]:before:bg-primary data-[active=true]:before:content-[''] [&>span:last-child]:whitespace-normal"
                         >
                           <Link
                             ref={activeUrl === item.url ? activeLink : undefined}
@@ -158,7 +169,7 @@ export function HrSidebar() {
                           <div
                             ref={sections?.setTarget}
                             data-sidebar-page-sections
-                            className="ml-4 border-l border-sidebar-border pl-1 group-data-[collapsible=icon]:hidden [&:empty]:hidden"
+                            className="ml-3 border-l border-sidebar-border/70 pl-1 group-data-[collapsible=icon]:hidden [&:empty]:hidden"
                           />
                         )}
                       </SidebarMenuItem>

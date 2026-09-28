@@ -203,6 +203,7 @@ export function SectionLink({
         active
           ? "border-primary bg-primary/10 font-semibold text-primary"
           : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
+        sidebar && "rounded-md px-2 text-xs leading-5 hover:bg-primary/5 hover:text-primary",
         disabled && "pointer-events-none opacity-50",
       )}
     >
