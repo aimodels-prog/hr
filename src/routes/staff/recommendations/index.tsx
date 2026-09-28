@@ -115,7 +115,7 @@ function RecommendationsIndex() {
   }, [vacancyService, refreshKey]);
 
   const submitReview = async () => {
-    if (!reviewing || reviewReason.trim().length < 5) return;
+    if (!reviewing || (reviewing.decision === "Decline" && reviewReason.trim().length < 5)) return;
     setSavingReview(true);
     try {
       await reviewEmployeeReferralFn({
@@ -402,7 +402,12 @@ function RecommendationsIndex() {
           <Textarea
             value={reviewReason}
             onChange={(event) => setReviewReason(event.target.value)}
-            placeholder="Record the reason for this HR decision"
+            aria-label={
+              reviewing?.decision === "Approve" ? "Note (optional)" : "Reason for declining"
+            }
+            placeholder={
+              reviewing?.decision === "Approve" ? "Note (optional)" : "Reason for declining"
+            }
             rows={4}
           />
           <DialogFooter>
@@ -412,7 +417,10 @@ function RecommendationsIndex() {
             <Button
               variant={reviewing?.decision === "Decline" ? "destructive" : "default"}
               onClick={submitReview}
-              disabled={savingReview || reviewReason.trim().length < 5}
+              disabled={
+                savingReview ||
+                (reviewing?.decision === "Decline" && reviewReason.trim().length < 5)
+              }
             >
               {savingReview ? "Saving..." : `Confirm ${reviewing?.decision || "Decision"}`}
             </Button>

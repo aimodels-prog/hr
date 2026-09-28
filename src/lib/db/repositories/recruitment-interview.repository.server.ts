@@ -511,7 +511,13 @@ export async function updateInterviewWorkflowInDatabase(
   actor: AuditActorContext,
 ): Promise<void> {
   requireRecruiter(actor);
-  const cleanReason = requireReason(input.reason, input.waiver ? 10 : 3);
+  const routineStatus =
+    input.action === "change-status" &&
+    (input.status === "Completed" || input.status === "No Show") &&
+    !input.waiver;
+  const cleanReason = routineStatus
+    ? input.reason.trim() || `Interview marked ${input.status}`
+    : requireReason(input.reason, input.waiver ? 10 : 3);
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
     const [interview] = await tx

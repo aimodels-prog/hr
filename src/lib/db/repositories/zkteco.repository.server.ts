@@ -770,7 +770,8 @@ export async function saveAttendanceDeviceInDatabase(
     throw new Error("Device code must contain 2-64 lowercase letters, numbers or hyphens.");
   }
   if (input.name.trim().length < 2) throw new Error("Enter the terminal name.");
-  if (reason.trim().length < 5) throw new Error("Explain the device change.");
+  if (input.id && reason.trim().length < 5) throw new Error("Explain the device change.");
+  reason = reason.trim() || "Attendance terminal registered";
   const db = getDatabaseClient();
   return db.transaction(async (tx) => {
     const [location] = await tx

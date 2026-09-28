@@ -479,7 +479,7 @@ test(
           interviewId,
           action: "change-status",
           status: "Completed",
-          reason: "Panel interview and required scorecard are complete",
+          reason: "",
         },
         actor,
       );

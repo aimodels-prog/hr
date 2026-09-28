@@ -489,14 +489,13 @@ function MyTrainingPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Withdraw training request</DialogTitle>
-            <DialogDescription>
-              Tell your supervisor and HR why the request is no longer needed.
-            </DialogDescription>
+            <DialogDescription>Your supervisor and HR will be notified.</DialogDescription>
           </DialogHeader>
           <Textarea
             value={withdrawReason}
             onChange={(event) => setWithdrawReason(event.target.value)}
-            placeholder="Reason for withdrawing"
+            aria-label="Note (optional)"
+            placeholder="Note (optional)"
           />
           <DialogFooter>
             <Button variant="outline" onClick={() => setWithdrawRequest(null)}>

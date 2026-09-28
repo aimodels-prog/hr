@@ -104,10 +104,26 @@ test(
           model: "ZKTeco F18",
           isActive: true,
         },
-        "Register the office terminal",
+        "",
         hrActor,
       );
       const previousKeyId = process.env["VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID"];
+      await assert.rejects(
+        saveAttendanceDeviceInDatabase(
+          organisationId,
+          {
+            id: deviceId,
+            recordVersion: 1,
+            code: "front-door",
+            name: "Renamed terminal",
+            locationId,
+            isActive: true,
+          },
+          "",
+          hrActor,
+        ),
+        /Explain the device change/,
+      );
       const previousKeys = process.env["VIA_HR_FIELD_ENCRYPTION_KEYS"];
       process.env["VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID"] = "test";
       process.env["VIA_HR_FIELD_ENCRYPTION_KEYS"] = JSON.stringify({

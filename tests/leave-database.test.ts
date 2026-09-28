@@ -273,7 +273,7 @@ test(
           policyId: annualPolicyId,
           startDate: isoDate(start),
           endDate: isoDate(end),
-          reason: "Family travel arrangements",
+          reason: "",
           handoverContactId: colleagueEmployeeId,
         },
         employeeActor,
@@ -366,7 +366,9 @@ test(
       assert.equal(Number(adjusted?.balance_days), 31);
       const exported = await exportLeaveRequestsCsvInDatabase(organisationId, {}, hrActor);
       assert.equal(exported.rowCount, 1);
-      assert.match(exported.content, /Family travel arrangements/);
+      assert.match(exported.content, /Annual leave requested/);
+      const [storedRequest] = await sql`SELECT reason FROM leave_requests WHERE id = ${requestId}`;
+      assert.equal(storedRequest?.reason, "Annual leave requested");
       const [exportAudit] = await sql`
         SELECT count(*)::int AS count FROM audit_events
         WHERE organisation_id = ${organisationId} AND entity_type = 'leave-export'

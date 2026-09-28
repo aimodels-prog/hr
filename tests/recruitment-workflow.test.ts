@@ -1442,6 +1442,15 @@ test("interview confirmation records calendar, meeting and invitations and calcu
   const panelContext: ActorContext = {
     actor: { userId: "panel-1", displayName: "Panel Member", roles: ["Employee"] },
   };
+  assert.throws(
+    () => interviews.changeStatus(interview.id, "Completed", "", hr),
+    /scorecards|waiver/,
+  );
+  assert.throws(
+    () => interviews.changeStatus(interview.id, "Completed", "", hr, true),
+    /waiver requires/,
+  );
+  assert.throws(() => interviews.changeStatus(interview.id, "Cancelled", "", hr), /reason/);
   const scorecard = scorecards.getOrCreateScorecard(interview.id, "panel-1", panelContext);
   scorecards.submitScorecard(
     scorecard.id,
@@ -1455,6 +1464,9 @@ test("interview confirmation records calendar, meeting and invitations and calcu
   const metrics = scorecards.calculateInterviewMetrics(interview.id, ["panel-1"]);
   assert.equal(metrics.averageScore, 4.4);
   assert.equal(metrics.criticalFailure, true);
+  const completed = interviews.changeStatus(interview.id, "Completed", "", hr);
+  assert.equal(completed.status, "Completed");
+  assert.equal(completed.history.at(-1)?.details, "Interview marked Completed");
   assert.deepEqual(
     new Set(
       storage

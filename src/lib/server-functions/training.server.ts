@@ -183,7 +183,7 @@ export const decideTrainingRequestFn = createServerFn({ method: "POST" })
         requestId: z.string().uuid(),
         stage: z.enum(["Supervisor", "HR"]),
         decision: z.enum(["Approve", "Reject"]),
-        comment: z.string().trim().min(5).max(2000),
+        comment: z.string().trim().max(2000).default(""),
       })
       .strict()
       .parse(input),
@@ -206,7 +206,7 @@ export const withdrawTrainingRequestFn = createServerFn({ method: "POST" })
       .object({
         actor: Actor,
         requestId: z.string().uuid(),
-        reason: z.string().trim().min(5).max(2000),
+        reason: z.string().trim().max(2000).default(""),
       })
       .strict()
       .parse(input),
@@ -428,7 +428,7 @@ export const decideTrainingRecordFn = createServerFn({ method: "POST" })
         actor: Actor,
         recordId: z.string().uuid(),
         decision: z.enum(["Verify", "Reject"]),
-        reason: z.string().trim().min(5).max(2000),
+        reason: z.string().trim().max(2000).default(""),
       })
       .strict()
       .parse(input),

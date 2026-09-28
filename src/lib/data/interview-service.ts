@@ -1018,7 +1018,7 @@ export class InterviewService {
       });
       throw new Error("Only HR or Super Admin can change interview status.");
     }
-    if (!reason || reason.trim().length === 0) {
+    if (status !== "Completed" && status !== "No Show" && reason.trim().length < 3) {
       throw new Error("A reason is required to change interview status.");
     }
     const interview = this.interviewRepo.getById(id);
@@ -1042,6 +1042,8 @@ export class InterviewService {
         "A waiver requires a real recorded explanation (at least 10 characters), not a placeholder reason.",
       );
     }
+
+    reason = reason.trim() || `Interview marked ${status}`;
 
     return this.interviewRepo.update(
       id,

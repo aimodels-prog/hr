@@ -619,7 +619,7 @@ test("working days are computed from the configured working week, not a hardcode
   assert.equal(service.calculateWorkingDays("2026-08-28", "2026-08-29", false), 0);
 });
 
-test("submitting leave notifies the manager for approval and HR for information", async () => {
+test("annual leave needs no explanation and still notifies the manager and HR", async () => {
   const { service, storage } = harness();
   const annualPolicy = service.getPolicies().find((policy) => policy.type === "Annual");
   assert.ok(annualPolicy);
@@ -630,7 +630,7 @@ test("submitting leave notifies the manager for approval and HR for information"
       policyId: annualPolicy.id,
       startDate: "2027-04-01",
       endDate: "2027-04-01",
-      reason: "Personal appointment",
+      reason: "",
       handoverContactId: "employee-tariq",
     },
     employee,

@@ -1558,13 +1558,15 @@ function AttendanceAdminContent() {
             </label>
             <div className="space-y-2 sm:col-span-2">
               <label htmlFor="attendance-terminal-reason" className="text-sm font-medium">
-                Reason
+                {editingDevice ? "Reason for change" : "Note (optional)"}
               </label>
               <Textarea
                 id="attendance-terminal-reason"
                 value={deviceReason}
                 onChange={(event) => setDeviceReason(event.target.value)}
-                placeholder="Why is this terminal being registered or changed?"
+                placeholder={
+                  editingDevice ? "Why is this terminal changing?" : "Add a note if needed"
+                }
               />
             </div>
           </div>
@@ -1577,7 +1579,7 @@ function AttendanceAdminContent() {
                 !deviceCode.trim() ||
                 !deviceName.trim() ||
                 !deviceLocationId ||
-                deviceReason.trim().length < 5 ||
+                (Boolean(editingDevice) && deviceReason.trim().length < 5) ||
                 savingDevice
               }
               onClick={() => void saveDevice()}

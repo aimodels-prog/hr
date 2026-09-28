@@ -305,7 +305,7 @@ export const reviewEmployeeReferralFn = createServerFn({ method: "POST" })
         actor: RecruitmentActor,
         recommendationId: z.string().uuid(),
         decision: z.enum(["Approve", "Decline"]),
-        reason: z.string().trim().min(5).max(1000),
+        reason: z.string().trim().max(1000).default(""),
       })
       .strict()
       .parse(input),

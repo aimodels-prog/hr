@@ -743,13 +743,7 @@ function StaffTrainingRoute() {
                             size="sm"
                             onClick={() =>
                               run(
-                                () =>
-                                  service.decideRecordAsync(
-                                    record.id,
-                                    "Verify",
-                                    "Certificate checked against the uploaded evidence",
-                                    context,
-                                  ),
+                                () => service.decideRecordAsync(record.id, "Verify", "", context),
                                 "Certificate verified",
                               )
                             }
@@ -863,19 +857,27 @@ function StaffTrainingRoute() {
           <DialogHeader>
             <DialogTitle>{decision?.value} training request</DialogTitle>
             <DialogDescription>
-              Record a clear reason for the employee and the audit history.
+              {decision?.value === "Reject"
+                ? "Tell the employee why this request is declined."
+                : "Approve this training request."}
             </DialogDescription>
           </DialogHeader>
           <Textarea
             value={decisionComment}
             onChange={(event) => setDecisionComment(event.target.value)}
-            placeholder="Decision reason"
+            aria-label={decision?.value === "Reject" ? "Reason for declining" : "Note (optional)"}
+            placeholder={decision?.value === "Reject" ? "Reason for declining" : "Note (optional)"}
           />
           <DialogFooter>
             <Button variant="outline" onClick={() => setDecision(null)}>
               Cancel
             </Button>
-            <Button onClick={decide}>{decision?.value}</Button>
+            <Button
+              onClick={decide}
+              disabled={decision?.value === "Reject" && decisionComment.trim().length < 5}
+            >
+              {decision?.value}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

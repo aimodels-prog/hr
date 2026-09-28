@@ -273,7 +273,7 @@ const CreateLeave = z
     policyId: z.string().uuid(),
     startDate: z.string().date(),
     endDate: z.string().date(),
-    reason: z.string().trim().min(3).max(2000),
+    reason: z.string().trim().max(2000).default(""),
     isHalfDay: z.boolean().optional(),
     handoverContactId: z.string().uuid().optional(),
     attachmentFileId: z.string().uuid().optional(),

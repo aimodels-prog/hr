@@ -1554,14 +1554,15 @@ export class LeaveService {
     context: ActorContext,
     attachment?: File,
   ): Promise<LeaveRequest> {
-    if (
-      !payload.employeeId ||
-      !payload.policyId ||
-      !payload.startDate ||
-      !payload.endDate ||
-      !payload.reason?.trim()
-    ) {
+    if (!payload.employeeId || !payload.policyId || !payload.startDate || !payload.endDate) {
       throw new Error("Missing required fields for leave request.");
+    }
+
+    if (
+      this.getPolicies().find((policy) => policy.id === payload.policyId)?.type !== "Annual" &&
+      (payload.reason?.trim().length ?? 0) < 3
+    ) {
+      throw new Error("Explain the reason for this leave request.");
     }
 
     if (!context.actor.employeeId || context.actor.employeeId !== payload.employeeId) {
@@ -1594,7 +1595,7 @@ export class LeaveService {
           policyId: payload.policyId,
           startDate: payload.startDate,
           endDate: payload.endDate,
-          reason: payload.reason.trim(),
+          reason: payload.reason?.trim() || "",
           ...(payload.isHalfDay !== undefined ? { isHalfDay: payload.isHalfDay } : {}),
           ...(handover?.databaseId ? { handoverContactId: handover.databaseId } : {}),
           ...(attachment
@@ -1827,7 +1828,7 @@ export class LeaveService {
       endDate: payload.endDate,
       isHalfDay: !!payload.isHalfDay,
       workingDaysRequested: workingDays,
-      reason: payload.reason,
+      reason: payload.reason?.trim() || "Annual leave requested",
       ...(payload.handoverContactId ? { handoverContactId: payload.handoverContactId } : {}),
       ...(payload.attachmentFileId ? { attachmentFileId: payload.attachmentFileId } : {}),
       status,

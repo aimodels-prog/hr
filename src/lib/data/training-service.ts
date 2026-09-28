@@ -550,7 +550,9 @@ export class TrainingService {
     if (request.status !== "Pending Supervisor") {
       throw new Error("This request is not awaiting supervisor review.");
     }
-    if (comment.trim().length < 5) throw new Error("Record a reason for this decision.");
+    if (decision === "Reject" && comment.trim().length < 5)
+      throw new Error("Record a reason for rejecting this request.");
+    comment = comment.trim() || "Training request approved";
     const updated = this.requestRepo.update(
       request.id,
       decision === "Approve"
@@ -599,7 +601,9 @@ export class TrainingService {
       request.id,
     );
     if (request.status !== "Pending HR") throw new Error("This request is not awaiting HR review.");
-    if (comment.trim().length < 5) throw new Error("Record a reason for this decision.");
+    if (decision === "Reject" && comment.trim().length < 5)
+      throw new Error("Record a reason for rejecting this request.");
+    comment = comment.trim() || "Training request approved";
     const updated = this.requestRepo.update(
       request.id,
       decision === "Approve"
@@ -646,7 +650,7 @@ export class TrainingService {
         "Only the employee can withdraw their pending request.",
       );
     }
-    if (reason.trim().length < 5) throw new Error("Explain why the request is being withdrawn.");
+    reason = reason.trim() || "Pending training request withdrawn by employee";
     const updated = this.requestRepo.update(
       request.id,
       { status: "Withdrawn", rejectionReason: reason.trim() },

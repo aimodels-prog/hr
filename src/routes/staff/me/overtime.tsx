@@ -190,7 +190,7 @@ function MyOvertimeRoute() {
                   <TableHead>Date</TableHead>
                   <TableHead>Hours</TableHead>
                   <TableHead>Project</TableHead>
-                  <TableHead>Reason</TableHead>
+                  <TableHead>Work performed / planned</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Warnings</TableHead>
                   <TableHead className="text-right">Action</TableHead>
@@ -433,7 +433,7 @@ function MyOvertimeRoute() {
                 </div>
               )}
               <div className="space-y-2">
-                <label className="text-sm font-medium">Reason / Justification</label>
+                <label className="text-sm font-medium">Work performed / planned</label>
                 <Textarea
                   placeholder="Required explanation for the extra hours..."
                   value={reason}

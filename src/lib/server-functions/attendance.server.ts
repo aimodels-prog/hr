@@ -101,7 +101,7 @@ const AttendanceDevice = z
     serialNumber: z.string().trim().max(128).optional(),
     model: z.string().trim().max(128).optional(),
     isActive: z.boolean(),
-    reason: z.string().trim().min(5).max(1000),
+    reason: z.string().trim().max(1000).default(""),
   })
   .strict();
 export const saveAttendanceDeviceFn = createServerFn({ method: "POST" })

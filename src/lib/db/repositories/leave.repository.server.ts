@@ -454,7 +454,7 @@ export async function createLeaveRequestInDatabase(
       throw new Error("HR must confirm your employment details before you can request leave.");
     if (input.endDate < input.startDate)
       throw new Error("Leave end date cannot be before the start date.");
-    if (input.reason.trim().length < 3)
+    if (policy.type !== "Annual" && input.reason.trim().length < 3)
       throw new Error("Explain the reason for this leave request.");
     if (policy.requiresAttachment && !input.attachmentFileId)
       throw new Error(`Supporting evidence is required for ${policy.name}.`);
@@ -677,7 +677,7 @@ export async function createLeaveRequestInDatabase(
       endDate: input.endDate,
       isHalfDay: input.isHalfDay ?? false,
       workingDaysRequested: String(days),
-      reason: input.reason.trim(),
+      reason: input.reason.trim() || "Annual leave requested",
       handoverContactId: input.handoverContactId,
       attachmentFileId: input.attachmentFileId,
       status,

@@ -222,7 +222,7 @@ export function OvertimeOnBehalfDialog({
             <Input type="file" onChange={(event) => setEvidence(event.target.files?.[0] ?? null)} />
           </div>
           <div className="space-y-2 sm:col-span-2">
-            <Label>Reason</Label>
+            <Label>Work performed / planned</Label>
             <Textarea
               value={reason}
               onChange={(event) => setReason(event.target.value)}

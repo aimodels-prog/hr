@@ -84,7 +84,7 @@ export const Route = createFileRoute("/staff/vacancies/$vacancyId")({
 });
 
 const transitionSchema = z.object({
-  reason: z.string().min(3),
+  reason: z.string().trim().max(1000),
 });
 
 function VacancyDetailRoute() {
@@ -285,6 +285,7 @@ function VacancyDetailRoute() {
 
   const form = useForm<z.infer<typeof transitionSchema>>({
     resolver: zodResolver(transitionSchema),
+    defaultValues: { reason: "" },
   });
 
   const getActorContext = (reason: string) => ({
@@ -301,6 +302,10 @@ function VacancyDetailRoute() {
   const onTransition = async (values: z.infer<typeof transitionSchema>) => {
     try {
       const act = transitionDialog.action;
+      if (!["Submit", "Publish"].includes(act) && values.reason.trim().length < 3) {
+        form.setError("reason", { message: "Explain this vacancy status change." });
+        return;
+      }
       const status =
         act === "Pause"
           ? "Paused"
@@ -314,7 +319,7 @@ function VacancyDetailRoute() {
       await vacancyService.transitionStatusAsync(
         vacancy.id,
         status,
-        values.reason || `${act} vacancy`,
+        values.reason,
         getActorContext(values.reason || `${act} vacancy`),
       );
 
@@ -604,9 +609,20 @@ function VacancyDetailRoute() {
                         name="reason"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Audit Reason</FormLabel>
+                            <FormLabel>
+                              {["Submit", "Publish"].includes(transitionDialog.action)
+                                ? "Note (optional)"
+                                : "Reason for change"}
+                            </FormLabel>
                             <FormControl>
-                              <Input {...field} placeholder="e.g. Role put on hold due to budget" />
+                              <Input
+                                {...field}
+                                placeholder={
+                                  ["Submit", "Publish"].includes(transitionDialog.action)
+                                    ? "Add a note if needed"
+                                    : "Explain this change"
+                                }
+                              />
                             </FormControl>
                             <FormMessage />
                           </FormItem>

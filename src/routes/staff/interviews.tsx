@@ -220,8 +220,15 @@ function Interviews() {
 
   const submitStatusChange = async () => {
     if (!statusChangeTarget) return;
-    if (!statusChangeReason.trim()) {
-      toast.error("A reason is required.");
+    if (
+      (statusChangeNeedsWaiver && statusChangeReason.trim().length < 10) ||
+      (statusChangeTarget.status === "Cancelled" && statusChangeReason.trim().length < 3)
+    ) {
+      toast.error(
+        statusChangeNeedsWaiver
+          ? "Explain the waiver in at least 10 characters."
+          : "Enter a cancellation reason.",
+      );
       return;
     }
     if (statusChangeNeedsWaiver && !waiverAcknowledged) {
@@ -681,16 +688,26 @@ function Interviews() {
           <DialogHeader>
             <DialogTitle>Mark interview as {statusChangeTarget?.status}</DialogTitle>
             <DialogDescription>
-              This is recorded on the interview history and requires a reason.
+              {statusChangeNeedsWaiver
+                ? "Explain why the interview can be completed without all scorecards."
+                : "This action is recorded in the interview history."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="status-change-reason">Reason</Label>
+            <Label htmlFor="status-change-reason">
+              {statusChangeNeedsWaiver || statusChangeTarget?.status === "Cancelled"
+                ? "Reason"
+                : "Note (optional)"}
+            </Label>
             <Textarea
               id="status-change-reason"
               value={statusChangeReason}
               onChange={(event) => setStatusChangeReason(event.target.value)}
-              placeholder={`Reason for marking this interview ${statusChangeTarget?.status ?? ""}`}
+              placeholder={
+                statusChangeNeedsWaiver || statusChangeTarget?.status === "Cancelled"
+                  ? "Explain this decision"
+                  : "Add a note if needed"
+              }
             />
           </div>
           {statusChangeNeedsWaiver && (

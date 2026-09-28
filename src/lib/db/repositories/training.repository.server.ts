@@ -783,7 +783,9 @@ export async function decideTrainingRequestInDatabase(
   comment: string,
   actor: AuditActorContext,
 ) {
-  if (comment.trim().length < 5) throw new Error("Record a reason for this decision.");
+  if (decision === "Reject" && comment.trim().length < 5)
+    throw new Error("Record a reason for rejecting this request.");
+  comment = comment.trim() || "Training request approved";
   if (stage === "HR") requireHr(actor);
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
@@ -869,7 +871,7 @@ export async function withdrawTrainingRequestInDatabase(
   reason: string,
   actor: AuditActorContext,
 ) {
-  if (reason.trim().length < 5) throw new Error("Explain why the request is being withdrawn.");
+  reason = reason.trim() || "Pending training request withdrawn by employee";
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
     const [request] = await tx
@@ -1516,7 +1518,9 @@ export async function decideTrainingRecordInDatabase(
   actor: AuditActorContext,
 ) {
   requireHr(actor);
-  if (reason.trim().length < 5) throw new Error("Record a reason for this decision.");
+  if (decision === "Reject" && reason.trim().length < 5)
+    throw new Error("Record a reason for rejecting this certificate.");
+  reason = reason.trim() || "Training certificate verified by HR";
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
     const [record] = await tx

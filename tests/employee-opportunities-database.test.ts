@@ -217,7 +217,7 @@ test(
         {
           recommendationId: referral.recommendationId,
           decision: "Approve",
-          reason: "The referral meets the evidence threshold for interview consideration.",
+          reason: "",
         },
         hrActor,
       );

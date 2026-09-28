@@ -151,7 +151,7 @@ export const updateInterviewWorkflowFn = createServerFn({ method: "POST" })
             "No Show",
           ])
           .optional(),
-        reason: z.string().trim().min(3).max(2000),
+        reason: z.string().trim().max(2000).default(""),
         waiver: z.boolean().optional(),
         expectedRecordVersion: z.number().int().positive().optional(),
       })

@@ -218,7 +218,7 @@ const TransitionRequest = z
     actor: ActorInput,
     vacancyId: z.string().uuid(),
     status: z.enum(["Draft", "Pending Approval", "Open", "Paused", "Closed", "Archived"]),
-    reason: z.string().trim().min(3).max(1000),
+    reason: z.string().trim().max(1000).default(""),
   })
   .strict();
 

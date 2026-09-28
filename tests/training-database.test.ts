@@ -148,12 +148,7 @@ test(
           ),
         /own training/,
       );
-      await withdrawTrainingRequestInDatabase(
-        ids.org!,
-        hrSelfRequest,
-        "Scheduling conflict with my own work.",
-        hrActor,
-      );
+      await withdrawTrainingRequestInDatabase(ids.org!, hrSelfRequest, "", hrActor);
       await assert.rejects(
         () =>
           createTrainingRequestInDatabase(
@@ -187,6 +182,17 @@ test(
       assert.match(String(rejected.reason), /already submitted/i);
       const requestId = successful[0]!.value;
       await assert.rejects(
+        decideTrainingRequestInDatabase(
+          ids.org!,
+          requestId,
+          "Supervisor",
+          "Reject",
+          "",
+          managerActor,
+        ),
+        /reason for rejecting/,
+      );
+      await assert.rejects(
         () =>
           decideTrainingRequestInDatabase(
             ids.org!,
@@ -203,17 +209,10 @@ test(
         requestId,
         "Supervisor",
         "Approve",
-        "Supported for operational development",
+        "",
         managerActor,
       );
-      await decideTrainingRequestInDatabase(
-        ids.org!,
-        requestId,
-        "HR",
-        "Approve",
-        "Budget and development need approved",
-        hrActor,
-      );
+      await decideTrainingRequestInDatabase(ids.org!, requestId, "HR", "Approve", "", hrActor);
       let snapshot = await listTrainingForActor(ids.org!, hrActor);
       const assignment = snapshot.enrollments.find((item) => item.requestId === requestId)!;
       assert.equal(assignment.status, "Assigned");
@@ -286,13 +285,11 @@ test(
           ),
         /Only HR or Super Admin/i,
       );
-      await decideTrainingRecordInDatabase(
-        ids.org!,
-        manualRecordId,
-        "Verify",
-        "Certificate and completion details verified",
-        hrActor,
+      await assert.rejects(
+        decideTrainingRecordInDatabase(ids.org!, manualRecordId, "Reject", "", hrActor),
+        /reason for rejecting/,
       );
+      await decideTrainingRecordInDatabase(ids.org!, manualRecordId, "Verify", "", hrActor);
 
       const mandatoryCourseId = await saveTrainingCourseInDatabase(
         ids.org!,

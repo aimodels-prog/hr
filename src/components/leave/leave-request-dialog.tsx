@@ -129,7 +129,12 @@ export function LeaveRequestDialog({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!policyId || !startDate || !endDate || !reason) {
+    if (
+      !policyId ||
+      !startDate ||
+      !endDate ||
+      (selectedPolicy?.type !== "Annual" && reason.trim().length < 3)
+    ) {
       toast.error("Please fill in all required fields.");
       return;
     }
@@ -462,7 +467,13 @@ export function LeaveRequestDialog({
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>
-                Reason for Leave <span className="text-destructive">*</span>
+                {selectedPolicy?.type === "Annual" ? (
+                  "Note (optional)"
+                ) : (
+                  <>
+                    Reason for Leave <span className="text-destructive">*</span>
+                  </>
+                )}
               </Label>
               <Textarea
                 value={reason}

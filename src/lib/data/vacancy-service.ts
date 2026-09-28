@@ -257,6 +257,14 @@ export class VacancyService {
     if (!VACANCY_TRANSITIONS[vacancy.status].includes(newStatus)) {
       throw new Error(`Vacancy cannot move from ${vacancy.status} to ${newStatus}.`);
     }
+    const routine =
+      newStatus === "Pending Approval" ||
+      (vacancy.status === "Pending Approval" && newStatus === "Open");
+    if (!routine && reason.trim().length < 3)
+      throw new Error("Explain this vacancy status change.");
+    reason =
+      reason.trim() ||
+      (newStatus === "Open" ? "Vacancy published" : "Vacancy submitted for approval");
     if (newStatus === "Open") {
       assertReadyToPublish(vacancy);
     }
