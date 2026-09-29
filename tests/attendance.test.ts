@@ -176,6 +176,11 @@ test("saved punches remain visible without tracking; missing records do not impl
   assert.equal(record?.status, "Present");
   assert.equal(record?.isLate, false);
   assert.equal(record?.isEarlyDeparture, false);
+  assert.equal(service.getMonthlySummary("employee-omar", "2026-09", hr).present, 1);
+  assert.equal(
+    service.getMonthlySummary("employee-omar", "2026-09", hr).hours,
+    record?.calculatedHours,
+  );
   assert.equal(service.reconcileDailyStatus("employee-omar", "2026-09-29", hr), null);
   assert.deepEqual(service.reconcileDailyStatus("employee-omar", "2026-09-30", hr), {
     status: "Not tracked",

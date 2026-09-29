@@ -512,10 +512,7 @@ export default function WorkforceCharts({
                 : [
                     {
                       label: "Recorded hours",
-                      value:
-                        data.attendanceTracked === false
-                          ? "Not tracked"
-                          : `${hours(data.totals.worked)} h`,
+                      value: `${hours(data.totals.worked)} h`,
                       note: "Completed attendance",
                     },
                     {
@@ -547,9 +544,13 @@ export default function WorkforceCharts({
             </div>
           )}
           <div className="grid min-w-0 gap-5 xl:grid-cols-2" data-testid="primary-dashboard-charts">
-            {(scope === "self" || employeeId) && data.attendanceTracked !== false && (
+            {(scope === "self" || employeeId) && (
               <Panel
-                title="Worked hours vs expected hours"
+                title={
+                  data.attendanceTracked === false
+                    ? "Recorded hours"
+                    : "Worked hours vs expected hours"
+                }
                 description="Recorded, completed attendance—including approved site duty—against the working-calendar expectation."
                 link={detail(
                   "attendance",
@@ -579,14 +580,16 @@ export default function WorkforceCharts({
                       radius={[3, 3, 0, 0]}
                       isAnimationActive={false}
                     />
-                    <Line
-                      name="Expected hours"
-                      dataKey="expected"
-                      stroke={colors.expected}
-                      strokeWidth={2}
-                      dot={false}
-                      isAnimationActive={false}
-                    />
+                    {data.attendanceTracked !== false && (
+                      <Line
+                        name="Expected hours"
+                        dataKey="expected"
+                        stroke={colors.expected}
+                        strokeWidth={2}
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                    )}
                   </ComposedChart>
                 </ChartContainer>
                 {data.totals.worked === 0 && (

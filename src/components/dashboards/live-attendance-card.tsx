@@ -51,7 +51,7 @@ export function LiveAttendanceCard() {
           minute: "2-digit",
         }).format(new Date(record.clockInAt))
       : "—";
-  if (data && !data.tracked)
+  if (data && !data.tracked && !record?.clockInAt && !record?.clockOutAt)
     return (
       <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4">
         <div>
@@ -91,7 +91,7 @@ export function LiveAttendanceCard() {
             {formatWorkedMinutes(workedMinutes(record, now))}
           </p>
           <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground">
-            {data.expectedDeparture && (
+            {data.tracked && data.expectedDeparture && (
               <span>
                 Expected finish{" "}
                 <strong className="ml-1 font-medium text-foreground">
@@ -103,12 +103,14 @@ export function LiveAttendanceCard() {
             <span>
               Clocked in <strong className="ml-1 font-medium text-foreground">{clockIn}</strong>
             </span>
-            <span>
-              Today's target{" "}
-              <strong className="ml-1 font-medium text-foreground">
-                {formatWorkedMinutes(data.targetMinutes)}
-              </strong>
-            </span>
+            {data.tracked && (
+              <span>
+                Today's target{" "}
+                <strong className="ml-1 font-medium text-foreground">
+                  {formatWorkedMinutes(data.targetMinutes)}
+                </strong>
+              </span>
+            )}
           </div>
         </div>
       )}

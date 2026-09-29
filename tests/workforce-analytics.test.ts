@@ -26,6 +26,62 @@ const base = {
   pendingVisits: [],
 };
 
+test("saved attendance counts without tracking while missing days have no expected hours or absence", () => {
+  const date = "2026-09-14";
+  const record = {
+    employeeId: employee.id,
+    date,
+    clockInAt: `${date}T04:24:27Z`,
+    clockOutAt: `${date}T13:00:40Z`,
+    calculatedHours: "7.60",
+    status: "Present",
+  };
+  const days = calculateAttendanceAnalytics({
+    ...base,
+    tracking: null,
+    records: [record],
+    dates: [date, "2026-09-15"],
+  });
+  assert.equal(days[0]?.worked, 7.6);
+  assert.equal(days[0]?.expected, 0);
+  assert.equal(days[1]?.missing, 0);
+  assert.equal(days[1]?.review, 0);
+  const today = attendanceToday({
+    tracking: null,
+    date,
+    now: new Date(`${date}T14:00Z`),
+    people: [employee, { ...employee, id: "no-punch" }],
+    records: [record],
+    leave: [],
+    pendingVisits: [],
+  });
+  assert.equal(today.recorded, 1);
+  assert.equal(today.headcount, 1);
+});
+
+test("untracked pending or incomplete punches are not counted as completed hours", () => {
+  const record = {
+    employeeId: employee.id,
+    date: base.dates[0]!,
+    clockInAt: "2026-09-14T04:00Z",
+    clockOutAt: "2026-09-14T13:00Z",
+    calculatedHours: "8",
+    status: "Correction Pending",
+  };
+  assert.equal(
+    calculateAttendanceAnalytics({ ...base, tracking: null, records: [record] })[0]?.worked,
+    0,
+  );
+  assert.equal(
+    calculateAttendanceAnalytics({
+      ...base,
+      tracking: null,
+      records: [{ ...record, status: "Present", clockOutAt: null }],
+    })[0]?.worked,
+    0,
+  );
+});
+
 test("today counts unique recorded people, not everyone who is off leave", () => {
   const date = "2026-09-14";
   const people = [

@@ -61,13 +61,28 @@ export function attendanceToday(input: {
   leave: { employeeId: string; startDate: string; endDate: string }[];
   pendingVisits: { employeeId: string; date: string }[];
 }) {
+  const recordedPeople = new Set(
+    input.records
+      .filter(
+        (record) =>
+          record.date === input.date &&
+          !!record.clockInAt &&
+          Date.parse(record.clockInAt) <= input.now.getTime() &&
+          !["Absent", "Correction Pending"].includes(record.status) &&
+          !input.pendingVisits.some(
+            (visit) => visit.employeeId === record.employeeId && visit.date === input.date,
+          ),
+      )
+      .map((record) => record.employeeId),
+  );
   const current = new Set(
     input.people
       .filter(
         (person) =>
           employedOn(person, input.date) &&
           (input.tracking === undefined ||
-            isAttendanceTracked(input.tracking, person.id, input.date)),
+            isAttendanceTracked(input.tracking, person.id, input.date) ||
+            recordedPeople.has(person.id)),
       )
       .map((person) => person.id),
   );
@@ -85,9 +100,7 @@ export function attendanceToday(input: {
           (record) =>
             record.date === input.date &&
             current.has(record.employeeId) &&
-            !!record.clockInAt &&
-            Date.parse(record.clockInAt) <= input.now.getTime() &&
-            !["Absent", "Correction Pending"].includes(record.status) &&
+            recordedPeople.has(record.employeeId) &&
             !pending.has(record.employeeId),
         )
         .map((record) => record.employeeId),
@@ -161,10 +174,11 @@ export function calculateAttendanceAnalytics(input: {
     };
     const workingDay = input.workingDays.includes(new Date(`${date}T12:00:00Z`).getUTCDay());
     for (const employee of input.employees) {
-      if (input.tracking !== undefined && !isAttendanceTracked(input.tracking, employee.id, date))
-        continue;
       if (!employedOn(employee, date)) continue;
+      const tracked =
+        input.tracking === undefined || isAttendanceTracked(input.tracking, employee.id, date);
       const scheduled =
+        tracked &&
         workingDay &&
         !holidays.has(`all:${date}`) &&
         !holidays.has(`${employee.locationId}:${date}`);

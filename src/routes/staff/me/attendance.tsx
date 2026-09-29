@@ -229,8 +229,7 @@ function MyAttendanceRoute() {
     .map((day) => {
       const date = format(day, "yyyy-MM-dd");
       const record = records.find((item) => item.date === date);
-      if (record && attendanceService.isTrackingRequired(employeeId, date))
-        return { ...record, virtual: false };
+      if (record) return { ...record, virtual: false };
       const reconciled = attendanceService.reconcileDailyStatus(employeeId, date, actorContext);
       return {
         id: `virtual-${date}`,
@@ -565,7 +564,7 @@ function MyAttendanceRoute() {
         )}
         {!trackingRequired && (
           <div className="rounded-xl border p-4 text-sm">
-            Biometric attendance is not required.{" "}
+            Attendance tracking is not enabled. Saved punches are still shown.{" "}
             <a className="text-primary underline" href="/staff/me/timesheets">
               Open your timesheet
             </a>

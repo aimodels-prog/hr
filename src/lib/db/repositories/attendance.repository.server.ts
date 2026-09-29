@@ -465,8 +465,8 @@ export async function exportAttendanceRecordsFromDatabase(
       ),
     )
     .orderBy(employees.preferredName);
-  const tracking = await getAttendanceTrackingPolicy(organisationId);
-  const rows = storedRows.filter((row) => isAttendanceTracked(tracking, row.employeeId, row.date));
+  // Export the same saved evidence shown in attendance, irrespective of eligibility.
+  const rows = storedRows;
   await db.insert(auditEvents).values({
     organisationId,
     actorUserId: actor.userId,

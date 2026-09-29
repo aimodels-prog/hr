@@ -2195,8 +2195,8 @@ export class AttendanceService {
   }
 
   getMonthlySummary(employeeId: string, month: string, context: ActorContext) {
-    const records = this.getRecordsForEmployee(employeeId, context).filter(
-      (record) => record.date.startsWith(month) && this.isTrackingRequired(employeeId, record.date),
+    const records = this.getRecordsForEmployee(employeeId, context).filter((record) =>
+      record.date.startsWith(month),
     );
     return {
       present: records.filter((record) => ["Present", "Corrected"].includes(record.status)).length,
