@@ -166,6 +166,7 @@ test(
           assert.deepEqual(current, {
             employee: "Year Test Employee",
             department: "Operations",
+            workLocation: "Operations",
             leaveType: "Annual Leave",
             leaveYear: 2026,
             periodStart: "2026-04-01",

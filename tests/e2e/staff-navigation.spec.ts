@@ -74,6 +74,9 @@ test("company setup sections use the main sidebar and preserve direct links", as
   await sections.getByRole("link", { name: "Positions", exact: true }).click();
   await expect(page).toHaveURL(/section=positions/);
   await page.reload();
+  await expect(page.getByRole("navigation", { name: "Main navigation", exact: true })).toBeVisible({
+    timeout: 30000,
+  });
   await expect(sections.getByRole("link", { name: "Positions", exact: true })).toHaveAttribute(
     "aria-current",
     "page",

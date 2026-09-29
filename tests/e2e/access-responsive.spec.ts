@@ -3,6 +3,10 @@ import { expect, test, type Page } from "@playwright/test";
 type PreviewRole = "Employee" | "Line Manager" | "HR" | "Accounts" | "Super Admin";
 
 async function previewAs(page: Page, userId: string, activeRole: PreviewRole, path: string) {
+  // Do not change preview identity while the preceding route is still hydrating.
+  await expect(page.getByText("VIA HR System is loading.", { exact: true })).toHaveCount(0, {
+    timeout: 30_000,
+  });
   await page.evaluate(
     ({ selectedUser, selectedRole }) => {
       localStorage.setItem(

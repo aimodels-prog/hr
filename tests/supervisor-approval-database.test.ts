@@ -223,6 +223,21 @@ test(
       await t.test(
         "the assigned Finance supervisor can see and act on a real correction in Manager mode",
         async () => {
+          const tracking = {
+            headOfficeLocationId: location,
+            effectiveFrom: "2020-01-01",
+            revision: 1,
+            assignments: [
+              {
+                employeeId: employee.employeeId,
+                effectiveFrom: "2020-01-01",
+                mode: "Head Office biometric",
+                source: "location",
+              },
+            ],
+          };
+          await query`UPDATE app_settings SET additional_settings = additional_settings ||
+            ${query.json({ attendanceTracking: tracking })}::jsonb WHERE organisation_id = ${org}`;
           const attendanceId = randomUUID();
           await query`INSERT INTO attendance_records (id,organisation_id,employee_id,date,source,status,clock_in_at,created_by,updated_by)
         VALUES (${attendanceId},${org},${employee.employeeId},'2020-01-06','Manual Entry','Present','2020-01-06T04:00:00Z',${author},${author})`;

@@ -13,7 +13,14 @@ test("Both database quality gates provision pinned MinIO and the required CV pro
     (workflow.match(/VIA_HR_CV_PROCESSOR_URL: http:\/\/127\.0\.0\.1:8080/g) ?? []).length,
     2,
   );
-  assert.match(script, /quay\.io\/minio\/minio:RELEASE\.2025-07-23T15-54-02Z@sha256:[a-f0-9]{64}/);
+  const minioBuild = readFileSync(
+    new URL("../scripts/ci-minio/Dockerfile", import.meta.url),
+    "utf8",
+  );
+  assert.match(script, /docker build --tag "\$minio_image" scripts\/ci-minio/);
+  assert.match(minioBuild, /7ced9663e6a791fef9dc6be798ff24cda9c730ac/);
+  assert.match(workflow, /defaults:\s+run:\s+shell: bash/);
+  assert.match(workflow, /grep --quiet '\^# fail 0\$' live-tests\.tap/);
   assert.doesNotMatch(workflow, /\sminio\/minio:/);
   assert.match(script, /trap diagnostics ERR/);
   assert.match(script, /docker build --tag via-hr-ci-cv-processor:local services\/cv-processor/);

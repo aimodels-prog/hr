@@ -7,9 +7,9 @@ set -euo pipefail
 minio_port="${VIA_HR_CI_MINIO_PORT:-9000}"
 cv_port="${VIA_HR_CI_CV_PORT:-8080}"
 
-# Same release as production, fetched from the upstream registry rather than the
-# now-unavailable Docker Hub repository. Pin the verified multi-platform digest.
-minio_image='quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z@sha256:d249d1fb6966de4d8ad26c04754b545205ff15a62e4fd19ebd0f26fa5baacbc0'
+# Same release as production, built from a pinned upstream commit. No dependency
+# on the former anonymous MinIO binary registries. Production is unaffected.
+minio_image='via-hr-ci-minio:7ced966'
 
 diagnostics() {
   for name in via-hr-ci-minio via-hr-ci-cv-processor; do
@@ -21,16 +21,7 @@ diagnostics() {
 }
 trap diagnostics ERR
 
-pull_ok=false
-for attempt in 1 2 3; do
-  if docker pull "$minio_image"; then pull_ok=true; break; fi
-  echo "MinIO image pull failed (attempt $attempt/3)."
-  if [ "$attempt" -lt 3 ]; then sleep 5; fi
-done
-if [ "$pull_ok" != true ]; then
-  echo 'Unable to pull the pinned MinIO image; integration tests cannot run.' >&2
-  exit 1
-fi
+docker build --tag "$minio_image" scripts/ci-minio
 
 export MINIO_ROOT_USER="$VIA_HR_OBJECT_STORAGE_ACCESS_KEY_ID"
 export MINIO_ROOT_PASSWORD="$VIA_HR_OBJECT_STORAGE_SECRET_ACCESS_KEY"

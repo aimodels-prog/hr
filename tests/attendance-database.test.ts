@@ -163,6 +163,25 @@ test(
       );
 
       const hrActor = actor(hrUserId, hrEmployeeId, "HR Reviewer", "HR");
+      await sql`INSERT INTO app_settings (organisation_id,timezone,base_currency,working_days,
+        standard_daily_hours,standard_weekly_hours,leave_year_start,leave_year_end,
+        document_reminder_days,employee_number_format,candidate_reference_format,created_by,updated_by)
+        VALUES (${organisationId},'UTC','OMR',ARRAY[1,2,3,4,5],8,40,'01-01','12-31',
+          ARRAY[30,7],'TEST-{####}','CAN-{####}',${hrUserId},${hrUserId})`;
+      // Historical fixture eligibility; the production setup deliberately cannot be backdated.
+      const tracking = {
+        headOfficeLocationId: locationId,
+        effectiveFrom: "2026-01-01",
+        revision: 1,
+        assignments: people.map(([id]) => ({
+          employeeId: id,
+          effectiveFrom: "2026-01-01",
+          mode: "Head Office biometric",
+          source: "location",
+        })),
+      };
+      await sql`UPDATE app_settings SET additional_settings = additional_settings ||
+        ${sql.json({ attendanceTracking: tracking })}::jsonb WHERE organisation_id = ${organisationId}`;
       await configureAttendanceOfficeInDatabase(
         organisationId,
         {
@@ -373,7 +392,7 @@ test(
           corrected.is_late,
           corrected.is_early_departure,
         ],
-        ["Approved", "Corrected", 8, false, false],
+        ["Approved", "Corrected", 7, false, true],
       );
 
       const missingDay = new Date();
@@ -813,11 +832,6 @@ test(
           scenario,
         );
       }
-      await sql`INSERT INTO app_settings (id, organisation_id, timezone, base_currency, working_days,
-        standard_daily_hours, standard_weekly_hours, leave_year_start, leave_year_end,
-        document_reminder_days, employee_number_format, candidate_reference_format, created_by, updated_by)
-        VALUES (${randomUUID()}, ${organisationId}, 'UTC', 'OMR', ARRAY[1,2,3,4,5], 8, 40,
-        '01-01', '12-31', ARRAY[30], 'EMP-{0000}', 'CAN-{0000}', ${hrUserId}, ${hrUserId})`;
       const analyticsAt = new Date(`${scheduledDate}T23:59:59Z`);
       for (const activeRole of ["Employee", "Accounts", "IT"] as const) {
         const personal = await getWorkforceAnalytics(

@@ -1,4 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
+import { configureAttendanceFixture } from "./attendance-fixture";
+
+test.beforeAll(configureAttendanceFixture);
 
 type PreviewRole = "Employee" | "Line Manager" | "HR" | "Accounts" | "Super Admin";
 

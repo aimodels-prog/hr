@@ -171,8 +171,14 @@ test(
       const [routineApproval] = await sql`
         SELECT status, approved_by FROM timesheets WHERE id = ${timesheetId}
       `;
-      assert.equal(routineApproval?.status, "Approved");
-      assert.equal(routineApproval?.approved_by, managerUserId);
+      assert.equal(routineApproval?.status, "Pending HR");
+      assert.equal(routineApproval?.approved_by, null, "Final approval waits for HR");
+      await assert.rejects(lockTimesheetForPayrollInDatabase(organisationId, timesheetId, hrActor));
+      await decideTimesheetInDatabase(organisationId, timesheetId, "approve", undefined, hrActor);
+      const [hrApproval] =
+        await sql`SELECT status, approved_by FROM timesheets WHERE id = ${timesheetId}`;
+      assert.equal(hrApproval?.status, "Approved");
+      assert.equal(hrApproval?.approved_by, hrActor.userId);
       await lockTimesheetForPayrollInDatabase(organisationId, timesheetId, hrActor);
       const correctionId = await reopenTimesheetInDatabase(
         organisationId,

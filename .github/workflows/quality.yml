@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+# Explicit bash enables pipefail, including commands piped through tee.
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: via-hr-quality-${{ github.ref }}
   cancel-in-progress: true
@@ -123,6 +128,7 @@ jobs:
       - name: Run every service and repository test with no infrastructure skips
         run: |
           npm run test:postgresql | tee live-tests.tap
+          grep --quiet '^# fail 0$' live-tests.tap
           grep --quiet '^# skipped 0$' live-tests.tap
 
       - name: Upload authoritative-store test evidence

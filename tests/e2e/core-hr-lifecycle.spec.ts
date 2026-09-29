@@ -12,7 +12,16 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
 }) => {
   const unique = Date.now().toString().slice(-6);
 
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "via_hr:dev_preview_state",
+      JSON.stringify({ userId: "user-rana", activeRole: "HR" }),
+    );
+  });
   await page.goto("/staff/employees");
+  await expect(page.getByRole("navigation", { name: "Main navigation", exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
   // Wait for the app to fully boot (seed data initialised) before reaching into its services -
   // otherwise this can race the app's own startup seeding.
   await expect(page.getByText("Employee Directory").first()).toBeVisible({ timeout: 20_000 });
@@ -77,17 +86,22 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
   await expect(employmentDialog.getByRole("combobox").first()).toHaveText(newDepartment);
   await page.keyboard.press("Escape");
 
-  // HR can arrange the company structure from the organisation chart itself. The update is
-  // persisted through the reporting-line transaction, including the special top-level position.
+  // Company-head placement is independent of reporting lines and approval routing.
   await page.goto("/staff/org-chart");
-  await expect(page.getByRole("heading", { name: "Organisation Chart" })).toBeVisible();
-  await page.getByLabel("Employee to arrange").click();
+  await expect(page.getByRole("heading", { name: /Organisation chart/i })).toBeVisible();
+  await page.getByRole("button", { name: "Arrange chart", exact: true }).click();
+  const chartDialog = page.getByRole("dialog", { name: "Arrange chart", exact: true });
+  await chartDialog.getByLabel("Company head", { exact: true }).click();
   await page.getByRole("option", { name: new RegExp(`Newhire${unique}`) }).click();
-  await page.getByLabel("Reports to").click();
-  await page.getByRole("option", { name: "Top of organisation" }).click();
-  await page.getByLabel("Reason").fill("Country reporting structure confirmed by HR");
-  await page.getByRole("button", { name: "Save reporting line" }).click();
-  await expect(page.getByText("Reporting line updated.")).toBeVisible();
+  await chartDialog.getByRole("button", { name: "Save company head" }).click();
+  await expect(page.getByText("Company head saved. Reporting lines are unchanged.")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await page.getByRole("button", { name: "Arrange chart", exact: true }).click();
+  await expect(chartDialog.getByLabel("Company head", { exact: true })).toContainText(
+    `Newhire${unique}`,
+  );
+  await page.keyboard.press("Escape");
 
   // --- Employee Files ---
   await page.goto("/staff/files");

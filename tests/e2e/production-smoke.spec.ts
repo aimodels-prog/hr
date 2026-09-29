@@ -1,6 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { SignJWT } from "jose";
 import { textPdf } from "./pdf-fixture";
+import { configureAttendanceFixture } from "./attendance-fixture";
+
+test.beforeAll(configureAttendanceFixture);
 
 type ProductionRole = "Employee" | "Line Manager" | "HR" | "Accounts" | "Super Admin";
 

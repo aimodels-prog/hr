@@ -1,4 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { configureAttendanceFixture } from "./attendance-fixture";
+
+test.beforeAll(configureAttendanceFixture);
 
 // Dev-mode server function IDs encode the function export. No production data or mocks are used.
 function functionName(route: Route) {

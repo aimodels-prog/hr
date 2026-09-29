@@ -2,8 +2,25 @@ import { createHash, createHmac } from "node:crypto";
 
 import { expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
+import { configureAttendanceFixture } from "./attendance-fixture";
+
+test.beforeAll(configureAttendanceFixture);
 
 type PreviewRole = "Employee" | "HR" | "Accounts";
+
+test("staff outside biometric tracking retain leave charts and manual timesheets", async ({
+  page,
+}) => {
+  await page.goto("/staff");
+  await previewAs(page, "user-mariam", "Employee", "/staff/me/attendance");
+  await expect(page.getByRole("link", { name: "Open your timesheet", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "My annual leave balance", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Worked hours vs expected hours", exact: true }),
+  ).toHaveCount(0);
+});
 
 test("terminal refresh survives identity updates and recovers from a stalled request", async ({
   page,
@@ -439,9 +456,6 @@ test("HR creates a one-time code for an office attendance connector", async ({ p
   await terminalDialog.getByLabel("Terminal name").fill(deviceName);
   await terminalDialog.getByLabel("Office").click();
   await page.getByRole("option").first().click();
-  await terminalDialog
-    .getByLabel("Reason")
-    .fill("Connect the office terminal through the guided installer.");
   await terminalDialog.getByRole("button", { name: "Save Terminal" }).click();
   await expect(terminalDialog).toBeHidden();
 
@@ -477,9 +491,6 @@ test("HR registers a door terminal and recovers a signed unmatched punch", async
   await terminalDialog.getByLabel("Office").click();
   await page.getByRole("option").first().click();
   await terminalDialog.getByLabel("Serial number").fill(serialNumber);
-  await terminalDialog
-    .getByLabel("Reason")
-    .fill("Browser acceptance for the office door terminal.");
   await terminalDialog.getByRole("button", { name: "Save Terminal" }).click();
   await expect(terminalDialog).toBeHidden();
   await expect(page.getByRole("row").filter({ hasText: deviceName })).toBeVisible();

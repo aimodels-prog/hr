@@ -259,7 +259,7 @@ test(
       assert.equal(record?.source, "Hardware Terminal");
       assert.ok(record?.clock_in_at);
       assert.ok(record?.clock_out_at);
-      assert.equal(Number(record?.calculated_hours), 8);
+      assert.equal(Number(record?.calculated_hours), 7, "Deduct the 13:00–14:00 lunch overlap");
       const directions = await sql<{ direction: string }[]>`
         SELECT direction FROM attendance_punch_events
         WHERE organisation_id = ${organisationId} AND employee_id = ${employeeId}
