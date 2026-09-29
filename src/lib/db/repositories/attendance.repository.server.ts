@@ -884,6 +884,8 @@ export async function requestAttendanceCorrectionInDatabase(
         throw new Error("The employee and missing attendance date are required.");
       if (input.employeeId !== actor.employeeId)
         throw new Error("Employees can request corrections only for their own attendance.");
+      // A completely missing record is still a full punch correction, not the HR-only shortcut.
+      await requireEmployeeSupervisor(tx, organisationId, actor.employeeId!);
       const [[employee], [settings], [policy]] = await Promise.all([
         tx
           .select({ id: employees.id, locationId: employees.locationId, status: employees.status })

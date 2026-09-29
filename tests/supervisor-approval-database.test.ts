@@ -245,8 +245,9 @@ test(
             org,
             {
               attendanceRecordId: attendanceId,
+              proposedClockIn: "2020-01-06T05:00:00Z",
               proposedClockOut: "2020-01-06T13:00:00Z",
-              explanation: "Forgot to clock out",
+              explanation: "Both recorded arrival and departure need correction",
             },
             employee,
           );
