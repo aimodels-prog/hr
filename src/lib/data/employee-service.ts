@@ -1,4 +1,10 @@
 import { getApplicationDataServices } from "./application-data.ts";
+import {
+  changedRecordFields,
+  changeReason,
+  employmentReasonRequired,
+  personalReasonRequired,
+} from "./change-reason-policy.ts";
 import { canReadEmploymentHistory } from "../auth/employment-history.ts";
 import { getMasterDataRepository, getProjectRepository } from "./master-data.ts";
 import { LocalRepository } from "./repository.ts";
@@ -1026,9 +1032,14 @@ export class EmployeeService {
         actorContext,
       );
     }
-    if (!reason.trim() || !effectiveDate) {
-      throw new Error("An effective date and reason are required.");
-    }
+    reason = changeReason(
+      reason,
+      employmentReasonRequired(
+        changedRecordFields({ ...employee }, { ...changes }),
+        employee.employmentConfirmationStatus,
+      ),
+      "Employment details updated by HR",
+    );
     validateEmploymentEffectiveDate(effectiveDate);
     if (
       effectiveDate > employmentCalendarDate(new SettingsService().getAppSettingsSync().timezone)
@@ -1463,7 +1474,11 @@ export class EmployeeService {
     if (!hasOnlyPersonalProfileFields(changes)) {
       throw new Error("Only personal and contact details can be changed here.");
     }
-    if (reason.trim().length < 5) throw new Error("Please give a short reason for this change.");
+    const employee = this.employeeRepo.getById(employeeId);
+    if (!employee) throw new Error("Employee not found.");
+    const fields = changedRecordFields({ ...employee }, { ...changes });
+    if (!fields.length) throw new Error("No personal details were changed.");
+    reason = changeReason(reason, personalReasonRequired(fields), "Contact details updated by HR");
 
     return this.employeeRepo.update(employeeId, changes, {
       actor: actorContext.actor,

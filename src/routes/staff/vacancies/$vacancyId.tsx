@@ -2,6 +2,7 @@ import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, useMemo } from "react";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { VacancyService } from "@/lib/data/vacancy-service";
+import { vacancyReasonRequired } from "@/lib/data/change-reason-policy";
 import { CandidateService } from "@/lib/data/candidate-service";
 import { ShortlistService } from "@/lib/data/shortlist-service";
 import type {
@@ -299,10 +300,26 @@ function VacancyDetailRoute() {
     reason,
   });
 
+  const transitionNeedsReason = (action: string) =>
+    vacancyReasonRequired(
+      vacancy.status,
+      action === "Pause"
+        ? "Paused"
+        : action === "Close"
+          ? "Closed"
+          : action === "Archive"
+            ? "Archived"
+            : action === "Submit"
+              ? "Pending Approval"
+              : "Open",
+      applications.filter((item) => item.status === "Hired" && !item.archivedAt).length,
+      vacancy.headcount,
+    );
+
   const onTransition = async (values: z.infer<typeof transitionSchema>) => {
     try {
       const act = transitionDialog.action;
-      if (!["Submit", "Publish"].includes(act) && values.reason.trim().length < 3) {
+      if (transitionNeedsReason(act) && values.reason.trim().length < 3) {
         form.setError("reason", { message: "Explain this vacancy status change." });
         return;
       }
@@ -610,7 +627,7 @@ function VacancyDetailRoute() {
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>
-                              {["Submit", "Publish"].includes(transitionDialog.action)
+                              {!transitionNeedsReason(transitionDialog.action)
                                 ? "Note (optional)"
                                 : "Reason for change"}
                             </FormLabel>
@@ -618,7 +635,7 @@ function VacancyDetailRoute() {
                               <Input
                                 {...field}
                                 placeholder={
-                                  ["Submit", "Publish"].includes(transitionDialog.action)
+                                  !transitionNeedsReason(transitionDialog.action)
                                     ? "Add a note if needed"
                                     : "Explain this change"
                                 }

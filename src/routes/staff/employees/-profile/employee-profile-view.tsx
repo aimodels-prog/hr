@@ -66,6 +66,11 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { EmployeeService } from "@/lib/data/employee-service";
+import {
+  changedRecordFields,
+  employmentReasonRequired,
+  changeReason,
+} from "@/lib/data/change-reason-policy";
 import { ScheduledEmploymentChanges } from "@/components/employees/scheduled-employment-changes";
 import { OffboardingService } from "@/lib/data/offboarding-service";
 import type { EmployeeSalary, MasterRecord } from "@/lib/data/types";
@@ -130,7 +135,7 @@ const editFormSchema = z.object({
   startDate: z.string().min(1, "Start date is required"),
   lineManagerId: z.string().optional(),
   effectiveDate: z.string().min(1, "Effective date is required"),
-  reason: z.string().min(5, "A reason must be provided (min 5 chars)"),
+  reason: z.string().trim().max(1000),
 });
 
 const salaryFormSchema = z.object({
@@ -387,18 +392,43 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
     reason,
   });
 
+  const employmentFormChanges = (values: z.infer<typeof editFormSchema>) => {
+    const { reason: _reason, effectiveDate: _date, ...fields } = values;
+    const proposed = {
+      ...fields,
+      department: quickSelectedValues.departments ?? fields.department,
+      position: quickSelectedValues.positions ?? fields.position,
+      location: quickSelectedValues.locations ?? fields.location,
+      employmentType: quickSelectedValues.employmentTypes ?? fields.employmentType,
+    };
+    const changed = changedRecordFields(
+      { ...employee, staffEntryType: employee.staffEntryType || "Existing Employee" },
+      proposed,
+    );
+    return Object.fromEntries(
+      changed.map((key) => [key, proposed[key as keyof typeof proposed]]),
+    ) as Partial<typeof proposed>;
+  };
+
   const onEditSubmit = async (values: z.infer<typeof editFormSchema>) => {
     try {
       if (!currentUser) return;
-      const { effectiveDate, reason, ...changes } = values;
+      const { effectiveDate, reason } = values;
+      const changes = employmentFormChanges(values);
+      try {
+        changeReason(
+          reason,
+          employmentReasonRequired(Object.keys(changes), employee.employmentConfirmationStatus),
+          "Employment details updated by HR",
+        );
+      } catch (error) {
+        form.setError("reason", { message: (error as Error).message });
+        return;
+      }
       const result = await employeeService.updateEmploymentRecordAsync(
         employeeId,
         {
           ...changes,
-          department: quickSelectedValues.departments ?? changes.department,
-          position: quickSelectedValues.positions ?? changes.position,
-          location: quickSelectedValues.locations ?? changes.location,
-          employmentType: quickSelectedValues.employmentTypes ?? changes.employmentType,
           lineManagerId:
             changes.lineManagerId === "none" || !changes.lineManagerId
               ? undefined
@@ -1666,7 +1696,14 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                     name="reason"
                                     render={({ field }) => (
                                       <FormItem className="mt-4">
-                                        <FormLabel>Reason for Change *</FormLabel>
+                                        <FormLabel>
+                                          {employmentReasonRequired(
+                                            Object.keys(employmentFormChanges(form.watch())),
+                                            employee.employmentConfirmationStatus,
+                                          )
+                                            ? "Reason for change *"
+                                            : "Note (optional)"}
+                                        </FormLabel>
                                         <FormControl>
                                           <Textarea
                                             placeholder="e.g. Annual promotion, Department restructure"
@@ -1687,7 +1724,12 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                   >
                                     Cancel
                                   </Button>
-                                  <Button type="submit">Save Changes</Button>
+                                  <Button
+                                    type="submit"
+                                    disabled={quickAddBusy || form.formState.isSubmitting}
+                                  >
+                                    Save Changes
+                                  </Button>
                                 </DialogFooter>
                               </form>
                             </Form>

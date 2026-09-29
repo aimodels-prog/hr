@@ -7,6 +7,7 @@ import { decryptSensitiveJson } from "../src/lib/db/encryption.server.ts";
 import {
   createEmployeeInDatabase,
   updateEmploymentRecordInDatabase,
+  updatePersonalRecordInDatabase,
   processScheduledEmploymentChanges,
   listScheduledEmploymentChangesInDatabase,
   cancelScheduledEmploymentChangeInDatabase,
@@ -87,6 +88,55 @@ test(
         actor,
       );
       const employeeId = created.employeeId;
+      await query`UPDATE employees SET employment_confirmation_status='Confirmed' WHERE id=${employeeId}`;
+      const siteLocation = randomUUID();
+      await query`INSERT INTO locations (id,organisation_id,name,code,is_active,order_index,created_by,updated_by)
+        VALUES (${siteLocation},${org},'Site','SITE',true,2,${authorId},${authorId})`;
+      await updateEmploymentRecordInDatabase(
+        org,
+        employeeId,
+        { location: "Site", position: "Coordinator", employmentType: "Full-time" },
+        "2026-09-30",
+        "",
+        hr,
+        beforeMidnight,
+      );
+      assert.equal(
+        (await query`SELECT location_id FROM employees WHERE id=${employeeId}`)[0]!.location_id,
+        siteLocation,
+      );
+      await assert.rejects(
+        updateEmploymentRecordInDatabase(
+          org,
+          employeeId,
+          { position: "Lead" },
+          "2026-09-30",
+          "",
+          hr,
+          beforeMidnight,
+        ),
+        /reason/,
+      );
+      await assert.rejects(
+        updateEmploymentRecordInDatabase(
+          org,
+          employeeId,
+          { salary: { baseMonthly: 9000, currency: "OMR" } },
+          "2026-09-30",
+          "",
+          accounts,
+          beforeMidnight,
+        ),
+        /reason/,
+      );
+      await updatePersonalRecordInDatabase(org, employeeId, { phone: "12345678" }, "", hr);
+      await assert.rejects(
+        updatePersonalRecordInDatabase(org, employeeId, { nationality: "Omani" }, "", hr),
+        /reason/,
+      );
+      const [routineAudit] =
+        await query`SELECT reason FROM audit_events WHERE entity_id=${employeeId} AND action='update-personal-record' LIMIT 1`;
+      assert.equal(routineAudit!.reason, "Contact details updated by HR");
       const snapshot = async () => ({
         employee: await query`SELECT * FROM employees WHERE id=${employeeId}`,
         compensation:

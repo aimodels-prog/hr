@@ -33,6 +33,11 @@ import { useForm, useFieldArray } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { EmployeeService } from "@/lib/data/employee-service";
+import {
+  changedRecordFields,
+  personalReasonRequired,
+  changeReason,
+} from "@/lib/data/change-reason-policy";
 import { useCurrentUser } from "@/lib/auth";
 import { toast } from "sonner";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -190,6 +195,10 @@ export function PersonalTab({
       if (JSON.stringify(values.dependants || []) !== JSON.stringify(employee.dependants || [])) {
         changes.dependants = values.dependants;
       }
+      const actualFields = new Set(changedRecordFields({ ...employee }, { ...changes }));
+      for (const key of Object.keys(changes) as Array<keyof Employee>) {
+        if (!actualFields.has(key)) delete changes[key];
+      }
       if (Object.keys(changes).length === 0) throw new Error("No changes were made.");
 
       if (isSelf) {
@@ -200,6 +209,16 @@ export function PersonalTab({
         );
         toast.success("Profile changes sent to HR for review");
       } else {
+        try {
+          changeReason(
+            values.changeReason || "",
+            personalReasonRequired(Object.keys(changes)),
+            "Contact details updated by HR",
+          );
+        } catch (error) {
+          form.setError("changeReason", { message: (error as Error).message });
+          return;
+        }
         await employeeService.updatePersonalRecordAsync(
           employee.id,
           changes,
@@ -580,7 +599,15 @@ export function PersonalTab({
                         name="changeReason"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Reason for change *</FormLabel>
+                            <FormLabel>
+                              {personalReasonRequired(
+                                changedRecordFields({ ...employee }, form.watch()).filter(
+                                  (key) => key !== "changeReason",
+                                ),
+                              )
+                                ? "Reason for change *"
+                                : "Note (optional)"}
+                            </FormLabel>
                             <FormControl>
                               <Textarea
                                 placeholder="For example: Corrected after checking the employee's documents"

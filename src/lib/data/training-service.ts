@@ -1,4 +1,5 @@
 import { getApplicationDataServices } from "./application-data.ts";
+import { changeReason, trainingReasonRequired } from "./change-reason-policy.ts";
 import { DocumentService } from "./document-service.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { LocalRepository } from "./repository.ts";
@@ -409,7 +410,10 @@ export class TrainingService {
 
   archiveCourse(courseId: string, reason: string, context: ActorContext): TrainingCourse {
     this.requireHr(context, "archive this training course", courseId);
-    if (reason.trim().length < 5) throw new Error("Explain why this course is being archived.");
+    const used =
+      this.requestRepo.list({ includeArchived: true }).some((item) => item.courseId === courseId) ||
+      this.sessionRepo.list({ includeArchived: true }).some((item) => item.courseId === courseId);
+    reason = changeReason(reason, used, "Unused training course archived");
     const activeEnrollments = this.enrollmentRepo
       .list()
       .filter(
@@ -453,8 +457,12 @@ export class TrainingService {
         "A linked employee profile is required to request training.",
       );
     }
-    if (reason.trim().length < 5) throw new Error("Explain why this training is needed.");
     const course = this.requireActiveCourse(courseId);
+    reason = changeReason(
+      reason,
+      trainingReasonRequired(course, "Employee Request"),
+      "Requested free catalogue training",
+    );
     this.requireNoOpenRequest(employeeId, courseId);
     const employee = this.employeeService.getById(employeeId, SYSTEM_CONTEXT);
     if (!employee) throw new Error("Employee not found.");
@@ -490,7 +498,6 @@ export class TrainingService {
     reason: string,
     context: ActorContext,
   ): TrainingRequest {
-    if (reason.trim().length < 5) throw new Error("Explain why this training is being assigned.");
     const employee = this.employeeService.getById(employeeId, SYSTEM_CONTEXT);
     if (!employee || ["Inactive", "Archived"].includes(employee.status)) {
       throw new Error("Select an active employee.");
@@ -502,6 +509,11 @@ export class TrainingService {
       this.requireNotSelf(employeeId, context, "approve your own training assignment", employeeId);
     }
     const course = this.requireActiveCourse(courseId);
+    reason = changeReason(
+      reason,
+      trainingReasonRequired(course, managerAssignment ? "Supervisor Assignment" : "HR Assignment"),
+      "Assigned standard catalogue training",
+    );
     this.requireNoOpenRequest(employeeId, courseId);
     const status: TrainingRequest["status"] =
       managerAssignment && course.cost > 0 ? "Pending HR" : "Approved";

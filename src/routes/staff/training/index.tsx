@@ -817,7 +817,17 @@ function StaffTrainingRoute() {
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="Why this training is needed">
+            <Field
+              label={
+                courses.some(
+                  (course) =>
+                    course.id === assignment.courseId &&
+                    (course.cost === 0 || (isHr && course.isMandatory)),
+                )
+                  ? "Note (optional)"
+                  : "Why this training is needed"
+              }
+            >
               <Textarea
                 value={assignment.reason}
                 onChange={(event) => setAssignment({ ...assignment, reason: event.target.value })}
@@ -1309,13 +1319,19 @@ function StaffTrainingRoute() {
           <DialogHeader>
             <DialogTitle>{reasonAction?.kind}</DialogTitle>
             <DialogDescription>
-              Record the reason so the employee and HR history are clear.
+              {reasonAction?.kind === "Archive Course"
+                ? "A note is optional for an unused course. Previously used courses require a reason."
+                : "Record the reason so the employee and HR history are clear."}
             </DialogDescription>
           </DialogHeader>
           <Textarea
             value={reason}
             onChange={(event) => setReason(event.target.value)}
-            placeholder="Reason"
+            placeholder={
+              reasonAction?.kind === "Archive Course"
+                ? "Note (optional for unused courses)"
+                : "Reason"
+            }
           />
           <DialogFooter>
             <Button variant="outline" onClick={() => setReasonAction(null)}>

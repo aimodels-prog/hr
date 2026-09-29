@@ -141,7 +141,7 @@ export const archiveTrainingCourseFn = createServerFn({ method: "POST" })
         actor: Actor,
         courseId: z.string().uuid(),
         archive: z.boolean(),
-        reason: z.string().trim().min(5).max(2000),
+        reason: z.string().trim().max(2000).default(""),
       })
       .strict()
       .parse(input),
@@ -164,7 +164,7 @@ export const createTrainingRequestFn = createServerFn({ method: "POST" })
         actor: Actor,
         employeeId: z.string().uuid(),
         courseId: z.string().uuid(),
-        reason: z.string().trim().min(5).max(2000),
+        reason: z.string().trim().max(2000).default(""),
         origin: z.enum(["Employee Request", "Supervisor Assignment", "HR Assignment"]),
       })
       .strict()

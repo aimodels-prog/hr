@@ -86,6 +86,28 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
   await expect(employmentDialog.getByRole("combobox").first()).toHaveText(newDepartment);
   await page.keyboard.press("Escape");
 
+  // A routine location assignment must save through the real server with a blank note.
+  await page.getByRole("button", { name: "Edit employment details" }).click();
+  await employmentDialog.getByRole("button", { name: "Add work location" }).click();
+  const newLocation = `Browser Site ${unique}`;
+  await employmentDialog.getByLabel("New work location").fill(newLocation);
+  await employmentDialog.getByRole("button", { name: "Add and select" }).click();
+  await expect(employmentDialog.getByLabel("Location", { exact: true })).toContainText(newLocation);
+  await expect(employmentDialog.getByLabel("Note (optional)")).toBeVisible();
+  await employmentDialog.getByRole("button", { name: "Save Changes", exact: true }).click();
+  await expect(page.getByText("Employment details saved", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByRole("navigation", { name: "Main navigation", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("navigation", { name: "Page sections" })
+    .getByRole("link", { name: "Employment", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit employment details" }).click();
+  await expect(employmentDialog.getByLabel("Location", { exact: true })).toContainText(newLocation);
+  await page.keyboard.press("Escape");
+
   // Company-head placement is independent of reporting lines and approval routing.
   await page.goto("/staff/org-chart");
   await expect(page.getByRole("heading", { name: /Organisation chart/i })).toBeVisible();

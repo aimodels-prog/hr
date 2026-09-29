@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { changeReason, vacancyReasonRequired } from "../../data/change-reason-policy.ts";
 
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 
@@ -421,13 +422,23 @@ export async function transitionVacancyInDatabase(
   if (!TRANSITIONS[current.status].includes(newStatus)) {
     throw new Error(`Vacancy cannot move from ${current.status} to ${newStatus}.`);
   }
-  const routine =
-    newStatus === "Pending Approval" ||
-    (current.status === "Pending Approval" && newStatus === "Open");
-  if (!routine && reason.trim().length < 3) throw new Error("Explain this vacancy status change.");
-  reason =
-    reason.trim() ||
-    (newStatus === "Open" ? "Vacancy published" : "Vacancy submitted for approval");
+  const hired = await getDatabaseClient()
+    .select({ id: candidateApplications.id })
+    .from(candidateApplications)
+    .where(
+      and(
+        eq(candidateApplications.organisationId, organisationId),
+        eq(candidateApplications.vacancyId, vacancyId),
+        eq(candidateApplications.status, "Hired"),
+        isNull(candidateApplications.archivedAt),
+      ),
+    );
+  reason = changeReason(
+    reason,
+    vacancyReasonRequired(current.status, newStatus, hired.length, current.headcount),
+    `Vacancy moved from ${current.status} to ${newStatus}`,
+    3,
+  );
   if (newStatus === "Open") assertReadyToPublish(current);
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {

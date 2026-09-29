@@ -6,6 +6,7 @@ import postgres from "postgres";
 
 import {
   addTrainingRecordInDatabase,
+  archiveTrainingCourseInDatabase,
   completeTrainingAssignmentInDatabase,
   createTrainingRequestInDatabase,
   decideTrainingRecordInDatabase,
@@ -149,6 +150,14 @@ test(
         /own training/,
       );
       await withdrawTrainingRequestInDatabase(ids.org!, hrSelfRequest, "", hrActor);
+      await assert.rejects(
+        createTrainingRequestInDatabase(
+          ids.org!,
+          { employeeId: ids.hr!, courseId, reason: "", origin: "Employee Request" },
+          hrActor,
+        ),
+        /reason/,
+      );
       await assert.rejects(
         () =>
           createTrainingRequestInDatabase(
@@ -335,6 +344,41 @@ test(
       assert.ok(counts!.audits >= 15);
       assert.ok(counts!.notifications >= 10);
       assert.equal(counts!.mandatory_assignments, 4);
+      const freeCourse = await saveTrainingCourseInDatabase(
+        ids.org!,
+        {
+          code: "FREE-OPTIONAL",
+          title: "Free catalogue course",
+          description: "Optional catalogue learning",
+          provider: "VIA",
+          category: "General",
+          deliveryType: "Self-paced",
+          durationHours: 1,
+          cost: 0,
+          currency: "AED",
+          requiredRoles: [],
+          requiredLocations: [],
+          requiredProjects: [],
+          isMandatory: false,
+          isActive: true,
+        },
+        hrActor,
+      );
+      await archiveTrainingCourseInDatabase(ids.org!, freeCourse, true, "", hrActor);
+      await archiveTrainingCourseInDatabase(ids.org!, freeCourse, false, "", hrActor);
+      const freeRequest = await createTrainingRequestInDatabase(
+        ids.org!,
+        { employeeId: ids.employee!, courseId: freeCourse, reason: "", origin: "Employee Request" },
+        employeeActor,
+      );
+      assert.equal(
+        (await sql`SELECT reason FROM training_requests WHERE id=${freeRequest}`)[0]!.reason,
+        "Requested free catalogue training",
+      );
+      await assert.rejects(
+        archiveTrainingCourseInDatabase(ids.org!, freeCourse, true, "", hrActor),
+        /reason/,
+      );
     } finally {
       await sql.end({ timeout: 5 });
     }

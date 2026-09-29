@@ -1,4 +1,10 @@
 import "@tanstack/react-start/server-only";
+import {
+  changedRecordFields,
+  changeReason,
+  employmentReasonRequired,
+  personalReasonRequired,
+} from "../../data/change-reason-policy.ts";
 import { syncEmployeeAttendanceTracking } from "./attendance-tracking.repository.server.ts";
 
 import { and, asc, eq, inArray, isNull, lte, ne, notInArray, sql } from "drizzle-orm";
@@ -404,16 +410,20 @@ export async function updatePersonalRecordInDatabase(
   if (actor.activeRole !== "HR" && actor.activeRole !== "Super Admin") {
     throw new Error("Only HR or a Super Admin can correct an employee's personal record.");
   }
-  const fields = Object.keys(changes);
+  let fields = Object.keys(changes);
   if (fields.length === 0) throw new Error("No personal details were changed.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
     const [current] = await tx
-      .select({ id: employees.id })
+      .select()
       .from(employees)
       .where(and(eq(employees.organisationId, organisationId), eq(employees.id, employeeId)))
+      .for("update")
       .limit(1);
     if (!current) throw new Error("Employee not found.");
+    fields = changedRecordFields({ ...current }, { ...changes });
+    if (!fields.length) throw new Error("No personal details were changed.");
+    reason = changeReason(reason, personalReasonRequired(fields), "Contact details updated by HR");
     await tx
       .update(employees)
       .set({
@@ -983,7 +993,6 @@ async function applyEmploymentRecord(
   scheduled?: ScheduledEmploymentChange,
 ): Promise<EmploymentChangeResult> {
   validateEmploymentEffectiveDate(effectiveDate);
-  if (reason.trim().length < 5) throw new Error("Give a reason of at least five characters.");
   // Also serialises reporting-line checks across employees, and schedule cancellation/application.
   await tx.execute(
     sql`select pg_advisory_xact_lock(hashtextextended(${`employment:${organisationId}`}, 0))`,
@@ -1169,6 +1178,11 @@ async function applyEmploymentRecord(
   }
   fields = fields.filter((field) => !sameEmploymentValue(previous[field], proposed[field]));
   if (fields.length === 0) return { status: "Applied", effectiveDate };
+  reason = changeReason(
+    reason,
+    employmentReasonRequired(fields, current.employmentConfirmationStatus),
+    "Employment details updated by HR",
+  );
   changes = Object.fromEntries(
     fields.map((field) => [field, changes[field]]),
   ) as EmploymentRecordChanges;

@@ -1,11 +1,12 @@
 import { getApplicationDataServices } from "./application-data.ts";
+import { changeReason, vacancyReasonRequired } from "./change-reason-policy.ts";
 import { recordAccessDenied } from "./audit-service.ts";
 import {
   cleanMandatoryCriteria,
   findMissingMandatoryCriteria,
 } from "./job-description-criteria.ts";
 import { LocalRepository } from "./repository.ts";
-import type { ActorContext, Vacancy, VacancyStatus } from "./types.ts";
+import type { ActorContext, Vacancy, VacancyStatus, CandidateApplication } from "./types.ts";
 
 const VACANCY_TRANSITIONS: Record<VacancyStatus, VacancyStatus[]> = {
   Draft: ["Pending Approval", "Closed"],
@@ -257,14 +258,15 @@ export class VacancyService {
     if (!VACANCY_TRANSITIONS[vacancy.status].includes(newStatus)) {
       throw new Error(`Vacancy cannot move from ${vacancy.status} to ${newStatus}.`);
     }
-    const routine =
-      newStatus === "Pending Approval" ||
-      (vacancy.status === "Pending Approval" && newStatus === "Open");
-    if (!routine && reason.trim().length < 3)
-      throw new Error("Explain this vacancy status change.");
-    reason =
-      reason.trim() ||
-      (newStatus === "Open" ? "Vacancy published" : "Vacancy submitted for approval");
+    const hired = getApplicationDataServices()
+      .storage.readCollection<CandidateApplication>("applications")
+      .filter((item) => item.vacancyId === id && item.status === "Hired" && !item.archivedAt);
+    reason = changeReason(
+      reason,
+      vacancyReasonRequired(vacancy.status, newStatus, hired.length, vacancy.headcount),
+      `Vacancy moved from ${vacancy.status} to ${newStatus}`,
+      3,
+    );
     if (newStatus === "Open") {
       assertReadyToPublish(vacancy);
     }

@@ -453,13 +453,20 @@ function MyTrainingPage() {
           <DialogHeader>
             <DialogTitle>Request {requestCourse?.title}</DialogTitle>
             <DialogDescription>
-              Explain how this course supports your current role or development plan.
+              {requestCourse?.cost === 0
+                ? "Add this course to your training plan."
+                : "Explain how this course supports your role or development plan."}
             </DialogDescription>
           </DialogHeader>
           <Textarea
             value={requestReason}
             onChange={(event) => setRequestReason(event.target.value)}
-            placeholder="Why this training would be valuable"
+            aria-label={
+              requestCourse?.cost === 0 ? "Note (optional)" : "Why this training is needed"
+            }
+            placeholder={
+              requestCourse?.cost === 0 ? "Note (optional)" : "Why this training is needed"
+            }
           />
           <DialogFooter>
             <Button variant="outline" onClick={() => setRequestCourse(null)}>

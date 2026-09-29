@@ -361,7 +361,7 @@ const UpdateEmploymentRequest = z
     employeeId: z.string().uuid(),
     changes: EmploymentChangesInput,
     effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    reason: z.string().trim().min(5).max(1000),
+    reason: z.string().trim().max(1000).default(""),
   })
   .strict();
 
@@ -472,7 +472,7 @@ const PersonalRecordRequest = z
     actor: ActorInput,
     employeeId: z.string().uuid(),
     changes: PersonalChangesInput,
-    reason: z.string().trim().min(5).max(1000),
+    reason: z.string().trim().max(1000).default(""),
   })
   .strict();
 

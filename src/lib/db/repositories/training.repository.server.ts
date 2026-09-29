@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { changeReason, trainingReasonRequired } from "../../data/change-reason-policy.ts";
 import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
@@ -534,7 +535,6 @@ export async function archiveTrainingCourseInDatabase(
   actor: AuditActorContext,
 ) {
   requireHr(actor);
-  if (reason.trim().length < 5) throw new Error("Record a reason for this change.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
     const [course] = await tx
@@ -544,6 +544,21 @@ export async function archiveTrainingCourseInDatabase(
       .for("update")
       .limit(1);
     if (!course) throw new Error("Training course not found.");
+    const [used] = await tx
+      .select({ id: trainingRequests.id })
+      .from(trainingRequests)
+      .where(and(eq(trainingRequests.organisationId, org), eq(trainingRequests.courseId, courseId)))
+      .limit(1);
+    const [session] = await tx
+      .select({ id: trainingSessions.id })
+      .from(trainingSessions)
+      .where(and(eq(trainingSessions.organisationId, org), eq(trainingSessions.courseId, courseId)))
+      .limit(1);
+    reason = changeReason(
+      reason,
+      Boolean(used || session),
+      archive ? "Unused training course archived" : "Unused training course restored",
+    );
     if (archive) {
       const [open] = await tx
         .select({ id: trainingAssignments.id })
@@ -628,7 +643,6 @@ export async function createTrainingRequestInDatabase(
   },
   actor: AuditActorContext,
 ) {
-  if (input.reason.trim().length < 5) throw new Error("Explain why this training is needed.");
   const self = actor.employeeId === input.employeeId;
   const manager = activeRole(actor) === "Line Manager";
   if (input.origin === "Employee Request" && !self)
@@ -667,6 +681,16 @@ export async function createTrainingRequestInDatabase(
     if (!employee || ["Inactive", "Archived"].includes(employee.status))
       throw new Error("Select an active employee.");
     if (!course) throw new Error("Select an active training course.");
+    input = {
+      ...input,
+      reason: changeReason(
+        input.reason,
+        trainingReasonRequired(course, input.origin),
+        input.origin === "Employee Request"
+          ? "Requested free catalogue training"
+          : "Assigned standard catalogue training",
+      ),
+    };
     // Serialize matching submissions before the duplicate check.
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtextextended(${`${org}:${input.employeeId}:${input.courseId}`}, 0))`,
