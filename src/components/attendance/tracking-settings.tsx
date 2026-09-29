@@ -123,6 +123,10 @@ export function AttendanceTrackingSettings({ employeeId }: { employeeId?: string
                 Select the location using the machine. Staff elsewhere will not receive
                 missing-punch or absence warnings.
               </p>
+              <p className="text-sm text-muted-foreground">
+                Assign each office employee's work location in their employment record. Staff with
+                an unconfirmed location are not automatically included.
+              </p>
               <select
                 aria-label="Head Office location"
                 className="h-11 w-full rounded-md border bg-background px-3"

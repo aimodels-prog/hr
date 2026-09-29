@@ -166,6 +166,36 @@ function seedRecord(service: AttendanceService, date: string) {
   );
 }
 
+test("saved punches remain visible without tracking; missing records do not imply absence", () => {
+  const { service, storage } = harnessWithClock(() => new Date("2026-09-29T08:00:00Z"));
+  const saved = seedRecord(service, "2026-09-29");
+  storage.writeCollection("attendanceTracking", []);
+  const record = service.getAllRecords(hr).find((item) => item.id === saved.id);
+  assert.equal(record?.clockIn, "09:00");
+  assert.equal(record?.clockOut, "18:00");
+  assert.equal(record?.status, "Present");
+  assert.equal(record?.isLate, false);
+  assert.equal(record?.isEarlyDeparture, false);
+  assert.equal(service.reconcileDailyStatus("employee-omar", "2026-09-29", hr), null);
+  assert.deepEqual(service.reconcileDailyStatus("employee-omar", "2026-09-30", hr), {
+    status: "Not tracked",
+  });
+});
+
+test("untracked open punches retain their times and correction workflow", () => {
+  const { service, storage } = harnessWithClock(() => new Date("2026-09-29T08:00:00Z"));
+  const saved = seedRecord(service, "2026-09-29");
+  storage.writeCollection("attendanceTracking", []);
+  for (const status of ["Late", "Correction Pending", "Corrected"] as const) {
+    storage.writeCollection("attendanceRecords", [{ ...saved, clockOut: undefined, status }]);
+    const record = service.getAllRecords(hr).find((item) => item.id === saved.id);
+    assert.equal(record?.clockIn, "09:00");
+    assert.equal(record?.clockOut, undefined);
+    assert.equal(record?.status, status === "Late" ? "Present" : status);
+    assert.equal(record?.isLate, false);
+  }
+});
+
 test("a correction decision keeps the version originally opened by the reviewer", async () => {
   const { service } = harness();
   const record = seedRecord(service, "2026-08-24");

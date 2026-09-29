@@ -1444,9 +1444,9 @@ export class AttendanceService {
     context: ActorContext,
   ): Partial<AttendanceRecord> | null {
     this.requireEmployeeRead(employeeId, context, "reconcile this employee's attendance status");
-    if (!this.isTrackingRequired(employeeId, targetDate)) return { status: "Not tracked" };
     const existing = this.findRecord(employeeId, targetDate);
     if (existing) return null;
+    if (!this.isTrackingRequired(employeeId, targetDate)) return { status: "Not tracked" };
     const day = new Date(`${targetDate}T12:00:00`);
     if (Number.isNaN(day.getTime())) throw new Error("Invalid attendance date.");
     const settings = new SettingsService().getAppSettingsSync();
@@ -2300,7 +2300,15 @@ export class AttendanceService {
 
   private presentRecord(record: AttendanceRecord): AttendanceRecord {
     if (!this.isTrackingRequired(record.employeeId, record.date)) {
-      return { ...record, status: "Not tracked", isLate: false, isEarlyDeparture: false };
+      // A real punch remains evidence even before eligibility is configured or
+      // after a transfer. Do not infer lateness or missing-punch penalties here.
+      const status =
+        record.status === "Correction Pending" || record.status === "Corrected"
+          ? record.status
+          : record.clockIn || record.clockOut
+            ? "Present"
+            : "Not tracked";
+      return { ...record, status, isLate: false, isEarlyDeparture: false };
     }
     return { ...record, status: this.deriveStatus(record) };
   }

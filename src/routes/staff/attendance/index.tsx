@@ -298,6 +298,8 @@ function AttendanceAdminContent() {
       const record = allRecords.find(
         (item) => item.employeeId === employee.id && item.date === date,
       );
+      // Eligibility controls inferred absence, never visibility of saved evidence.
+      if (record) return { employee, ...record };
       if (!attendanceService.isTrackingRequired(employee.id, date))
         return {
           employee,
@@ -309,7 +311,6 @@ function AttendanceAdminContent() {
           calculatedHours: 0,
           source: "Not required",
         };
-      if (record) return { employee, ...record };
       const reconciled = attendanceService.reconcileDailyStatus(employee.id, date, actorContext);
       return {
         employee,
@@ -671,6 +672,16 @@ function AttendanceAdminContent() {
         </div>
 
         <TabsContent value="daily" className="space-y-4">
+          {!attendanceService.getTrackingPolicy() && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4">
+              <p className="text-sm">
+                Head Office tracking needs setup. Saved punches are shown; absence checks are off.
+              </p>
+              <Button variant="outline" onClick={() => setSection("setup")}>
+                Set up tracking
+              </Button>
+            </div>
+          )}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-col gap-3 sm:flex-row">
               <Input
