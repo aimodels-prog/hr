@@ -1872,6 +1872,108 @@ export async function saveAttendancePolicyInDatabase(
   });
 }
 
+export async function getMyLiveAttendance(organisationId: string, actor: AuditActorContext) {
+  if (!actor.employeeId) throw new Error("A verified employee is required.");
+  const db = getDatabaseClient();
+  const [settingsRows, policyRows, employeeRows] = await Promise.all([
+    db
+      .select({
+        timezone: appSettings.timezone,
+        workingDays: appSettings.workingDays,
+        hours: appSettings.standardDailyHours,
+      })
+      .from(appSettings)
+      .where(eq(appSettings.organisationId, organisationId))
+      .limit(1),
+    db
+      .select()
+      .from(attendancePolicies)
+      .where(eq(attendancePolicies.organisationId, organisationId))
+      .limit(1),
+    db
+      .select({ locationId: employees.locationId })
+      .from(employees)
+      .where(and(eq(employees.organisationId, organisationId), eq(employees.id, actor.employeeId)))
+      .limit(1),
+  ]);
+  const settings = settingsRows[0];
+  const policy = policyRows[0];
+  const timezone = settings?.timezone ?? "UTC";
+  const now = new Date();
+  const date = zonedParts(now, timezone).date;
+  const [record] = await db
+    .select({
+      clockInAt: attendanceRecords.clockInAt,
+      clockOutAt: attendanceRecords.clockOutAt,
+      breakMinutes: attendanceRecords.breakMinutes,
+      expectedClockIn: attendanceRecords.expectedClockIn,
+      expectedClockOut: attendanceRecords.expectedClockOut,
+      status: attendanceRecords.status,
+    })
+    .from(attendanceRecords)
+    .where(
+      and(
+        eq(attendanceRecords.organisationId, organisationId),
+        eq(attendanceRecords.employeeId, actor.employeeId),
+        eq(attendanceRecords.date, date),
+      ),
+    )
+    .limit(1);
+  const [holiday] = await db
+    .select({ id: publicHolidays.id })
+    .from(publicHolidays)
+    .where(
+      and(
+        eq(publicHolidays.organisationId, organisationId),
+        eq(publicHolidays.holidayDate, date),
+        eq(publicHolidays.isActive, true),
+        isNull(publicHolidays.archivedAt),
+        employeeRows[0]?.locationId
+          ? or(
+              isNull(publicHolidays.locationId),
+              eq(publicHolidays.locationId, employeeRows[0].locationId),
+            )
+          : isNull(publicHolidays.locationId),
+      ),
+    )
+    .limit(1);
+  const approvedLeave = await db
+    .select({ isHalfDay: leaveRequests.isHalfDay })
+    .from(leaveRequests)
+    .where(
+      and(
+        eq(leaveRequests.organisationId, organisationId),
+        eq(leaveRequests.employeeId, actor.employeeId),
+        inArray(leaveRequests.status, ["Approved", "Taken"]),
+        sql`${leaveRequests.startDate} <= ${date}`,
+        sql`${leaveRequests.endDate} >= ${date}`,
+      ),
+    );
+  let targetMinutes = Math.round(Number(policy?.standardDailyHours ?? settings?.hours ?? 8) * 60);
+  if (record?.expectedClockIn && record.expectedClockOut) {
+    const minutes = (time: string) => {
+      const [h, m] = time.split(":").map(Number);
+      return h! * 60 + m!;
+    };
+    let span = minutes(record.expectedClockOut) - minutes(record.expectedClockIn);
+    if (span < 0) span += 1440;
+    targetMinutes = Math.max(0, span - (policy?.defaultBreakMinutes ?? 0));
+  }
+  const leaveFraction = Math.min(
+    1,
+    approvedLeave.reduce((sum, leave) => sum + (leave.isHalfDay ? 0.5 : 1), 0),
+  );
+  targetMinutes = Math.round(targetMinutes * (1 - leaveFraction));
+  const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
+  if (
+    holiday ||
+    (settings && !settings.workingDays.includes(weekday)) ||
+    (record && ["On Leave", "Holiday", "Rest Day"].includes(record.status))
+  )
+    targetMinutes = 0;
+  return { date, timezone, serverNow: now.toISOString(), targetMinutes, record: record ?? null };
+}
+
 export async function listAttendanceForActor(organisationId: string, actor: AuditActorContext) {
   if (!actor.employeeId) throw new Error("A verified employee is required.");
   const db = getDatabaseClient();

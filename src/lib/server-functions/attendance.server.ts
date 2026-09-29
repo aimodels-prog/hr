@@ -11,6 +11,7 @@ import {
   exportAttendanceRecordsFromDatabase,
   importAttendanceRecordsInDatabase,
   listAttendanceForActor,
+  getMyLiveAttendance,
   readAttendanceCorrectionEvidenceInDatabase,
   requestSiteVisitInDatabase,
   updateSiteVisitProgressInDatabase,
@@ -47,6 +48,13 @@ async function verify(actor: z.infer<typeof Actor>) {
     throw new Error("Your VIA access could not be verified.");
   return { organisationId, actor: { ...result.actor, activeRole: actor.activeRole } };
 }
+
+export const getMyLiveAttendanceFn = createServerFn({ method: "POST" })
+  .validator((input) => z.object({ actor: Actor }).strict().parse(input))
+  .handler(async ({ data }) => {
+    const verified = await verify(data.actor);
+    return getMyLiveAttendance(verified.organisationId, verified.actor);
+  });
 
 const Punch = z
   .object({

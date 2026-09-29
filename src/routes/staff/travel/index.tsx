@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { toast } from "sonner";
 import { TravelService } from "@/lib/data/travel-service";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
@@ -55,15 +56,9 @@ function MyTravelRoute() {
   }
 
   const handleWithdraw = async (id: string) => {
-    try {
-      await travelService.withdrawRequestAsync(id, currentUser.getActorContext());
-      setRequests(travelService.getRequestsForEmployee(employeeId, currentUser.getActorContext()));
-      toast.success("Travel request withdrawn");
-    } catch (error: unknown) {
-      toast.error(
-        error instanceof Error ? error.message : "The travel request could not be withdrawn.",
-      );
-    }
+    await travelService.withdrawRequestAsync(id, currentUser.getActorContext());
+    setRequests(travelService.getRequestsForEmployee(employeeId, currentUser.getActorContext()));
+    toast.success("Travel request withdrawn");
   };
 
   return (
@@ -135,14 +130,16 @@ function MyTravelRoute() {
                       {req.status === "Pending HR and Accounts" &&
                         req.hrApprovalStatus === "Pending" &&
                         req.accountsApprovalStatus === "Pending" && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="ml-2"
-                            onClick={() => void handleWithdraw(req.id)}
+                          <ConfirmAction
+                            title="Withdraw this travel request?"
+                            description="This request will leave the approval queue. Its history will be kept."
+                            confirmLabel="Withdraw request"
+                            onConfirm={() => handleWithdraw(req.id)}
                           >
-                            Withdraw
-                          </Button>
+                            <Button variant="outline" size="sm" className="ml-2">
+                              Withdraw
+                            </Button>
+                          </ConfirmAction>
                         )}
                     </TableCell>
                   </TableRow>

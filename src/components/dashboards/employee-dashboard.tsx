@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { LiveAttendanceCard } from "./live-attendance-card";
 import { DashboardCharts } from "./dashboard-charts";
 import { StaffDataBoundary } from "@/components/layout/staff-data-boundary";
 import { DASHBOARD_MODULES } from "@/lib/data/staff-module-plan";
@@ -24,6 +25,7 @@ import {
 export function EmployeeDashboard({ employee, userId }: { employee: Employee; userId: string }) {
   return (
     <div className="flex flex-col gap-4">
+      <LiveAttendanceCard />
       <DashboardCharts scope="self" />
       <StaffDataBoundary modules={DASHBOARD_MODULES.employee}>
         <EmployeeDashboardDetails employee={employee} userId={userId} />

@@ -9,6 +9,7 @@ import {
 } from "@/lib/data/report-service";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import {
   Table,
   TableBody,
@@ -198,13 +199,9 @@ function ReportsDashboard() {
   };
 
   const deleteView = async (view: ReportSavedView) => {
-    try {
-      await reportService.deleteSavedViewFromDatabase(view.id);
-      setSavedViews((current) => current.filter((item) => item.id !== view.id));
-      toast.success("Saved view removed");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "The view could not be removed.");
-    }
+    await reportService.deleteSavedViewFromDatabase(view.id);
+    setSavedViews((current) => current.filter((item) => item.id !== view.id));
+    toast.success("Saved view removed");
   };
 
   const handleExport = async () => {
@@ -379,15 +376,21 @@ function ReportsDashboard() {
                         >
                           {view.name}
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 rounded-l-none text-muted-foreground hover:text-destructive"
-                          aria-label={`Remove saved view ${view.name}`}
-                          onClick={() => deleteView(view)}
+                        <ConfirmAction
+                          title={`Remove ${view.name}?`}
+                          description="Only this saved filter view will be removed. Report and employee data are kept."
+                          confirmLabel="Remove saved view"
+                          onConfirm={() => deleteView(view)}
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 rounded-l-none text-muted-foreground hover:text-destructive"
+                            aria-label={`Remove saved view ${view.name}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </ConfirmAction>
                       </div>
                     ))}
                   </div>

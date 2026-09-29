@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -533,16 +534,40 @@ function TimesheetEntryRoute() {
                         )}
                       </TableCell>
                       <TableCell className="p-2 text-center">
-                        {isEditable && !isReadonlyBlock && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                            onClick={() => handleRemoveRow(entry.id)}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        )}
+                        {isEditable &&
+                          !isReadonlyBlock &&
+                          (!entry.projectId &&
+                          !entry.costCentreId &&
+                          !entry.activityCodeId &&
+                          !entry.locationCodeId &&
+                          !entry.notes?.trim() &&
+                          !Object.values(entry.hours).some((hours) => Number(hours) > 0) ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              aria-label="Remove timesheet row"
+                              onClick={() => handleRemoveRow(entry.id)}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          ) : (
+                            <ConfirmAction
+                              title="Remove this timesheet row?"
+                              description="The row and its entered hours will be removed from this form. Save your timesheet to keep the change."
+                              confirmLabel="Remove row"
+                              onConfirm={() => handleRemoveRow(entry.id)}
+                            >
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                aria-label="Remove timesheet row"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </ConfirmAction>
+                          ))}
                       </TableCell>
                     </TableRow>
                   );

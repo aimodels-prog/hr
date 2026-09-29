@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
@@ -91,18 +92,12 @@ function TravelDetailRoute() {
     : null;
 
   const handleWithdraw = async () => {
-    try {
-      const updated = await travelService.withdrawRequestAsync(
-        request.id,
-        currentUser!.getActorContext(),
-      );
-      setRequest(updated);
-      toast.success("Travel request withdrawn");
-    } catch (error: unknown) {
-      toast.error(
-        error instanceof Error ? error.message : "Travel request could not be withdrawn.",
-      );
-    }
+    const updated = await travelService.withdrawRequestAsync(
+      request.id,
+      currentUser!.getActorContext(),
+    );
+    setRequest(updated);
+    toast.success("Travel request withdrawn");
   };
 
   const getStatusIcon = (status: string) => {
@@ -256,9 +251,14 @@ function TravelDetailRoute() {
           request.hrApprovalStatus === "Pending" &&
           request.accountsApprovalStatus === "Pending" && (
             <div className="flex justify-end">
-              <Button variant="outline" onClick={handleWithdraw}>
-                Withdraw Request
-              </Button>
+              <ConfirmAction
+                title="Withdraw this travel request?"
+                description="This request will leave the approval queue. Its history will be kept."
+                confirmLabel="Withdraw request"
+                onConfirm={handleWithdraw}
+              >
+                <Button variant="outline">Withdraw Request</Button>
+              </ConfirmAction>
             </div>
           )}
 
@@ -501,16 +501,39 @@ function TravelDetailRoute() {
                         )}
                       </div>
                       <div className="col-span-1 text-right">
-                        {!isSubmissionLocked && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-destructive px-2"
-                            onClick={() => removeLine(line.id)}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        )}
+                        {!isSubmissionLocked &&
+                          (!line.amount &&
+                          !line.reference?.trim() &&
+                          !line.notes?.trim() &&
+                          !line.receiptFileId &&
+                          !receiptFiles.has(line.id) &&
+                          !request.expenses?.some((saved) => saved.id === line.id) ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive px-2"
+                              aria-label="Remove expense"
+                              onClick={() => removeLine(line.id)}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          ) : (
+                            <ConfirmAction
+                              title="Remove this expense?"
+                              description="This expense will be removed from this form. Submit the claim to save your changes."
+                              confirmLabel="Remove expense"
+                              onConfirm={() => removeLine(line.id)}
+                            >
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive px-2"
+                                aria-label="Remove expense"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </ConfirmAction>
+                          ))}
                       </div>
                     </div>
                   ))}
@@ -539,9 +562,18 @@ function TravelDetailRoute() {
               </CardContent>
               {!isSubmissionLocked && (
                 <div className="p-4 bg-muted/10 border-t flex justify-end gap-2">
-                  <Button variant="outline" onClick={() => setExpenseLines(request.expenses || [])}>
-                    Reset
-                  </Button>
+                  <ConfirmAction
+                    title="Discard expense changes?"
+                    description="Restore the last saved expenses. Unsaved entries and newly attached receipts will be discarded."
+                    confirmLabel="Discard changes"
+                    onConfirm={() => {
+                      setExpenseLines(request.expenses || []);
+                      setReceiptFiles(new Map());
+                      setVarianceExplanation(request.varianceExplanation || "");
+                    }}
+                  >
+                    <Button variant="outline">Reset</Button>
+                  </ConfirmAction>
                   <Button onClick={handleSubmitExpenses}>Submit for Closure</Button>
                 </div>
               )}

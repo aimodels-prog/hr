@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -50,16 +51,10 @@ export function PerformanceTemplatesPanel() {
       }
     : { userId: "system", displayName: "System", roles: [] };
 
-  const deleteTemplate = (id: string) => {
-    void perfService
-      .deleteTemplateAsync(id, { actor: currentActor })
-      .then((items) => {
-        setTemplates(items);
-        toast.success("Template deleted");
-      })
-      .catch((error) =>
-        toast.error(error instanceof Error ? error.message : "Failed to delete template"),
-      );
+  const deleteTemplate = async (id: string) => {
+    const items = await perfService.deleteTemplateAsync(id, { actor: currentActor });
+    setTemplates(items);
+    toast.success("Template archived");
   };
 
   const createTemplate = async () => {
@@ -213,9 +208,16 @@ export function PerformanceTemplatesPanel() {
                 <CardDescription className="mt-1">{tmpl.description}</CardDescription>
               </div>
               <div className="flex items-center gap-2">
-                <Button variant="ghost" size="icon" onClick={() => deleteTemplate(tmpl.id)}>
-                  <Trash2 className="w-4 h-4 text-destructive" />
-                </Button>
+                <ConfirmAction
+                  title={`Archive ${tmpl.name}?`}
+                  description="This template will no longer be available for new appraisals. Existing appraisal records are kept."
+                  confirmLabel="Archive template"
+                  onConfirm={() => deleteTemplate(tmpl.id)}
+                >
+                  <Button variant="ghost" size="icon" aria-label={`Archive ${tmpl.name}`}>
+                    <Trash2 className="w-4 h-4 text-destructive" />
+                  </Button>
+                </ConfirmAction>
               </div>
             </CardHeader>
             <CardContent className="pt-4 space-y-6">
