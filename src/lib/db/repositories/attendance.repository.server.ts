@@ -7,6 +7,7 @@ import {
 import { getAttendanceTrackingPolicy } from "./attendance-tracking.repository.server.ts";
 import { isAttendanceTracked, readAttendanceTracking } from "../../data/attendance-tracking.ts";
 import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
+import { enqueueMissingClockoutReminders } from "./missing-clockout.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
 import {
@@ -866,7 +867,6 @@ export async function requestAttendanceCorrectionInDatabase(
   const id = randomUUID();
   await db.transaction(async (tx) => {
     let record: typeof attendanceRecords.$inferSelect | undefined;
-    await requireEmployeeSupervisor(tx, organisationId, actor.employeeId!);
     if (input.attendanceRecordId) {
       [record] = await tx
         .select()
@@ -981,7 +981,28 @@ export async function requestAttendanceCorrectionInDatabase(
           .limit(1);
     }
     if (!record) throw new Error("Attendance record not found.");
+    // Serialize submissions for the same record, including double taps from a phone.
+    await tx.execute(sql`SELECT id FROM attendance_records WHERE id=${record.id}::uuid FOR UPDATE`);
+    const [currentRecord] = await tx
+      .select()
+      .from(attendanceRecords)
+      .where(eq(attendanceRecords.id, record.id))
+      .limit(1);
+    record = currentRecord!;
+    const [pendingCorrection] = await tx
+      .select({ id: attendanceCorrections.id })
+      .from(attendanceCorrections)
+      .where(
+        and(
+          eq(attendanceCorrections.attendanceRecordId, record.id),
+          inArray(attendanceCorrections.status, ["Pending Manager", "Pending HR"]),
+          isNull(attendanceCorrections.archivedAt),
+        ),
+      )
+      .limit(1);
+    if (pendingCorrection) throw new Error("A correction is already pending for this record.");
     if (
+      !record.clockInAt &&
       !isAttendanceTracked(
         await getAttendanceTrackingPolicy(organisationId),
         record.employeeId,
@@ -1003,11 +1024,22 @@ export async function requestAttendanceCorrectionInDatabase(
       .limit(1);
     const timezone = settings?.timezone ?? "UTC";
     const localTimePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
-    const proposedClockIn = input.proposedClockIn
-      ? localTimePattern.test(input.proposedClockIn)
-        ? zonedDateTimeToUtc(record.date, input.proposedClockIn, timezone).toISOString()
-        : input.proposedClockIn
-      : undefined;
+    const clockOutOnly =
+      !!record.clockInAt &&
+      !record.clockOutAt &&
+      !!input.proposedClockOut &&
+      record.date < zonedParts(new Date(), timezone).date &&
+      (!input.proposedClockIn ||
+        input.proposedClockIn === zonedParts(new Date(record.clockInAt), timezone).time ||
+        input.proposedClockIn === record.clockInAt);
+    if (!clockOutOnly) await requireEmployeeSupervisor(tx, organisationId, actor.employeeId!);
+    const proposedClockIn = clockOutOnly
+      ? record.clockInAt!
+      : input.proposedClockIn
+        ? localTimePattern.test(input.proposedClockIn)
+          ? zonedDateTimeToUtc(record.date, input.proposedClockIn, timezone).toISOString()
+          : input.proposedClockIn
+        : undefined;
     let proposedClockOut = input.proposedClockOut
       ? localTimePattern.test(input.proposedClockOut)
         ? zonedDateTimeToUtc(record.date, input.proposedClockOut, timezone).toISOString()
@@ -1064,10 +1096,23 @@ export async function requestAttendanceCorrectionInDatabase(
       proposedClockOut,
       explanation: input.explanation.trim(),
       evidenceFileId: input.evidenceFileId,
-      status: "Pending Manager",
+      status: clockOutOnly ? "Pending HR" : "Pending Manager",
       createdBy: actor.userId,
       updatedBy: actor.userId,
     } as typeof attendanceCorrections.$inferInsert);
+    if (clockOutOnly)
+      await tx.execute(sql`INSERT INTO notifications
+      (organisation_id,recipient_user_id,type,title,message,priority,deduplication_key,link,created_by,updated_by)
+      SELECT ${organisationId}::uuid,u.id,'attendance.correction_submitted','Clock-out awaiting HR approval',
+        'An employee submitted a missing clock-out time. Review the original punch and proposed time.',
+        'Normal','clockout-review-' || ${id} || '-' || u.id,
+        jsonb_build_object('entityType','attendance-correction','entityId',${id}::text,'path','/staff/attendance/corrections'),
+        ${actor.userId}::uuid,${actor.userId}::uuid
+      FROM users u JOIN user_roles ur ON ur.user_id=u.id AND ur.organisation_id=u.organisation_id
+      JOIN roles r ON r.id=ur.role_id
+      WHERE u.organisation_id=${organisationId}::uuid AND u.status='Active' AND u.archived_at IS NULL
+        AND u.employee_id<>${actor.employeeId}::uuid AND r.code IN ('HR','Super Admin')
+      ON CONFLICT DO NOTHING`);
     await tx.insert(auditEvents).values({
       organisationId,
       actorUserId: actor.userId,
@@ -2371,58 +2416,8 @@ export async function processAttendanceScheduledWork(
         .limit(1);
       const timezone = settings?.timezone ?? "UTC";
       const date = zonedParts(at, timezone).date;
-      const openRecords = await tx
-        .select({ record: attendanceRecords, userId: users.id })
-        .from(attendanceRecords)
-        .innerJoin(users, eq(users.employeeId, attendanceRecords.employeeId))
-        .where(
-          and(
-            eq(attendanceRecords.organisationId, organisation.organisationId),
-            eq(attendanceRecords.date, date),
-            sql`${attendanceRecords.clockInAt} IS NOT NULL AND ${attendanceRecords.clockOutAt} IS NULL`,
-          ),
-        );
+      // Missing clock-out emails run after duty reconciliation, never at departure time.
       const tracking = await getAttendanceTrackingPolicy(organisation.organisationId);
-      for (const row of openRecords.filter((item) =>
-        isAttendanceTracked(tracking, item.record.employeeId, item.record.date),
-      ))
-        for (const [index, offset] of policy.signOutReminderOffsetsMinutes.entries()) {
-          const due =
-            new Date(row.record.clockInAt!).getTime() +
-            (flexibleOfficeSchedule(
-              zonedParts(new Date(row.record.clockInAt!), timezone).time,
-              null,
-              Number(policy.standardDailyHours),
-            ).elapsedMinutes +
-              offset) *
-              60_000;
-          if (at.getTime() < due) continue;
-          const key = `attendance-signout-${row.record.id}-${index + 1}`;
-          const created = await tx
-            .insert(notifications)
-            .values({
-              organisationId: organisation.organisationId,
-              recipientUserId: row.userId,
-              type: "attendance.sign_out",
-              title: "Remember to clock out",
-              message:
-                index === 0
-                  ? "You have completed your standard working hours."
-                  : `Reminder ${index + 1} of 3: please clock out before leaving.`,
-              priority: index === 2 ? "High" : "Normal",
-              deduplicationKey: key,
-              link: {
-                entityType: "attendance-record",
-                entityId: row.record.id,
-                path: "/staff/me/attendance",
-              },
-              createdBy: row.userId,
-              updatedBy: row.userId,
-            } as typeof notifications.$inferInsert)
-            .onConflictDoNothing()
-            .returning({ id: notifications.id });
-          reminders += created.length;
-        }
       const visits = await tx
         .select()
         .from(siteVisitRequests)
@@ -2764,5 +2759,6 @@ export async function processAttendanceScheduledWork(
             .where(eq(siteVisitRequests.id, visit.id));
       }
     });
+  reminders += await enqueueMissingClockoutReminders(at);
   return { reminders, siteVisits, exceptions, reconciled };
 }

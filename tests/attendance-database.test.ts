@@ -3,6 +3,10 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
 import postgres from "postgres";
+import {
+  enqueueMissingClockoutReminders,
+  missingClockoutCandidates,
+} from "../src/lib/db/repositories/missing-clockout.repository.server.ts";
 import { getWorkforceAnalytics } from "../src/lib/db/repositories/workforce-analytics.repository.server.ts";
 
 import {
@@ -482,7 +486,7 @@ test(
         );
       }
       const workerResult = await processAttendanceScheduledWork(workerAt);
-      assert.ok(workerResult.reminders >= 3);
+      assert.equal(workerResult.reminders, 0);
       assert.ok(workerResult.siteVisits >= 1);
       assert.ok(workerResult.exceptions >= 1);
       const [workerState] = await sql`
@@ -491,7 +495,109 @@ test(
           (SELECT count(*)::int FROM attendance_records WHERE site_visit_id = ${homeVisitId} AND clock_out_at IS NOT NULL) AS home_attendance,
           (SELECT id FROM attendance_exception_cases WHERE site_visit_id = ${officeVisitId}) AS exception_id
       `;
-      assert.deepEqual([workerState.reminders, workerState.home_attendance], [3, 1]);
+      assert.deepEqual([workerState.reminders, workerState.home_attendance], [0, 1]);
+      const nextMorning = new Date(`${scheduledDate}T09:00:00Z`);
+      nextMorning.setUTCDate(nextMorning.getUTCDate() + 1);
+      assert.equal(
+        await enqueueMissingClockoutReminders(new Date(nextMorning.getTime() - 60_000)),
+        0,
+      );
+      await Promise.all([
+        enqueueMissingClockoutReminders(nextMorning),
+        enqueueMissingClockoutReminders(nextMorning),
+      ]);
+      const [morningNotice] =
+        await sql`SELECT count(*)::int AS total FROM notifications WHERE recipient_user_id=${reminderUserId} AND type='attendance.missing_clockout_reminder'`;
+      assert.equal(morningNotice.total, 1);
+      // Late sync is checked again: an existing notification must not imply the record is still open.
+      await sql`UPDATE attendance_records SET clock_out_at=${`${scheduledDate}T11:00:00Z`} WHERE employee_id=${reminderEmployeeId}`;
+      const { getDatabaseClient } = await import("../src/lib/db/client.ts");
+      const eligible = await getDatabaseClient().execute(missingClockoutCandidates(nextMorning));
+      assert.ok(!eligible.some((item) => item["employee_id"] === reminderEmployeeId));
+      await sql`UPDATE attendance_records SET clock_out_at=NULL, expected_clock_in='22:00',expected_clock_out='10:00',
+        clock_in_at=${`${scheduledDate}T22:00:00Z`} WHERE employee_id=${reminderEmployeeId} AND date=${scheduledDate}`;
+      const overnight = await getDatabaseClient().execute(missingClockoutCandidates(nextMorning));
+      assert.ok(!overnight.some((item) => item["employee_id"] === reminderEmployeeId));
+      await sql`UPDATE attendance_records SET expected_clock_in=NULL,expected_clock_out=NULL,
+        clock_in_at=${`${scheduledDate}T02:00:00Z`} WHERE employee_id=${reminderEmployeeId} AND date=${scheduledDate}`;
+      await sql`UPDATE app_settings SET timezone='Asia/Muscat' WHERE organisation_id=${organisationId}`;
+      const muscatMorning = new Date(nextMorning.getTime() - 4 * 60 * 60 * 1000);
+      const localMorning = await getDatabaseClient().execute(
+        missingClockoutCandidates(muscatMorning),
+      );
+      assert.ok(localMorning.some((item) => item["employee_id"] === reminderEmployeeId));
+      const tooEarly = await getDatabaseClient().execute(
+        missingClockoutCandidates(new Date(muscatMorning.getTime() - 60_000)),
+      );
+      assert.ok(!tooEarly.some((item) => item["employee_id"] === reminderEmployeeId));
+      await sql`UPDATE app_settings SET timezone='UTC' WHERE organisation_id=${organisationId}`;
+      await sql`UPDATE attendance_records SET source='Hardware Terminal' WHERE employee_id=${reminderEmployeeId} AND date=${scheduledDate}`;
+      const unsynced = await getDatabaseClient().execute(missingClockoutCandidates(nextMorning));
+      assert.ok(!unsynced.some((item) => item["employee_id"] === reminderEmployeeId));
+      await sql`UPDATE attendance_records SET source='Manual Entry' WHERE employee_id=${reminderEmployeeId} AND date=${scheduledDate}`;
+      // A missing clock-out goes straight to HR, keeps original clock-in seconds,
+      // and does not require an assigned supervisor or biometric eligibility.
+      {
+        const yesterday = new Date();
+        yesterday.setUTCDate(yesterday.getUTCDate() - 10);
+        const missedDate = yesterday.toISOString().slice(0, 10);
+        const [missed] = await sql`UPDATE attendance_records SET date=${missedDate},
+        clock_in_at=${`${missedDate}T08:24:27Z`},clock_out_at=NULL
+        WHERE employee_id=${reminderEmployeeId} AND date=${scheduledDate} RETURNING id`;
+        await sql`UPDATE employees SET line_manager_id=NULL WHERE id=${reminderEmployeeId}`;
+        const submit = () =>
+          requestAttendanceCorrectionInDatabase(
+            organisationId,
+            {
+              attendanceRecordId: String(missed.id),
+              proposedClockIn: "08:24",
+              proposedClockOut: "17:00",
+              explanation: "Employee supplied a missing clock-out time for HR confirmation.",
+            },
+            actor(reminderUserId, reminderEmployeeId, "Reminder Employee", "Employee"),
+          );
+        const submissions = await Promise.allSettled([submit(), submit()]);
+        assert.equal(
+          submissions.filter((item) => item.status === "fulfilled").length,
+          1,
+          submissions
+            .map((item) => (item.status === "rejected" ? String(item.reason) : "ok"))
+            .join("; "),
+        );
+        const result = submissions.find((item) => item.status === "fulfilled");
+        assert.ok(result?.status === "fulfilled");
+        const correctionId = result.value;
+        const [simpleCorrection] =
+          await sql`SELECT status,proposed_clock_in FROM attendance_corrections WHERE id=${correctionId}`;
+        assert.equal(simpleCorrection.status, "Pending HR");
+        assert.equal(
+          new Date(simpleCorrection.proposed_clock_in).toISOString(),
+          `${missedDate}T08:24:27.000Z`,
+        );
+        await assert.rejects(
+          () =>
+            decideAttendanceCorrectionInDatabase(
+              organisationId,
+              correctionId,
+              "approve",
+              undefined,
+              actor(managerUserId, managerEmployeeId, "Manager", "Line Manager"),
+              1,
+            ),
+          /assigned correction approver/,
+        );
+        await decideAttendanceCorrectionInDatabase(
+          organisationId,
+          correctionId,
+          "approve",
+          undefined,
+          actor(hrUserId, hrEmployeeId, "HR", "HR"),
+          1,
+        );
+        const [confirmed] =
+          await sql`SELECT clock_out_at FROM attendance_records WHERE id=${String(missed.id)}`;
+        assert.equal(new Date(confirmed.clock_out_at).toISOString(), `${missedDate}T17:00:00.000Z`);
+      }
       assert.ok(workerState.exception_id);
       await resolveAttendanceExceptionInDatabase(
         organisationId,

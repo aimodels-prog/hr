@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { getDatabaseClient } from "../client.ts";
 import { decryptSensitiveJson } from "../encryption.server.ts";
 import { calendarAccessToken } from "../../integrations/google-calendar.server.ts";
+import { missingClockoutEmailDate } from "./missing-clockout.repository.server.ts";
 import { sendWorkflowEmail, WorkflowEmailError } from "../../integrations/workflow-email.server.ts";
 
 /** Mirrors durable workflow notifications; does not send historic backlog on first connection. */
@@ -14,6 +15,7 @@ export async function enqueueWorkflowEmails() {
     JOIN google_calendar_connections c ON c.organisation_id=n.organisation_id AND c.email_enabled_at IS NOT NULL
     JOIN users u ON u.id=n.recipient_user_id AND u.organisation_id=n.organisation_id AND u.status='Active' AND u.archived_at IS NULL
     WHERE n.archived_at IS NULL AND n.created_at>=c.email_enabled_at
+      AND n.type NOT IN ('attendance.sign_out','attendance.sign_out_reminder')
       AND (n.type='workflow.request_update' OR NOT EXISTS (
         SELECT 1 FROM notifications receipt WHERE receipt.type='workflow.request_update'
         AND receipt.organisation_id=n.organisation_id AND receipt.recipient_user_id=n.recipient_user_id
@@ -44,7 +46,7 @@ export async function processWorkflowEmails() {
     const org = String(claimed["organisation_id"]);
     try {
       const [recipient] =
-        await db.execute(sql`SELECT u.workspace_email,c.refresh_token_encrypted FROM notifications n
+        await db.execute(sql`SELECT u.workspace_email,c.refresh_token_encrypted,n.type FROM notifications n
         JOIN users u ON u.id=n.recipient_user_id AND u.organisation_id=n.organisation_id AND u.status='Active' AND u.archived_at IS NULL
         JOIN google_calendar_connections c ON c.organisation_id=n.organisation_id AND c.email_enabled_at IS NOT NULL
         WHERE n.id=${id}::uuid AND n.organisation_id=${org}::uuid AND n.archived_at IS NULL`);
@@ -65,7 +67,23 @@ export async function processWorkflowEmails() {
           "The Google sender connection needs administrator review or reconnection.",
         );
       }
-      const reference = await sendWorkflowEmail(token, String(recipient["workspace_email"]), id);
+      const morningEmail = recipient["type"] === "attendance.missing_clockout_reminder";
+      const date = morningEmail ? await missingClockoutEmailDate(id) : null;
+      if (
+        (morningEmail && !date) ||
+        ["attendance.sign_out", "attendance.sign_out_reminder"].includes(String(recipient["type"]))
+      ) {
+        await db.execute(
+          sql`UPDATE workflow_notification_emails SET status='Skipped',last_error='Reminder no longer applicable.',updated_at=now() WHERE notification_id=${id}::uuid`,
+        );
+        continue;
+      }
+      const reference = await sendWorkflowEmail(
+        token,
+        String(recipient["workspace_email"]),
+        id,
+        date ?? undefined,
+      );
       await db.execute(
         sql`UPDATE workflow_notification_emails SET status='Sent',provider_message_id=${reference},sent_at=now(),last_error=NULL,updated_at=now() WHERE notification_id=${id}::uuid`,
       );

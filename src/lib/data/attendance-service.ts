@@ -1581,6 +1581,12 @@ export class AttendanceService {
     if (openCorrection) throw new Error("A correction is already pending for this record.");
 
     const employee = new EmployeeService().getById(record.employeeId, SYSTEM_CONTEXT);
+    const clockOutOnly =
+      !!record.clockIn &&
+      !record.clockOut &&
+      !!proposedOut &&
+      record.date < dateKey(this.now()) &&
+      (!proposedIn || proposedIn === record.clockIn);
     const correction = this.correctionRepo.create(
       {
         attendanceRecordId: recordId,
@@ -1596,7 +1602,7 @@ export class AttendanceService {
         proposedClockOut: proposedOut || undefined,
         explanation: explanation.trim(),
         evidenceFileId,
-        status: employee?.lineManagerId ? "Pending Manager" : "Pending HR",
+        status: clockOutOnly || !employee?.lineManagerId ? "Pending HR" : "Pending Manager",
       },
       context,
     );
@@ -1605,7 +1611,11 @@ export class AttendanceService {
       { status: "Correction Pending" },
       { ...context, reason: "Attendance correction submitted" },
     );
-    this.notifyCorrectionReviewer(correction, employee?.lineManagerId, context);
+    this.notifyCorrectionReviewer(
+      correction,
+      clockOutOnly ? undefined : employee?.lineManagerId,
+      context,
+    );
     return correction;
   }
 
@@ -1978,65 +1988,9 @@ export class AttendanceService {
     return resolved;
   }
 
-  reconcileSignOutReminders(at = this.now()): number {
-    const { storage, notifications } = getApplicationDataServices();
-    const users = storage.readCollection<User>("users");
-    const existingKeys = new Set(
-      notifications
-        .list()
-        .map((notification) => notification.deduplicationKey)
-        .filter(Boolean),
-    );
-    const policy = this.getPolicy();
-    let created = 0;
-    for (const record of this.recordRepo
-      .list()
-      .filter((item) => item.clockInAt && !item.clockOut && item.date === dateKey(at))) {
-      if (
-        record.source === "Site Visit Auto" ||
-        !this.isTrackingRequired(record.employeeId, record.date)
-      )
-        continue;
-      const user = users.find((item) => item.employeeId === record.employeeId);
-      if (!user) continue;
-      const completionTime =
-        new Date(record.clockInAt!).getTime() +
-        flexibleOfficeSchedule(record.clockIn!, null, policy.standardDailyHours).elapsedMinutes *
-          60_000;
-      policy.signOutReminderOffsetsMinutes.forEach((offset, index) => {
-        const due = completionTime + offset * 60_000;
-        const key = `attendance-sign-out-${record.id}-${index + 1}`;
-        if (at.getTime() >= due && !existingKeys.has(key)) {
-          notifications.create(
-            {
-              recipientUserId: user.id,
-              type: "attendance.sign_out_reminder",
-              title: `Sign-out reminder ${index + 1} of 3`,
-              message:
-                index === 0
-                  ? `You have completed ${policy.standardDailyHours} working hours. Remember to sign out before leaving the office.`
-                  : `Your attendance is still open. Please sign out from the office geofence to avoid a missing punch.`,
-              priority: index === 2 ? "High" : "Normal",
-              status: "Unread",
-              dueAt: new Date(due).toISOString(),
-              deduplicationKey: key,
-              link: { entityType: "attendance", entityId: record.id, path: "/staff/me/attendance" },
-            },
-            {
-              actor: {
-                userId: "system",
-                displayName: "VIA HR System",
-                activeRole: "Super Admin",
-                roles: ["Super Admin"],
-              },
-            },
-          );
-          existingKeys.add(key);
-          created += 1;
-        }
-      });
-    }
-    return created;
+  reconcileSignOutReminders(_at = this.now()): number {
+    // Durable morning reminders belong to the server worker; never prompt staff to leave.
+    return 0;
   }
 
   previewCsv(text: string): AttendanceImportPreview {

@@ -10,17 +10,29 @@ export class WorkflowEmailError extends Error {
     super(message);
   }
 }
-export function workflowEmailRaw(recipient: string, notificationId: string) {
+export function workflowEmailRaw(
+  recipient: string,
+  notificationId: string,
+  missingClockoutDate?: string,
+) {
   z.string().email().parse(recipient);
   z.string().uuid().parse(notificationId);
   const { accountEmail, origin } = googleCalendarConfig();
   // Keep personal, medical, compensation and candidate information inside the authenticated app.
-  const body = `You have an approval-related update or reminder in VIA HR.\r\n\r\nOpen VIA HR to view your requests, decisions and tasks:\r\n${origin}/staff/requests\r\n\r\nAn email notification is not an approval. Sign in to see the current status.\r\n`;
+  if (missingClockoutDate)
+    z.string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .parse(missingClockoutDate);
+  const body = missingClockoutDate
+    ? `Your clock-in was recorded on ${missingClockoutDate}, but no clock-out was received. Please enter the time you left for HR to confirm.\r\n\r\nCorrect clock-out:\r\n${origin}/staff/me/attendance?correct=${missingClockoutDate}\r\n\r\nIf you have already corrected this record, no action is needed. Sign in to see the current status.\r\n`
+    : `You have an approval-related update or reminder in VIA HR.\r\n\r\nOpen VIA HR to view your requests, decisions and tasks:\r\n${origin}/staff/requests\r\n\r\nAn email notification is not an approval. Sign in to see the current status.\r\n`;
   return Buffer.from(
     [
       `From: VIA HR <${accountEmail}>`,
       `To: ${recipient}`,
-      "Subject: VIA HR - request update or reminder",
+      missingClockoutDate
+        ? "Subject: VIA HR - Missing clock-out for yesterday"
+        : "Subject: VIA HR - request update or reminder",
       `Message-ID: <via-notification-${notificationId}@via-int.com>`,
       "MIME-Version: 1.0",
       'Content-Type: text/plain; charset="UTF-8"',
@@ -34,8 +46,9 @@ export async function sendWorkflowEmail(
   accessToken: string,
   recipient: string,
   notificationId: string,
+  missingClockoutDate?: string,
 ) {
-  const raw = workflowEmailRaw(recipient, notificationId);
+  const raw = workflowEmailRaw(recipient, notificationId, missingClockoutDate);
   let response: Response;
   try {
     response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {

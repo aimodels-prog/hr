@@ -187,6 +187,12 @@ test("saved punches remain visible without tracking; missing records do not impl
   });
 });
 
+test("client attendance never prompts an employee to leave at the end of the day", () => {
+  const { service } = harnessWithClock(() => new Date("2026-09-29T23:00Z"));
+  seedRecord(service, "2026-09-29");
+  assert.equal(service.reconcileSignOutReminders(), 0);
+});
+
 test("untracked open punches retain their times and correction workflow", () => {
   const { service, storage } = harnessWithClock(() => new Date("2026-09-29T08:00:00Z"));
   const saved = seedRecord(service, "2026-09-29");

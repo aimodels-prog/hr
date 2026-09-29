@@ -8,6 +8,40 @@ test.beforeAll(configureAttendanceFixture);
 
 type PreviewRole = "Employee" | "HR" | "Accounts";
 
+test("morning email opens a one-time-field clock-out correction on a phone", async ({ page }) => {
+  const url = process.env["VIA_HR_TEST_DATABASE_URL"];
+  expect(url).toBeTruthy();
+  expect(new URL(url!).pathname).toMatch(/test|scratch/);
+  const sql = postgres(url!, { max: 1 });
+  let recordId: string | undefined;
+  try {
+    const [record] = await sql`INSERT INTO attendance_records
+      (organisation_id,employee_id,date,clock_in_at,source,status,created_by,updated_by)
+      SELECT e.organisation_id,e.id,d::date,d::date + time '08:24:27','Manual Entry','Present',u.id,u.id
+      FROM employees e JOIN users u ON u.employee_id=e.id
+      CROSS JOIN generate_series(current_date - 30,current_date - 2,interval '1 day') d
+      WHERE lower(e.work_email)='omar.rahman@via-int.com'
+      AND NOT EXISTS (SELECT 1 FROM attendance_records a WHERE a.employee_id=e.id AND a.date=d::date)
+      LIMIT 1 RETURNING id,date::text`;
+    expect(record).toBeTruthy();
+    recordId = record!.id;
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/staff");
+    await previewAs(page, "user-omar", "Employee", `/staff/me/attendance?correct=${record!.date}`);
+    const dialog = page.getByRole("dialog", { name: "Correct clock-out", exact: true });
+    await expect(dialog).toBeVisible({ timeout: 30000 });
+    await expect(dialog.getByLabel("Clock In", { exact: true })).toBeHidden();
+    await expect(dialog.getByLabel("Justification")).toBeHidden();
+    await expect(dialog.getByLabel("Clock Out", { exact: true })).toHaveValue("");
+    await dialog.getByLabel("Clock Out", { exact: true }).fill("17:00");
+    await expect(dialog.getByRole("button", { name: "Submit for Approval" })).toBeEnabled();
+    await expect(dialog).toContainText("HR will confirm it");
+  } finally {
+    if (recordId) await sql`DELETE FROM attendance_records WHERE id=${recordId}`;
+    await sql.end();
+  }
+});
+
 test("staff outside biometric tracking retain leave charts and manual timesheets", async ({
   page,
 }) => {

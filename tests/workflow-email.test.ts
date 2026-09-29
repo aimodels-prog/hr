@@ -21,6 +21,15 @@ test("workflow emails require explicit permission and confirmed Google acceptanc
     assert.throws(() => workflowEmailRaw("person@example.test\r\nBcc: other@example.test", id));
     const mime = Buffer.from(workflowEmailRaw("person@example.test", id), "base64url").toString();
     assert.match(mime, /Message-ID: <via-notification-/);
+    const morning = Buffer.from(
+      workflowEmailRaw("person@example.test", id, "2026-09-29"),
+      "base64url",
+    ).toString();
+    assert.match(morning, /Subject: VIA HR - Missing clock-out for yesterday/);
+    const body = Buffer.from(morning.split("\r\n\r\n")[1]!, "base64").toString();
+    assert.match(body, /\/staff\/me\/attendance\?correct=2026-09-29/);
+    assert.match(body, /HR to confirm/);
+    assert.doesNotMatch(body, /before leaving|go home/);
     const fetchMock = t.mock.method(
       globalThis,
       "fetch",
