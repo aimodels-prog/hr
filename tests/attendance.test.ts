@@ -96,6 +96,21 @@ function fakeFileRepository(): FileRepository {
 function harness() {
   const storage = new VersionedStorageService(new MemoryStorageDriver());
   initializeSeedData(storage);
+  storage.writeCollection("attendanceTracking", [
+    {
+      headOfficeLocationId: "loc-muscat",
+      effectiveFrom: "2020-01-01",
+      revision: 1,
+      assignments: storage
+        .readCollection<{ id: string; databaseId?: string }>("employees")
+        .map((person) => ({
+          employeeId: person.databaseId ?? person.id,
+          effectiveFrom: "2020-01-01",
+          mode: "Head Office biometric",
+          source: "location",
+        })),
+    },
+  ]);
   const audit = new AuditService(storage);
   const notifications = new NotificationService(storage, audit);
   const files = fakeFileRepository();
@@ -106,6 +121,21 @@ function harness() {
 function harnessWithClock(now: () => Date) {
   const storage = new VersionedStorageService(new MemoryStorageDriver());
   initializeSeedData(storage);
+  storage.writeCollection("attendanceTracking", [
+    {
+      headOfficeLocationId: "loc-muscat",
+      effectiveFrom: "2020-01-01",
+      revision: 1,
+      assignments: storage
+        .readCollection<{ id: string; databaseId?: string }>("employees")
+        .map((person) => ({
+          employeeId: person.databaseId ?? person.id,
+          effectiveFrom: "2020-01-01",
+          mode: "Head Office biometric",
+          source: "location",
+        })),
+    },
+  ]);
   const audit = new AuditService(storage);
   const notifications = new NotificationService(storage, audit);
   const files = fakeFileRepository();
@@ -401,4 +431,19 @@ test("HR attendance edits cannot create a duplicate employee-and-date record", (
   );
   const edited = service.updateRecord(first.id, { clockOut: "19:00" }, hr);
   assert.equal(edited.clockOut, "19:00");
+});
+
+test("ordinary office attendance follows actual arrival rather than a fixed departure", () => {
+  const { service } = harness();
+  const initial = seedRecord(service, "2026-09-29");
+  const fullDay = service.updateRecord(initial.id, { clockIn: "07:30", clockOut: "16:30" }, hr);
+  assert.equal(fullDay.calculatedHours, 8);
+  assert.equal(fullDay.expectedClockOut, "16:30");
+  assert.equal(fullDay.isEarlyDeparture, false);
+  assert.equal(fullDay.isLate, false);
+  const shortDay = service.updateRecord(initial.id, { clockOut: "16:00" }, hr);
+  assert.equal(shortDay.isEarlyDeparture, true);
+  const laterStart = service.updateRecord(initial.id, { clockIn: "09:00", clockOut: "18:00" }, hr);
+  assert.equal(laterStart.isLate, false);
+  assert.equal(laterStart.calculatedHours, 8);
 });

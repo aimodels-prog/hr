@@ -32,6 +32,7 @@ const Filters = z
       .or(z.literal(""))
       .default(""),
     department: z.string().max(120).default("all"),
+    location: z.string().max(120).default("all"),
     status: z.string().max(120).default("all"),
     leaveYear: z
       .union([z.number().int().min(2000).max(2200), z.enum(["current", "all"])])

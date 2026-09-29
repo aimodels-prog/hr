@@ -14,6 +14,8 @@ import {
 } from "../schema/master-data.ts";
 import { employees, roles, userRoles, users } from "../schema/employee.ts";
 import { appSettings } from "../schema/organisation.ts";
+import { isAttendanceTracked, readAttendanceTracking } from "../../data/attendance-tracking.ts";
+import { ordinaryAttendanceHours } from "../../data/office-schedule.ts";
 import { leaveRequests } from "../schema/leave.ts";
 import { auditEvents, notifications } from "../schema/system.ts";
 import {
@@ -32,7 +34,7 @@ const DEFAULT_SETTINGS = {
   overtimeThresholdWeekly: 40,
   allowCopyPreviousWeek: true,
   payrollLockBehaviour: "Manual by HR" as const,
-  requireHrOvertimeVerification: false,
+  requireHrOvertimeVerification: true,
   overtimePreauthorisationRequired: true,
   overtimeMaxDailyHours: 4,
   overtimeMaxWeeklyHours: 12,
@@ -297,32 +299,44 @@ export async function submitTimesheetInDatabase(
     const attendanceByDate = new Map(attendance.map((item) => [item.date, item]));
     const dates = new Set([...workByDate.keys(), ...attendanceByDate.keys()]);
     const explanations = (sheet.attendanceDiscrepancyExplanations ?? {}) as Record<string, string>;
-    const days = [...dates].sort().map((date) => {
-      const record = attendanceByDate.get(date);
-      const attendanceHours = Number(record?.calculatedHours ?? 0);
-      const timesheetWorkHours = workByDate.get(date) ?? 0;
-      const varianceHours = Number((timesheetWorkHours - attendanceHours).toFixed(2));
-      const requiresExplanation =
-        !record?.clockInAt || !record?.clockOutAt || Math.abs(varianceHours) > tolerance;
-      const explanation = explanations[date]?.trim();
-      return {
-        date,
-        attendanceHours,
-        timesheetWorkHours,
-        leaveHours: 0,
-        holidayHours: 0,
-        varianceHours,
-        attendanceStatus: record?.status ?? "No Record",
-        status: !record
-          ? "Missing Attendance"
-          : Math.abs(varianceHours) > tolerance
-            ? "Variance"
-            : "Matched",
-        requiresExplanation,
-        ...(explanation ? { explanation } : {}),
-        resolved: !requiresExplanation || Boolean(explanation && explanation.length >= 10),
-      };
-    });
+    const [trackingSettings] = await tx
+      .select({ additional: appSettings.additionalSettings })
+      .from(appSettings)
+      .where(eq(appSettings.organisationId, organisationId))
+      .limit(1);
+    const tracking = readAttendanceTracking(trackingSettings?.additional);
+    const days = [...dates]
+      .filter((date) => isAttendanceTracked(tracking, sheet.employeeId, date))
+      .sort()
+      .map((date) => {
+        const record = attendanceByDate.get(date);
+        const attendanceHours = ordinaryAttendanceHours(
+          Number(record?.calculatedHours ?? 0),
+          Number(settings?.standardDailyHours ?? 8),
+        );
+        const timesheetWorkHours = workByDate.get(date) ?? 0;
+        const varianceHours = Number((timesheetWorkHours - attendanceHours).toFixed(2));
+        const requiresExplanation =
+          !record?.clockInAt || !record?.clockOutAt || Math.abs(varianceHours) > tolerance;
+        const explanation = explanations[date]?.trim();
+        return {
+          date,
+          attendanceHours,
+          timesheetWorkHours,
+          leaveHours: 0,
+          holidayHours: 0,
+          varianceHours,
+          attendanceStatus: record?.status ?? "No Record",
+          status: !record
+            ? "Missing Attendance"
+            : Math.abs(varianceHours) > tolerance
+              ? "Variance"
+              : "Matched",
+          requiresExplanation,
+          ...(explanation ? { explanation } : {}),
+          resolved: !requiresExplanation || Boolean(explanation && explanation.length >= 10),
+        };
+      });
     const unresolved = days.filter((item) => !item.resolved);
     if (unresolved.length)
       throw new Error(
@@ -442,22 +456,11 @@ export async function decideTimesheetInDatabase(
       .from(timesheetSettings)
       .where(eq(timesheetSettings.organisationId, organisationId))
       .limit(1);
-    const reconciliationDays = reconciliation.days as Array<{
-      requiresExplanation?: boolean;
-      status?: string;
-    }>;
-    const requiresHrReview =
-      reconciliationDays.some((day) => day.requiresExplanation || day.status !== "Matched") ||
-      Number(sheet.totalHours) > Number(sheet.expectedHours);
     const next =
       decision === "return"
         ? "Returned"
         : manager
-          ? requiresHrReview
-            ? "Pending HR"
-            : settings?.payrollLockBehaviour === "Automatic on Approval"
-              ? "Payroll Locked"
-              : "Approved"
+          ? "Pending HR"
           : settings?.payrollLockBehaviour === "Automatic on Approval"
             ? "Payroll Locked"
             : "Approved";
@@ -508,9 +511,9 @@ export async function decideTimesheetInDatabase(
           organisationId,
           hrUser.id,
           {
-            title: "Timesheet exception awaiting HR review",
+            title: "Timesheet awaiting HR approval",
             message:
-              "A supervisor-approved timesheet contains an attendance or hours exception requiring HR review.",
+              "A supervisor has reviewed this timesheet. HR final approval is required before payroll.",
             key: `timesheet-hr-${timesheetId}-${sheet.recordVersion + 1}`,
             entityId: timesheetId,
             path: `/staff/timesheet-approvals/${timesheetId}`,
@@ -548,7 +551,7 @@ export async function decideTimesheetInDatabase(
       entityId: timesheetId,
       afterSummary: {
         status: next,
-        hrExceptionReviewRequired: manager && requiresHrReview,
+        hrReviewRequired: manager && decision === "approve",
       },
       reason: notes?.trim() ?? `Timesheet ${decision}d`,
       riskLevel: "High",
@@ -641,7 +644,7 @@ export async function listTimesheetSnapshotForActor(
           allowCopyPreviousWeek: settingsRow.allowCopyPreviousWeek,
           payrollLockBehaviour: settingsRow.payrollLockBehaviour as
             "Manual by HR" | "Automatic on Approval",
-          requireHrOvertimeVerification: settingsRow.requireHrOvertimeVerification,
+          requireHrOvertimeVerification: true,
           overtimePreauthorisationRequired: settingsRow.overtimePreauthorisationRequired,
           overtimeMaxDailyHours: Number(settingsRow.overtimeMaxDailyHours),
           overtimeMaxWeeklyHours: Number(settingsRow.overtimeMaxWeeklyHours),
@@ -778,6 +781,7 @@ export async function updateTimesheetSettingsInDatabase(
         .update(timesheetSettings)
         .set({
           ...settings,
+          requireHrOvertimeVerification: true,
           standardDailyHours: String(settings.standardDailyHours),
           overtimeThresholdWeekly: String(settings.overtimeThresholdWeekly),
           overtimePreauthorisationRequired,
@@ -795,6 +799,7 @@ export async function updateTimesheetSettingsInDatabase(
         id: randomUUID(),
         organisationId,
         ...settings,
+        requireHrOvertimeVerification: true,
         standardDailyHours: String(settings.standardDailyHours),
         overtimeThresholdWeekly: String(settings.overtimeThresholdWeekly),
         overtimePreauthorisationRequired,
@@ -997,35 +1002,47 @@ async function buildTimesheetReconciliation(
     workByDate.set(entry.workDate, (workByDate.get(entry.workDate) ?? 0) + Number(entry.hours));
   const recordByDate = new Map(records.map((item) => [item.date, item]));
   const explanations = (sheet.attendanceDiscrepancyExplanations ?? {}) as Record<string, string>;
-  const days = [...new Set([...workByDate.keys(), ...recordByDate.keys()])].sort().map((date) => {
-    const record = recordByDate.get(date);
-    const attendanceHours = Number(record?.calculatedHours ?? 0);
-    const timesheetWorkHours = workByDate.get(date) ?? 0;
-    const varianceHours = Number((timesheetWorkHours - attendanceHours).toFixed(2));
-    const incomplete = Boolean(record && (!record.clockInAt || !record.clockOutAt));
-    const requiresExplanation = !record || incomplete || Math.abs(varianceHours) > toleranceHours;
-    const explanation = explanations[date]?.trim();
-    const status = !record
-      ? "Missing Attendance"
-      : incomplete
-        ? "Incomplete Attendance"
-        : Math.abs(varianceHours) > toleranceHours
-          ? "Variance"
-          : "Matched";
-    return {
-      date,
-      attendanceHours,
-      timesheetWorkHours,
-      leaveHours: 0,
-      holidayHours: 0,
-      varianceHours,
-      attendanceStatus: record?.status ?? "No Record",
-      status,
-      requiresExplanation,
-      ...(explanation ? { explanation } : {}),
-      resolved: !requiresExplanation || Boolean(explanation && explanation.length >= 10),
-    };
-  });
+  const [trackingSettings] = await tx
+    .select({ additional: appSettings.additionalSettings })
+    .from(appSettings)
+    .where(eq(appSettings.organisationId, organisationId))
+    .limit(1);
+  const tracking = readAttendanceTracking(trackingSettings?.additional);
+  const days = [...new Set([...workByDate.keys(), ...recordByDate.keys()])]
+    .filter((date) => isAttendanceTracked(tracking, sheet.employeeId, date))
+    .sort()
+    .map((date) => {
+      const record = recordByDate.get(date);
+      const attendanceHours = ordinaryAttendanceHours(
+        Number(record?.calculatedHours ?? 0),
+        Number(settings?.standardDailyHours ?? 8),
+      );
+      const timesheetWorkHours = workByDate.get(date) ?? 0;
+      const varianceHours = Number((timesheetWorkHours - attendanceHours).toFixed(2));
+      const incomplete = Boolean(record && (!record.clockInAt || !record.clockOutAt));
+      const requiresExplanation = !record || incomplete || Math.abs(varianceHours) > toleranceHours;
+      const explanation = explanations[date]?.trim();
+      const status = !record
+        ? "Missing Attendance"
+        : incomplete
+          ? "Incomplete Attendance"
+          : Math.abs(varianceHours) > toleranceHours
+            ? "Variance"
+            : "Matched";
+      return {
+        date,
+        attendanceHours,
+        timesheetWorkHours,
+        leaveHours: 0,
+        holidayHours: 0,
+        varianceHours,
+        attendanceStatus: record?.status ?? "No Record",
+        status,
+        requiresExplanation,
+        ...(explanation ? { explanation } : {}),
+        resolved: !requiresExplanation || Boolean(explanation && explanation.length >= 10),
+      };
+    });
   return {
     generatedAt: new Date().toISOString(),
     toleranceHours,
@@ -1170,8 +1187,6 @@ export async function saveTimesheetDraftInDatabase(
           throw new Error(
             "Select a project, cost centre, activity and work location for entered hours.",
           );
-        if (!entry.notes?.trim() || entry.notes.trim().length < 3)
-          throw new Error("Describe the work completed for every row containing hours.");
         await activeMaster(tx, projects, organisationId, entry.projectId, "project");
         await activeMaster(tx, costCentres, organisationId, entry.costCentreId, "cost centre");
         await activeMaster(
@@ -1190,7 +1205,7 @@ export async function saveTimesheetDraftInDatabase(
           locationId: entry.locationId,
           workDate,
           hours,
-          notes: entry.notes.trim(),
+          notes: entry.notes?.trim() ?? "",
         });
       }
     }

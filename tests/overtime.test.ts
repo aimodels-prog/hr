@@ -16,6 +16,12 @@ import { TimesheetService } from "../src/lib/data/timesheet-service.ts";
 import type { FileRepository, SaveFileInput } from "../src/lib/data/file-repository.ts";
 import type { ActorContext, FileMetadata } from "../src/lib/data/types.ts";
 
+function approveThroughHr(overtime: OvertimeService, id: string, reviewer: ActorContext) {
+  const reviewed = overtime.managerApprove(id, reviewer);
+  assert.equal(reviewed.status, "Pending HR");
+  return overtime.hrVerify(id, true, "", hr);
+}
+
 const employee: ActorContext = {
   actor: {
     userId: "user-omar",
@@ -327,13 +333,16 @@ test("Super Admin cannot approve their own overtime claim even though they hold 
   assert.throws(() => overtime.managerApprove(claim.id, superAdmin), /own overtime claim/);
 });
 
-test("a manager approving a direct report's claim moves it straight to Approved when HR verification is not required", async () => {
+test("manager approval always waits for HR, even when the legacy verification option is off", async () => {
   const { overtime } = harness();
   const claim = await overtime.submitClaim(
     { employeeId: "employee-omar", date: "2026-08-10", hours: 2, reason: "Client escalation" },
     employee,
   );
-  const approved = overtime.managerApprove(claim.id, manager);
+  const reviewed = overtime.managerApprove(claim.id, manager);
+  assert.equal(reviewed.status, "Pending HR");
+  assert.equal(reviewed.approvedAt, undefined);
+  const approved = overtime.hrVerify(claim.id, true, "", hr);
   assert.equal(approved.status, "Approved");
 });
 
@@ -367,7 +376,7 @@ test("a TOIL claim credits Compensation Leave exactly once when approved", async
     },
     employee,
   );
-  const approved = overtime.managerApprove(claim.id, manager);
+  const approved = approveThroughHr(overtime, claim.id, manager);
   assert.equal(approved.status, "Approved");
   assert.ok(approved.toilCreditedAt, "expected toilCreditedAt to be set after crediting");
 
@@ -402,7 +411,7 @@ test("correcting approved TOIL reverses the original leave credit before reappro
     },
     employee,
   );
-  const approved = overtime.managerApprove(claim.id, manager);
+  const approved = approveThroughHr(overtime, claim.id, manager);
   assert.ok(
     leave.calculateBalance("employee-omar", compPolicy.id, employee).available > startingBalance,
   );
@@ -429,7 +438,7 @@ test("an approved claim from an earlier date is carried into the next payroll co
     },
     employee,
   );
-  overtime.managerApprove(claim.id, manager);
+  approveThroughHr(overtime, claim.id, manager);
 
   const payroll = new PayrollService();
   const period = payroll.createPeriod(
@@ -463,7 +472,7 @@ test("correcting an approved claim only archives the original once the replaceme
     { employeeId: "employee-omar", date: "2026-08-10", hours: 2, reason: "Client escalation" },
     employee,
   );
-  const approved = overtime.managerApprove(claim.id, manager);
+  const approved = approveThroughHr(overtime, claim.id, manager);
   assert.equal(approved.status, "Approved");
 
   // An invalid correction (exceeds the max hours) must fail validation without touching the
@@ -495,7 +504,7 @@ test("a valid correction commits the replacement and the original's Corrected st
     { employeeId: "employee-omar", date: "2026-08-11", hours: 2, reason: "Client escalation" },
     employee,
   );
-  const approved = overtime.managerApprove(claim.id, manager);
+  const approved = approveThroughHr(overtime, claim.id, manager);
   assert.equal(approved.status, "Approved");
 
   let overtimeClaimsWrites = 0;
@@ -531,7 +540,7 @@ test("two concurrent corrections against the same approved claim cannot both suc
     { employeeId: "employee-omar", date: "2026-08-12", hours: 2, reason: "Client escalation" },
     employee,
   );
-  const approved = overtime.managerApprove(claim.id, manager);
+  const approved = approveThroughHr(overtime, claim.id, manager);
   assert.equal(approved.status, "Approved");
 
   // Both calls start synchronously and reach their internal `await` (buildClaimPayload) before
@@ -625,10 +634,10 @@ test("the Finance overtime ledger is restricted to Accounts and Super Admin and 
     },
     employee,
   );
-  const approved = overtime.managerApprove(claim.id, manager);
+  const approved = approveThroughHr(overtime, claim.id, manager);
 
   assert.ok(approved.approvedAt);
-  assert.equal(approved.approvedBy, manager.actor.userId);
+  assert.equal(approved.approvedBy, hr.actor.userId);
   assert.throws(() => overtime.getPayrollOvertimeLedger(hr), /not authorised/);
   assert.throws(() => overtime.getPayrollOvertimeLedger(employee), /not authorised/);
 
@@ -669,8 +678,8 @@ test("TOIL is never compiled or assigned as payable overtime", async () => {
     },
     employee,
   );
-  overtime.managerApprove(payment.id, manager);
-  overtime.managerApprove(toil.id, manager);
+  approveThroughHr(overtime, payment.id, manager);
+  approveThroughHr(overtime, toil.id, manager);
 
   const payroll = new PayrollService();
   const period = payroll.createPeriod(
@@ -702,7 +711,8 @@ test("TOIL is never compiled or assigned as payable overtime", async () => {
 
 test("payroll assignment pre-validates every claim and cannot partially include a mixed Payment and TOIL batch", async () => {
   const { overtime } = harness();
-  const payment = overtime.managerApprove(
+  const payment = approveThroughHr(
+    overtime,
     (
       await overtime.submitClaim(
         {
@@ -717,7 +727,8 @@ test("payroll assignment pre-validates every claim and cannot partially include 
     ).id,
     manager,
   );
-  const toil = overtime.managerApprove(
+  const toil = approveThroughHr(
+    overtime,
     (
       await overtime.submitClaim(
         {
@@ -756,7 +767,7 @@ test("overtime ledger export applies service filters, protects spreadsheet cells
     },
     employee,
   );
-  overtime.managerApprove(claim.id, manager);
+  approveThroughHr(overtime, claim.id, manager);
 
   assert.throws(() => overtime.exportPayrollOvertimeLedgerCsv(hr), /not authorised/);
   const csv = overtime.exportPayrollOvertimeLedgerCsv(accounts, {
@@ -785,7 +796,7 @@ test("payroll collection restores both the period and overtime assignment when t
     },
     employee,
   );
-  overtime.managerApprove(claim.id, manager);
+  approveThroughHr(overtime, claim.id, manager);
   const payroll = new PayrollService();
   const period = payroll.createPeriod(
     {

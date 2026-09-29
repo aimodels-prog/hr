@@ -25,6 +25,7 @@ import { getMasterDataRepository, getProjectRepository } from "./master-data.ts"
 import type { ActorContext, User } from "./types.ts";
 import { LeaveService } from "./leave-service.ts";
 import { AttendanceService } from "./attendance-service.ts";
+import { ordinaryAttendanceHours } from "./office-schedule.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { SettingsService } from "./settings-service.ts";
 
@@ -37,7 +38,7 @@ const DEFAULT_SETTINGS: TimesheetSettings = {
   overtimeThresholdWeekly: 40,
   allowCopyPreviousWeek: true,
   payrollLockBehaviour: "Manual by HR",
-  requireHrOvertimeVerification: false,
+  requireHrOvertimeVerification: true,
   overtimePreauthorisationRequired: true,
   overtimeMaxDailyHours: 4,
   overtimeMaxWeeklyHours: 12,
@@ -446,7 +447,9 @@ export class TimesheetService {
     }
     const { storage, audit } = getApplicationDataServices();
     const previous = this.getSettings();
-    storage.writeCollection(SETTINGS_COLLECTION, [settings]);
+    storage.writeCollection(SETTINGS_COLLECTION, [
+      { ...settings, requireHrOvertimeVerification: true },
+    ]);
     audit.record({
       context,
       action: "UPDATE",
@@ -659,66 +662,73 @@ export class TimesheetService {
     const days: DailyAttendanceReconciliation[] = eachDayOfInterval({
       start: parseISO(period.startDate),
       end: parseISO(period.endDate),
-    }).map((day) => {
-      const date = format(day, "yyyy-MM-dd");
-      const record = attendanceByDate.get(date);
-      const virtualStatus = record
-        ? undefined
-        : this.attendanceService.reconcileDailyStatus(timesheet.employeeId, date, SYSTEM_CONTEXT)
-            ?.status;
-      let workHours = 0;
-      let leaveHours = 0;
-      let holidayHours = 0;
-      for (const entry of timesheet.entries) {
-        const hours = entry.hours[date] ?? 0;
-        if (entry.isLeave) leaveHours += hours;
-        else if (entry.isHoliday) holidayHours += hours;
-        else workHours += hours;
-      }
-      const attendanceHours = record?.calculatedHours ?? 0;
-      const attendanceStatus = record?.status ?? virtualStatus ?? "No Record";
-      const completeAttendance = Boolean(record?.clockIn && record?.clockOut);
-      let status: DailyAttendanceReconciliation["status"] = "Matched";
-      let requiresExplanation = false;
+    })
+      .filter((day) =>
+        this.attendanceService.isTrackingRequired(timesheet.employeeId, format(day, "yyyy-MM-dd")),
+      )
+      .map((day) => {
+        const date = format(day, "yyyy-MM-dd");
+        const record = attendanceByDate.get(date);
+        const virtualStatus = record
+          ? undefined
+          : this.attendanceService.reconcileDailyStatus(timesheet.employeeId, date, SYSTEM_CONTEXT)
+              ?.status;
+        let workHours = 0;
+        let leaveHours = 0;
+        let holidayHours = 0;
+        for (const entry of timesheet.entries) {
+          const hours = entry.hours[date] ?? 0;
+          if (entry.isLeave) leaveHours += hours;
+          else if (entry.isHoliday) holidayHours += hours;
+          else workHours += hours;
+        }
+        const attendanceHours = ordinaryAttendanceHours(
+          record?.calculatedHours ?? 0,
+          settings.standardDailyHours,
+        );
+        const attendanceStatus = record?.status ?? virtualStatus ?? "No Record";
+        const completeAttendance = Boolean(record?.clockIn && record?.clockOut);
+        let status: DailyAttendanceReconciliation["status"] = "Matched";
+        let requiresExplanation = false;
 
-      if (attendanceStatus === "On Leave") status = "Leave";
-      else if (attendanceStatus === "Holiday") status = "Holiday";
-      else if (attendanceStatus === "Rest Day" && workHours === 0) status = "Rest Day";
-      else if (record && !completeAttendance) {
-        status = "Incomplete Attendance";
-        requiresExplanation = workHours > 0;
-      } else if (!record && workHours > 0) {
-        status = "Missing Attendance";
-        requiresExplanation = true;
-      } else if (
-        completeAttendance &&
-        workHours === 0 &&
-        attendanceHours > settings.attendanceVarianceToleranceHours
-      ) {
-        status = "Missing Timesheet";
-        requiresExplanation = true;
-      } else if (
-        Math.abs(workHours - attendanceHours) > settings.attendanceVarianceToleranceHours
-      ) {
-        status = "Variance";
-        requiresExplanation = true;
-      }
+        if (attendanceStatus === "On Leave") status = "Leave";
+        else if (attendanceStatus === "Holiday") status = "Holiday";
+        else if (attendanceStatus === "Rest Day" && workHours === 0) status = "Rest Day";
+        else if (record && !completeAttendance) {
+          status = "Incomplete Attendance";
+          requiresExplanation = workHours > 0;
+        } else if (!record && workHours > 0) {
+          status = "Missing Attendance";
+          requiresExplanation = true;
+        } else if (
+          completeAttendance &&
+          workHours === 0 &&
+          attendanceHours > settings.attendanceVarianceToleranceHours
+        ) {
+          status = "Missing Timesheet";
+          requiresExplanation = true;
+        } else if (
+          Math.abs(workHours - attendanceHours) > settings.attendanceVarianceToleranceHours
+        ) {
+          status = "Variance";
+          requiresExplanation = true;
+        }
 
-      const explanation = explanations[date]?.trim();
-      return {
-        date,
-        attendanceHours,
-        timesheetWorkHours: workHours,
-        leaveHours,
-        holidayHours,
-        varianceHours: Number((workHours - attendanceHours).toFixed(2)),
-        attendanceStatus,
-        status,
-        requiresExplanation,
-        ...(explanation ? { explanation } : {}),
-        resolved: !requiresExplanation || Boolean(explanation && explanation.length >= 10),
-      };
-    });
+        const explanation = explanations[date]?.trim();
+        return {
+          date,
+          attendanceHours,
+          timesheetWorkHours: workHours,
+          leaveHours,
+          holidayHours,
+          varianceHours: Number((workHours - attendanceHours).toFixed(2)),
+          attendanceStatus,
+          status,
+          requiresExplanation,
+          ...(explanation ? { explanation } : {}),
+          resolved: !requiresExplanation || Boolean(explanation && explanation.length >= 10),
+        };
+      });
     return {
       generatedAt: new Date().toISOString(),
       toleranceHours: settings.attendanceVarianceToleranceHours,
@@ -927,15 +937,6 @@ export class TimesheetService {
     for (const [date, total] of Object.entries(dailyTotals)) {
       if (total > 24) {
         throw new Error(`Total hours on ${date} exceeds 24 hours (${total}h).`);
-      }
-    }
-
-    // Validation: Required notes if standard entries
-    for (const entry of ts.entries) {
-      if (!entry.isLeave && !entry.isHoliday) {
-        if (!entry.notes || entry.notes.trim().length < 3) {
-          throw new Error("Notes are required for all standard time entries.");
-        }
       }
     }
 
@@ -1153,6 +1154,8 @@ export class TimesheetService {
   approveTimesheet(timesheetId: string, context: ActorContext): TimesheetWithEntries {
     const ts = this.timesheetRepo.getById(timesheetId);
     if (!ts) throw new Error("Timesheet not found");
+    if (ts.employeeId === context.actor.employeeId)
+      throw new Error("You cannot approve your own timesheet.");
 
     if (ts.status === "Pending Manager") {
       this.requireDirectReport(ts.employeeId, context, "review this timesheet");
@@ -1162,30 +1165,15 @@ export class TimesheetService {
           "This timesheet has unexplained attendance differences and must be returned to the employee.",
         );
       }
-      const requiresHrReview =
-        reconciliation.days.some((day) => day.requiresExplanation || day.status !== "Matched") ||
-        ts.totalHours > ts.expectedHours;
-      const settings = this.getSettings();
-      ts.status = requiresHrReview
-        ? "Pending HR"
-        : settings.payrollLockBehaviour === "Automatic on Approval"
-          ? "Payroll Locked"
-          : "Approved";
+      ts.status = "Pending HR";
       ts.supervisorReviewedAt = new Date().toISOString();
       ts.supervisorReviewedBy = context.actor.userId;
       ts.attendanceReconciliationSnapshot = reconciliation;
-      if (!requiresHrReview) {
-        ts.approvedAt = new Date().toISOString();
-        ts.approvedBy = context.actor.userId;
-      }
       const updated = this.timesheetRepo.update(ts.id, ts, {
         ...context,
-        reason: requiresHrReview
-          ? "Supervisor approved an exception timesheet for HR review"
-          : "Supervisor approved the routine timesheet",
+        reason: "Supervisor reviewed the timesheet; HR final approval is required",
       });
-      if (requiresHrReview) this.notifyHrReviewers(updated, context);
-      else this.notifyEmployee(updated, context);
+      this.notifyHrReviewers(updated, context);
       return updated;
     }
 

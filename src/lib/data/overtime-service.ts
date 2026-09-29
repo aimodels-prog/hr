@@ -662,21 +662,9 @@ export class OvertimeService {
     );
     if (claim.status !== "Pending Manager") throw new Error("Invalid status");
 
-    const tsService = new TimesheetService();
-    const settings = tsService.getSettings();
-
-    if (settings.requireHrOvertimeVerification) {
-      claim.status = "Pending HR";
-      const updated = this.claimRepo.update(claim.id, claim, context);
-      this.notifyHr(updated, context);
-      return updated;
-    }
-
-    claim.status = "Approved";
-    claim.approvedAt = new Date().toISOString();
-    claim.approvedBy = context.actor.userId;
+    claim.status = "Pending HR";
     const updated = this.claimRepo.update(claim.id, claim, context);
-    this.notifyDecision(updated, context);
+    this.notifyHr(updated, context);
     return updated;
   }
 

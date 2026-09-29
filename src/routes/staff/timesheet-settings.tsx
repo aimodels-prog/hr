@@ -310,15 +310,9 @@ function TimesheetSettingsRoute() {
               </Label>
             </div>
             <div className="flex items-center space-x-2">
-              <Switch
-                id="hr-overtime-verification"
-                checked={settings.requireHrOvertimeVerification}
-                onCheckedChange={(value) =>
-                  setSettings({ ...settings, requireHrOvertimeVerification: value })
-                }
-              />
+              <Switch id="hr-overtime-verification" checked disabled />
               <Label htmlFor="hr-overtime-verification">
-                Require HR verification after supervisor overtime approval
+                HR approval is required after supervisor review
               </Label>
             </div>
           </CardContent>

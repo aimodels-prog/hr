@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { AttendanceTrackingSettings } from "@/components/attendance/tracking-settings";
 import { Link, useLocation } from "@tanstack/react-router";
 import { employeeSearch } from "@/components/employees/employee-filter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -75,6 +76,7 @@ export function AttendanceTab({ employeeId }: { employeeId: string }) {
 
   return (
     <div className="space-y-6">
+      <AttendanceTrackingSettings employeeId={employeeId} />
       {from && until && (
         <p className="text-sm text-muted-foreground">
           Dashboard period: {from} to {until}. Attendance and overtime below use this period.

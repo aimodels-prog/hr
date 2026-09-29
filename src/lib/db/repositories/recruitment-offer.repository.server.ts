@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { syncEmployeeAttendanceTracking } from "./attendance-tracking.repository.server.ts";
 import { assignSupervisorApprovalAccess } from "./supervisor-access.repository.server.ts";
 import { isHrOwnedSetupTask } from "../../data/hr-owned-fields.ts";
 import {
@@ -1162,6 +1163,13 @@ async function convertAcceptedOffer(
     createdBy: actor.userId!,
     updatedBy: actor.userId!,
   });
+  await syncEmployeeAttendanceTracking(
+    tx,
+    organisationId,
+    employeeId,
+    vacancy.locationId,
+    offer.startDate,
+  );
   await tx.insert(users).values({
     id: userId,
     organisationId,

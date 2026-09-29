@@ -1,5 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
+import { AttendanceTrackingSettings } from "@/components/attendance/tracking-settings";
+import { VIA_OFFICE_SCHEDULE } from "@/lib/data/office-schedule";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
 import {
@@ -120,6 +122,7 @@ function AttendanceAdminContent() {
   const attendanceService = useMemo(() => new AttendanceService(), []);
   const employeeService = useMemo(() => new EmployeeService(), []);
   const [revision, setRevision] = useState(0);
+  const [section, setSection] = useState("daily");
   const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [statusFilter, setStatusFilter] = useState("All");
   const [manualOpen, setManualOpen] = useState(false);
@@ -269,7 +272,11 @@ function AttendanceAdminContent() {
       }, new Map<string, { punch: UnmatchedAttendancePunch; firstPunchAt: string; waitingCount: number }>())
       .values(),
   ];
-  const employeeFilter = useEmployeeFilter();
+  const headOffice = attendanceService.getTrackingPolicy()?.headOfficeLocationId;
+  const defaultOffice = attendanceService
+    .getLocations()
+    .find((item) => item.id === headOffice || item.databaseId === headOffice)?.name;
+  const employeeFilter = useEmployeeFilter(section === "daily" ? defaultOffice : undefined);
   const allRecords = attendanceService
     .getAllRecords(actorContext)
     .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
@@ -291,6 +298,17 @@ function AttendanceAdminContent() {
       const record = allRecords.find(
         (item) => item.employeeId === employee.id && item.date === date,
       );
+      if (!attendanceService.isTrackingRequired(employee.id, date))
+        return {
+          employee,
+          id: `untracked-${employee.id}`,
+          date,
+          status: "Not tracked",
+          clockIn: undefined,
+          clockOut: undefined,
+          calculatedHours: 0,
+          source: "Not required",
+        };
       if (record) return { employee, ...record };
       const reconciled = attendanceService.reconcileDailyStatus(employee.id, date, actorContext);
       return {
@@ -636,7 +654,7 @@ function AttendanceAdminContent() {
         ))}
       </div>
 
-      <Tabs defaultValue="daily">
+      <Tabs value={section} onValueChange={setSection}>
         <div className="overflow-x-auto pb-2">
           <TabsList>
             <TabsTrigger value="daily">Today's attendance</TabsTrigger>
@@ -690,7 +708,15 @@ function AttendanceAdminContent() {
                 try {
                   downloadText(
                     `via-attendance-${date}.csv`,
-                    await attendanceService.exportCsvAsync(date, actorContext),
+                    await attendanceService.exportCsvAsync(
+                      date,
+                      actorContext,
+                      currentRows
+                        .filter((row) =>
+                          attendanceService.isTrackingRequired(row.employee.id, date),
+                        )
+                        .map((row) => row.employee.id),
+                    ),
                     "text/csv",
                   );
                 } catch (error) {
@@ -1222,6 +1248,7 @@ function AttendanceAdminContent() {
         </TabsContent>
 
         <TabsContent value="setup" className="grid gap-4 lg:grid-cols-2">
+          <AttendanceTrackingSettings />
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
@@ -1294,6 +1321,24 @@ function AttendanceAdminContent() {
               </CardTitle>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setExpectedIn(VIA_OFFICE_SCHEDULE.start);
+                    setExpectedOut(VIA_OFFICE_SCHEDULE.end);
+                    setDefaultBreak(String(VIA_OFFICE_SCHEDULE.breakMinutes));
+                    setStandardHours(String(VIA_OFFICE_SCHEDULE.workingHours));
+                    setPolicyReason("Apply VIA office hours: 08:30–17:30; lunch 13:00–14:00.");
+                  }}
+                >
+                  Use VIA office hours
+                </Button>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Flexible arrival and finish · 8 working hours · Lunch 1–2 pm. An 8:30 am start
+                  finishes at 5:30 pm.
+                </p>
+              </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">Standard hours</label>
                 <Input

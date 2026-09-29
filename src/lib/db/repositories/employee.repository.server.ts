@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { syncEmployeeAttendanceTracking } from "./attendance-tracking.repository.server.ts";
 
 import { and, asc, eq, inArray, isNull, lte, ne, notInArray, sql } from "drizzle-orm";
 import {
@@ -1267,6 +1268,14 @@ async function applyEmploymentRecord(
       .update(employees)
       .set(updateValues)
       .where(and(eq(employees.organisationId, organisationId), eq(employees.id, employeeId)));
+    if (locationId)
+      await syncEmployeeAttendanceTracking(
+        tx,
+        organisationId,
+        employeeId,
+        locationId,
+        effectiveDate,
+      );
   }
 
   if (changes.lineManagerId !== undefined && changes.lineManagerId !== current.lineManagerId) {
@@ -1806,6 +1815,13 @@ export async function createEmployeeInDatabase(
       })
       .returning({ id: employees.id });
     if (!employee) throw new Error("The employee record could not be created.");
+    await syncEmployeeAttendanceTracking(
+      tx,
+      organisationId,
+      employee.id,
+      location.id,
+      input.startDate,
+    );
     const [user] = await tx
       .insert(users)
       .values({

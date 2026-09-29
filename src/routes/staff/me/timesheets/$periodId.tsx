@@ -529,7 +529,7 @@ function TimesheetEntryRoute() {
                             className="h-8 text-xs"
                             value={entry.notes || ""}
                             onChange={(e) => updateEntry(entry.id, "notes", e.target.value)}
-                            placeholder="Required..."
+                            placeholder="Task notes (optional)"
                           />
                         )}
                       </TableCell>

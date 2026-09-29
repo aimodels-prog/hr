@@ -1,4 +1,6 @@
 import "@tanstack/react-start/server-only";
+import { getAttendanceTrackingPolicy } from "./attendance-tracking.repository.server.ts";
+import { isAttendanceTracked } from "../../data/attendance-tracking.ts";
 import { and, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { getDatabaseClient } from "../client.ts";
 import { employees } from "../schema/employee.ts";
@@ -225,7 +227,9 @@ export async function getWorkforceAnalytics(
             .groupBy(siteVisitRequests.status)
         : [],
     ]);
+  const tracking = await getAttendanceTrackingPolicy(organisationId);
   const daily = calculateAttendanceAnalytics({
+    tracking,
     dates,
     employees: people,
     workingDays: settings.workingDays,
@@ -252,7 +256,19 @@ export async function getWorkforceAnalytics(
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   return {
-    today: attendanceToday({ date: today, now: at, people, records, leave, pendingVisits }),
+    workforceHeadcount: people.filter((person) => employedOn(person, today)).length,
+    attendanceTracked: individualId
+      ? isAttendanceTracked(tracking, individualId, today)
+      : Boolean(tracking),
+    today: attendanceToday({
+      date: today,
+      now: at,
+      people,
+      records,
+      leave,
+      pendingVisits,
+      tracking,
+    }),
     priorities: await dashboardPriorities({
       organisationId,
       scope,

@@ -51,6 +51,23 @@ export function LiveAttendanceCard() {
           minute: "2-digit",
         }).format(new Date(record.clockInAt))
       : "—";
+  if (data && !data.tracked)
+    return (
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4">
+        <div>
+          <p className="font-medium">My timesheet</p>
+          <p className="text-sm text-muted-foreground">
+            Record your work hours. Biometric attendance is not required.
+          </p>
+        </div>
+        <a
+          href="/staff/me/timesheets"
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+        >
+          Open timesheet
+        </a>
+      </section>
+    );
   return (
     <section aria-label="Today's attendance" className="rounded-xl border bg-card p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -74,6 +91,15 @@ export function LiveAttendanceCard() {
             {formatWorkedMinutes(workedMinutes(record, now))}
           </p>
           <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground">
+            {data.expectedDeparture && (
+              <span>
+                Expected finish{" "}
+                <strong className="ml-1 font-medium text-foreground">
+                  {data.expectedDeparture}
+                  {data.departureDayOffset ? " next day" : ""}
+                </strong>
+              </span>
+            )}
             <span>
               Clocked in <strong className="ml-1 font-medium text-foreground">{clockIn}</strong>
             </span>
@@ -95,9 +121,11 @@ export function LiveAttendanceCard() {
           {data ? "Sync delayed — retry" : "Try again"}
         </button>
       )}
-      {record && record.breakMinutes > 0 && (
+      {record && (record.breakStartAt || record.breakMinutes > 0) && (
         <p className="mt-2 text-xs text-muted-foreground">
-          {record.breakMinutes} min recorded break deducted
+          {record.breakStartAt
+            ? "Lunch 1–2 pm is excluded as it occurs"
+            : `${record.breakMinutes} min recorded break deducted`}
         </p>
       )}
     </section>

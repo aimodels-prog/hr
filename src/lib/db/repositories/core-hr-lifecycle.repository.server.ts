@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { syncEmployeeAttendanceTracking } from "./attendance-tracking.repository.server.ts";
 import { assignSupervisorApprovalAccess } from "./supervisor-access.repository.server.ts";
 import { isHrOwnedSetupTask } from "../../data/hr-owned-fields.ts";
 import { assertOffboardingCaseActive } from "../../data/offboarding-policy.ts";
@@ -2018,6 +2019,15 @@ export async function decideEmploymentDetailsInDatabase(
       })
       .where(eq(employees.id, employee.id));
 
+    if (input.decision === "Confirmed") {
+      await syncEmployeeAttendanceTracking(
+        tx,
+        organisationId,
+        employee.id,
+        proposed.locationId,
+        today,
+      );
+    }
     if (input.decision === "Changes Requested") {
       await tx
         .update(onboardingTasks)

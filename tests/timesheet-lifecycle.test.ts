@@ -56,6 +56,21 @@ const accounts: ActorContext = {
 function harness() {
   const storage = new VersionedStorageService(new MemoryStorageDriver());
   initializeSeedData(storage);
+  storage.writeCollection("attendanceTracking", [
+    {
+      headOfficeLocationId: "loc-muscat",
+      effectiveFrom: "2020-01-01",
+      revision: 1,
+      assignments: storage
+        .readCollection<{ id: string; databaseId?: string }>("employees")
+        .map((person) => ({
+          employeeId: person.databaseId ?? person.id,
+          effectiveFrom: "2020-01-01",
+          mode: "Head Office biometric",
+          source: "location",
+        })),
+    },
+  ]);
   const audit = new AuditService(storage);
   const notifications = new NotificationService(storage, audit);
   configureApplicationDataServices({ storage, audit, notifications, files: {} as never });

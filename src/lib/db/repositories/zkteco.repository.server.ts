@@ -1,4 +1,9 @@
 import "@tanstack/react-start/server-only";
+import {
+  attendanceBreakMinutes,
+  flexibleOfficeSchedule,
+  VIA_OFFICE_SCHEDULE,
+} from "../../data/office-schedule.ts";
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
@@ -319,8 +324,8 @@ async function projectDailyAttendance(
       organisationId: input.organisationId,
       employeeId: input.employeeId,
       date,
-      expectedClockIn: policy?.expectedClockIn ?? "09:00",
-      expectedClockOut: policy?.expectedClockOut ?? "18:00",
+      expectedClockIn: policy?.expectedClockIn ?? VIA_OFFICE_SCHEDULE.start,
+      expectedClockOut: policy?.expectedClockOut ?? VIA_OFFICE_SCHEDULE.end,
       clockInAt: input.occurredAt,
       breakMinutes: policy?.defaultBreakMinutes ?? 0,
       location: input.locationName,
@@ -362,7 +367,15 @@ async function projectDailyAttendance(
     effectiveEvents.length > 1 ? effectiveEvents[effectiveEvents.length - 1]!.toISOString() : null;
   if (siteDirectionKnown && effectiveIndex === effectiveEvents.length - 1)
     clockOutAt = direction === "out" ? input.occurredAt : null;
-  const breakMinutes = existing?.breakMinutes ?? policy?.defaultBreakMinutes ?? 0;
+  const breakMinutes = clockOutAt
+    ? attendanceBreakMinutes(
+        zonedParts(new Date(clockInAt), timezone).time,
+        zonedParts(new Date(clockOutAt), timezone).time,
+        policy?.defaultBreakMinutes ?? 60,
+        existing?.expectedClockIn ?? policy?.expectedClockIn ?? VIA_OFFICE_SCHEDULE.start,
+        existing?.expectedClockOut ?? policy?.expectedClockOut ?? VIA_OFFICE_SCHEDULE.end,
+      )
+    : (policy?.defaultBreakMinutes ?? 60);
   const hours = clockOutAt
     ? Math.max(
         0,
@@ -373,8 +386,10 @@ async function projectDailyAttendance(
   const localClockIn = zonedParts(new Date(clockInAt), timezone).time;
   const localClockOut = clockOutAt ? zonedParts(new Date(clockOutAt), timezone).time : undefined;
   const minutes = (value: string) => Number(value.slice(0, 2)) * 60 + Number(value.slice(3, 5));
-  const expectedIn = existing?.expectedClockIn ?? policy?.expectedClockIn ?? "09:00";
-  const expectedOut = existing?.expectedClockOut ?? policy?.expectedClockOut ?? "18:00";
+  const expectedIn =
+    existing?.expectedClockIn ?? policy?.expectedClockIn ?? VIA_OFFICE_SCHEDULE.start;
+  const expectedOut =
+    existing?.expectedClockOut ?? policy?.expectedClockOut ?? VIA_OFFICE_SCHEDULE.end;
   const isLate = minutes(localClockIn) > minutes(expectedIn) + (policy?.lateGraceMinutes ?? 0);
   const isEarlyDeparture = Boolean(localClockOut && minutes(localClockOut) < minutes(expectedOut));
   const automaticProjection =
@@ -399,8 +414,27 @@ async function projectDailyAttendance(
         source,
         status: isLate ? "Late" : "Present",
         calculatedHours: String(Math.min(24, hours)),
+        breakMinutes,
         isLate,
         isEarlyDeparture,
+        ...(!siteVisit
+          ? (() => {
+              const flex = flexibleOfficeSchedule(
+                localClockIn,
+                localClockOut,
+                Number(policy?.standardDailyHours ?? 8),
+              );
+              return {
+                expectedClockIn: flex.expectedIn,
+                expectedClockOut: flex.expectedOut,
+                breakMinutes: flex.breakMinutes,
+                calculatedHours: String(flex.calculatedHours),
+                isEarlyDeparture: flex.isEarlyDeparture,
+                isLate: false,
+                status: "Present" as const,
+              };
+            })()
+          : {}),
         updatedAt: new Date(),
         updatedBy: input.deviceId,
         recordVersion: sql`${attendanceRecords.recordVersion} + 1`,

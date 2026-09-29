@@ -16,6 +16,7 @@ import { DashboardCharts } from "@/components/dashboards/dashboard-charts";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { getApplicationDataServices } from "@/lib/data/application-data";
 import { AttendanceService } from "@/lib/data/attendance-service";
+import { flexibleOfficeSchedule } from "@/lib/data/office-schedule";
 import {
   siteVisitLocalNow,
   siteVisitReturnLabel,
@@ -203,6 +204,7 @@ function MyAttendanceRoute() {
   const records = attendanceService.getRecordsForEmployee(employeeId, actorContext);
   const openRecord = attendanceService.getOpenRecord(employeeId, actorContext);
   const todayKey = localNow.date;
+  const trackingRequired = attendanceService.isTrackingRequired(employeeId, todayKey);
   const todayOpenRecord = openRecord?.date === todayKey ? openRecord : null;
   const missedOpenRecord = attendanceService.getMissedOpenRecord(employeeId, actorContext);
   const siteVisits = attendanceService.getSiteVisitsForEmployee(employeeId, actorContext);
@@ -227,7 +229,8 @@ function MyAttendanceRoute() {
     .map((day) => {
       const date = format(day, "yyyy-MM-dd");
       const record = records.find((item) => item.date === date);
-      if (record) return { ...record, virtual: false };
+      if (record && attendanceService.isTrackingRequired(employeeId, date))
+        return { ...record, virtual: false };
       const reconciled = attendanceService.reconcileDailyStatus(employeeId, date, actorContext);
       return {
         id: `virtual-${date}`,
@@ -290,7 +293,12 @@ function MyAttendanceRoute() {
     setCorrectionRecord(record);
     setCorrectionDate(record.date);
     setProposedIn(record.clockIn ?? policy.expectedClockIn);
-    setProposedOut(record.clockOut ?? policy.expectedClockOut);
+    setProposedOut(
+      record.clockOut ??
+        (record.clockIn
+          ? flexibleOfficeSchedule(record.clockIn, null, policy.standardDailyHours).expectedOut
+          : policy.expectedClockOut),
+    );
     setExplanation("");
     setEvidence(null);
   };
@@ -465,94 +473,105 @@ function MyAttendanceRoute() {
           </Alert>
         )}
 
-        <Card className="overflow-hidden border-primary/20 bg-gradient-to-br from-primary/[0.08] to-background">
-          <CardContent className="grid gap-6 p-6 lg:grid-cols-[1fr_auto] lg:items-center">
-            <div>
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <Badge variant={todayOpenRecord ? "default" : "outline"}>
-                  {todayOpenRecord ? "Attendance open" : "Not clocked in today"}
-                </Badge>
-                {todayOpenRecord?.workMode && (
-                  <Badge variant="secondary">{todayOpenRecord.workMode}</Badge>
+        {trackingRequired && (
+          <Card className="overflow-hidden border-primary/20 bg-gradient-to-br from-primary/[0.08] to-background">
+            <CardContent className="grid gap-6 p-6 lg:grid-cols-[1fr_auto] lg:items-center">
+              <div>
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <Badge variant={todayOpenRecord ? "default" : "outline"}>
+                    {todayOpenRecord ? "Attendance open" : "Not clocked in today"}
+                  </Badge>
+                  {todayOpenRecord?.workMode && (
+                    <Badge variant="secondary">{todayOpenRecord.workMode}</Badge>
+                  )}
+                </div>
+                <h2 className="text-2xl font-semibold">
+                  {todayOpenRecord
+                    ? `Clocked in at ${todayOpenRecord.clockIn}`
+                    : "Verify your office location to begin"}
+                </h2>
+                <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+                  {todayOpenRecord
+                    ? `The system will issue three reminders after ${policy.standardDailyHours} worked hours while this record remains open.`
+                    : `Clocking is allowed only inside an active VIA office zone with browser accuracy of ${policy.maximumLocationAccuracyMeters} metres or better.`}
+                </p>
+                {missedOpenRecord && (
+                  <Alert className="mt-4 border-amber-300 bg-amber-50 text-amber-950">
+                    <Clock className="h-4 w-4" />
+                    <AlertTitle>Sign-out was missed</AlertTitle>
+                    <AlertDescription>
+                      Provide the correct time and justification. Your manager and HR must approve
+                      it.
+                    </AlertDescription>
+                  </Alert>
                 )}
               </div>
-              <h2 className="text-2xl font-semibold">
-                {todayOpenRecord
-                  ? `Clocked in at ${todayOpenRecord.clockIn}`
-                  : "Verify your office location to begin"}
-              </h2>
-              <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-                {todayOpenRecord
-                  ? `The system will issue three reminders after ${policy.standardDailyHours} worked hours while this record remains open.`
-                  : `Clocking is allowed only inside an active VIA office zone with browser accuracy of ${policy.maximumLocationAccuracyMeters} metres or better.`}
-              </p>
-              {missedOpenRecord && (
-                <Alert className="mt-4 border-amber-300 bg-amber-50 text-amber-950">
-                  <Clock className="h-4 w-4" />
-                  <AlertTitle>Sign-out was missed</AlertTitle>
-                  <AlertDescription>
-                    Provide the correct time and justification. Your manager and HR must approve it.
-                  </AlertDescription>
-                </Alert>
-              )}
-            </div>
-            <div className="flex flex-col gap-2 sm:min-w-52">
-              {siteVisits.some(
-                (visit) =>
-                  visit.date === todayKey &&
-                  !visit.details?.finishedAt &&
-                  !visit.details?.returnedAt &&
-                  ["Pending HR", "Approved"].includes(visit.status),
-              ) && (
-                <>
+              <div className="flex flex-col gap-2 sm:min-w-52">
+                {siteVisits.some(
+                  (visit) =>
+                    visit.date === todayKey &&
+                    !visit.details?.finishedAt &&
+                    !visit.details?.returnedAt &&
+                    ["Pending HR", "Approved"].includes(visit.status),
+                ) && (
+                  <>
+                    <Button
+                      variant="outline"
+                      disabled={locating}
+                      onClick={() => void performClockAction("in", true)}
+                    >
+                      Back at office
+                    </Button>
+                    <p className="max-w-64 text-xs text-muted-foreground">
+                      Confirm your return using office location verification. Normal office
+                      clock-out then applies.
+                    </p>
+                  </>
+                )}
+                {!todayOpenRecord ? (
                   <Button
-                    variant="outline"
-                    disabled={locating}
-                    onClick={() => void performClockAction("in", true)}
+                    size="lg"
+                    disabled={locating || locations.length === 0}
+                    onClick={() => void performClockAction("in")}
                   >
-                    Back at office
+                    <LocateFixed className="mr-2 h-5 w-5" />
+                    {locating ? "Verifying…" : "Clock In"}
                   </Button>
-                  <p className="max-w-64 text-xs text-muted-foreground">
-                    Confirm your return using office location verification. Normal office clock-out
-                    then applies.
-                  </p>
-                </>
-              )}
-              {!todayOpenRecord ? (
-                <Button
-                  size="lg"
-                  disabled={locating || locations.length === 0}
-                  onClick={() => void performClockAction("in")}
-                >
-                  <LocateFixed className="mr-2 h-5 w-5" />
-                  {locating ? "Verifying…" : "Clock In"}
-                </Button>
-              ) : (
-                <Button
-                  size="lg"
-                  disabled={locating}
-                  onClick={() => void performClockAction("out")}
-                >
-                  <CheckCircle2 className="mr-2 h-5 w-5" />
-                  {locating ? "Verifying…" : "Clock Out"}
-                </Button>
-              )}
-              {missedOpenRecord && (
-                <Button
-                  size="lg"
-                  variant="outline"
-                  onClick={() => openCorrection({ ...missedOpenRecord, virtual: false })}
-                >
-                  <Clock className="mr-2 h-5 w-5" /> Submit Missed Sign-out
-                </Button>
-              )}
-              <span className="text-center text-xs text-muted-foreground">
-                High-accuracy browser location required
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-
+                ) : (
+                  <Button
+                    size="lg"
+                    disabled={locating}
+                    onClick={() => void performClockAction("out")}
+                  >
+                    <CheckCircle2 className="mr-2 h-5 w-5" />
+                    {locating ? "Verifying…" : "Clock Out"}
+                  </Button>
+                )}
+                {missedOpenRecord && (
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    onClick={() => openCorrection({ ...missedOpenRecord, virtual: false })}
+                  >
+                    <Clock className="mr-2 h-5 w-5" /> Submit Missed Sign-out
+                  </Button>
+                )}
+                <span className="text-center text-xs text-muted-foreground">
+                  High-accuracy browser location required
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+        {!trackingRequired && (
+          <div className="rounded-xl border p-4 text-sm">
+            Biometric attendance is not required.{" "}
+            <a className="text-primary underline" href="/staff/me/timesheets">
+              Open your timesheet
+            </a>
+            . Leave and visits remain available.
+          </div>
+        )}
         <DashboardCharts scope="self" />
 
         <Tabs defaultValue="attendance">

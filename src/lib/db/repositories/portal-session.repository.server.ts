@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { syncEmployeeAttendanceTracking } from "./attendance-tracking.repository.server.ts";
 import { restoreConfirmedSupervisorAccess } from "./supervisor-access.repository.server.ts";
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -447,6 +448,13 @@ async function findOrCreatePortalUser(
         })
         .returning();
       if (!employee) throw new Error("Your employee profile could not be created.");
+      await syncEmployeeAttendanceTracking(
+        tx,
+        organisationId,
+        employeeId,
+        defaults.location.id,
+        today,
+      );
       [user] = await tx
         .insert(users)
         .values({

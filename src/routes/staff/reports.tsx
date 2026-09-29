@@ -85,6 +85,7 @@ function ReportsDashboard() {
   const [dateTo, setDateTo] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [departmentFilter, setDepartmentFilter] = useState("all");
+  const [locationFilter, setLocationFilter] = useState("all");
   const [leaveYear, setLeaveYear] = useState<NonNullable<ReportFilters["leaveYear"]>>("current");
   const [appliedFilters, setAppliedFilters] = useState<ReportFilters | null>(null);
   const reportRequest = useRef(0);
@@ -131,10 +132,11 @@ function ReportsDashboard() {
       dateFrom,
       dateTo,
       department: departmentFilter,
+      location: locationFilter,
       status: statusFilter,
       leaveYear,
     }),
-    [dateFrom, dateTo, departmentFilter, filterQuery, statusFilter, leaveYear],
+    [dateFrom, dateTo, departmentFilter, locationFilter, filterQuery, statusFilter, leaveYear],
   );
 
   const loadReport = async (
@@ -180,6 +182,7 @@ function ReportsDashboard() {
     setDateFrom(view.filters.dateFrom);
     setDateTo(view.filters.dateTo);
     setDepartmentFilter(view.filters.department);
+    setLocationFilter(view.filters.location ?? "all");
     setStatusFilter(view.filters.status);
     setLeaveYear(view.filters.leaveYear ?? "current");
     await loadReport(view.reportId, view.filters);
@@ -265,6 +268,7 @@ function ReportsDashboard() {
     setDateTo("");
     setStatusFilter("all");
     setDepartmentFilter("all");
+    setLocationFilter("all");
     setLeaveYear("current");
     await loadReport(id);
   };
@@ -276,6 +280,7 @@ function ReportsDashboard() {
     setDateTo("");
     setStatusFilter("all");
     setDepartmentFilter("all");
+    setLocationFilter("all");
     setLeaveYear("current");
     await loadReport(activeReportId);
   };
@@ -465,6 +470,27 @@ function ReportsDashboard() {
                     value={dateTo}
                     onChange={(event) => setDateTo(event.target.value)}
                   />
+                  <Select value={locationFilter} onValueChange={setLocationFilter}>
+                    <SelectTrigger aria-label="Filter location">
+                      <SelectValue placeholder="All locations" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All locations</SelectItem>
+                      {[
+                        ...new Set(
+                          (reportData?.rows ?? [])
+                            .map((row) => String(row["workLocation"] ?? row["location"] ?? ""))
+                            .filter(Boolean),
+                        ),
+                      ]
+                        .sort()
+                        .map((name) => (
+                          <SelectItem key={name} value={name}>
+                            {name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
                   <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
                     <SelectTrigger aria-label="Department filter">
                       <SelectValue placeholder="All departments" />

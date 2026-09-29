@@ -122,7 +122,7 @@ function TimesheetApprovalsContent() {
           isFinanceViewer
             ? "View submitted and approved timesheets for payroll preparation."
             : isHrReviewer
-              ? "Review only supervisor-approved timesheets with attendance or hours exceptions."
+              ? "Give final approval to every supervisor-reviewed timesheet before payroll."
               : "Review timesheets submitted by employees who report directly to you."
         }
       />

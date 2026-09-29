@@ -1,4 +1,11 @@
 import "@tanstack/react-start/server-only";
+import {
+  attendanceBreakMinutes,
+  flexibleOfficeSchedule,
+  VIA_OFFICE_SCHEDULE,
+} from "../../data/office-schedule.ts";
+import { getAttendanceTrackingPolicy } from "./attendance-tracking.repository.server.ts";
+import { isAttendanceTracked, readAttendanceTracking } from "../../data/attendance-tracking.ts";
 import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
@@ -153,22 +160,33 @@ function attendanceMetrics(
     overnight.setUTCDate(overnight.getUTCDate() + 1);
     clockOutAt = overnight.toISOString();
   }
+  const deduction =
+    input.clockIn && input.clockOut
+      ? attendanceBreakMinutes(
+          input.clockIn,
+          input.clockOut,
+          input.breakMinutes,
+          policy?.expectedClockIn ?? VIA_OFFICE_SCHEDULE.start,
+          policy?.expectedClockOut ?? VIA_OFFICE_SCHEDULE.end,
+        )
+      : input.breakMinutes;
   const hours =
     clockInAt && clockOutAt
       ? Math.max(
           0,
           (new Date(clockOutAt).getTime() - new Date(clockInAt).getTime()) / 3_600_000 -
-            input.breakMinutes / 60,
+            deduction / 60,
         )
       : 0;
-  const expectedIn = policy?.expectedClockIn ?? "09:00";
-  const expectedOut = policy?.expectedClockOut ?? "18:00";
+  const expectedIn = policy?.expectedClockIn ?? VIA_OFFICE_SCHEDULE.start;
+  const expectedOut = policy?.expectedClockOut ?? VIA_OFFICE_SCHEDULE.end;
   const grace = policy?.lateGraceMinutes ?? 0;
   const minutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
   return {
     clockInAt,
     clockOutAt,
     calculatedHours: String(Math.min(24, hours)),
+    breakMinutes: deduction,
     isLate: Boolean(input.clockIn && minutes(input.clockIn) > minutes(expectedIn) + grace),
     isEarlyDeparture: Boolean(input.clockOut && minutes(input.clockOut) < minutes(expectedOut)),
     status: (input.clockIn
@@ -178,6 +196,24 @@ function attendanceMetrics(
       : "Absent") as "Late" | "Present" | "Absent",
     expectedIn,
     expectedOut,
+    ...(input.clockIn
+      ? (() => {
+          const flex = flexibleOfficeSchedule(
+            input.clockIn,
+            input.clockOut,
+            Number(policy?.standardDailyHours ?? 8),
+          );
+          return {
+            expectedIn: flex.expectedIn,
+            expectedOut: flex.expectedOut,
+            isLate: false,
+            isEarlyDeparture: flex.isEarlyDeparture,
+            breakMinutes: flex.breakMinutes,
+            calculatedHours: String(flex.calculatedHours),
+            status: "Present" as const,
+          };
+        })()
+      : {}),
   };
 }
 
@@ -253,7 +289,7 @@ export async function saveAttendanceRecordInDatabase(
       expectedClockOut: metrics.expectedOut,
       clockInAt: metrics.clockInAt,
       clockOutAt: metrics.clockOutAt,
-      breakMinutes: input.breakMinutes,
+      breakMinutes: metrics.breakMinutes,
       location: input.location?.trim() || null,
       source: input.source,
       workMode: "Office",
@@ -361,7 +397,7 @@ export async function importAttendanceRecordsInDatabase(
           expectedClockOut: metrics.expectedOut,
           clockInAt: metrics.clockInAt,
           clockOutAt: metrics.clockOutAt,
-          breakMinutes: row.breakMinutes,
+          breakMinutes: metrics.breakMinutes,
           location: row.location?.trim() || null,
           source: "Import" as const,
           workMode: "Office",
@@ -397,12 +433,14 @@ export async function exportAttendanceRecordsFromDatabase(
   organisationId: string,
   date: string,
   actor: AuditActorContext,
+  employeeIds?: string[],
 ) {
   requireAttendanceAdmin(actor);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Select a valid attendance date.");
   const db = getDatabaseClient();
-  const rows = await db
+  const storedRows = await db
     .select({
+      employeeId: employees.id,
       employeeNumber: employees.employeeNumber,
       employeeName: employees.preferredName,
       date: attendanceRecords.date,
@@ -418,9 +456,17 @@ export async function exportAttendanceRecordsFromDatabase(
     .from(attendanceRecords)
     .innerJoin(employees, eq(employees.id, attendanceRecords.employeeId))
     .where(
-      and(eq(attendanceRecords.organisationId, organisationId), eq(attendanceRecords.date, date)),
+      and(
+        eq(attendanceRecords.organisationId, organisationId),
+        eq(attendanceRecords.date, date),
+        ...(employeeIds
+          ? [employeeIds.length ? inArray(attendanceRecords.employeeId, employeeIds) : sql`false`]
+          : []),
+      ),
     )
     .orderBy(employees.preferredName);
+  const tracking = await getAttendanceTrackingPolicy(organisationId);
+  const rows = storedRows.filter((row) => isAttendanceTracked(tracking, row.employeeId, row.date));
   await db.insert(auditEvents).values({
     organisationId,
     actorUserId: actor.userId,
@@ -570,11 +616,16 @@ export async function captureAttendancePunchInDatabase(
       .where(eq(attendancePolicies.organisationId, organisationId))
       .limit(1);
     const [settings] = await tx
-      .select({ timezone: appSettings.timezone })
+      .select({ timezone: appSettings.timezone, additional: appSettings.additionalSettings })
       .from(appSettings)
       .where(eq(appSettings.organisationId, organisationId))
       .limit(1);
     const date = zonedParts(at, settings?.timezone ?? "UTC").date;
+    if (
+      !isAttendanceTracked(readAttendanceTracking(settings?.additional), input.employeeId, date)
+    ) {
+      throw new Error("Biometric attendance is not required. Record your work in My timesheet.");
+    }
     if (policy && input.accuracyMeters > policy.maximumLocationAccuracyMeters)
       throw new Error(
         `Location accuracy must be within ${policy.maximumLocationAccuracyMeters} metres.`,
@@ -705,6 +756,19 @@ export async function captureAttendancePunchInDatabase(
           capturedAccuracyMeters: input.accuracyMeters,
           clockInAt: now,
           source: "Web",
+          ...(() => {
+            const flex = flexibleOfficeSchedule(
+              zonedParts(at, settings?.timezone ?? "UTC").time,
+              null,
+              Number(policy?.standardDailyHours ?? 8),
+            );
+            return {
+              expectedClockIn: flex.expectedIn,
+              expectedClockOut: flex.expectedOut,
+              breakMinutes: 0,
+              isLate: false,
+            };
+          })(),
           status: "Present",
           createdBy: actor.userId,
           updatedBy: actor.userId,
@@ -712,11 +776,6 @@ export async function captureAttendancePunchInDatabase(
     } else if (input.direction === "out") {
       if (!existing?.clockInAt) throw new Error("Clock in before clocking out.");
       if (existing.clockOutAt) throw new Error("You are already clocked out today.");
-      const hours = Math.max(
-        0,
-        (new Date(now).getTime() - new Date(existing.clockInAt).getTime()) / 3_600_000 -
-          (existing.breakMinutes ?? 0) / 60,
-      );
       await tx
         .update(attendanceRecords)
         .set({
@@ -726,7 +785,22 @@ export async function captureAttendancePunchInDatabase(
           clockOutCapturedLongitude: input.longitude,
           clockOutCapturedAccuracyMeters: input.accuracyMeters,
           source: existing.source === "Hardware Terminal" ? "Multiple Sources" : existing.source,
-          calculatedHours: String(Math.min(24, hours)),
+          ...(() => {
+            const flex = flexibleOfficeSchedule(
+              zonedParts(new Date(existing.clockInAt!), settings?.timezone ?? "UTC").time,
+              zonedParts(at, settings?.timezone ?? "UTC").time,
+              Number(policy?.standardDailyHours ?? 8),
+            );
+            return {
+              expectedClockIn: flex.expectedIn,
+              expectedClockOut: flex.expectedOut,
+              breakMinutes: flex.breakMinutes,
+              calculatedHours: String(flex.calculatedHours),
+              isEarlyDeparture: flex.isEarlyDeparture,
+              isLate: false,
+              status: "Present" as const,
+            };
+          })(),
           updatedAt: new Date(),
           updatedBy: actor.userId,
         })
@@ -907,6 +981,15 @@ export async function requestAttendanceCorrectionInDatabase(
           .limit(1);
     }
     if (!record) throw new Error("Attendance record not found.");
+    if (
+      !isAttendanceTracked(
+        await getAttendanceTrackingPolicy(organisationId),
+        record.employeeId,
+        record.date,
+      )
+    ) {
+      throw new Error("Biometric attendance is not required for this date. Use My timesheet.");
+    }
     if (["On Leave", "Holiday", "Rest Day"].includes(record.status))
       throw new Error(`${record.status} days cannot be changed through a punch correction.`);
     if (!input.proposedClockIn && !input.proposedClockOut)
@@ -1128,11 +1211,33 @@ export async function decideAttendanceCorrectionInDatabase(
             expectedClockIn: attendancePolicies.expectedClockIn,
             expectedClockOut: attendancePolicies.expectedClockOut,
             lateGraceMinutes: attendancePolicies.lateGraceMinutes,
+            defaultBreakMinutes: attendancePolicies.defaultBreakMinutes,
+            standardDailyHours: attendancePolicies.standardDailyHours,
           })
           .from(attendancePolicies)
           .where(eq(attendancePolicies.organisationId, organisationId))
           .limit(1),
       ]);
+      const timezone = settings?.timezone ?? "UTC";
+      const localClockIn = clockInAt ? zonedParts(new Date(clockInAt), timezone).time : null;
+      const localClockOut = clockOutAt ? zonedParts(new Date(clockOutAt), timezone).time : null;
+      const expectedClockIn =
+        record.expectedClockIn ?? policy?.expectedClockIn ?? VIA_OFFICE_SCHEDULE.start;
+      const expectedClockOut =
+        record.expectedClockOut ?? policy?.expectedClockOut ?? VIA_OFFICE_SCHEDULE.end;
+      const deduction =
+        localClockIn && localClockOut
+          ? attendanceBreakMinutes(
+              localClockIn,
+              localClockOut,
+              expectedClockIn === VIA_OFFICE_SCHEDULE.start &&
+                expectedClockOut === VIA_OFFICE_SCHEDULE.end
+                ? (policy?.defaultBreakMinutes ?? 60)
+                : record.breakMinutes,
+              expectedClockIn,
+              expectedClockOut,
+            )
+          : record.breakMinutes;
       const hours =
         clockInAt && clockOutAt
           ? Math.max(
@@ -1140,16 +1245,11 @@ export async function decideAttendanceCorrectionInDatabase(
               Math.min(
                 24,
                 (new Date(clockOutAt).getTime() - new Date(clockInAt).getTime()) / 3_600_000 -
-                  record.breakMinutes / 60,
+                  deduction / 60,
               ),
             )
           : 0;
-      const timezone = settings?.timezone ?? "UTC";
-      const localClockIn = clockInAt ? zonedParts(new Date(clockInAt), timezone).time : null;
-      const localClockOut = clockOutAt ? zonedParts(new Date(clockOutAt), timezone).time : null;
       const minutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
-      const expectedClockIn = record.expectedClockIn ?? policy?.expectedClockIn ?? "09:00";
-      const expectedClockOut = record.expectedClockOut ?? policy?.expectedClockOut ?? "18:00";
       const isLate = Boolean(
         localClockIn &&
         minutes(localClockIn) > minutes(expectedClockIn) + (policy?.lateGraceMinutes ?? 0),
@@ -1162,10 +1262,28 @@ export async function decideAttendanceCorrectionInDatabase(
         .set({
           clockInAt,
           clockOutAt,
+          breakMinutes: deduction,
           calculatedHours: String(hours),
           isLate,
           isEarlyDeparture,
           status: "Corrected",
+          ...(localClockIn && record.source !== "Site Visit Auto"
+            ? (() => {
+                const flex = flexibleOfficeSchedule(
+                  localClockIn,
+                  localClockOut,
+                  Number(policy?.standardDailyHours ?? 8),
+                );
+                return {
+                  expectedClockIn: flex.expectedIn,
+                  expectedClockOut: flex.expectedOut,
+                  breakMinutes: flex.breakMinutes,
+                  calculatedHours: String(flex.calculatedHours),
+                  isEarlyDeparture: flex.isEarlyDeparture,
+                  isLate: false,
+                };
+              })()
+            : {}),
           updatedAt: new Date(),
           updatedBy: actor.userId,
           recordVersion: sql`${attendanceRecords.recordVersion} + 1`,
@@ -1908,6 +2026,7 @@ export async function getMyLiveAttendance(organisationId: string, actor: AuditAc
       breakMinutes: attendanceRecords.breakMinutes,
       expectedClockIn: attendanceRecords.expectedClockIn,
       expectedClockOut: attendanceRecords.expectedClockOut,
+      source: attendanceRecords.source,
       status: attendanceRecords.status,
     })
     .from(attendanceRecords)
@@ -1950,7 +2069,7 @@ export async function getMyLiveAttendance(organisationId: string, actor: AuditAc
       ),
     );
   let targetMinutes = Math.round(Number(policy?.standardDailyHours ?? settings?.hours ?? 8) * 60);
-  if (record?.expectedClockIn && record.expectedClockOut) {
+  if (record?.source === "Site Visit Auto" && record.expectedClockIn && record.expectedClockOut) {
     const minutes = (time: string) => {
       const [h, m] = time.split(":").map(Number);
       return h! * 60 + m!;
@@ -1971,7 +2090,43 @@ export async function getMyLiveAttendance(organisationId: string, actor: AuditAc
     (record && ["On Leave", "Holiday", "Rest Day"].includes(record.status))
   )
     targetMinutes = 0;
-  return { date, timezone, serverNow: now.toISOString(), targetMinutes, record: record ?? null };
+  const tracking = await getAttendanceTrackingPolicy(organisationId);
+  const flexible =
+    record?.clockInAt && record.source !== "Site Visit Auto"
+      ? flexibleOfficeSchedule(
+          zonedParts(new Date(record.clockInAt), timezone).time,
+          null,
+          Number(policy?.standardDailyHours ?? settings?.hours ?? 8),
+        )
+      : null;
+  return {
+    tracked: isAttendanceTracked(tracking, actor.employeeId, date),
+    date,
+    timezone,
+    serverNow: now.toISOString(),
+    targetMinutes,
+    expectedDeparture: flexible?.expectedOut ?? null,
+    departureDayOffset: flexible?.departureDayOffset ?? 0,
+    record: record
+      ? {
+          ...record,
+          ...(flexible
+            ? {
+                breakStartAt: zonedDateTimeToUtc(
+                  date,
+                  VIA_OFFICE_SCHEDULE.breakStart,
+                  timezone,
+                ).toISOString(),
+                breakEndAt: zonedDateTimeToUtc(
+                  date,
+                  VIA_OFFICE_SCHEDULE.breakEnd,
+                  timezone,
+                ).toISOString(),
+              }
+            : {}),
+        }
+      : null,
+  };
 }
 
 export async function listAttendanceForActor(organisationId: string, actor: AuditActorContext) {
@@ -1983,6 +2138,7 @@ export async function listAttendanceForActor(organisationId: string, actor: Audi
     .where(eq(appSettings.organisationId, organisationId))
     .limit(1);
   const timezone = attendanceSettings?.timezone ?? "UTC";
+  const tracking = await getAttendanceTrackingPolicy(organisationId);
   let employeeIds = [actor.employeeId];
   if (actor.activeRole === "HR" || actor.activeRole === "Super Admin") {
     employeeIds = (
@@ -2009,6 +2165,7 @@ export async function listAttendanceForActor(organisationId: string, actor: Audi
   if (!employeeIds.length)
     return {
       timezone,
+      tracking,
       employeeIds: [],
       records: [],
       corrections: [],
@@ -2066,6 +2223,12 @@ export async function listAttendanceForActor(organisationId: string, actor: Audi
   return {
     timezone,
     employeeIds,
+    tracking: tracking
+      ? {
+          ...tracking,
+          assignments: tracking.assignments.filter((item) => employeeIds.includes(item.employeeId)),
+        }
+      : null,
     records,
     corrections,
     siteVisits: visits,
@@ -2219,11 +2382,20 @@ export async function processAttendanceScheduledWork(
             sql`${attendanceRecords.clockInAt} IS NOT NULL AND ${attendanceRecords.clockOutAt} IS NULL`,
           ),
         );
-      for (const row of openRecords)
+      const tracking = await getAttendanceTrackingPolicy(organisation.organisationId);
+      for (const row of openRecords.filter((item) =>
+        isAttendanceTracked(tracking, item.record.employeeId, item.record.date),
+      ))
         for (const [index, offset] of policy.signOutReminderOffsetsMinutes.entries()) {
           const due =
             new Date(row.record.clockInAt!).getTime() +
-            (Number(policy.standardDailyHours) * 60 + offset) * 60_000;
+            (flexibleOfficeSchedule(
+              zonedParts(new Date(row.record.clockInAt!), timezone).time,
+              null,
+              Number(policy.standardDailyHours),
+            ).elapsedMinutes +
+              offset) *
+              60_000;
           if (at.getTime() < due) continue;
           const key = `attendance-signout-${row.record.id}-${index + 1}`;
           const created = await tx
@@ -2312,6 +2484,20 @@ export async function processAttendanceScheduledWork(
         const visitTimezone = employeeOffice?.timezone || timezone;
         const start = zonedDateTimeToUtc(visit.date, visit.startTime, visitTimezone);
         const end = zonedDateTimeToUtc(visit.date, visit.endTime, visitTimezone);
+        if (!isAttendanceTracked(tracking, visit.employeeId, visit.date)) {
+          if ((visit.details.finishedAt && new Date(visit.details.finishedAt) <= at) || end <= at) {
+            await tx
+              .update(siteVisitRequests)
+              .set({
+                status: "Completed",
+                updatedAt: new Date(),
+                recordVersion: sql`${siteVisitRequests.recordVersion} + 1`,
+              })
+              .where(eq(siteVisitRequests.id, visit.id));
+            siteVisits += 1;
+          }
+          continue;
+        }
         const scheduledClose =
           visit.origin === "Office" && !visit.details.returnPlan
             ? zonedDateTimeToUtc(visit.date, "17:00", visitTimezone)

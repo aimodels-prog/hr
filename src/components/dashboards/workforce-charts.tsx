@@ -488,7 +488,7 @@ export default function WorkforceCharts({
                 ? [
                     {
                       label: "Current employees",
-                      value: String(data.today.headcount),
+                      value: String(data.workforceHeadcount ?? data.today.headcount),
                       note: "Current workforce",
                     },
                     {
@@ -512,12 +512,16 @@ export default function WorkforceCharts({
                 : [
                     {
                       label: "Recorded hours",
-                      value: `${hours(data.totals.worked)} h`,
+                      value:
+                        data.attendanceTracked === false
+                          ? "Not tracked"
+                          : `${hours(data.totals.worked)} h`,
                       note: "Completed attendance",
                     },
                     {
                       label: "Expected hours",
-                      value: `${hours(data.totals.expected)} h`,
+                      value:
+                        data.attendanceTracked === false ? "—" : `${hours(data.totals.expected)} h`,
                       note: "Working calendar adjusted for leave",
                     },
                     {
@@ -543,7 +547,7 @@ export default function WorkforceCharts({
             </div>
           )}
           <div className="grid min-w-0 gap-5 xl:grid-cols-2" data-testid="primary-dashboard-charts">
-            {(scope === "self" || employeeId) && (
+            {(scope === "self" || employeeId) && data.attendanceTracked !== false && (
               <Panel
                 title="Worked hours vs expected hours"
                 description="Recorded, completed attendance—including approved site duty—against the working-calendar expectation."

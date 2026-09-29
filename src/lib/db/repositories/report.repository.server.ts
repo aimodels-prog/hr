@@ -1,4 +1,6 @@
 import "@tanstack/react-start/server-only";
+import { getAttendanceTrackingPolicy } from "./attendance-tracking.repository.server.ts";
+import { isAttendanceTracked } from "../../data/attendance-tracking.ts";
 
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 
@@ -187,12 +189,12 @@ const definitions: Record<ReportId, QueryDefinition> = {
       c("department", "Department"),
       c("status", "Status"),
       c("totalHours", "Total Hours", "number"),
-      c("overtime", "Overtime Hours", "number"),
+      c("overtime", "Hours above expected (not approved overtime)", "number"),
       c("date", "Period End", "date"),
     ],
     query: (org) =>
       getDatabaseClient().execute(
-        sql`select concat(p.start_date,' to ',p.end_date) as period, e.legal_name as employee, d.name as department, t.status::text as status, t.total_hours::double precision as "totalHours", greatest(t.total_hours-t.expected_hours,0)::double precision as overtime, p.end_date as date from timesheets t join timesheet_periods p on p.id=t.period_id join employees e on e.id=t.employee_id join departments d on d.id=e.department_id where t.organisation_id=${org} and t.archived_at is null order by p.end_date desc,e.legal_name`,
+        sql`select concat(p.start_date,' to ',p.end_date) as period, e.id as "__employeeId", (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department, t.status::text as status, t.total_hours::double precision as "totalHours", greatest(t.total_hours-t.expected_hours,0)::double precision as overtime, p.end_date as date from timesheets t join timesheet_periods p on p.id=t.period_id join employees e on e.id=t.employee_id join departments d on d.id=e.department_id where t.organisation_id=${org} and t.archived_at is null order by p.end_date desc,e.legal_name`,
       ),
   },
   timesheet_projects: {
@@ -210,7 +212,7 @@ const definitions: Record<ReportId, QueryDefinition> = {
     ],
     query: (org) =>
       getDatabaseClient().execute(
-        sql`select e.legal_name as employee, d.name as department, p.name as project, cc.name as "costCentre", te.hours::double precision as hours, t.status::text as status, te.work_date as date from timesheet_entries te join timesheets t on t.id=te.timesheet_id join employees e on e.id=t.employee_id join departments d on d.id=e.department_id join projects p on p.id=te.project_id join cost_centres cc on cc.id=te.cost_centre_id where te.organisation_id=${org} and te.archived_at is null order by te.work_date desc`,
+        sql`select e.id as "__employeeId", (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department, p.name as project, cc.name as "costCentre", te.hours::double precision as hours, t.status::text as status, te.work_date as date from timesheet_entries te join timesheets t on t.id=te.timesheet_id join employees e on e.id=t.employee_id join departments d on d.id=e.department_id join projects p on p.id=te.project_id join cost_centres cc on cc.id=te.cost_centre_id where te.organisation_id=${org} and te.archived_at is null order by te.work_date desc`,
       ),
   },
   attendance: {
@@ -228,7 +230,7 @@ const definitions: Record<ReportId, QueryDefinition> = {
     ],
     query: (org) =>
       getDatabaseClient().execute(
-        sql`select e.legal_name as employee, d.name as department, ar.date, coalesce(l.name,'Not recorded') as location, coalesce(ar.calculated_hours,0)::double precision as hours, ar.status::text as status, case when ar.is_late then 'Yes' else 'No' end as late from attendance_records ar join employees e on e.id=ar.employee_id join departments d on d.id=e.department_id left join locations l on l.id=ar.location_id where ar.organisation_id=${org} and ar.archived_at is null order by ar.date desc`,
+        sql`select e.id as "__employeeId", (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department, ar.date, coalesce(l.name,'Not recorded') as location, coalesce(ar.calculated_hours,0)::double precision as hours, ar.status::text as status, case when ar.is_late then 'Yes' else 'No' end as late from attendance_records ar join employees e on e.id=ar.employee_id join departments d on d.id=e.department_id left join locations l on l.id=ar.location_id where ar.organisation_id=${org} and ar.archived_at is null order by ar.date desc`,
       ),
   },
   overtime: {
@@ -246,7 +248,7 @@ const definitions: Record<ReportId, QueryDefinition> = {
     ],
     query: (org) =>
       getDatabaseClient().execute(
-        sql`select e.legal_name as employee, d.name as department, oc.date, oc.hours::double precision as hours, oc.compensation_type as compensation, oc.status::text as status, trim(both '[]' from oc.cross_check_warnings::text) as warnings from overtime_claims oc join employees e on e.id=oc.employee_id join departments d on d.id=e.department_id where oc.organisation_id=${org} and oc.archived_at is null order by oc.date desc`,
+        sql`select e.id as "__employeeId", (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department, oc.date, oc.hours::double precision as hours, oc.compensation_type as compensation, oc.status::text as status, trim(both '[]' from oc.cross_check_warnings::text) as warnings from overtime_claims oc join employees e on e.id=oc.employee_id join departments d on d.id=e.department_id where oc.organisation_id=${org} and oc.archived_at is null order by oc.date desc`,
       ),
   },
   performance: {
@@ -262,7 +264,7 @@ const definitions: Record<ReportId, QueryDefinition> = {
     ],
     query: (org) =>
       getDatabaseClient().execute(
-        sql`select e.legal_name as employee, d.name as department, pc.name as cycle, pr.status::text as status, coalesce(pr.overall_manager_score,pr.overall_self_score,0)::double precision as score from performance_reviews pr join employees e on e.id=pr.employee_id join departments d on d.id=e.department_id join performance_cycles pc on pc.id=pr.cycle_id where pr.organisation_id=${org} and pr.archived_at is null order by pc.self_assessment_deadline desc,e.legal_name`,
+        sql`select e.id as "__employeeId", (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department, pc.name as cycle, pr.status::text as status, coalesce(pr.overall_manager_score,pr.overall_self_score,0)::double precision as score from performance_reviews pr join employees e on e.id=pr.employee_id join departments d on d.id=e.department_id join performance_cycles pc on pc.id=pr.cycle_id where pr.organisation_id=${org} and pr.archived_at is null order by pc.self_assessment_deadline desc,e.legal_name`,
       ),
   },
   training: {
@@ -280,7 +282,7 @@ const definitions: Record<ReportId, QueryDefinition> = {
     ],
     query: (org) =>
       getDatabaseClient().execute(
-        sql`select e.legal_name as employee, d.name as department, tr.title, tr.provider, tr.completion_date as "completionDate", tr.expiry_date as "expiryDate", case when tr.hr_verified then 'Verified' when tr.rejected_at is not null then 'Rejected' else 'Pending' end as status from training_records tr join employees e on e.id=tr.employee_id join departments d on d.id=e.department_id where tr.organisation_id=${org} and tr.archived_at is null order by coalesce(tr.expiry_date,tr.completion_date)`,
+        sql`select e.id as "__employeeId", (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department, tr.title, tr.provider, tr.completion_date as "completionDate", tr.expiry_date as "expiryDate", case when tr.hr_verified then 'Verified' when tr.rejected_at is not null then 'Rejected' else 'Pending' end as status from training_records tr join employees e on e.id=tr.employee_id join departments d on d.id=e.department_id where tr.organisation_id=${org} and tr.archived_at is null order by coalesce(tr.expiry_date,tr.completion_date)`,
       ),
   },
   documents: {
@@ -296,7 +298,7 @@ const definitions: Record<ReportId, QueryDefinition> = {
     ],
     query: (org) =>
       getDatabaseClient().execute(
-        sql`select e.legal_name as employee, d.name as department, ed.type::text as document, ed.expiry_date as "expiryDate", ed.status::text as status from employee_documents ed join employees e on e.id=ed.employee_id join departments d on d.id=e.department_id where ed.organisation_id=${org} and ed.archived_at is null and ed.expiry_date is not null order by ed.expiry_date`,
+        sql`select e.id as "__employeeId", (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department, ed.type::text as document, ed.expiry_date as "expiryDate", ed.status::text as status from employee_documents ed join employees e on e.id=ed.employee_id join departments d on d.id=e.department_id where ed.organisation_id=${org} and ed.archived_at is null and ed.expiry_date is not null order by ed.expiry_date`,
       ),
   },
   travel: {
@@ -315,7 +317,7 @@ const definitions: Record<ReportId, QueryDefinition> = {
     ],
     query: (org) =>
       getDatabaseClient().execute(
-        sql`select e.legal_name as employee, d.name as department, tr.destination, tr.start_date as "startDate", tr.total_estimate::double precision as estimate, coalesce(tr.actual_total,0)::double precision as actual, (coalesce(tr.actual_total,0)-tr.total_estimate)::double precision as variance, tr.status::text as status from travel_requests tr join employees e on e.id=tr.employee_id join departments d on d.id=e.department_id where tr.organisation_id=${org} and tr.archived_at is null order by tr.start_date desc`,
+        sql`select e.id as "__employeeId", (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department, tr.destination, tr.start_date as "startDate", tr.total_estimate::double precision as estimate, coalesce(tr.actual_total,0)::double precision as actual, (coalesce(tr.actual_total,0)-tr.total_estimate)::double precision as variance, tr.status::text as status from travel_requests tr join employees e on e.id=tr.employee_id join departments d on d.id=e.department_id where tr.organisation_id=${org} and tr.archived_at is null order by tr.start_date desc`,
       ),
   },
   onboarding: {
@@ -332,7 +334,7 @@ const definitions: Record<ReportId, QueryDefinition> = {
     ],
     query: (org) =>
       getDatabaseClient().execute(
-        sql`select e.legal_name as employee, d.name as department, e.start_date as "startDate", oc.progress_percentage as progress, count(ot.id) filter (where ot.status not in ('Completed','Waived') and ot.archived_at is null)::integer as outstanding, oc.status::text as status from onboarding_cases oc join employees e on e.id=oc.employee_id join departments d on d.id=e.department_id left join onboarding_tasks ot on ot.case_id=oc.id where oc.organisation_id=${org} and oc.archived_at is null group by oc.id,e.id,d.name order by e.start_date`,
+        sql`select e.id as "__employeeId", (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department, e.start_date as "startDate", oc.progress_percentage as progress, count(ot.id) filter (where ot.status not in ('Completed','Waived') and ot.archived_at is null)::integer as outstanding, oc.status::text as status from onboarding_cases oc join employees e on e.id=oc.employee_id join departments d on d.id=e.department_id left join onboarding_tasks ot on ot.case_id=oc.id where oc.organisation_id=${org} and oc.archived_at is null group by oc.id,e.id,d.name order by e.start_date`,
       ),
   },
   offboarding: {
@@ -350,7 +352,7 @@ const definitions: Record<ReportId, QueryDefinition> = {
     ],
     query: (org) =>
       getDatabaseClient().execute(
-        sql`select e.legal_name as employee, d.name as department, oc.reason_category as reason, oc.last_working_date as "lastWorkingDate", oc.progress_percentage as progress, count(ot.id) filter (where ot.status not in ('Completed','Waived') and ot.archived_at is null)::integer as outstanding, oc.status::text as status from offboarding_cases oc join employees e on e.id=oc.employee_id join departments d on d.id=e.department_id left join offboarding_tasks ot on ot.case_id=oc.id where oc.organisation_id=${org} and oc.archived_at is null group by oc.id,e.id,d.name order by oc.last_working_date`,
+        sql`select e.id as "__employeeId", (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department, oc.reason_category as reason, oc.last_working_date as "lastWorkingDate", oc.progress_percentage as progress, count(ot.id) filter (where ot.status not in ('Completed','Waived') and ot.archived_at is null)::integer as outstanding, oc.status::text as status from offboarding_cases oc join employees e on e.id=oc.employee_id join departments d on d.id=e.department_id left join offboarding_tasks ot on ot.case_id=oc.id where oc.organisation_id=${org} and oc.archived_at is null group by oc.id,e.id,d.name order by oc.last_working_date`,
       ),
   },
   payroll: {
@@ -369,7 +371,7 @@ const definitions: Record<ReportId, QueryDefinition> = {
     ],
     query: (org) =>
       getDatabaseClient().execute(
-        sql`select pp.name as period, e.legal_name as employee, d.name as department, pi.approved_overtime_hours::double precision as "overtimeHours", pi.unpaid_leave_days::double precision as "unpaidLeaveDays", pi.reimbursements_total::double precision as reimbursements, pi.manual_adjustments_total::double precision as adjustments, pp.status::text as status from payroll_inputs pi join payroll_periods pp on pp.id=pi.period_id join employees e on e.id=pi.employee_id join departments d on d.id=e.department_id where pi.organisation_id=${org} and pi.archived_at is null order by pp.end_date desc,e.legal_name`,
+        sql`select pp.name as period, e.id as "__employeeId", (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department, pi.approved_overtime_hours::double precision as "overtimeHours", pi.unpaid_leave_days::double precision as "unpaidLeaveDays", pi.reimbursements_total::double precision as reimbursements, pi.manual_adjustments_total::double precision as adjustments, pp.status::text as status from payroll_inputs pi join payroll_periods pp on pp.id=pi.period_id join employees e on e.id=pi.employee_id join departments d on d.id=e.department_id where pi.organisation_id=${org} and pi.archived_at is null order by pp.end_date desc,e.legal_name`,
       ),
   },
 };
@@ -418,6 +420,12 @@ function applyFilters(
       return false;
     if (filters.status !== "all" && String(row["status"] ?? "") !== filters.status) return false;
     if (filters.department !== "all" && String(row["department"] ?? "") !== filters.department)
+      return false;
+    if (
+      filters.location &&
+      filters.location !== "all" &&
+      String(row["workLocation"] ?? row["location"] ?? "") !== filters.location
+    )
       return false;
     if (filters.dateFrom || filters.dateTo) {
       const values = dateKeys.map((key) => String(row[key] ?? "").slice(0, 10)).filter(Boolean);
@@ -475,7 +483,14 @@ export async function generateReportInDatabase(
       ? await resolveLeaveReportYears(organisationId, filters.leaveYear)
       : undefined;
   const result = await definition.query(organisationId, leaveYears);
-  const rows = Array.from(result as Iterable<Record<string, unknown>>).map((row) =>
+  const tracking =
+    reportId === "attendance" ? await getAttendanceTrackingPolicy(organisationId) : null;
+  const eligible = Array.from(result as Iterable<Record<string, unknown>>).filter(
+    (row) =>
+      reportId !== "attendance" ||
+      isAttendanceTracked(tracking, String(row["__employeeId"]), String(row["date"]).slice(0, 10)),
+  );
+  const rows = eligible.map((row) =>
     Object.fromEntries(Object.entries(row).map(([key, value]) => [key, normalizeCell(value)])),
   );
   return {
@@ -484,7 +499,9 @@ export async function generateReportInDatabase(
     description: definition.description,
     columns: definition.columns,
     containsPersonalData: definition.containsPersonalData,
-    rows: applyFilters(rows, definition.columns, filters),
+    rows: applyFilters(rows, definition.columns, filters).map((row) =>
+      Object.fromEntries(Object.entries(row).filter(([key]) => key !== "__employeeId")),
+    ),
     ...(leaveYears ? { leaveYears } : {}),
   };
 }

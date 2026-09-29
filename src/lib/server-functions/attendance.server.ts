@@ -30,6 +30,40 @@ import {
 import { saveObjectFile } from "../db/object-storage.server.ts";
 import { resolveOrganisationIdForActor, verifyServerActorRole } from "../db/utils.server.ts";
 import { ROLE_VALUES } from "../data/types.ts";
+import {
+  getAttendanceTrackingPolicy,
+  saveAttendanceTrackingPolicy,
+} from "../db/repositories/attendance-tracking.repository.server.ts";
+
+export const getAttendanceTrackingFn = createServerFn({ method: "POST" })
+  .validator((input) => Actor.parse(input))
+  .handler(async ({ data }) => {
+    const v = await verify(data);
+    const policy = await getAttendanceTrackingPolicy(v.organisationId);
+    if (!policy || ["HR", "Super Admin"].includes(v.actor.activeRole)) return policy;
+    return {
+      ...policy,
+      assignments: policy.assignments.filter((item) => item.employeeId === v.actor.employeeId),
+    };
+  });
+export const saveAttendanceTrackingFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: Actor,
+        headOfficeLocationId: z.string().uuid().optional(),
+        employeeId: z.string().uuid().optional(),
+        mode: z.enum(["Head Office biometric", "Not required"]).optional(),
+        effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        revision: z.number().int().nonnegative(),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    return saveAttendanceTrackingPolicy(v.organisationId, data, v.actor);
+  });
 
 const Actor = z.object({
   actorId: z.string().min(1),
@@ -573,10 +607,24 @@ export const importAttendanceRecordsFn = createServerFn({ method: "POST" })
   });
 
 export const exportAttendanceRecordsFn = createServerFn({ method: "POST" })
-  .validator((input) => z.object({ actor: Actor, date: z.string().date() }).strict().parse(input))
+  .validator((input) =>
+    z
+      .object({
+        actor: Actor,
+        date: z.string().date(),
+        employeeIds: z.array(z.string().uuid()).max(10000).optional(),
+      })
+      .strict()
+      .parse(input),
+  )
   .handler(async ({ data }) => {
     const v = await verify(data.actor);
-    return exportAttendanceRecordsFromDatabase(v.organisationId, data.date, v.actor);
+    return exportAttendanceRecordsFromDatabase(
+      v.organisationId,
+      data.date,
+      v.actor,
+      data.employeeIds,
+    );
   });
 
 export const listAttendanceFn = createServerFn({ method: "POST" })

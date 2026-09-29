@@ -65,6 +65,7 @@ export interface ReportFilters {
   dateFrom: string;
   dateTo: string;
   department: string;
+  location?: string;
   status: string;
   leaveYear?: number | "current" | "all";
 }
@@ -387,7 +388,11 @@ export class ReportService {
             { key: "employee", label: "Employee" },
             { key: "status", label: "Status" },
             { key: "totalHours", label: "Total Hours", type: "number" },
-            { key: "overtime", label: "Overtime Hours", type: "number" },
+            {
+              key: "overtime",
+              label: "Hours above expected (not approved overtime)",
+              type: "number",
+            },
           ],
           rows: timesheets.map((t) => {
             const emp = scopedEmployees.find((e) => e.id === t.employeeId);

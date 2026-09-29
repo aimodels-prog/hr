@@ -6,6 +6,12 @@ import { LeaveService } from "./leave-service.ts";
 import { getMasterDataRepository } from "./master-data.ts";
 import { LocalRepository, type NewRecord } from "./repository.ts";
 import { SettingsService } from "./settings-service.ts";
+import { isAttendanceTracked, type AttendanceTrackingPolicy } from "./attendance-tracking.ts";
+import {
+  attendanceBreakMinutes,
+  flexibleOfficeSchedule,
+  VIA_OFFICE_SCHEDULE,
+} from "./office-schedule.ts";
 import type {
   AttendanceCorrection,
   AttendanceCorrectionType,
@@ -198,6 +204,10 @@ export class AttendanceService {
     const { listAttendanceFn } = await import("../server-functions/attendance.server.ts");
     const snapshot = await listAttendanceFn({ data: { actor: this.serverActor(context) } });
     if (!canCommit()) return;
+    getApplicationDataServices().storage.writeCollection(
+      "attendanceTracking",
+      snapshot.tracking ? [snapshot.tracking] : [],
+    );
     const { storage } = getApplicationDataServices();
     const employeeMap = new Map(
       storage
@@ -941,10 +951,27 @@ export class AttendanceService {
     return ids.length;
   }
 
-  async exportCsvAsync(date: string, context: ActorContext): Promise<string> {
+  async exportCsvAsync(
+    date: string,
+    context: ActorContext,
+    employeeIds?: string[],
+  ): Promise<string> {
     const { exportAttendanceRecordsFn } = await import("../server-functions/attendance.server.ts");
     const records = await exportAttendanceRecordsFn({
-      data: { actor: this.serverActor(context), date },
+      data: {
+        actor: this.serverActor(context),
+        date,
+        ...(employeeIds
+          ? {
+              employeeIds: employeeIds.map(
+                (id) =>
+                  getApplicationDataServices()
+                    .storage.readCollection<{ id: string; databaseId?: string }>("employees")
+                    .find((person) => person.id === id)?.databaseId ?? id,
+              ),
+            }
+          : {}),
+      },
     });
     const headers = [
       "Employee Number",
@@ -1130,8 +1157,8 @@ export class AttendanceService {
       updatedBy: "system",
       recordVersion: 1,
       standardDailyHours,
-      expectedClockIn: "09:00",
-      expectedClockOut: "18:00",
+      expectedClockIn: VIA_OFFICE_SCHEDULE.start,
+      expectedClockOut: VIA_OFFICE_SCHEDULE.end,
       defaultBreakMinutes: 60,
       lateGraceMinutes: 5,
       maximumLocationAccuracyMeters: 100,
@@ -1372,6 +1399,7 @@ export class AttendanceService {
         .filter(
           (record) =>
             record.employeeId === employeeId &&
+            this.isTrackingRequired(record.employeeId, record.date) &&
             Boolean(record.clockIn) &&
             !record.clockOut &&
             record.date < today,
@@ -1395,12 +1423,28 @@ export class AttendanceService {
     return record.isLate ? "Late" : "Present";
   }
 
+  getTrackingPolicy(): AttendanceTrackingPolicy | null {
+    return (
+      getApplicationDataServices().storage.readCollection<AttendanceTrackingPolicy>(
+        "attendanceTracking",
+      )[0] ?? null
+    );
+  }
+
+  isTrackingRequired(employeeId: string, date: string): boolean {
+    const employee = getApplicationDataServices()
+      .storage.readCollection<{ id: string; databaseId?: string }>("employees")
+      .find((item) => item.id === employeeId);
+    return isAttendanceTracked(this.getTrackingPolicy(), employee?.databaseId ?? employeeId, date);
+  }
+
   reconcileDailyStatus(
     employeeId: string,
     targetDate: string,
     context: ActorContext,
   ): Partial<AttendanceRecord> | null {
     this.requireEmployeeRead(employeeId, context, "reconcile this employee's attendance status");
+    if (!this.isTrackingRequired(employeeId, targetDate)) return { status: "Not tracked" };
     const existing = this.findRecord(employeeId, targetDate);
     if (existing) return null;
     const day = new Date(`${targetDate}T12:00:00`);
@@ -1769,6 +1813,13 @@ export class AttendanceService {
         ? new Date(Math.min(new Date(visit.details.finishedAt).getTime(), scheduledEnd.getTime()))
         : scheduledEnd;
       if (at < start) continue;
+      if (!this.isTrackingRequired(visit.employeeId, visit.date)) {
+        if (at >= end) {
+          this.siteVisitRepo.update(visit.id, { status: "Completed" }, systemContext);
+          completed += 1;
+        }
+        continue;
+      }
       let record = visit.attendanceRecordId
         ? this.recordRepo.getById(visit.attendanceRecordId)
         : this.findRecord(visit.employeeId, visit.date);
@@ -1856,7 +1907,10 @@ export class AttendanceService {
 
   getExceptionCases(context: ActorContext): AttendanceExceptionCase[] {
     this.requireAdmin(context, "view attendance exception cases");
-    return this.exceptionRepo.list().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return this.exceptionRepo
+      .list()
+      .filter((item) => this.isTrackingRequired(item.employeeId, item.date))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   assignExceptionCase(id: string, ownerId: string, context: ActorContext): AttendanceExceptionCase {
@@ -1938,12 +1992,17 @@ export class AttendanceService {
     for (const record of this.recordRepo
       .list()
       .filter((item) => item.clockInAt && !item.clockOut && item.date === dateKey(at))) {
-      if (record.source === "Site Visit Auto") continue;
+      if (
+        record.source === "Site Visit Auto" ||
+        !this.isTrackingRequired(record.employeeId, record.date)
+      )
+        continue;
       const user = users.find((item) => item.employeeId === record.employeeId);
       if (!user) continue;
       const completionTime =
         new Date(record.clockInAt!).getTime() +
-        (policy.standardDailyHours * 60 + record.breakMinutes) * 60_000;
+        flexibleOfficeSchedule(record.clockIn!, null, policy.standardDailyHours).elapsedMinutes *
+          60_000;
       policy.signOutReminderOffsetsMinutes.forEach((offset, index) => {
         const due = completionTime + offset * 60_000;
         const key = `attendance-sign-out-${record.id}-${index + 1}`;
@@ -2136,8 +2195,8 @@ export class AttendanceService {
   }
 
   getMonthlySummary(employeeId: string, month: string, context: ActorContext) {
-    const records = this.getRecordsForEmployee(employeeId, context).filter((record) =>
-      record.date.startsWith(month),
+    const records = this.getRecordsForEmployee(employeeId, context).filter(
+      (record) => record.date.startsWith(month) && this.isTrackingRequired(employeeId, record.date),
     );
     return {
       present: records.filter((record) => ["Present", "Corrected"].includes(record.status)).length,
@@ -2186,12 +2245,34 @@ export class AttendanceService {
 
   private calculateMetrics(record: Partial<AttendanceRecord>) {
     const policy = this.getPolicy();
+    if (record.clockIn && record.source !== "Site Visit Auto") {
+      const flex = flexibleOfficeSchedule(
+        record.clockIn,
+        record.clockOut,
+        policy.standardDailyHours,
+      );
+      return {
+        calculatedHours: Number(flex.calculatedHours.toFixed(2)),
+        isLate: false,
+        isEarlyDeparture: flex.isEarlyDeparture,
+        expectedClockIn: flex.expectedIn,
+        expectedClockOut: flex.expectedOut,
+        breakMinutes: flex.breakMinutes,
+      };
+    }
     let calculatedHours = 0;
     if (record.clockIn && record.clockOut) {
       const clockIn = parseMinutes(record.clockIn);
       let clockOut = parseMinutes(record.clockOut);
       if (clockOut <= clockIn) clockOut += 24 * 60;
-      const workedMinutes = clockOut - clockIn - Math.max(0, record.breakMinutes ?? 0);
+      const deduction = attendanceBreakMinutes(
+        record.clockIn,
+        record.clockOut,
+        record.breakMinutes ?? 0,
+        record.expectedClockIn ?? policy.expectedClockIn,
+        record.expectedClockOut ?? policy.expectedClockOut,
+      );
+      const workedMinutes = clockOut - clockIn - Math.max(0, deduction);
       if (workedMinutes < 0 || workedMinutes > 24 * 60) {
         throw new Error("Clock times and break produce an invalid worked duration.");
       }
@@ -2218,6 +2299,9 @@ export class AttendanceService {
   }
 
   private presentRecord(record: AttendanceRecord): AttendanceRecord {
+    if (!this.isTrackingRequired(record.employeeId, record.date)) {
+      return { ...record, status: "Not tracked", isLate: false, isEarlyDeparture: false };
+    }
     return { ...record, status: this.deriveStatus(record) };
   }
 
@@ -2306,7 +2390,13 @@ export class AttendanceService {
   private findOpenRecord(employeeId: string): AttendanceRecord | undefined {
     return this.recordRepo
       .list()
-      .filter((record) => record.employeeId === employeeId && record.clockIn && !record.clockOut)
+      .filter(
+        (record) =>
+          record.employeeId === employeeId &&
+          this.isTrackingRequired(record.employeeId, record.date) &&
+          record.clockIn &&
+          !record.clockOut,
+      )
       .sort((a, b) => b.date.localeCompare(a.date))[0];
   }
 

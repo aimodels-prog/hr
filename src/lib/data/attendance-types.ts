@@ -1,6 +1,7 @@
 import type { BaseRecord, MasterRecord, RecordId } from "./types.ts";
 
 export type AttendanceStatus =
+  | "Not tracked"
   | "Present"
   | "Absent"
   | "On Leave"

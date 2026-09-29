@@ -1,14 +1,18 @@
-import { useMemo, useState } from "react";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page-header";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -17,368 +21,386 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmployeeService } from "@/lib/data/employee-service";
-import { cn } from "@/lib/utils";
-import { ChevronDown, ChevronRight, Network, Search, Users } from "lucide-react";
+import { SettingsService } from "@/lib/data/settings-service";
+import { employmentCalendarDate } from "@/lib/data/employment-change-policy";
+import { buildOrganisationForest } from "@/lib/data/org-chart-layout";
+import {
+  getOrganisationChartHeadFn,
+  saveOrganisationChartHeadFn,
+} from "@/lib/server-functions/org-chart.server";
+import { OrgChartTree } from "@/components/org-chart-tree";
+import { Crown, Minus, Plus, Search, Settings2 } from "lucide-react";
 import { toast } from "sonner";
-import type { Employee } from "@/lib/data/types";
 
-export const Route = createFileRoute("/staff/org-chart")({
-  component: OrgChartRoute,
-});
-
-function initialsFor(employee: Employee): string {
-  return (employee.preferredName || employee.legalName)
-    .split(" ")
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
-
-function matchesSearch(employee: Employee, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return false;
-  return (
-    employee.preferredName.toLowerCase().includes(q) ||
-    employee.legalName.toLowerCase().includes(q) ||
-    employee.position.toLowerCase().includes(q) ||
-    employee.department.toLowerCase().includes(q) ||
-    employee.employeeNumber.toLowerCase().includes(q)
-  );
-}
-
-// Matches the manager-loop circuit breaker already used in employee-service.ts's
-// validateHierarchy - a defensive bound, not an expected depth.
-const MAX_ANCESTOR_HOPS = 100;
+export const Route = createFileRoute("/staff/org-chart")({ component: OrgChartRoute });
 
 function OrgChartRoute() {
-  const currentUser = useCurrentUser();
-  const employeeService = useMemo(() => new EmployeeService(), []);
-  const [, setRefreshVersion] = useState(0);
-  const allEmployees = employeeService.getDirectoryEmployees(currentUser.getActorContext(), {
-    includeArchived: false,
-  });
-  const visibleList = allEmployees;
-  const visible = useMemo(() => new Map(visibleList.map((e) => [e.id, e])), [visibleList]);
-
-  const childrenByManager = useMemo(() => {
-    const map = new Map<string, Employee[]>();
-    for (const employee of visible.values()) {
-      if (!employee.lineManagerId || !visible.has(employee.lineManagerId)) continue;
-      const siblings = map.get(employee.lineManagerId) ?? [];
-      siblings.push(employee);
-      map.set(employee.lineManagerId, siblings);
-    }
-    for (const siblings of map.values()) {
-      siblings.sort((a, b) => a.preferredName.localeCompare(b.preferredName));
-    }
-    return map;
-  }, [visible]);
-
-  // Real report counts, from the full company - not just what this viewer's scope shows -
-  // so a manager never looks like they have fewer reports than they really do.
-  const totalReportsByManager = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const employee of allEmployees) {
-      if (!employee.lineManagerId) continue;
-      map.set(employee.lineManagerId, (map.get(employee.lineManagerId) ?? 0) + 1);
-    }
-    return map;
-  }, [allEmployees]);
-
-  const roots = useMemo(
-    () =>
-      [...visible.values()]
-        .filter((employee) => !employee.lineManagerId || !visible.has(employee.lineManagerId))
-        .sort((a, b) => a.preferredName.localeCompare(b.preferredName)),
-    [visible],
-  );
-
-  const [query, setQuery] = useState("");
-  const [employeeId, setEmployeeId] = useState("");
-  const [supervisorId, setSupervisorId] = useState("");
-  const [reason, setReason] = useState("Reporting line updated by HR");
-  const [saving, setSaving] = useState(false);
-  const canManageReportingLines = currentUser.permissions.has("employee:manage_all");
-
-  const selectEmployee = (id: string) => {
-    setEmployeeId(id);
-    setSupervisorId(allEmployees.find((employee) => employee.id === id)?.lineManagerId ?? "top");
+  const user = useCurrentUser();
+  const navigate = useNavigate();
+  const service = useMemo(() => new EmployeeService(), []);
+  const [, refresh] = useState(0);
+  const people = service.getDirectoryEmployees(user.getActorContext(), { includeArchived: false });
+  const actor = {
+    actorId: user.id,
+    ...(user.workspaceEmail ? { actorEmail: user.workspaceEmail } : {}),
+    activeRole: user.activeRole,
   };
-
-  const saveReportingLine = async () => {
-    if (!employeeId || !supervisorId || reason.trim().length < 5) {
-      toast.error("Select an employee and supervisor, and give a short reason.");
-      return;
+  const headQuery = useQuery({
+    queryKey: ["organisation-chart-head", user.id, user.activeRole],
+    queryFn: () => getOrganisationChartHeadFn({ data: actor }),
+    staleTime: 0,
+  });
+  const headId =
+    people.find((person) => (person.databaseId ?? person.id) === headQuery.data?.employeeId)?.id ??
+    null;
+  const forest = buildOrganisationForest(people, headId);
+  const [query, setQuery] = useState("");
+  const [zoom, setZoom] = useState(100);
+  const [expanded, setExpanded] = useState(true);
+  const [treeVersion, setTreeVersion] = useState(0);
+  const [editing, setEditing] = useState(false);
+  const [employeeId, setEmployeeId] = useState("");
+  const [supervisorId, setSupervisorId] = useState("none");
+  const [selectedHead, setSelectedHead] = useState("");
+  const [saving, setSaving] = useState(false);
+  const viewport = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const canvas = viewport.current;
+    const head = canvas?.querySelector('[data-company-head="true"]');
+    if (!canvas || !head) return;
+    const card = head.getBoundingClientRect();
+    const frame = canvas.getBoundingClientRect();
+    canvas.scrollLeft += card.left + card.width / 2 - frame.left - canvas.clientWidth / 2;
+  }, [headId, zoom, treeVersion, query]);
+  const canManage = user.permissions.has("employee:manage_all");
+  const normalized = query.trim().toLowerCase();
+  const matches = new Set(
+    people
+      .filter(
+        (person) =>
+          normalized &&
+          [
+            person.preferredName,
+            person.legalName,
+            person.position,
+            person.department,
+            person.location,
+          ].some((value) => value?.toLowerCase().includes(normalized)),
+      )
+      .map((person) => person.id),
+  );
+  const kept = new Set<string>();
+  const visit = (id: string): boolean => {
+    const descendantMatch = (forest.children.get(id) ?? [])
+      .map((person) => visit(person.id))
+      .some(Boolean);
+    if (!normalized || matches.has(id) || descendantMatch) {
+      kept.add(id);
+      return true;
     }
+    return false;
+  };
+  forest.roots.forEach((person) => visit(person.id));
+  const visibleChildren = new Map(
+    [...forest.children].map(([id, children]) => [
+      id,
+      children.filter((child) => kept.has(child.id)),
+    ]),
+  );
+  const otherRoots = forest.roots.filter((person) => person.id !== headId && kept.has(person.id));
+  const openRecord = canManage
+    ? (id: string) => {
+        void navigate({ to: "/staff/employees/$employeeId", params: { employeeId: id } });
+      }
+    : undefined;
+  const saveHead = async () => {
+    if (!headQuery.data) return;
     setSaving(true);
     try {
-      await employeeService.updateEmploymentRecordAsync(
-        employeeId,
-        { lineManagerId: supervisorId === "top" ? null : supervisorId },
-        new Date().toISOString().slice(0, 10),
-        reason.trim(),
-        currentUser.getActorContext(),
-      );
-      currentUser.refreshRecords();
-      setRefreshVersion((value) => value + 1);
-      toast.success("Reporting line updated.");
+      const selected = people.find((person) => person.id === selectedHead);
+      await saveOrganisationChartHeadFn({
+        data: {
+          actor,
+          employeeId: selected ? (selected.databaseId ?? selected.id) : null,
+          previousEmployeeId: headQuery.data.employeeId,
+        },
+      });
+      await headQuery.refetch();
+      setQuery("");
+      setTreeVersion((value) => value + 1);
+      toast.success("Company head saved. Reporting lines are unchanged.");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to update the reporting line.");
+      toast.error(error instanceof Error ? error.message : "Could not save company head.");
+      await headQuery.refetch();
     } finally {
       setSaving(false);
     }
   };
-
-  // While searching, prune the tree to matches plus the path down to them (ancestors) and
-  // their own team (descendants), instead of flattening the whole chart into a plain list.
-  const keepIds = useMemo(() => {
-    if (!query.trim()) return null;
-    const keep = new Set<string>();
-    for (const employee of visible.values()) {
-      if (!matchesSearch(employee, query)) continue;
-      keep.add(employee.id);
-      let current: Employee | undefined = employee;
-      let hops = 0;
-      while (current?.lineManagerId && hops < MAX_ANCESTOR_HOPS) {
-        keep.add(current.lineManagerId);
-        current = visible.get(current.lineManagerId);
-        hops += 1;
-      }
-      const stack = [...(childrenByManager.get(employee.id) ?? [])];
-      while (stack.length > 0) {
-        const next = stack.pop()!;
-        keep.add(next.id);
-        stack.push(...(childrenByManager.get(next.id) ?? []));
-      }
+  const saveReporting = async () => {
+    if (!employeeId) return;
+    setSaving(true);
+    try {
+      const result = await service.updateEmploymentRecordAsync(
+        employeeId,
+        { lineManagerId: supervisorId === "none" ? null : supervisorId },
+        employmentCalendarDate(new SettingsService().getAppSettingsSync().timezone),
+        "Reporting line updated by HR",
+        user.getActorContext(),
+      );
+      user.refreshRecords();
+      refresh((value) => value + 1);
+      setQuery("");
+      setTreeVersion((value) => value + 1);
+      toast.success(
+        result.status === "Scheduled"
+          ? "Reporting line change scheduled."
+          : "Reporting line saved.",
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save reporting line.");
+    } finally {
+      setSaving(false);
     }
-    return keep;
-  }, [query, visible, childrenByManager]);
-
-  const totalVisible = visible.size;
-  const visibleRoots = roots.filter((root) => !keepIds || keepIds.has(root.id));
-  const noSearchMatches = query.trim().length > 0 && keepIds?.size === 0;
-
+  };
   return (
     <RequirePermission permission="employee:view_directory" resourceName="Organisation Chart">
-      <div className="flex flex-col gap-6 max-w-[1400px] mx-auto pb-10">
-        <PageHeader
-          title="Organisation Chart"
-          description="See how VIA teams and country leadership connect from the top of the organisation."
-          breadcrumbs={[{ label: "Core HR" }, { label: "Organisation Chart" }]}
-        />
-
-        {canManageReportingLines && (
-          <Card className="space-y-4 p-5">
-            <div className="flex items-start gap-3">
-              <div className="rounded-lg bg-primary/10 p-2 text-primary">
-                <Network className="h-5 w-5" />
-              </div>
-              <div>
-                <h2 className="font-semibold">Arrange reporting lines</h2>
-                <p className="text-sm text-muted-foreground">
-                  Choose a colleague and who they report to. Select top of organisation for the CEO
-                  or highest country leader.
-                </p>
-              </div>
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label>Employee</Label>
-                <Select value={employeeId} onValueChange={selectEmployee}>
-                  <SelectTrigger aria-label="Employee to arrange">
-                    <SelectValue placeholder="Choose an employee" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {allEmployees.map((employee) => (
-                      <SelectItem key={employee.id} value={employee.id}>
-                        {employee.preferredName} · {employee.position} · {employee.location}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Reports to</Label>
-                <Select value={supervisorId} onValueChange={setSupervisorId} disabled={!employeeId}>
-                  <SelectTrigger aria-label="Reports to">
-                    <SelectValue placeholder="Choose a supervisor" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="top">Top of organisation</SelectItem>
-                    {allEmployees
-                      .filter((employee) => employee.id !== employeeId)
-                      .map((employee) => (
-                        <SelectItem key={employee.id} value={employee.id}>
-                          {employee.preferredName} · {employee.position} · {employee.location}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="reporting-line-reason">Reason</Label>
-              <Textarea
-                id="reporting-line-reason"
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-                placeholder="Why is this reporting line changing?"
-              />
-            </div>
-            <Button onClick={() => void saveReportingLine()} disabled={saving || !employeeId}>
-              {saving ? "Saving..." : "Save reporting line"}
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <PageHeader title="Organisation chart" />
+          {canManage && (
+            <Button
+              onClick={() => {
+                setSelectedHead(headId ?? "none");
+                setEditing(true);
+              }}
+              disabled={!headQuery.data}
+            >
+              <Settings2 className="mr-2 h-4 w-4" />
+              Arrange chart
             </Button>
-          </Card>
-        )}
-
-        <div className="flex flex-wrap items-center gap-4 rounded-xl border bg-card p-4 shadow-sm">
-          <div className="relative flex-1 min-w-[250px]">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-card p-3">
+          <div className="relative min-w-48 flex-1">
+            <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search by name, position, or department..."
-              className="pl-9 bg-background"
+              aria-label="Search organisation chart"
+              placeholder="Find a colleague or team"
+              className="pl-9"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(event) => setQuery(event.target.value)}
             />
           </div>
-          <p className="text-xs text-muted-foreground">
-            {totalVisible} colleague{totalVisible === 1 ? "" : "s"} in the organisation chart
-          </p>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setExpanded(!expanded);
+              setTreeVersion((value) => value + 1);
+            }}
+          >
+            {expanded ? "Collapse teams" : "Expand teams"}
+          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Zoom out"
+              disabled={zoom <= 40}
+              onClick={() => setZoom(Math.max(40, zoom - 10))}
+            >
+              <Minus className="h-4 w-4" />
+            </Button>
+            <button
+              type="button"
+              className="min-w-12 text-sm tabular-nums"
+              aria-label="Reset zoom"
+              onClick={() => setZoom(100)}
+            >
+              {zoom}%
+            </button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Zoom in"
+              disabled={zoom >= 130}
+              onClick={() => setZoom(Math.min(130, zoom + 10))}
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
-
-        <Card className="p-6 overflow-x-auto">
-          {visibleRoots.length === 0 ? (
-            <p className="py-10 text-center text-muted-foreground">
-              {noSearchMatches
-                ? "No one in your reporting line matches that search."
-                : "No reporting line is visible to you yet."}
+        {headQuery.isError && (
+          <div role="alert" className="rounded-xl border p-4 text-sm">
+            Company-head settings could not load.{" "}
+            <button
+              type="button"
+              className="text-primary underline"
+              onClick={() => void headQuery.refetch()}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+        {headQuery.data && !forest.head && (
+          <p className="text-sm text-muted-foreground">
+            {headQuery.data.employeeId
+              ? "The saved company head is no longer in the directory."
+              : "Company head not set."}
+            {canManage && " Select Arrange chart to choose one."}
+          </p>
+        )}
+        <div
+          ref={viewport}
+          tabIndex={0}
+          role="region"
+          aria-label="Organisation hierarchy — scroll to explore"
+          className="max-h-[75vh] min-h-96 overflow-auto rounded-xl border bg-muted/20 p-6 sm:p-10"
+        >
+          {normalized && matches.size === 0 ? (
+            <p className="py-20 text-center text-sm text-muted-foreground">
+              No matching colleagues.
             </p>
           ) : (
-            <div className="flex flex-col gap-2 min-w-[520px]">
-              {visibleRoots.map((root) => (
-                <OrgChartNode
-                  key={root.id}
-                  employee={root}
-                  childrenByManager={childrenByManager}
-                  totalReportsByManager={totalReportsByManager}
-                  keepIds={keepIds}
-                  query={query}
-                  currentEmployeeId={currentUser?.employeeId}
-                  canOpenHrRecord={canManageReportingLines}
-                  depth={0}
+            <div
+              key={`${treeVersion}-${normalized}`}
+              className="mx-auto flex w-max min-w-full flex-col items-center gap-12"
+              style={{ zoom: zoom / 100 }}
+            >
+              {forest.head && kept.has(forest.head.id) && (
+                <OrgChartTree
+                  person={forest.head}
+                  childrenByManager={visibleChildren}
+                  headId={headId}
+                  matches={matches}
+                  expandAll={normalized ? true : expanded}
+                  {...(openRecord ? { onOpen: openRecord } : {})}
                 />
-              ))}
+              )}
+              {otherRoots.length > 0 && (
+                <section className="flex flex-col items-center gap-6">
+                  {forest.head && (
+                    <p className="rounded-full border border-dashed px-4 py-2 text-xs text-muted-foreground">
+                      Other teams · no reporting link to company head
+                    </p>
+                  )}
+                  <div className="flex items-start gap-10">
+                    {otherRoots.map((person) => (
+                      <OrgChartTree
+                        key={person.id}
+                        person={person}
+                        childrenByManager={visibleChildren}
+                        headId={headId}
+                        matches={matches}
+                        expandAll={normalized ? true : expanded}
+                        {...(openRecord ? { onOpen: openRecord } : {})}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+              {people.length === 0 && (
+                <p className="py-20 text-sm text-muted-foreground">No employees to display.</p>
+              )}
             </div>
           )}
-        </Card>
+        </div>
+        <Dialog
+          open={editing}
+          onOpenChange={(open) => {
+            if (!saving) setEditing(open);
+          }}
+        >
+          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Arrange chart</DialogTitle>
+              <DialogDescription>
+                Choose the company head or update a reporting line.
+              </DialogDescription>
+            </DialogHeader>
+            <fieldset disabled={saving} className="space-y-3 rounded-xl border p-4">
+              <Label className="flex items-center gap-2">
+                <Crown className="h-4 w-4 text-primary" />
+                Company head
+              </Label>
+              <Select value={selectedHead} onValueChange={setSelectedHead} disabled={saving}>
+                <SelectTrigger aria-label="Company head">
+                  <SelectValue placeholder="Choose company head" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Not set</SelectItem>
+                  {people.map((person) => (
+                    <SelectItem key={person.id} value={person.id}>
+                      {person.preferredName} · {person.position}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Shown at the top. Supervisors and approvals stay unchanged.
+              </p>
+              <Button
+                onClick={() => void saveHead()}
+                disabled={saving || !headQuery.data || selectedHead === (headId ?? "none")}
+              >
+                Save company head
+              </Button>
+            </fieldset>
+            <fieldset disabled={saving} className="space-y-3 rounded-xl border p-4">
+              <Label>Reporting line</Label>
+              <Select
+                value={employeeId}
+                onValueChange={(id) => {
+                  setEmployeeId(id);
+                  setSupervisorId(
+                    people.find((person) => person.id === id)?.lineManagerId ?? "none",
+                  );
+                }}
+                disabled={saving}
+              >
+                <SelectTrigger aria-label="Employee to arrange">
+                  <SelectValue placeholder="Choose employee" />
+                </SelectTrigger>
+                <SelectContent>
+                  {people.map((person) => (
+                    <SelectItem key={person.id} value={person.id}>
+                      {person.preferredName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={supervisorId}
+                onValueChange={setSupervisorId}
+                disabled={!employeeId || saving}
+              >
+                <SelectTrigger aria-label="Reports to">
+                  <SelectValue placeholder="Reports to" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No supervisor</SelectItem>
+                  {people
+                    .filter((person) => person.id !== employeeId)
+                    .map((person) => (
+                      <SelectItem key={person.id} value={person.id}>
+                        {person.preferredName}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Changes the employee's supervisor and approval routing.
+              </p>
+              <Button
+                variant="outline"
+                onClick={() => void saveReporting()}
+                disabled={!employeeId || saving}
+              >
+                Save reporting line
+              </Button>
+            </fieldset>
+          </DialogContent>
+        </Dialog>
       </div>
     </RequirePermission>
-  );
-}
-
-function OrgChartNode({
-  employee,
-  childrenByManager,
-  totalReportsByManager,
-  keepIds,
-  query,
-  currentEmployeeId,
-  canOpenHrRecord,
-  depth,
-}: {
-  employee: Employee;
-  childrenByManager: Map<string, Employee[]>;
-  totalReportsByManager: Map<string, number>;
-  keepIds: Set<string> | null;
-  query: string;
-  currentEmployeeId: string | undefined;
-  canOpenHrRecord: boolean;
-  depth: number;
-}) {
-  const allScopedChildren = childrenByManager.get(employee.id) ?? [];
-  const children = allScopedChildren.filter((child) => !keepIds || keepIds.has(child.id));
-  const totalReports = totalReportsByManager.get(employee.id) ?? 0;
-  const hiddenReports = totalReports - allScopedChildren.length;
-  const [expanded, setExpanded] = useState(true);
-  const isMatch = matchesSearch(employee, query);
-  const isSelf = currentEmployeeId === employee.id;
-
-  return (
-    <div className="flex flex-col">
-      <div
-        className={cn(
-          "flex items-center gap-3 rounded-lg border p-3 bg-card",
-          isSelf && "border-primary bg-primary/5",
-          isMatch && "ring-2 ring-amber-400",
-        )}
-        style={{ marginLeft: depth * 28 }}
-      >
-        {children.length > 0 ? (
-          <button
-            type="button"
-            onClick={() => setExpanded((value) => !value)}
-            className="text-muted-foreground hover:text-foreground"
-            aria-label={expanded ? "Collapse team" : "Expand team"}
-          >
-            {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          </button>
-        ) : (
-          <span className="w-4" />
-        )}
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
-          {initialsFor(employee)}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            {canOpenHrRecord ? (
-              <Link
-                to="/staff/employees/$employeeId"
-                params={{ employeeId: employee.id }}
-                className="font-medium hover:underline"
-              >
-                {employee.preferredName}
-              </Link>
-            ) : (
-              <span className="font-medium">{employee.preferredName}</span>
-            )}
-            {isSelf && <span className="text-xs text-primary">(You)</span>}
-            <StatusBadge status={employee.status} />
-          </div>
-          <p className="truncate text-sm text-muted-foreground">
-            {employee.position} &bull; {employee.department}
-          </p>
-        </div>
-        <Badge variant="outline" className="shrink-0 gap-1">
-          <Users className="h-3 w-3" />
-          {totalReports}
-        </Badge>
-      </div>
-      {expanded && children.length > 0 && (
-        <div className="mt-2 flex flex-col gap-2">
-          {children.map((child) => (
-            <OrgChartNode
-              key={child.id}
-              employee={child}
-              childrenByManager={childrenByManager}
-              totalReportsByManager={totalReportsByManager}
-              keepIds={keepIds}
-              query={query}
-              currentEmployeeId={currentEmployeeId}
-              canOpenHrRecord={canOpenHrRecord}
-              depth={depth + 1}
-            />
-          ))}
-        </div>
-      )}
-      {expanded && hiddenReports > 0 && (
-        <p
-          className="mt-1 text-xs text-muted-foreground"
-          style={{ marginLeft: (depth + 1) * 28 + 40 }}
-        >
-          +{hiddenReports} more direct report{hiddenReports === 1 ? "" : "s"} outside your view
-        </p>
-      )}
-    </div>
   );
 }

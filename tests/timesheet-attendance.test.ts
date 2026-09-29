@@ -55,6 +55,21 @@ const accounts: ActorContext = {
 function harness() {
   const storage = new VersionedStorageService(new MemoryStorageDriver());
   initializeSeedData(storage);
+  storage.writeCollection("attendanceTracking", [
+    {
+      headOfficeLocationId: "loc-muscat",
+      effectiveFrom: "2020-01-01",
+      revision: 1,
+      assignments: storage
+        .readCollection<{ id: string; databaseId?: string }>("employees")
+        .map((person) => ({
+          employeeId: person.databaseId ?? person.id,
+          effectiveFrom: "2020-01-01",
+          mode: "Head Office biometric",
+          source: "location",
+        })),
+    },
+  ]);
   const audit = new AuditService(storage);
   const notifications = new NotificationService(storage, audit);
   configureApplicationDataServices({ storage, audit, notifications, files: {} as never });
@@ -102,11 +117,26 @@ function addProjectHours(timesheet: TimesheetWithEntries, date: string, hours: n
   timesheet.totalHours += hours;
 }
 
+test("staff outside biometric tracking submit project hours without punch explanations", () => {
+  const { storage, timesheets, period } = harness();
+  storage.writeCollection("attendanceTracking", []);
+  const timesheet = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
+  addProjectHours(timesheet, "2026-08-17", 8);
+  const saved = timesheets.saveTimesheetDraft(timesheet, employee);
+  assert.equal(timesheets.reconcileAttendance(saved).unresolvedCount, 0);
+  assert.equal(timesheets.submitTimesheet(saved.id, employee).status, "Pending Manager");
+  const reviewed = timesheets.approveTimesheet(saved.id, manager);
+  assert.equal(reviewed.status, "Pending HR");
+  assert.equal(reviewed.approvedAt, undefined);
+  assert.equal(timesheets.approveTimesheet(saved.id, hr).status, "Approved");
+});
+
 test("matching project and attendance hours reconcile without an explanation", () => {
   const { attendance, timesheets, period } = harness();
   addAttendance(attendance, "2026-08-17");
   const timesheet = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
   addProjectHours(timesheet, "2026-08-17", 8);
+  for (const entry of timesheet.entries) if (!entry.isLeave && !entry.isHoliday) entry.notes = "";
   const saved = timesheets.saveTimesheetDraft(timesheet, employee);
   const reconciliation = timesheets.reconcileAttendance(saved);
 
@@ -125,6 +155,26 @@ test("an unexplained attendance variance blocks submission", () => {
   assert.throws(
     () => timesheets.submitTimesheet(saved.id, employee),
     /Explain the attendance differences/,
+  );
+});
+
+test("extra office presence does not become overtime or force extra ordinary timesheet hours", () => {
+  const { attendance, timesheets, period, storage } = harness();
+  addAttendance(attendance, "2026-08-17", "20:00");
+  const sheet = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
+  addProjectHours(sheet, "2026-08-17", 8);
+  const saved = timesheets.saveTimesheetDraft(sheet, employee);
+  assert.equal(timesheets.reconcileAttendance(saved).unresolvedCount, 0);
+  const before = storage.readCollection("overtimeClaims").length;
+  timesheets.submitTimesheet(saved.id, employee);
+  assert.equal(timesheets.approveTimesheet(saved.id, manager).status, "Pending HR");
+  assert.equal(timesheets.approveTimesheet(saved.id, hr).status, "Approved");
+  assert.equal(storage.readCollection("overtimeClaims").length, before);
+  assert.equal(
+    attendance
+      .getRecordsForEmployee("employee-omar", employee)
+      .find((row) => row.date === "2026-08-17")?.calculatedHours,
+    10,
   );
 });
 

@@ -1,3 +1,4 @@
+import { isAttendanceTracked, type AttendanceTrackingPolicy } from "./attendance-tracking.ts";
 export interface AnalyticsEmployee {
   id: string;
   startDate: string;
@@ -16,6 +17,8 @@ export interface AnalyticsDay {
   leaveDays: number;
 }
 export interface WorkforceAnalytics {
+  workforceHeadcount?: number;
+  attendanceTracked?: boolean;
   today: { date: string; headcount: number; recorded: number; onLeave: number };
   priorities: {
     leaveYear: number;
@@ -50,6 +53,7 @@ export function completedDateRange(today: string, count: number): string[] {
 
 /** Today's snapshot is separate from completed-day trends; a missing punch is not absence. */
 export function attendanceToday(input: {
+  tracking?: AttendanceTrackingPolicy | null;
   date: string;
   now: Date;
   people: AnalyticsEmployee[];
@@ -58,7 +62,14 @@ export function attendanceToday(input: {
   pendingVisits: { employeeId: string; date: string }[];
 }) {
   const current = new Set(
-    input.people.filter((person) => employedOn(person, input.date)).map((person) => person.id),
+    input.people
+      .filter(
+        (person) =>
+          employedOn(person, input.date) &&
+          (input.tracking === undefined ||
+            isAttendanceTracked(input.tracking, person.id, input.date)),
+      )
+      .map((person) => person.id),
   );
   const pending = new Set(
     input.pendingVisits
@@ -85,7 +96,9 @@ export function attendanceToday(input: {
       input.leave
         .filter(
           (request) =>
-            current.has(request.employeeId) &&
+            input.people.some(
+              (person) => person.id === request.employeeId && employedOn(person, input.date),
+            ) &&
             request.startDate <= input.date &&
             request.endDate >= input.date,
         )
@@ -104,6 +117,7 @@ export function employedOn(employee: AnalyticsEmployee, date: string): boolean {
 }
 
 export function calculateAttendanceAnalytics(input: {
+  tracking?: AttendanceTrackingPolicy | null;
   dates: string[];
   employees: AnalyticsEmployee[];
   workingDays: number[];
@@ -147,6 +161,8 @@ export function calculateAttendanceAnalytics(input: {
     };
     const workingDay = input.workingDays.includes(new Date(`${date}T12:00:00Z`).getUTCDay());
     for (const employee of input.employees) {
+      if (input.tracking !== undefined && !isAttendanceTracked(input.tracking, employee.id, date))
+        continue;
       if (!employedOn(employee, date)) continue;
       const scheduled =
         workingDay &&
