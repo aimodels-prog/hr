@@ -6,6 +6,7 @@ import { appSettings, organisations } from "../schema/organisation.ts";
 import { leaveBalances, leavePolicies, leaveTransactions } from "../schema/leave.ts";
 import { notifications } from "../schema/system.ts";
 import { leaveYearForDate } from "../../data/leave-year.ts";
+import { reminderRulesFromSettings } from "../../data/reminder-rules.ts";
 import { leaveReminderStage, remainingCarryForReminder } from "../../data/leave-reminders.ts";
 
 export async function processLeaveUsageReminders(now = new Date()) {
@@ -18,6 +19,8 @@ export async function processLeaveUsageReminders(now = new Date()) {
   let sent = 0;
   for (const { settings } of orgs) {
     const organisationId = settings.organisationId;
+    const rules = reminderRulesFromSettings(settings.additionalSettings);
+    if (!rules.leaveEnabled) continue;
     const today = new Intl.DateTimeFormat("en-CA", {
       timeZone: settings.timezone,
       year: "numeric",
@@ -85,7 +88,13 @@ export async function processLeaveUsageReminders(now = new Date()) {
         available,
         grouped.get(`${balance.employeeId}:${balance.policyId}`) ?? [],
       );
-      const stage = leaveReminderStage(today, year, carry);
+      const stage = leaveReminderStage(today, year, carry, rules, settings.leaveYearStart);
+      const deadlineLabel = new Intl.DateTimeFormat("en-GB", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: "UTC",
+      }).format(new Date(`${stage.deadline}T00:00:00Z`));
       const inserted = await db
         .insert(notifications)
         .values({
@@ -94,11 +103,11 @@ export async function processLeaveUsageReminders(now = new Date()) {
           type: "leave-usage-reminder",
           title:
             stage.kind === "carry"
-              ? "Plan your carried-over leave before May"
+              ? "Plan your carried-over leave"
               : "Remember to plan your annual leave",
           message:
             stage.kind === "carry"
-              ? `Please plan to use old ${name} leave by 30 April ${year}. Your balance includes an estimated ${Number(carry.toFixed(2))} carried-over days, counting approved leave against old days first. Check your dates with HR and request leave. This reminder does not expire or deduct days.`
+              ? `Please plan to use old ${name} leave by ${deadlineLabel}. Your balance includes an estimated ${Number(carry.toFixed(2))} carried-over days, counting approved leave against old days first. Check your dates with HR and request leave. This reminder does not expire or deduct days.`
               : `You have ${available} days of ${name} available. Plan a break with your manager and submit your leave request. Normal eligibility and approval rules apply.`,
           priority: "Normal",
           status: "Unread",

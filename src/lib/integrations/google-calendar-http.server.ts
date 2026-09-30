@@ -5,6 +5,12 @@ import { getPortalPrincipalForRequest } from "../auth/portal-auth-http.server.ts
 import { getDatabaseClient } from "../db/client.ts";
 import { encryptSensitiveJson, decryptSensitiveJson } from "../db/encryption.server.ts";
 import {
+  getCalendarOrganiserEmail,
+  saveCalendarOrganiserEmail,
+  calendarEmailFromSettings,
+} from "../db/repositories/calendar-settings.repository.server.ts";
+import { appSettings } from "../db/schema/organisation.ts";
+import {
   googleCalendarConnections as connections,
   googleCalendarOAuthStates as states,
 } from "../db/schema/google-calendar.ts";
@@ -64,12 +70,45 @@ export async function resolveGoogleCalendarRequest(
         {
           configured,
           connected: !!connection,
-          accountEmail: connection?.email ?? "hr@via-int.com",
+          accountEmail: await getCalendarOrganiserEmail(principal.organisationId),
           emailEnabled: !!connection?.emailEnabledAt,
           emailDeliveryCounts: deliveryCounts,
         },
         { headers },
       );
+    }
+    if (api && request.method === "PATCH") {
+      const origin = process.env["APP_ORIGIN"]?.trim();
+      if (!origin || request.headers.get("origin") !== new URL(origin).origin)
+        return Response.json({ error: "forbidden_origin" }, { status: 403, headers });
+      const body = await request.json();
+      if (typeof body?.accountEmail !== "string" || body.accountEmail.length > 254)
+        return Response.json(
+          { error: "Enter a valid Google account email." },
+          { status: 400, headers },
+        );
+      try {
+        const accountEmail = await saveCalendarOrganiserEmail(
+          principal.organisationId,
+          body.accountEmail,
+          {
+            userId: principal.user.id,
+            displayName: principal.user.displayName,
+            activeRole: principal.user.roles.includes("HR") ? "HR" : "Super Admin",
+          },
+        );
+        return Response.json({ accountEmail }, { headers });
+      } catch (error) {
+        return Response.json(
+          {
+            error:
+              error instanceof Error && error.message.startsWith("This account has linked")
+                ? error.message
+                : "The account could not be saved. Check the email address and try again.",
+          },
+          { status: 409, headers },
+        );
+      }
     }
     if (callback && request.method === "GET") {
       const state = url.searchParams.get("state") ?? "";
@@ -92,28 +131,38 @@ export async function resolveGoogleCalendarRequest(
       const account = await exchangeCalendarCode(
         code,
         decryptSensitiveJson<string>(pending.verifierEncrypted),
+        await getCalendarOrganiserEmail(principal.organisationId),
       );
-      await db
-        .insert(connections)
-        .values({
-          organisationId: principal.organisationId,
-          accountEmail: account.email,
-          refreshTokenEncrypted: encryptSensitiveJson(account.refreshToken),
-          connectedBy: principal.user.id,
-          emailEnabledAt: account.emailAuthorised ? new Date() : null,
-        })
-        .onConflictDoUpdate({
-          target: connections.organisationId,
-          set: {
+      await db.transaction(async (tx) => {
+        const [settings] = await tx
+          .select()
+          .from(appSettings)
+          .where(eq(appSettings.organisationId, principal.organisationId))
+          .for("update");
+        if (!settings || calendarEmailFromSettings(settings.additionalSettings) !== account.email)
+          throw new Error("Calendar account changed. Connect again.");
+        await tx
+          .insert(connections)
+          .values({
+            organisationId: principal.organisationId,
             accountEmail: account.email,
             refreshTokenEncrypted: encryptSensitiveJson(account.refreshToken),
             connectedBy: principal.user.id,
-            connectedAt: new Date(),
-            emailEnabledAt: account.emailAuthorised
-              ? sql`coalesce(${connections.emailEnabledAt},now())`
-              : null,
-          },
-        });
+            emailEnabledAt: account.emailAuthorised ? new Date() : null,
+          })
+          .onConflictDoUpdate({
+            target: connections.organisationId,
+            set: {
+              accountEmail: account.email,
+              refreshTokenEncrypted: encryptSensitiveJson(account.refreshToken),
+              connectedBy: principal.user.id,
+              connectedAt: new Date(),
+              emailEnabledAt: account.emailAuthorised
+                ? sql`coalesce(${connections.emailEnabledAt},now())`
+                : null,
+            },
+          });
+      });
       if (account.emailAuthorised)
         await db.execute(
           sql`UPDATE workflow_notification_emails SET attempts=0,next_attempt_at=now() WHERE organisation_id=${principal.organisationId} AND status='Blocked'`,
@@ -167,6 +216,7 @@ export async function resolveGoogleCalendarRequest(
             state,
             verifier,
             url.searchParams.get("email") === "enable",
+            await getCalendarOrganiserEmail(principal.organisationId),
           ),
         },
       });

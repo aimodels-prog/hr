@@ -519,6 +519,10 @@ const Policy = z
     expectedClockIn: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
     expectedClockOut: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
     defaultBreakMinutes: z.number().int().min(0).max(1439),
+    breakStart: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .optional(),
     lateGraceMinutes: z.number().int().nonnegative(),
     maximumLocationAccuracyMeters: z.number().int().positive(),
     signOutReminderOffsetsMinutes: z.array(z.number().int().nonnegative()).length(3),
@@ -538,6 +542,7 @@ export const saveAttendancePolicyFn = createServerFn({ method: "POST" })
         expectedClockIn: data.expectedClockIn,
         expectedClockOut: data.expectedClockOut,
         defaultBreakMinutes: data.defaultBreakMinutes,
+        breakStart: data.breakStart,
         lateGraceMinutes: data.lateGraceMinutes,
         maximumLocationAccuracyMeters: data.maximumLocationAccuracyMeters,
         signOutReminderOffsetsMinutes: data.signOutReminderOffsetsMinutes,

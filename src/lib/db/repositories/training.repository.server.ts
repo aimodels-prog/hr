@@ -1,4 +1,6 @@
 import "@tanstack/react-start/server-only";
+import { getReminderRules } from "./reminder-rules.repository.server.ts";
+import { trainingReminderThreshold } from "../../data/reminder-rules.ts";
 import { changeReason, trainingReasonRequired } from "../../data/change-reason-policy.ts";
 import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
 
@@ -1673,6 +1675,7 @@ export async function processTrainingAutomationInDatabase(
   const db = getDatabaseClient();
   let assignmentsCreated = 0;
   let remindersCreated = 0;
+  const reminderRules = await getReminderRules(org);
   await db.transaction(async (tx) => {
     const courses = await tx
       .select()
@@ -1799,6 +1802,7 @@ export async function processTrainingAutomationInDatabase(
       );
     const todayMs = Date.parse(`${today}T00:00:00Z`);
     for (const record of records) {
+      if (!reminderRules.trainingEnabled) continue;
       const remaining = Math.ceil(
         (Date.parse(`${record.expiryDate}T00:00:00Z`) - todayMs) / 86_400_000,
       );
@@ -1826,32 +1830,32 @@ export async function processTrainingAutomationInDatabase(
         if (!before.length) remindersCreated += 1;
         continue;
       }
-      for (const threshold of [60, 30, 14, 7, 0])
-        if (remaining <= threshold) {
-          const before = await tx
-            .select({ id: notifications.id })
-            .from(notifications)
-            .where(
-              and(
-                eq(notifications.organisationId, org),
-                eq(notifications.deduplicationKey, `training-expiry-${record.id}-${threshold}`),
-              ),
-            )
-            .limit(1);
-          await notifyEmployee(
-            tx,
-            org,
-            record.employeeId,
-            remaining <= 0
-              ? "Training certification expires today"
-              : "Training certification expiring",
-            `${record.title} expires in ${remaining} day${remaining === 1 ? "" : "s"}.`,
-            record.id,
-            `training-expiry-${record.id}-${threshold}`,
-            actor,
-          );
-          if (!before.length) remindersCreated += 1;
-        }
+      const threshold = trainingReminderThreshold(remaining, reminderRules.trainingExpiryDays);
+      if (threshold !== undefined) {
+        const before = await tx
+          .select({ id: notifications.id })
+          .from(notifications)
+          .where(
+            and(
+              eq(notifications.organisationId, org),
+              eq(notifications.deduplicationKey, `training-expiry-${record.id}-${threshold}`),
+            ),
+          )
+          .limit(1);
+        await notifyEmployee(
+          tx,
+          org,
+          record.employeeId,
+          remaining <= 0
+            ? "Training certification expires today"
+            : "Training certification expiring",
+          `${record.title} expires in ${remaining} day${remaining === 1 ? "" : "s"}.`,
+          record.id,
+          `training-expiry-${record.id}-${threshold}`,
+          actor,
+        );
+        if (!before.length) remindersCreated += 1;
+      }
     }
     await audit(
       tx,

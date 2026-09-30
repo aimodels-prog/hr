@@ -13,11 +13,13 @@ export class WorkflowEmailError extends Error {
 export function workflowEmailRaw(
   recipient: string,
   notificationId: string,
+  accountEmail: string,
   missingClockoutDate?: string,
 ) {
   z.string().email().parse(recipient);
   z.string().uuid().parse(notificationId);
-  const { accountEmail, origin } = googleCalendarConfig();
+  z.string().email().parse(accountEmail);
+  const { origin } = googleCalendarConfig();
   // Keep personal, medical, compensation and candidate information inside the authenticated app.
   if (missingClockoutDate)
     z.string()
@@ -46,9 +48,10 @@ export async function sendWorkflowEmail(
   accessToken: string,
   recipient: string,
   notificationId: string,
+  accountEmail: string,
   missingClockoutDate?: string,
 ) {
-  const raw = workflowEmailRaw(recipient, notificationId, missingClockoutDate);
+  const raw = workflowEmailRaw(recipient, notificationId, accountEmail, missingClockoutDate);
   let response: Response;
   try {
     response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
@@ -68,7 +71,7 @@ export async function sendWorkflowEmail(
   if ([401, 403].includes(response.status))
     throw new WorkflowEmailError(
       "Blocked",
-      "Enable Gmail API and reconnect hr@via-int.com with email-sending permission.",
+      "Enable Gmail API and reconnect the configured organising account with email-sending permission.",
     );
   if (response.status >= 500)
     throw new WorkflowEmailError(

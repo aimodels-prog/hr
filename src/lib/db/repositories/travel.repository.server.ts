@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { getReminderRules } from "./reminder-rules.repository.server.ts";
 import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
@@ -1074,7 +1075,7 @@ export async function assignTravelReimbursementsToPayrollInDatabase(
 
 export async function processTravelWorker(now = new Date()) {
   const db = getDatabaseClient();
-  const cutoff = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+  const cutoff = new Date(now.getTime() - 60 * 60 * 1000);
   const pending = await db
     .select()
     .from(travelRequests)
@@ -1094,7 +1095,22 @@ export async function processTravelWorker(now = new Date()) {
       ),
     );
   let reminders = 0;
+  const rulesByOrg = new Map<string, Awaited<ReturnType<typeof getReminderRules>>>();
   for (const pendingRequest of pending) {
+    let rules = rulesByOrg.get(pendingRequest.organisationId);
+    if (!rules) {
+      rules = await getReminderRules(pendingRequest.organisationId);
+      rulesByOrg.set(pendingRequest.organisationId, rules);
+    }
+    const waitingSince =
+      pendingRequest.status === "Pending Super Admin Closure"
+        ? pendingRequest.updatedAt
+        : pendingRequest.createdAt;
+    if (
+      !rules.travelEnabled ||
+      now.getTime() - waitingSince.getTime() < rules.travelAfterHours * 3600000
+    )
+      continue;
     await db.transaction(async (tx) => {
       const [request] = await tx
         .select()

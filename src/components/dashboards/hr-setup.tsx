@@ -157,8 +157,8 @@ export function HrSetup() {
               </div>
               {needsConnection && data?.configured && (
                 <p className="text-xs text-muted-foreground">
-                  Connect hr@via-int.com once. Email permission is separate from calendar
-                  permission.
+                  Connect {status.data?.accountEmail ?? "the organising account"} once. Email
+                  permission is separate from calendar permission.
                 </p>
               )}
             </>

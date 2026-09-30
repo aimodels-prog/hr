@@ -7,6 +7,7 @@ import { appSettings, organisations } from "../schema/organisation.ts";
 import { auditEvents } from "../schema/system.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 import type { AppSettings } from "../../data/types.ts";
+import { syncWorkingHours } from "./working-hours.repository.server.ts";
 
 function mapAppSettings(
   settingsRow: typeof appSettings.$inferSelect,
@@ -62,6 +63,14 @@ export async function saveAppSettings(
   const db = getDatabaseClient();
 
   return db.transaction(async (tx) => {
+    await syncWorkingHours(
+      tx,
+      orgId,
+      settings.standardDailyHours,
+      actor,
+      "company",
+      settings.standardWeeklyHours,
+    );
     const now = new Date();
 
     const [existing] = await tx

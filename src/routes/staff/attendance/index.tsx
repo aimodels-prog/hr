@@ -146,10 +146,12 @@ function AttendanceAdminContent() {
   const [capturingOffice, setCapturingOffice] = useState(false);
   const [officePreview, setOfficePreview] = useState<GeoReading | null>(null);
   const policy = attendanceService.getPolicy();
+  const [policyReady, setPolicyReady] = useState(false);
   const [standardHours, setStandardHours] = useState(String(policy.standardDailyHours));
   const [expectedIn, setExpectedIn] = useState(policy.expectedClockIn);
   const [expectedOut, setExpectedOut] = useState(policy.expectedClockOut);
   const [defaultBreak, setDefaultBreak] = useState(String(policy.defaultBreakMinutes));
+  const [breakStart, setBreakStart] = useState(policy.breakStart ?? VIA_OFFICE_SCHEDULE.breakStart);
   const [lateGrace, setLateGrace] = useState(String(policy.lateGraceMinutes));
   const [maxAccuracy, setMaxAccuracy] = useState(String(policy.maximumLocationAccuracyMeters));
   const [approvedNetworks, setApprovedNetworks] = useState(
@@ -228,6 +230,8 @@ function AttendanceAdminContent() {
   useEffect(() => {
     let active = true;
     let refreshing = false;
+    let initialPolicyLoaded = false;
+    setPolicyReady(false);
     const refresh = async () => {
       if (refreshing) return;
       refreshing = true;
@@ -236,7 +240,23 @@ function AttendanceAdminContent() {
           attendanceService.hydrateFromDatabase(actorContext),
           "Attendance refresh timed out. Please reload the page.",
         );
-        if (active) setRevision((value) => value + 1);
+        if (active) {
+          if (!initialPolicyLoaded) {
+            const saved = attendanceService.getPolicy();
+            setStandardHours(String(saved.standardDailyHours));
+            setExpectedIn(saved.expectedClockIn);
+            setExpectedOut(saved.expectedClockOut);
+            setDefaultBreak(String(saved.defaultBreakMinutes));
+            setBreakStart(saved.breakStart ?? VIA_OFFICE_SCHEDULE.breakStart);
+            setLateGrace(String(saved.lateGraceMinutes));
+            setMaxAccuracy(String(saved.maximumLocationAccuracyMeters));
+            setApprovedNetworks(saved.approvedNetworkCidrs?.join(", ") ?? "");
+            setDeduplicationMinutes(String(saved.punchDeduplicationMinutes));
+            initialPolicyLoaded = true;
+            setPolicyReady(true);
+          }
+          setRevision((value) => value + 1);
+        }
       } catch (error) {
         if (active) {
           toast.error(
@@ -442,9 +462,10 @@ function AttendanceAdminContent() {
           expectedClockIn: expectedIn,
           expectedClockOut: expectedOut,
           defaultBreakMinutes: Number(defaultBreak),
+          breakStart,
           lateGraceMinutes: Number(lateGrace),
           maximumLocationAccuracyMeters: Number(maxAccuracy),
-          signOutReminderOffsetsMinutes: [0, 15, 30],
+          signOutReminderOffsetsMinutes: policy.signOutReminderOffsetsMinutes,
           punchDeduplicationMinutes: Number(deduplicationMinutes),
         },
         approvedNetworks
@@ -1340,6 +1361,7 @@ function AttendanceAdminContent() {
                     setExpectedIn(VIA_OFFICE_SCHEDULE.start);
                     setExpectedOut(VIA_OFFICE_SCHEDULE.end);
                     setDefaultBreak(String(VIA_OFFICE_SCHEDULE.breakMinutes));
+                    setBreakStart(VIA_OFFICE_SCHEDULE.breakStart);
                     setStandardHours(String(VIA_OFFICE_SCHEDULE.workingHours));
                     setPolicyReason("Apply VIA office hours: 08:30–17:30; lunch 13:00–14:00.");
                   }}
@@ -1347,13 +1369,16 @@ function AttendanceAdminContent() {
                   Use VIA office hours
                 </Button>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  Flexible arrival and finish · 8 working hours · Lunch 1–2 pm. An 8:30 am start
-                  finishes at 5:30 pm.
+                  Daily hours are working time, excluding the break. Changes also update company and
+                  timesheet daily hours. Flexible finish times follow the saved hours and break.
                 </p>
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium">Standard hours</label>
+                <label htmlFor="policy-standard-hours" className="text-sm font-medium">
+                  Standard hours
+                </label>
                 <Input
+                  id="policy-standard-hours"
                   type="number"
                   min="1"
                   max="24"
@@ -1363,13 +1388,27 @@ function AttendanceAdminContent() {
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium">Default break minutes</label>
+                <label htmlFor="policy-break-minutes" className="text-sm font-medium">
+                  Default break minutes
+                </label>
                 <Input
+                  id="policy-break-minutes"
                   type="number"
                   min="0"
                   max="360"
                   value={defaultBreak}
                   onChange={(event) => setDefaultBreak(event.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="policy-break-start" className="text-sm font-medium">
+                  Break starts at
+                </label>
+                <Input
+                  id="policy-break-start"
+                  type="time"
+                  value={breakStart}
+                  onChange={(event) => setBreakStart(event.target.value)}
                 />
               </div>
               <div className="space-y-2">
@@ -1429,8 +1468,11 @@ function AttendanceAdminContent() {
                     </p>
                   </div>
                   <div className="space-y-2 sm:col-span-2">
-                    <label className="text-sm font-medium">Approved office networks</label>
+                    <label htmlFor="policy-networks" className="text-sm font-medium">
+                      Approved office networks
+                    </label>
                     <Input
+                      id="policy-networks"
                       value={approvedNetworks}
                       onChange={(event) => setApprovedNetworks(event.target.value)}
                       placeholder="Example: 203.0.113.24/32"
@@ -1443,8 +1485,11 @@ function AttendanceAdminContent() {
                 </div>
               </details>
               <div className="space-y-2 sm:col-span-2">
-                <label className="text-sm font-medium">Reason for change</label>
+                <label htmlFor="policy-reason" className="text-sm font-medium">
+                  Reason for change
+                </label>
                 <Input
+                  id="policy-reason"
                   value={policyReason}
                   onChange={(event) => setPolicyReason(event.target.value)}
                   placeholder="Why is the attendance policy changing?"
@@ -1452,13 +1497,13 @@ function AttendanceAdminContent() {
               </div>
               <Alert className="sm:col-span-2">
                 <Settings2 className="h-4 w-4" />
-                <AlertTitle>Three daily reminders</AlertTitle>
+                <AlertTitle>Missing clock-outs</AlertTitle>
                 <AlertDescription>
-                  Sent when standard working hours are completed, then 15 and 30 minutes later while
-                  attendance remains open.
+                  Follow-up is sent the next morning. Staff are not reminded to leave at the end of
+                  the day.
                 </AlertDescription>
               </Alert>
-              <Button className="sm:col-span-2" onClick={savePolicy}>
+              <Button className="sm:col-span-2" onClick={savePolicy} disabled={!policyReady}>
                 Save Attendance Policy
               </Button>
             </CardContent>

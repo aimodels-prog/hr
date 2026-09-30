@@ -2,12 +2,14 @@ import "@tanstack/react-start/server-only";
 import {
   attendanceBreakMinutes,
   flexibleOfficeSchedule,
+  officeBreakWindow,
   VIA_OFFICE_SCHEDULE,
 } from "../../data/office-schedule.ts";
 import { getAttendanceTrackingPolicy } from "./attendance-tracking.repository.server.ts";
 import { isAttendanceTracked, readAttendanceTracking } from "../../data/attendance-tracking.ts";
 import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
 import { enqueueMissingClockoutReminders } from "./missing-clockout.repository.server.ts";
+import { syncWorkingHours } from "./working-hours.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
 import {
@@ -203,6 +205,7 @@ function attendanceMetrics(
             input.clockIn,
             input.clockOut,
             Number(policy?.standardDailyHours ?? 8),
+            policy,
           );
           return {
             expectedIn: flex.expectedIn,
@@ -762,6 +765,7 @@ export async function captureAttendancePunchInDatabase(
               zonedParts(at, settings?.timezone ?? "UTC").time,
               null,
               Number(policy?.standardDailyHours ?? 8),
+              policy,
             );
             return {
               expectedClockIn: flex.expectedIn,
@@ -791,6 +795,7 @@ export async function captureAttendancePunchInDatabase(
               zonedParts(new Date(existing.clockInAt!), settings?.timezone ?? "UTC").time,
               zonedParts(at, settings?.timezone ?? "UTC").time,
               Number(policy?.standardDailyHours ?? 8),
+              policy,
             );
             return {
               expectedClockIn: flex.expectedIn,
@@ -1259,6 +1264,7 @@ export async function decideAttendanceCorrectionInDatabase(
             expectedClockOut: attendancePolicies.expectedClockOut,
             lateGraceMinutes: attendancePolicies.lateGraceMinutes,
             defaultBreakMinutes: attendancePolicies.defaultBreakMinutes,
+            breakStart: attendancePolicies.breakStart,
             standardDailyHours: attendancePolicies.standardDailyHours,
           })
           .from(attendancePolicies)
@@ -1320,6 +1326,7 @@ export async function decideAttendanceCorrectionInDatabase(
                   localClockIn,
                   localClockOut,
                   Number(policy?.standardDailyHours ?? 8),
+                  policy,
                 );
                 return {
                   expectedClockIn: flex.expectedIn,
@@ -1950,6 +1957,7 @@ export async function saveAttendancePolicyInDatabase(
     expectedClockIn: string;
     expectedClockOut: string;
     defaultBreakMinutes: number;
+    breakStart?: string | undefined;
     lateGraceMinutes: number;
     maximumLocationAccuracyMeters: number;
     signOutReminderOffsetsMinutes: number[];
@@ -1984,17 +1992,23 @@ export async function saveAttendancePolicyInDatabase(
     throw new Error("Configure at least one valid approved office IPv4 network.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
+    await syncWorkingHours(tx, organisationId, input.standardDailyHours, actor, "attendance");
     const [before] = await tx
       .select()
       .from(attendancePolicies)
       .where(eq(attendancePolicies.organisationId, organisationId))
       .for("update")
       .limit(1);
+    officeBreakWindow({
+      breakStart: input.breakStart ?? before?.breakStart,
+      defaultBreakMinutes: input.defaultBreakMinutes,
+    });
     const values = {
       standardDailyHours: String(input.standardDailyHours),
       expectedClockIn: input.expectedClockIn,
       expectedClockOut: input.expectedClockOut,
       defaultBreakMinutes: input.defaultBreakMinutes,
+      ...(input.breakStart !== undefined ? { breakStart: input.breakStart } : {}),
       lateGraceMinutes: input.lateGraceMinutes,
       maximumLocationAccuracyMeters: input.maximumLocationAccuracyMeters,
       signOutReminderOffsetsMinutes: reminders,
@@ -2144,6 +2158,7 @@ export async function getMyLiveAttendance(organisationId: string, actor: AuditAc
           zonedParts(new Date(record.clockInAt), timezone).time,
           null,
           Number(policy?.standardDailyHours ?? settings?.hours ?? 8),
+          policy,
         )
       : null;
   return {
@@ -2161,12 +2176,12 @@ export async function getMyLiveAttendance(organisationId: string, actor: AuditAc
             ? {
                 breakStartAt: zonedDateTimeToUtc(
                   date,
-                  VIA_OFFICE_SCHEDULE.breakStart,
+                  officeBreakWindow(policy).start,
                   timezone,
                 ).toISOString(),
                 breakEndAt: zonedDateTimeToUtc(
                   date,
-                  VIA_OFFICE_SCHEDULE.breakEnd,
+                  officeBreakWindow(policy).end,
                   timezone,
                 ).toISOString(),
               }

@@ -21,6 +21,7 @@ import {
   NumberingSettingsPanel,
 } from "@/components/settings/organisation-settings-panel";
 import { ProjectsPanel } from "@/components/settings/projects-panel";
+import { ReminderSettingsPanel } from "@/components/settings/reminder-settings-panel";
 
 import {
   AlertDialog,
@@ -40,6 +41,11 @@ const SETTINGS_GROUPS = [
     label: "Organisation",
     icon: Building2,
     items: [
+      {
+        key: "reminders",
+        label: "Reminder settings",
+        description: "Notification timing and reminders",
+      },
       {
         key: "org",
         label: "Company information",
@@ -141,6 +147,14 @@ function SettingsRoute() {
   const currentUser = useCurrentUser();
   const navigate = Route.useNavigate();
   const { section } = Route.useSearch();
+  if (section === "reminders" && ["HR", "Super Admin"].includes(currentUser.activeRole)) {
+    return (
+      <div className="max-w-5xl mx-auto space-y-6">
+        <PageHeader title="Reminder Settings" />
+        <ReminderSettingsPanel />
+      </div>
+    );
+  }
   if (!currentUser.can("system:settings_manage")) {
     return (
       <RequirePermission permission="leave:admin_all" resourceName="Leave Policies">
@@ -202,6 +216,8 @@ function SettingsRoute() {
 
 function SettingsSectionContent({ section }: { section: SettingsSection }) {
   switch (section) {
+    case "reminders":
+      return <ReminderSettingsPanel />;
     case "org":
       return <OrganisationSettingsPanel />;
     case "numbering":

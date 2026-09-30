@@ -65,13 +65,39 @@ test("Authorisation requests offline Calendar access without placing secrets in 
   process.env["GOOGLE_CALENDAR_CLIENT_ID"] = "test-client";
   process.env["GOOGLE_CALENDAR_CLIENT_SECRET"] = "secret-not-in-url";
   process.env["APP_ORIGIN"] = "https://hr.via-int.com";
-  const url = new URL(calendarAuthorisationUrl("state", "verifier"));
+  const url = new URL(calendarAuthorisationUrl("state", "verifier", false, "hr@via-int.com"));
   assert.equal(url.searchParams.get("access_type"), "offline");
   assert.equal(url.searchParams.get("login_hint"), "hr@via-int.com");
   assert.equal(url.searchParams.get("code_challenge_method"), "S256");
   assert.doesNotMatch(url.toString(), /secret-not-in-url/);
+  assert.equal(
+    new URL(
+      calendarAuthorisationUrl("state", "verifier", false, "people@example.test"),
+    ).searchParams.get("login_hint"),
+    "people@example.test",
+  );
   t.mock.method(globalThis, "fetch", async () =>
     Response.json({ access_token: "test", refresh_token: "test", scope: "openid email" }),
   );
-  await assert.rejects(() => exchangeCalendarCode("code", "verifier"), /permission/);
+  await assert.rejects(
+    () => exchangeCalendarCode("code", "verifier", "hr@via-int.com"),
+    /permission/,
+  );
+  t.mock.method(globalThis, "fetch", async (url: string) =>
+    url.includes("userinfo")
+      ? Response.json({ email: "people@example.test", email_verified: true })
+      : Response.json({
+          access_token: "test",
+          refresh_token: "test",
+          scope: "openid email https://www.googleapis.com/auth/calendar.events",
+        }),
+  );
+  assert.equal(
+    (await exchangeCalendarCode("code", "verifier", "people@example.test")).email,
+    "people@example.test",
+  );
+  await assert.rejects(
+    () => exchangeCalendarCode("code", "verifier", "other@example.test"),
+    /Connect the other/,
+  );
 });

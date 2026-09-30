@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { getReminderRules } from "./reminder-rules.repository.server.ts";
 
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
 
@@ -11,12 +12,15 @@ export async function processRecruitmentDeadlines(
   now = new Date(),
 ): Promise<{ expiredOffers: number; reminders: number }> {
   const db = getDatabaseClient();
-  const expiringSoon = new Date(now.getTime() + 48 * 60 * 60_000);
   let expiredOffers = 0;
   let reminders = 0;
   const organisations = await db.execute(sql`select id from organisations where is_active=true`);
   for (const organisation of organisations) {
     const organisationId = String(organisation["id"]);
+    const rules = await getReminderRules(organisationId);
+    const expiringSoon = new Date(
+      now.getTime() + (rules.offerEnabled ? rules.offerBeforeHours : 0) * 3600000,
+    );
     const recipients = await db
       .select({ userId: users.id })
       .from(users)
@@ -88,7 +92,7 @@ export async function processRecruitmentDeadlines(
               recipientUserId,
               type: expired ? "offer_expired" : "offer_deadline",
               title: expired ? "Offer response deadline passed" : "Offer response due soon",
-              message: `${offer.candidateName}'s offer for ${offer.position} ${expired ? "has expired" : "is due within 48 hours"}.`,
+              message: `${offer.candidateName}'s offer for ${offer.position} ${expired ? "has expired" : `is due within ${rules.offerBeforeHours} hours`}.`,
               priority: expired ? "High" : "Normal",
               status: "Unread",
               deduplicationKey: `offer-${expired ? "expired" : "deadline"}-${offer.id}-${deadline.toISOString().slice(0, 10)}`,

@@ -27,7 +27,7 @@ import { LeaveService } from "./leave-service.ts";
 import { AttendanceService } from "./attendance-service.ts";
 import { ordinaryAttendanceHours } from "./office-schedule.ts";
 import { EmployeeService } from "./employee-service.ts";
-import { SettingsService } from "./settings-service.ts";
+import { SettingsService, syncWorkingHoursCompatibilityCache } from "./settings-service.ts";
 
 const SETTINGS_COLLECTION = "timesheetSettings";
 
@@ -141,6 +141,7 @@ export class TimesheetService {
     if (typeof window === "undefined") return this.saveSettings(settings, context);
     const { updateTimesheetSettingsFn } = await import("../server-functions/timesheet.server.ts");
     await updateTimesheetSettingsFn({ data: { actor: await this.serverActor(context), settings } });
+    syncWorkingHoursCompatibilityCache(settings.standardDailyHours);
     await this.hydrateCompatibilityCache(context);
   }
 

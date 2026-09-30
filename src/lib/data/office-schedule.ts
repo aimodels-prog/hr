@@ -13,8 +13,41 @@ export function ordinaryAttendanceHours(recorded: number, dailyHours = 8): numbe
   return Math.max(0, Math.min(recorded, dailyHours));
 }
 
-/** Eight working hours from the actual arrival, pausing only during 13:00–14:00. */
-export function flexibleOfficeSchedule(clockIn: string, clockOut?: string | null, dailyHours = 8) {
+export type OfficeBreakPolicy = {
+  breakStart?: string | undefined;
+  defaultBreakMinutes?: number | undefined;
+};
+
+export function officeBreakWindow(policy?: OfficeBreakPolicy | null) {
+  const start = policy?.breakStart ?? VIA_OFFICE_SCHEDULE.breakStart;
+  const duration = policy?.defaultBreakMinutes ?? VIA_OFFICE_SCHEDULE.breakMinutes;
+  if (
+    !/^([01]\d|2[0-3]):[0-5]\d$/.test(start) ||
+    !Number.isInteger(duration) ||
+    duration < 0 ||
+    duration > 1439
+  )
+    throw new Error("Enter a valid break start time and duration.");
+  const startMinutes = Number(start.slice(0, 2)) * 60 + Number(start.slice(3, 5));
+  const endMinutes = startMinutes + duration;
+  if (endMinutes >= 1440) throw new Error("The break must finish before midnight.");
+  return {
+    start,
+    end: `${String(Math.floor(endMinutes / 60)).padStart(2, "0")}:${String(endMinutes % 60).padStart(2, "0")}`,
+    startMinutes,
+    endMinutes,
+    duration,
+  };
+}
+
+/** Working hours from actual arrival, excluding the configured daily break. */
+export function flexibleOfficeSchedule(
+  clockIn: string,
+  clockOut?: string | null,
+  dailyHours = 8,
+  policy?: OfficeBreakPolicy | null,
+) {
+  const lunch = officeBreakWindow(policy);
   const parse = (value: string) => {
     if (!/^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(value))
       throw new Error("Invalid attendance time.");
@@ -27,8 +60,8 @@ export function flexibleOfficeSchedule(clockIn: string, clockOut?: string | null
     throw new Error("Invalid working hours.");
   while (remaining > 0) {
     const day = Math.floor(cursor / 1440) * 1440;
-    const lunchStart = day + 780;
-    const lunchEnd = day + 840;
+    const lunchStart = day + lunch.startMinutes;
+    const lunchEnd = day + lunch.endMinutes;
     if (cursor >= lunchStart && cursor < lunchEnd) {
       cursor = lunchEnd;
       continue;
@@ -44,7 +77,8 @@ export function flexibleOfficeSchedule(clockIn: string, clockOut?: string | null
   for (let day = 0; day <= Math.floor(end / 1440); day++) {
     breakMinutes += Math.max(
       0,
-      Math.min(end, day * 1440 + 840) - Math.max(start, day * 1440 + 780),
+      Math.min(end, day * 1440 + lunch.endMinutes) -
+        Math.max(start, day * 1440 + lunch.startMinutes),
     );
   }
   const expectedOut = `${String(Math.floor(cursor / 60) % 24).padStart(2, "0")}:${String(cursor % 60).padStart(2, "0")}`;

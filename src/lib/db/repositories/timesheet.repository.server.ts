@@ -1,5 +1,6 @@
 import "@tanstack/react-start/server-only";
 import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
+import { syncWorkingHours } from "./working-hours.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
@@ -771,6 +772,7 @@ export async function updateTimesheetSettingsInDatabase(
     throw new Error("Select a valid payroll lock option.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
+    await syncWorkingHours(tx, organisationId, settings.standardDailyHours, actor, "timesheets");
     const [before] = await tx
       .select()
       .from(timesheetSettings)

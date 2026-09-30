@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { SignJWT } from "jose";
+import postgres from "postgres";
 import { textPdf } from "./pdf-fixture";
 import { configureAttendanceFixture } from "./attendance-fixture";
 
@@ -8,6 +9,73 @@ test.beforeAll(configureAttendanceFixture);
 type ProductionRole = "Employee" | "Line Manager" | "HR" | "Accounts" | "Super Admin";
 
 const portalSecret = process.env["PORTAL_SSO_SECRET"] ?? "";
+
+test("production release smoke saves working hours and HR reminder settings", async ({ page }) => {
+  test.skip(
+    !portalSecret || process.env["PORTAL_SSO_ENABLED"] !== "true",
+    "Requires isolated portal SSO",
+  );
+  const url = process.env["DATABASE_URL"]!;
+  expect(new URL(url).pathname).toMatch(/test|scratch/);
+  const sql = postgres(url, { max: 1 });
+  const [user] =
+    await sql`SELECT organisation_id FROM users WHERE workspace_email='rana.nair@via-int.com' LIMIT 1`;
+  const org = user!.organisation_id;
+  const [company] = await sql`SELECT * FROM app_settings WHERE organisation_id=${org}`;
+  const [policy] = await sql`SELECT * FROM attendance_policies WHERE organisation_id=${org}`;
+  const [timesheet] = await sql`SELECT * FROM timesheet_settings WHERE organisation_id=${org}`;
+  try {
+    await signInAs(page, "rana.nair@via-int.com", "Rana Nair", "/staff/settings?section=reminders");
+    await page.getByLabel("Remind after waiting (hours)").fill("72");
+    await page.getByLabel("Days before expiry", { exact: true }).fill("30, 3, 0");
+    await page.getByRole("button", { name: "Save reminder settings", exact: true }).click();
+    await expect(page.getByText("Reminder settings saved.", { exact: true })).toBeVisible();
+    await page.reload();
+    await expect(page.getByLabel("Remind after waiting (hours)")).toHaveValue("72", {
+      timeout: 30000,
+    });
+    await expect(page.getByLabel("Days before expiry", { exact: true })).toHaveValue("30, 3, 0");
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.screenshot({
+      path: test.info().outputPath("reminder-settings-mobile.png"),
+      fullPage: true,
+    });
+    await page.goto("/staff/attendance#section=setup");
+    await expect(
+      page.getByRole("button", { name: "Save Attendance Policy", exact: true }),
+    ).toBeEnabled({ timeout: 30000 });
+    await page.getByLabel("Standard hours", { exact: true }).fill("7.5");
+    await page.getByLabel("Default break minutes", { exact: true }).fill("30");
+    await page.getByLabel("Break starts at", { exact: true }).fill("12:00");
+    await page.getByText("Advanced location and network settings", { exact: true }).click();
+    await page.getByLabel("Approved office networks", { exact: true }).fill("127.0.0.1/32");
+    await page
+      .getByLabel("Reason for change", { exact: true })
+      .fill("Verify configurable working day");
+    await page.getByRole("button", { name: "Save Attendance Policy", exact: true }).click();
+    await expect(page.getByText("Attendance policy updated.", { exact: true })).toBeVisible();
+    await page.reload();
+    await expect(
+      page.getByRole("button", { name: "Save Attendance Policy", exact: true }),
+    ).toBeEnabled({ timeout: 30000 });
+    await expect(page.getByLabel("Standard hours", { exact: true })).toHaveValue("7.5");
+    await expect(page.getByLabel("Break starts at", { exact: true })).toHaveValue("12:00");
+    const rows =
+      await sql`SELECT standard_daily_hours FROM app_settings WHERE organisation_id=${org} UNION ALL SELECT standard_daily_hours FROM timesheet_settings WHERE organisation_id=${org}`;
+    expect(rows.map((row) => Number(row.standard_daily_hours))).toEqual([7.5, 7.5]);
+  } finally {
+    if (company)
+      await sql`UPDATE app_settings SET standard_daily_hours=${company.standard_daily_hours},additional_settings=${sql.json(company.additional_settings)} WHERE organisation_id=${org}`;
+    if (policy)
+      await sql`UPDATE attendance_policies SET standard_daily_hours=${policy.standard_daily_hours},break_start=${policy.break_start},default_break_minutes=${policy.default_break_minutes},approved_network_cidrs=${policy.approved_network_cidrs} WHERE organisation_id=${org}`;
+    if (timesheet)
+      await sql`UPDATE timesheet_settings SET standard_daily_hours=${timesheet.standard_daily_hours} WHERE organisation_id=${org}`;
+    await sql.end();
+  }
+});
 
 test("production release smoke recovers charts after a transient request failure", async ({
   page,

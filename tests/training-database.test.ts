@@ -325,7 +325,9 @@ test(
       const secondWorker = await processTrainingAutomationInDatabase(ids.org!, hrActor, today);
       assert.equal(firstWorker.assignmentsCreated, 4);
       assert.equal(secondWorker.assignmentsCreated, 0);
-      assert.ok(firstWorker.remindersCreated >= 3);
+      // A newly discovered near-expiry record receives only its nearest warning,
+      // rather than several overdue warning thresholds at once.
+      assert.ok(firstWorker.remindersCreated >= 1);
       assert.equal(secondWorker.remindersCreated, 0);
 
       snapshot = await listTrainingForActor(ids.org!, employeeActor);

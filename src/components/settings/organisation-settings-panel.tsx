@@ -161,8 +161,11 @@ export function OrganisationSettingsPanel() {
                     <FormItem>
                       <FormLabel>Standard Daily Hours</FormLabel>
                       <FormControl>
-                        <Input type="number" {...field} />
+                        <Input type="number" step="0.25" {...field} />
                       </FormControl>
+                      <p className="text-xs text-muted-foreground">
+                        Working time only, excluding breaks. Shared with attendance and timesheets.
+                      </p>
                       <FormMessage />
                     </FormItem>
                   )}

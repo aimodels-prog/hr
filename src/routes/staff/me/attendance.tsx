@@ -329,7 +329,8 @@ function MyAttendanceRoute() {
         ? ""
         : (record.clockOut ??
             (record.clockIn
-              ? flexibleOfficeSchedule(record.clockIn, null, policy.standardDailyHours).expectedOut
+              ? flexibleOfficeSchedule(record.clockIn, null, policy.standardDailyHours, policy)
+                  .expectedOut
               : policy.expectedClockOut)),
     );
     setExplanation("");

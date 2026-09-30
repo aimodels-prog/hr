@@ -182,11 +182,15 @@ function TimesheetSettingsRoute() {
                   type="number"
                   min={1}
                   max={24}
+                  step={0.25}
                   value={settings.standardDailyHours}
                   onChange={(e) =>
-                    setSettings({ ...settings, standardDailyHours: parseInt(e.target.value) || 0 })
+                    setSettings({ ...settings, standardDailyHours: Number(e.target.value) || 0 })
                   }
                 />
+                <p className="text-xs text-muted-foreground">
+                  Working hours only, excluding breaks. Shared with attendance and company settings.
+                </p>
               </div>
               <div className="space-y-2">
                 <Label>Overtime Threshold (Weekly Hours)</Label>

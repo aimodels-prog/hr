@@ -15,14 +15,26 @@ test("workflow emails require explicit permission and confirmed Google acceptanc
   process.env.GOOGLE_CALENDAR_CLIENT_SECRET = "test-secret";
   process.env.APP_ORIGIN = "https://hr.example.test";
   try {
-    assert.ok(!calendarAuthorisationUrl("state", "verifier").includes("gmail.send"));
-    assert.ok(calendarAuthorisationUrl("state", "verifier", true).includes("gmail.send"));
+    assert.ok(
+      !calendarAuthorisationUrl("state", "verifier", false, "hr@via-int.com").includes(
+        "gmail.send",
+      ),
+    );
+    assert.ok(
+      calendarAuthorisationUrl("state", "verifier", true, "hr@via-int.com").includes("gmail.send"),
+    );
     const id = "10000000-0000-4000-8000-000000000001";
-    assert.throws(() => workflowEmailRaw("person@example.test\r\nBcc: other@example.test", id));
-    const mime = Buffer.from(workflowEmailRaw("person@example.test", id), "base64url").toString();
+    assert.throws(() =>
+      workflowEmailRaw("person@example.test\r\nBcc: other@example.test", id, "new-hr@example.test"),
+    );
+    const mime = Buffer.from(
+      workflowEmailRaw("person@example.test", id, "new-hr@example.test"),
+      "base64url",
+    ).toString();
+    assert.match(mime, /From: VIA HR <new-hr@example.test>/);
     assert.match(mime, /Message-ID: <via-notification-/);
     const morning = Buffer.from(
-      workflowEmailRaw("person@example.test", id, "2026-09-29"),
+      workflowEmailRaw("person@example.test", id, "new-hr@example.test", "2026-09-29"),
       "base64url",
     ).toString();
     assert.match(morning, /Subject: VIA HR - Missing clock-out for yesterday/);
@@ -35,7 +47,10 @@ test("workflow emails require explicit permission and confirmed Google acceptanc
       "fetch",
       async () => new Response(JSON.stringify({ id: "google-message" }), { status: 200 }),
     );
-    assert.equal(await sendWorkflowEmail("test", "person@example.test", id), "google-message");
+    assert.equal(
+      await sendWorkflowEmail("test", "person@example.test", id, "new-hr@example.test"),
+      "google-message",
+    );
     for (const [status, outcome] of [
       [403, "Blocked"],
       [429, "Queued"],
@@ -45,7 +60,7 @@ test("workflow emails require explicit permission and confirmed Google acceptanc
     ] as const) {
       fetchMock.mock.mockImplementation(async () => new Response("{}", { status }));
       await assert.rejects(
-        () => sendWorkflowEmail("test", "person@example.test", id),
+        () => sendWorkflowEmail("test", "person@example.test", id, "new-hr@example.test"),
         (error: unknown) => error instanceof WorkflowEmailError && error.outcome === outcome,
       );
     }

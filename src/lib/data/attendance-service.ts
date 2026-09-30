@@ -5,7 +5,7 @@ import { EmployeeService } from "./employee-service.ts";
 import { LeaveService } from "./leave-service.ts";
 import { getMasterDataRepository } from "./master-data.ts";
 import { LocalRepository, type NewRecord } from "./repository.ts";
-import { SettingsService } from "./settings-service.ts";
+import { SettingsService, syncWorkingHoursCompatibilityCache } from "./settings-service.ts";
 import { isAttendanceTracked, type AttendanceTrackingPolicy } from "./attendance-tracking.ts";
 import {
   attendanceBreakMinutes,
@@ -457,6 +457,7 @@ export class AttendanceService {
           expectedClockIn: snapshot.policy.expectedClockIn,
           expectedClockOut: snapshot.policy.expectedClockOut,
           defaultBreakMinutes: snapshot.policy.defaultBreakMinutes,
+          breakStart: snapshot.policy.breakStart,
           lateGraceMinutes: snapshot.policy.lateGraceMinutes,
           maximumLocationAccuracyMeters: snapshot.policy.maximumLocationAccuracyMeters,
           signOutReminderOffsetsMinutes: snapshot.policy.signOutReminderOffsetsMinutes as [
@@ -758,6 +759,7 @@ export class AttendanceService {
         expectedClockIn: input.expectedClockIn,
         expectedClockOut: input.expectedClockOut,
         defaultBreakMinutes: input.defaultBreakMinutes,
+        breakStart: input.breakStart ?? VIA_OFFICE_SCHEDULE.breakStart,
         lateGraceMinutes: input.lateGraceMinutes,
         maximumLocationAccuracyMeters: input.maximumLocationAccuracyMeters,
         signOutReminderOffsetsMinutes: input.signOutReminderOffsetsMinutes,
@@ -766,6 +768,7 @@ export class AttendanceService {
         reason,
       },
     });
+    syncWorkingHoursCompatibilityCache(input.standardDailyHours);
     await this.hydrateFromDatabase(context);
     return this.getPolicy();
   }
@@ -1160,6 +1163,7 @@ export class AttendanceService {
       expectedClockIn: VIA_OFFICE_SCHEDULE.start,
       expectedClockOut: VIA_OFFICE_SCHEDULE.end,
       defaultBreakMinutes: 60,
+      breakStart: VIA_OFFICE_SCHEDULE.breakStart,
       lateGraceMinutes: 5,
       maximumLocationAccuracyMeters: 100,
       signOutReminderOffsetsMinutes: [0, 15, 30],
@@ -1174,6 +1178,7 @@ export class AttendanceService {
       | "expectedClockIn"
       | "expectedClockOut"
       | "defaultBreakMinutes"
+      | "breakStart"
       | "lateGraceMinutes"
       | "maximumLocationAccuracyMeters"
       | "signOutReminderOffsetsMinutes"
@@ -2204,6 +2209,7 @@ export class AttendanceService {
         record.clockIn,
         record.clockOut,
         policy.standardDailyHours,
+        policy,
       );
       return {
         calculatedHours: Number(flex.calculatedHours.toFixed(2)),

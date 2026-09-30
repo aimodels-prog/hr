@@ -396,7 +396,8 @@ test(
           corrected.is_late,
           corrected.is_early_departure,
         ],
-        ["Approved", "Corrected", 7, false, true],
+        // This organisation explicitly configured zero break minutes.
+        ["Approved", "Corrected", 8, false, false],
       );
 
       const missingDay = new Date();

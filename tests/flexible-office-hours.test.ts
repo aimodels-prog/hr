@@ -39,3 +39,28 @@ test("overnight completion and invalid times are handled explicitly", () => {
   assert.throws(() => flexibleOfficeSchedule("25:00"));
   assert.throws(() => flexibleOfficeSchedule("07:30", null, 0));
 });
+
+test("configured working hours and break replace the initial VIA defaults", () => {
+  const policy = { breakStart: "12:00", defaultBreakMinutes: 30 };
+  const day = flexibleOfficeSchedule("08:00", "16:00", 7.5, policy);
+  assert.equal(day.expectedOut, "16:00");
+  assert.equal(day.calculatedHours, 7.5);
+  assert.equal(day.breakMinutes, 30);
+  assert.equal(flexibleOfficeSchedule("08:00", "12:15", 7.5, policy).breakMinutes, 15);
+  assert.equal(flexibleOfficeSchedule("12:15", "16:00", 7.5, policy).breakMinutes, 15);
+  assert.equal(flexibleOfficeSchedule("13:00", "14:00", 7.5, policy).breakMinutes, 0);
+  assert.equal(
+    flexibleOfficeSchedule("08:00", "16:00", 8, { breakStart: "13:00", defaultBreakMinutes: 0 })
+      .calculatedHours,
+    8,
+  );
+  assert.equal(
+    flexibleOfficeSchedule("08:00", null, 8, { breakStart: "13:00", defaultBreakMinutes: 0 })
+      .expectedOut,
+    "16:00",
+  );
+  assert.throws(() => flexibleOfficeSchedule("08:00", null, 8, { breakStart: "bad" }));
+  assert.throws(() =>
+    flexibleOfficeSchedule("08:00", null, 8, { breakStart: "23:30", defaultBreakMinutes: 60 }),
+  );
+});

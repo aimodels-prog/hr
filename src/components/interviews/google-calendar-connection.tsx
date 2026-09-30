@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useHrSetupPreference } from "@/components/dashboards/use-hr-setup-preference";
 import { toast } from "sonner";
+import { Input } from "@/components/ui/input";
 
 export function GoogleCalendarConnection() {
   const setupPreference = useHrSetupPreference();
@@ -14,17 +15,21 @@ export function GoogleCalendarConnection() {
     emailDeliveryCounts: Array<{ status: string; count: number }>;
   }>();
   const [error, setError] = useState("");
+  const [accountEmail, setAccountEmail] = useState("");
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
     const result = new URL(window.location.href).searchParams.get("calendar");
     if (result && result !== "connected")
       setError(
-        "Google Calendar was not connected. Sign in through VIA Portal if your session expired, then try again using hr@via-int.com.",
+        "Google Calendar was not connected. Sign in through VIA Portal if your session expired, then try again using the organising account shown below.",
       );
     void fetch("/api/integrations/google-calendar", { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error("Connection status could not be loaded.");
-        setStatus(await response.json());
+        const next = await response.json();
+        setStatus(next);
+        setAccountEmail(next.accountEmail);
       })
       .catch(() => {
         if (!controller.signal.aborted) setError("Connection status could not be loaded.");
@@ -52,9 +57,65 @@ export function GoogleCalendarConnection() {
           {status?.connected
             ? `Organising account connected: ${status.accountEmail}`
             : status?.configured
-              ? "Connect hr@via-int.com once for the HR team."
+              ? `Connect ${status.accountEmail} once for the HR team.`
               : "Google Calendar setup is awaiting administrator configuration. You can still prepare interview records."}
         </p>
+        <form
+          className="space-y-2"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            setSaving(true);
+            setError("");
+            try {
+              const response = await fetch("/api/integrations/google-calendar", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ accountEmail }),
+              });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || "The account could not be saved.");
+              const refreshed = await fetch("/api/integrations/google-calendar");
+              if (!refreshed.ok)
+                throw new Error(
+                  "Saved, but connection status could not be refreshed. Reload this page.",
+                );
+              setStatus(await refreshed.json());
+              setAccountEmail(result.accountEmail);
+              toast.success("Organising account saved.");
+            } catch (failure) {
+              setError(
+                failure instanceof Error ? failure.message : "The account could not be saved.",
+              );
+            } finally {
+              setSaving(false);
+            }
+          }}
+        >
+          <label htmlFor="calendar-organiser-email" className="text-sm font-medium">
+            Organising email
+          </label>
+          <Input
+            id="calendar-organiser-email"
+            type="email"
+            required
+            maxLength={254}
+            value={accountEmail}
+            onChange={(event) => setAccountEmail(event.target.value)}
+            disabled={!status || saving}
+          />
+          <p className="text-xs text-muted-foreground">
+            Changing accounts requires a new Google sign-in and pauses approval emails. Linked
+            interview bookings must be migrated by an administrator first.
+          </p>
+          <Button
+            variant="outline"
+            disabled={
+              !status || saving || accountEmail.trim().toLowerCase() === status.accountEmail
+            }
+          >
+            {saving ? "Saving…" : "Save account and reconnect"}
+          </Button>
+        </form>
         {error && (
           <p role="alert" className="text-destructive">
             {error}
@@ -78,9 +139,9 @@ export function GoogleCalendarConnection() {
           </p>
           <p className="text-xs text-muted-foreground">
             Enable Gmail API in the existing Google Cloud project, add the gmail.send scope, then
-            connect below and allow sending as hr@via-int.com. This starts emails for new workflow
-            notifications; it does not email the old notification backlog. Private details stay
-            inside VIA HR.
+            connect below and allow sending as {status?.accountEmail ?? "the organising account"}.
+            This starts emails for new workflow notifications; it does not email the old
+            notification backlog. Private details stay inside VIA HR.
           </p>
           <form method="post" action="/api/integrations/google-calendar?email=enable">
             <Button disabled={!status?.configured} variant="outline">

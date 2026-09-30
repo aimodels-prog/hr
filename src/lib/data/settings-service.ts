@@ -5,6 +5,22 @@ const SETTINGS_COLLECTION = "appSettings";
 
 let memoryCachedSettings: AppSettings | null = null;
 
+/** Refresh only cached copies after a successful PostgreSQL settings save. */
+export function syncWorkingHoursCompatibilityCache(hours: number): void {
+  if (memoryCachedSettings)
+    memoryCachedSettings = { ...memoryCachedSettings, standardDailyHours: hours };
+  const { storage } = getApplicationDataServices();
+  for (const collection of ["appSettings", "attendancePolicies", "timesheetSettings"]) {
+    const records = storage.readCollection<{ standardDailyHours: number }>(collection);
+    if (records.length)
+      storage.writeCollection(
+        collection,
+        records.map((record) => ({ ...record, standardDailyHours: hours })),
+      );
+  }
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("via_hr:data_changed"));
+}
+
 function usesBrowserServerFunctions(): boolean {
   return typeof window !== "undefined";
 }
@@ -129,6 +145,7 @@ export class SettingsService {
       },
     })) as unknown as AppSettings;
     memoryCachedSettings = result;
+    syncWorkingHoursCompatibilityCache(result.standardDailyHours);
     return result;
   }
 

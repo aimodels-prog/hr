@@ -42,6 +42,7 @@ export interface AttendancePolicy extends BaseRecord {
   expectedClockIn: string;
   expectedClockOut: string;
   defaultBreakMinutes: number;
+  breakStart?: string | undefined;
   lateGraceMinutes: number;
   maximumLocationAccuracyMeters: number;
   signOutReminderOffsetsMinutes: [number, number, number];

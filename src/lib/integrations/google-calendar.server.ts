@@ -25,11 +25,16 @@ export function googleCalendarConfig() {
     clientSecret,
     origin: url.origin,
     redirectUri: new URL("/auth/google-calendar/callback", url).toString(),
-    accountEmail: "hr@via-int.com",
   };
 }
 
-export function calendarAuthorisationUrl(state: string, verifier: string, includeEmail = false) {
+export function calendarAuthorisationUrl(
+  state: string,
+  verifier: string,
+  includeEmail: boolean,
+  accountEmail: string,
+) {
+  z.string().email().parse(accountEmail);
   const config = googleCalendarConfig();
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.search = new URLSearchParams({
@@ -39,7 +44,7 @@ export function calendarAuthorisationUrl(state: string, verifier: string, includ
     scope: `openid email ${GOOGLE_CALENDAR_SCOPE}${includeEmail ? ` ${GOOGLE_EMAIL_SCOPE}` : ""}`,
     access_type: "offline",
     prompt: "consent",
-    login_hint: config.accountEmail,
+    login_hint: accountEmail,
     state,
     code_challenge_method: "S256",
     code_challenge: createHash("sha256").update(verifier).digest("base64url"),
@@ -52,7 +57,8 @@ const Tokens = z.object({
   refresh_token: z.string().min(1).optional(),
   scope: z.string().optional(),
 });
-export async function exchangeCalendarCode(code: string, verifier: string) {
+export async function exchangeCalendarCode(code: string, verifier: string, accountEmail: string) {
+  accountEmail = z.string().trim().email().parse(accountEmail).toLowerCase();
   const config = googleCalendarConfig();
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -78,10 +84,10 @@ export async function exchangeCalendarCode(code: string, verifier: string) {
   const identity = z
     .object({ email: z.string().email(), email_verified: z.literal(true) })
     .parse(await identityResponse.json());
-  if (identity.email.trim().toLowerCase() !== config.accountEmail)
-    throw new Error("Connect the hr@via-int.com Google account.");
+  if (identity.email.trim().toLowerCase() !== accountEmail)
+    throw new Error(`Connect the ${accountEmail} Google account.`);
   return {
-    email: config.accountEmail,
+    email: accountEmail,
     refreshToken: tokens.refresh_token,
     emailAuthorised: tokens.scope.split(" ").includes(GOOGLE_EMAIL_SCOPE),
   };

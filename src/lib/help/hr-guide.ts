@@ -2,6 +2,25 @@ import { article } from "./guide.ts";
 
 export const hrGuide = [
   article(
+    "hr-reminder-settings",
+    "hr",
+    "HR essentials",
+    "Change reminder settings",
+    "Choose when the company receives useful reminders.",
+    "/staff/settings?section=reminders",
+    "notifications reminders travel training expiry leave carryover missing clock out morning offer deadlines",
+    [
+      "Open HR Settings → Reminder Settings. Each card controls one kind of reminder.",
+      "Turn a reminder on or off, then set its waiting hours, warning days or morning window. Separate warning days with commas; 0 means the expiry day.",
+      "Set the carried-over leave target as month-day, for example 04-30 for 30 April. This only changes reminders, not leave entitlements or expiry rules.",
+      "Choose Save reminder settings. The saved rules apply across the company. Leave and training approvals are unchanged.",
+      "For emails, also enable Approval emails & reminders in Google Calendar & Meet. Missing-clock-out reminders remain in the next morning, in company local time.",
+    ],
+    "Changes do not recall messages already sent. Document expiry reminder days remain in Company Setup.",
+    ["Only HR and Super Admin can change these rules."],
+    "leave:admin_all",
+  ),
+  article(
     "hr-start",
     "hr",
     "HR essentials",
@@ -358,6 +377,7 @@ export const hrGuide = [
     "weekly start deadline daily hours lunch tolerance copy period generate close reopen lock overtime limits attendance prefill",
     [
       "Open Timesheet Settings. Review the week’s start day, submission deadline and standard daily hours.",
+      "Standard Daily Hours means working time without breaks: use 8 for an eight-hour day plus a one-hour lunch. Saving this value updates attendance, timesheets and Company Setup together. To change the break, open Attendance & Visits → Office Setup → Attendance Policy and set Break starts at and Default break minutes. Use 0 minutes for no scheduled break.",
       "Review overtime limits, advance-approval rules and the allowed difference between attendance and a timesheet. HR approval after supervisor review remains required.",
       "Choose whether staff can copy the previous week and review the payroll-lock choice. Save Configuration.",
       "Use Period Generation with the intended start and end dates, then check the generated weeks.",
@@ -529,6 +549,7 @@ export const hrGuide = [
     [
       "Open Interviews and choose the candidate and vacancy.",
       "If prompted, connect the agreed HR Google account and grant the requested calendar access. Portal sign-in alone does not connect the calendar.",
+      "To change the organising email, open Google Calendar & Meet, enter the new Organising email and choose Save account and reconnect. Then sign into that Google account. Approval emails pause until you grant email access again. If interviews are already linked, ask your administrator to move the bookings first; changing the address does not move meetings between calendars.",
       "Choose the interview date, time, time zone, interviewers and meeting details. Check the candidate email before scheduling.",
       "Check the saved interview and invitation or meeting status; do not assume an unfinished connection sent an invitation.",
       "Use the interview’s reschedule or cancel action when plans change. Ask assigned interviewers to complete their scorecards.",
@@ -794,6 +815,7 @@ export const hrGuide = [
       "Once email and calendar setup is complete, choose Hide from dashboard to remove the setup panel for your account on this browser. Emails and interviews keep working. To bring it back, open Organisation Tracker or Interviews and choose Show setup on dashboard under Google Calendar & Meet.",
       "Grant the separate email permission when enabling Approval emails & reminders; calendar permission alone is not enough.",
       "Review the connection and email status before relying on delivery.",
+      "Open HR Settings → Reminder Settings to turn reminders on or off and change travel waiting hours, training expiry warning days, leave planning dates, offer warning hours and the next-morning missing-clock-out window. Select Save reminder settings. These settings are shared by the company and remain saved after sign-out. Document expiry warning days remain in Company Setup. Changes affect future reminders, not messages already sent; changing the leave reminder target never removes leave days.",
       "Continue monitoring Requests & approvals and My Tasks for the actual decisions and outstanding work.",
     ],
     "Emails depend on an active authorised connection and enabled reminder settings. A request can exist even if email delivery is unavailable.",

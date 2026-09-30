@@ -224,6 +224,7 @@ export const attendancePolicies = pgTable(
     expectedClockIn: text("expected_clock_in").notNull(),
     expectedClockOut: text("expected_clock_out").notNull(),
     defaultBreakMinutes: integer("default_break_minutes").notNull(),
+    breakStart: text("break_start").notNull().default("13:00"),
     lateGraceMinutes: integer("late_grace_minutes").notNull(),
     maximumLocationAccuracyMeters: integer("maximum_location_accuracy_meters").notNull(),
     signOutReminderOffsetsMinutes: integer("sign_out_reminder_offsets_minutes").array().notNull(),
@@ -238,6 +239,10 @@ export const attendancePolicies = pgTable(
       sql`${table.standardDailyHours} > 0 AND ${table.standardDailyHours} <= 24`,
     ),
     check("attendance_policies_break_range", sql`${table.defaultBreakMinutes} BETWEEN 0 AND 1439`),
+    check(
+      "attendance_policies_break_start_format",
+      sql`${table.breakStart} ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'`,
+    ),
     check("attendance_policies_grace_non_negative", sql`${table.lateGraceMinutes} >= 0`),
     check("attendance_policies_accuracy_positive", sql`${table.maximumLocationAccuracyMeters} > 0`),
     check(

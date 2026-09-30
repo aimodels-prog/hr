@@ -46,7 +46,7 @@ export async function processWorkflowEmails() {
     const org = String(claimed["organisation_id"]);
     try {
       const [recipient] =
-        await db.execute(sql`SELECT u.workspace_email,c.refresh_token_encrypted,n.type FROM notifications n
+        await db.execute(sql`SELECT u.workspace_email,c.refresh_token_encrypted,c.account_email,n.type FROM notifications n
         JOIN users u ON u.id=n.recipient_user_id AND u.organisation_id=n.organisation_id AND u.status='Active' AND u.archived_at IS NULL
         JOIN google_calendar_connections c ON c.organisation_id=n.organisation_id AND c.email_enabled_at IS NOT NULL
         WHERE n.id=${id}::uuid AND n.organisation_id=${org}::uuid AND n.archived_at IS NULL`);
@@ -82,6 +82,7 @@ export async function processWorkflowEmails() {
         token,
         String(recipient["workspace_email"]),
         id,
+        String(recipient["account_email"]),
         date ?? undefined,
       );
       await db.execute(

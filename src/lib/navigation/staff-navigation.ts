@@ -388,6 +388,13 @@ const navigation: NavGroup[] = [
         requiredPermission: "system:settings_manage",
       },
       {
+        title: "Reminder Settings",
+        url: "/staff/settings?section=reminders",
+        keywords: "notifications email timing reminders travel training leave",
+        icon: CalendarClock,
+        requiredRoles: ["HR", "Super Admin"],
+      },
+      {
         title: "Leave Policies",
         url: "/staff/leave-policies",
         keywords: "leave rules eligibility entitlement",

@@ -423,6 +423,7 @@ async function projectDailyAttendance(
                 localClockIn,
                 localClockOut,
                 Number(policy?.standardDailyHours ?? 8),
+                policy,
               );
               return {
                 expectedClockIn: flex.expectedIn,
