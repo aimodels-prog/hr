@@ -24,6 +24,7 @@ import {
   Network,
   PartyPopper,
   BriefcaseBusiness,
+  BookOpen,
 } from "lucide-react";
 import type { Permission } from "../auth/permissions.ts";
 import type { Role } from "../data/types.ts";
@@ -43,7 +44,18 @@ export interface NavGroup {
 }
 
 const navigation: NavGroup[] = [
-  { label: "Home", items: [{ title: "Dashboard", url: "/staff", icon: LayoutDashboard }] },
+  {
+    label: "Home",
+    items: [
+      { title: "Dashboard", url: "/staff", icon: LayoutDashboard },
+      {
+        title: "Help & Knowledge",
+        url: "/staff/help",
+        icon: BookOpen,
+        keywords: "help guide knowledge support how instructions documentation",
+      },
+    ],
+  },
   {
     label: "My Workspace",
     items: [

@@ -27,6 +27,7 @@ import { Route as StaffCompanyLibraryRouteImport } from './routes/staff/company-
 import { Route as StaffDocumentExpiryRouteImport } from './routes/staff/document-expiry'
 import { Route as StaffDocumentsRouteImport } from './routes/staff/documents'
 import { Route as StaffFilesRouteImport } from './routes/staff/files'
+import { Route as StaffHelpRouteImport } from './routes/staff/help'
 import { Route as StaffInterviewsRouteImport } from './routes/staff/interviews'
 import { Route as StaffLeaveRouteImport } from './routes/staff/leave'
 import { Route as StaffLeaveAdminRouteImport } from './routes/staff/leave-admin'
@@ -191,6 +192,11 @@ const StaffDocumentsRoute = StaffDocumentsRouteImport.update({
 const StaffFilesRoute = StaffFilesRouteImport.update({
   id: '/files',
   path: '/files',
+  getParentRoute: () => StaffRoute,
+} as any)
+const StaffHelpRoute = StaffHelpRouteImport.update({
+  id: '/help',
+  path: '/help',
   getParentRoute: () => StaffRoute,
 } as any)
 const StaffInterviewsRoute = StaffInterviewsRouteImport.update({
@@ -603,6 +609,7 @@ export interface FileRoutesByFullPath {
   '/staff/document-expiry': typeof StaffDocumentExpiryRoute
   '/staff/documents': typeof StaffDocumentsRoute
   '/staff/files': typeof StaffFilesRoute
+  '/staff/help': typeof StaffHelpRoute
   '/staff/interviews': typeof StaffInterviewsRoute
   '/staff/leave': typeof StaffLeaveRoute
   '/staff/leave-admin': typeof StaffLeaveAdminRoute
@@ -695,6 +702,7 @@ export interface FileRoutesByTo {
   '/staff/document-expiry': typeof StaffDocumentExpiryRoute
   '/staff/documents': typeof StaffDocumentsRoute
   '/staff/files': typeof StaffFilesRoute
+  '/staff/help': typeof StaffHelpRoute
   '/staff/interviews': typeof StaffInterviewsRoute
   '/staff/leave': typeof StaffLeaveRoute
   '/staff/leave-admin': typeof StaffLeaveAdminRoute
@@ -785,6 +793,7 @@ export interface FileRoutesById {
   '/staff/document-expiry': typeof StaffDocumentExpiryRoute
   '/staff/documents': typeof StaffDocumentsRoute
   '/staff/files': typeof StaffFilesRoute
+  '/staff/help': typeof StaffHelpRoute
   '/staff/interviews': typeof StaffInterviewsRoute
   '/staff/leave': typeof StaffLeaveRoute
   '/staff/leave-admin': typeof StaffLeaveAdminRoute
@@ -882,6 +891,7 @@ export interface FileRouteTypes {
     | '/staff/document-expiry'
     | '/staff/documents'
     | '/staff/files'
+    | '/staff/help'
     | '/staff/interviews'
     | '/staff/leave'
     | '/staff/leave-admin'
@@ -974,6 +984,7 @@ export interface FileRouteTypes {
     | '/staff/document-expiry'
     | '/staff/documents'
     | '/staff/files'
+    | '/staff/help'
     | '/staff/interviews'
     | '/staff/leave'
     | '/staff/leave-admin'
@@ -1063,6 +1074,7 @@ export interface FileRouteTypes {
     | '/staff/document-expiry'
     | '/staff/documents'
     | '/staff/files'
+    | '/staff/help'
     | '/staff/interviews'
     | '/staff/leave'
     | '/staff/leave-admin'
@@ -1280,6 +1292,13 @@ declare module '@tanstack/react-router' {
       path: '/files'
       fullPath: '/staff/files'
       preLoaderRoute: typeof StaffFilesRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/help': {
+      id: '/staff/help'
+      path: '/help'
+      fullPath: '/staff/help'
+      preLoaderRoute: typeof StaffHelpRouteImport
       parentRoute: typeof StaffRoute
     }
     '/staff/interviews': {
@@ -1975,6 +1994,7 @@ interface StaffRouteChildren {
   StaffDocumentExpiryRoute: typeof StaffDocumentExpiryRoute
   StaffDocumentsRoute: typeof StaffDocumentsRoute
   StaffFilesRoute: typeof StaffFilesRoute
+  StaffHelpRoute: typeof StaffHelpRoute
   StaffInterviewsRoute: typeof StaffInterviewsRoute
   StaffLeaveRoute: typeof StaffLeaveRoute
   StaffLeaveAdminRoute: typeof StaffLeaveAdminRoute
@@ -2034,6 +2054,7 @@ const StaffRouteChildren: StaffRouteChildren = {
   StaffDocumentExpiryRoute: StaffDocumentExpiryRoute,
   StaffDocumentsRoute: StaffDocumentsRoute,
   StaffFilesRoute: StaffFilesRoute,
+  StaffHelpRoute: StaffHelpRoute,
   StaffInterviewsRoute: StaffInterviewsRoute,
   StaffLeaveRoute: StaffLeaveRoute,
   StaffLeaveAdminRoute: StaffLeaveAdminRoute,
