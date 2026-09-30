@@ -24,6 +24,7 @@ test("HR dashboard setup: connections, retry, shortcuts and mobile", async ({ pa
     timeout: 30_000,
   });
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(setup.getByRole("button", { name: "Hide from dashboard" })).toHaveCount(0);
   await expect(
     setup.locator('form[action="/api/integrations/google-calendar?email=enable"]'),
   ).toBeVisible();
@@ -50,10 +51,22 @@ test("HR dashboard setup: connections, retry, shortcuts and mobile", async ({ pa
   await expect(setup.getByText("Enabled", { exact: true })).toBeVisible();
   await expect(setup.getByText("Connected", { exact: true })).toBeVisible();
   await expect(setup.getByRole("button", { name: "Enable emails", exact: true })).toHaveCount(0);
+  await setup.getByRole("button", { name: "Hide from dashboard" }).click();
+  await expect(setup).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "People overview", exact: true })).toBeVisible();
+  await expect(setup).toHaveCount(0);
+  await page.goto("/staff/requests?view=organisation");
+  await page.getByRole("button", { name: "Show setup on dashboard" }).click();
+  await expect(page.getByRole("button", { name: "Show setup on dashboard" })).toHaveCount(0);
+  await page.goto("/staff");
+  await expect(setup).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
 
   failed = true;
   await page.reload();
   await expect(setup.getByText("Connection status is unavailable.")).toBeVisible();
+  await expect(setup.getByRole("button", { name: "Hide from dashboard" })).toHaveCount(0);
   failed = false;
   configured = false;
   connected = false;

@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { useHrSetupPreference } from "@/components/dashboards/use-hr-setup-preference";
+import { toast } from "sonner";
 
 export function GoogleCalendarConnection() {
+  const setupPreference = useHrSetupPreference();
   const [status, setStatus] = useState<{
     configured: boolean;
     connected: boolean;
@@ -34,6 +37,17 @@ export function GoogleCalendarConnection() {
         <CardTitle>Google Calendar &amp; Meet</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
+        {setupPreference.hidden && (
+          <Button
+            variant="outline"
+            onClick={() => {
+              setupPreference.setHidden(false);
+              toast.success("HR setup will appear on your dashboard again.");
+            }}
+          >
+            Show setup on dashboard
+          </Button>
+        )}
         <p>
           {status?.connected
             ? `Organising account connected: ${status.accountEmail}`

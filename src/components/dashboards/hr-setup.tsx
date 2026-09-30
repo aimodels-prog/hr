@@ -4,6 +4,8 @@ import { Link } from "@tanstack/react-router";
 import { CheckCircle2, ChevronDown, Settings2 } from "lucide-react";
 import { useCurrentUser } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import { useHrSetupPreference } from "./use-hr-setup-preference";
 
 type ConnectionStatus = {
   configured: boolean;
@@ -15,11 +17,12 @@ type ConnectionStatus = {
 export function HrSetup() {
   const user = useCurrentUser();
   const panelId = useId();
+  const preference = useHrSetupPreference();
   const [expanded, setExpanded] = useState<boolean | null>(null);
   const allowed = user.activeRole === "HR" || user.activeRole === "Super Admin";
   const status = useQuery({
     queryKey: ["hr-dashboard-setup", user.id, user.activeRole],
-    enabled: allowed,
+    enabled: allowed && preference.loaded && !preference.hidden,
     staleTime: 60_000,
     retry: false,
     queryFn: async ({ signal }): Promise<ConnectionStatus> => {
@@ -31,8 +34,9 @@ export function HrSetup() {
       return response.json();
     },
   });
-  if (!allowed) return null;
+  if (!allowed || !preference.loaded || preference.hidden) return null;
   const data = status.data;
+  const complete = !status.isError && data?.configured && data.connected && data.emailEnabled;
   const needsConnection = data && (!data.configured || !data.connected || !data.emailEnabled);
   const open = expanded ?? Boolean(needsConnection || status.isError);
   const connections = [
@@ -52,28 +56,46 @@ export function HrSetup() {
 
   return (
     <section aria-label="HR setup" className="rounded-xl border bg-card">
-      <button
-        type="button"
-        className="flex min-h-12 w-full items-center gap-3 rounded-xl p-4 text-left focus-visible:outline-primary"
-        aria-expanded={open}
-        aria-controls={panelId}
-        onClick={() => setExpanded(!open)}
-      >
-        <Settings2 className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-        <span className="font-medium">HR setup</span>
-        {needsConnection && (
-          <span className="rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
-            Connect your HR account
-          </span>
+      <div className="flex flex-wrap items-center gap-x-2 pr-3">
+        <button
+          type="button"
+          className="flex min-h-12 flex-1 items-center gap-3 rounded-xl p-4 text-left focus-visible:outline-primary"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={() => setExpanded(!open)}
+        >
+          <Settings2 className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+          <span className="font-medium">HR setup</span>
+          {needsConnection && (
+            <span className="rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
+              Connect your HR account
+            </span>
+          )}
+          {status.isError && (
+            <span className="text-xs text-muted-foreground">Check connection status</span>
+          )}
+          <ChevronDown
+            className={`ml-auto h-4 w-4 shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
+            aria-hidden="true"
+          />
+        </button>
+        {complete && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="mb-1 ml-3 sm:mb-0"
+            onClick={() => {
+              preference.setHidden(true);
+              toast.success("Setup hidden on this browser. Restore it from Manage connections.", {
+                action: { label: "Undo", onClick: () => preference.setHidden(false) },
+              });
+            }}
+          >
+            Hide from dashboard
+          </Button>
         )}
-        {status.isError && (
-          <span className="text-xs text-muted-foreground">Check connection status</span>
-        )}
-        <ChevronDown
-          className={`ml-auto h-4 w-4 shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
-          aria-hidden="true"
-        />
-      </button>
+      </div>
       {open && (
         <div id={panelId} className="space-y-4 border-t p-4">
           {status.isPending ? (

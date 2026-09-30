@@ -791,6 +791,7 @@ export const hrGuide = [
     [
       "On the HR dashboard, open HR setup and choose Enable emails or Connect calendar. Completed connections stay folded away. Office hours, leave policies and timesheet settings are also linked here where your role allows them.",
       "For connection details or to pause emails, choose Manage connections. You can also find Google Calendar & Meet in Requests & approvals → Organisation Tracker, or Interviews.",
+      "Once email and calendar setup is complete, choose Hide from dashboard to remove the setup panel for your account on this browser. Emails and interviews keep working. To bring it back, open Organisation Tracker or Interviews and choose Show setup on dashboard under Google Calendar & Meet.",
       "Grant the separate email permission when enabling Approval emails & reminders; calendar permission alone is not enough.",
       "Review the connection and email status before relying on delivery.",
       "Continue monitoring Requests & approvals and My Tasks for the actual decisions and outstanding work.",
