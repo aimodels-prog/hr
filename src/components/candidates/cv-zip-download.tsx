@@ -20,7 +20,7 @@ export function CvZipDownload({ candidateIds }: { candidateIds: string[] }) {
   const [manifest, setManifest] = useState<CvZipManifest | null>(null);
   const [progress, setProgress] = useState("");
   const controller = useRef<AbortController | null>(null);
-  useEffect(() => () => controller.current?.abort(), []);
+  useEffect(() => () => controller.current?.abort(), [user.id, user.activeRole]);
   const actor = {
     actorId: user.id,
     ...(user.workspaceEmail ? { actorEmail: user.workspaceEmail } : {}),
@@ -74,6 +74,9 @@ export function CvZipDownload({ candidateIds }: { candidateIds: string[] }) {
       const blob = await buildCvZip(
         manifest,
         async (entry) => {
+          // Keep large exports below the production proxy's sustained request limit.
+          await new Promise((resolve) => window.setTimeout(resolve, 150));
+          operation.signal.throwIfAborted();
           const result = await downloadCandidateCvFn({
             data: {
               actor,
