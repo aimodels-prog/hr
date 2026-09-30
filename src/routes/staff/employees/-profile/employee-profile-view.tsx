@@ -74,7 +74,7 @@ import {
 } from "@/lib/data/change-reason-policy";
 import { ScheduledEmploymentChanges } from "@/components/employees/scheduled-employment-changes";
 import { OffboardingService } from "@/lib/data/offboarding-service";
-import type { EmployeeSalary, MasterRecord } from "@/lib/data/types";
+import type { EmployeeSalary, MasterRecord, Project } from "@/lib/data/types";
 import {
   getMasterDataRepository,
   getProjectRepository,
@@ -107,7 +107,9 @@ import { AuditViewer } from "@/components/audit-viewer";
 import { getApplicationDataServices } from "@/lib/data/application-data";
 import type { DevPreviewContextValue } from "@/lib/auth";
 
-type EmploymentMasterDataCollection = "departments" | "positions" | "locations" | "employmentTypes";
+type EmploymentMasterDataCollection =
+  "departments" | "positions" | "locations" | "employmentTypes" | "grades";
+type EmploymentQuickAddCollection = EmploymentMasterDataCollection | "projects";
 
 function refreshedEmploymentOptions(
   collection: EmploymentMasterDataCollection,
@@ -226,13 +228,16 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
   const [masterDataVersion, setMasterDataVersion] = useState(0);
   const [quickAddedOptions, setQuickAddedOptions] = useState<
     Record<EmploymentMasterDataCollection, MasterRecord[]>
-  >({ departments: [], positions: [], locations: [], employmentTypes: [] });
+  >({ departments: [], positions: [], locations: [], employmentTypes: [], grades: [] });
   const [quickSelectedValues, setQuickSelectedValues] = useState<
-    Partial<Record<EmploymentMasterDataCollection, string | undefined>>
+    Partial<Record<EmploymentQuickAddCollection, string | undefined>>
   >({});
-  const [quickAddCollection, setQuickAddCollection] =
-    useState<EmploymentMasterDataCollection | null>(null);
+  const [quickAddCollection, setQuickAddCollection] = useState<EmploymentQuickAddCollection | null>(
+    null,
+  );
   const [quickAddName, setQuickAddName] = useState("");
+  const [quickProjectStartDate, setQuickProjectStartDate] = useState("");
+  const [addedProjects, setAddedProjects] = useState<Project[]>([]);
   const [quickAddBusy, setQuickAddBusy] = useState(false);
 
   // Viewing your own record, regardless of what admin permissions you happen to hold, is a
@@ -300,12 +305,25 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
     () => refreshedEmploymentOptions("locations", masterDataVersion, quickAddedOptions.locations),
     [masterDataVersion, quickAddedOptions.locations],
   );
-  const grades = useMemo(() => getMasterDataRepository("grades").list(), []);
+  const grades = useMemo(
+    () => refreshedEmploymentOptions("grades", masterDataVersion, quickAddedOptions.grades),
+    [masterDataVersion, quickAddedOptions.grades],
+  );
   const positions = useMemo(
     () => refreshedEmploymentOptions("positions", masterDataVersion, quickAddedOptions.positions),
     [masterDataVersion, quickAddedOptions.positions],
   );
-  const projects = useMemo(() => getProjectRepository().list(), []);
+  const projects = useMemo(
+    () => [
+      ...new Map(
+        [...getProjectRepository().list(), ...addedProjects].map((project) => [
+          project.id,
+          project,
+        ]),
+      ).values(),
+    ],
+    [addedProjects],
+  );
   const employmentTypes = useMemo(
     () =>
       refreshedEmploymentOptions(
@@ -401,6 +419,8 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
       position: quickSelectedValues.positions ?? fields.position,
       location: quickSelectedValues.locations ?? fields.location,
       employmentType: quickSelectedValues.employmentTypes ?? fields.employmentType,
+      grade: quickSelectedValues.grades ?? fields.grade,
+      projectId: quickSelectedValues.projects ?? fields.projectId,
     };
     const changed = changedRecordFields(
       { ...employee, staffEntryType: employee.staffEntryType || "Existing Employee" },
@@ -454,18 +474,42 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
     }
   };
 
-  const quickAddLabels: Record<EmploymentMasterDataCollection, string> = {
+  const quickAddLabels: Record<EmploymentQuickAddCollection, string> = {
     departments: "department",
     positions: "position",
     locations: "work location",
     employmentTypes: "employment type",
+    grades: "grade",
+    projects: "project",
   };
 
   const createEmploymentOption = async () => {
-    if (!quickAddCollection || !quickAddName.trim()) return;
+    if (quickAddBusy || !quickAddCollection || !quickAddName.trim()) return;
+    if (quickAddCollection === "projects" && !quickProjectStartDate) {
+      toast.error("Enter the project start date.");
+      return;
+    }
     const label = quickAddLabels[quickAddCollection] ?? "option";
     setQuickAddBusy(true);
     try {
+      if (quickAddCollection === "projects") {
+        const project = await masterDataService.createProject(
+          {
+            name: quickAddName.trim(),
+            startDate: quickProjectStartDate,
+            isActive: true,
+            orderIndex: projects.length,
+          },
+          currentUser.getActorContext(),
+        );
+        setAddedProjects((current) => [...current, project]);
+        setQuickSelectedValues((current) => ({ ...current, projects: project.id }));
+        form.setValue("projectId", project.id, { shouldDirty: true, shouldValidate: true });
+        setQuickAddCollection(null);
+        setQuickAddName("");
+        toast.success(`${project.name} added and selected`);
+        return;
+      }
       const record = await masterDataService.create(
         quickAddCollection,
         {
@@ -480,6 +524,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
         positions: "position",
         locations: "location",
         employmentTypes: "employmentType",
+        grades: "grade",
       } as const;
       const createdCollection = quickAddCollection;
       setQuickAddedOptions((current) => ({
@@ -1333,6 +1378,8 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                         ["positions", "Position"],
                                         ["locations", "Work location"],
                                         ["employmentTypes", "Employment type"],
+                                        ["projects", "Project"],
+                                        ["grades", "Grade"],
                                       ] as const
                                     ).map(([collection, label]) => (
                                       <Button
@@ -1340,9 +1387,11 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                         type="button"
                                         size="sm"
                                         variant="outline"
+                                        disabled={quickAddBusy}
                                         onClick={() => {
                                           setQuickAddCollection(collection);
                                           setQuickAddName("");
+                                          setQuickProjectStartDate("");
                                         }}
                                       >
                                         <Plus className="h-3.5 w-3.5" /> Add {label.toLowerCase()}
@@ -1358,6 +1407,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                         <Input
                                           id="quick-add-employment-option"
                                           value={quickAddName}
+                                          disabled={quickAddBusy}
                                           autoFocus
                                           onChange={(event) => setQuickAddName(event.target.value)}
                                           onKeyDown={(event) => {
@@ -1368,17 +1418,39 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                           }}
                                         />
                                       </div>
+                                      {quickAddCollection === "projects" && (
+                                        <div className="space-y-1.5">
+                                          <Label htmlFor="quick-project-start">
+                                            Project start date *
+                                          </Label>
+                                          <Input
+                                            id="quick-project-start"
+                                            type="date"
+                                            value={quickProjectStartDate}
+                                            disabled={quickAddBusy}
+                                            onChange={(event) =>
+                                              setQuickProjectStartDate(event.target.value)
+                                            }
+                                          />
+                                        </div>
+                                      )}
                                       <div className="flex gap-2">
                                         <Button
                                           type="button"
                                           variant="ghost"
+                                          disabled={quickAddBusy}
                                           onClick={() => setQuickAddCollection(null)}
                                         >
                                           Cancel
                                         </Button>
                                         <Button
                                           type="button"
-                                          disabled={quickAddBusy || !quickAddName.trim()}
+                                          disabled={
+                                            quickAddBusy ||
+                                            !quickAddName.trim() ||
+                                            (quickAddCollection === "projects" &&
+                                              !quickProjectStartDate)
+                                          }
                                           onClick={() => void createEmploymentOption()}
                                         >
                                           {quickAddBusy ? "Adding..." : "Add and select"}
@@ -1465,12 +1537,21 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                       <FormItem>
                                         <FormLabel>Grade</FormLabel>
                                         <Select
-                                          onValueChange={field.onChange}
-                                          value={field.value as string}
+                                          onValueChange={(value) => {
+                                            if (!value) return;
+                                            setQuickSelectedValues((current) => ({
+                                              ...current,
+                                              grades: undefined,
+                                            }));
+                                            field.onChange(value);
+                                          }}
+                                          value={quickSelectedValues.grades ?? field.value ?? ""}
                                         >
                                           <FormControl>
                                             <SelectTrigger>
-                                              <SelectValue placeholder="None" />
+                                              <SelectValue placeholder="None">
+                                                {quickSelectedValues.grades ?? field.value}
+                                              </SelectValue>
                                             </SelectTrigger>
                                           </FormControl>
                                           <SelectContent>
@@ -1652,24 +1733,28 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                     render={({ field }) => (
                                       <FormItem>
                                         <FormLabel>Project</FormLabel>
-                                        <Select
-                                          onValueChange={field.onChange}
-                                          defaultValue={field.value as string}
-                                        >
-                                          <FormControl>
-                                            <SelectTrigger>
-                                              <SelectValue placeholder="None" />
-                                            </SelectTrigger>
-                                          </FormControl>
-                                          <SelectContent>
-                                            <SelectItem value="none">None</SelectItem>
-                                            {projects.map((d) => (
-                                              <SelectItem key={d.id} value={d.id}>
-                                                {d.name}
-                                              </SelectItem>
-                                            ))}
-                                          </SelectContent>
-                                        </Select>
+                                        <FormControl>
+                                          <SearchableSelect
+                                            value={
+                                              quickSelectedValues.projects ?? field.value ?? ""
+                                            }
+                                            onValueChange={(value) => {
+                                              setQuickSelectedValues((current) => ({
+                                                ...current,
+                                                projects: undefined,
+                                              }));
+                                              field.onChange(value);
+                                            }}
+                                            placeholder="None"
+                                            options={[
+                                              { value: "none", label: "None" },
+                                              ...projects.map((project) => ({
+                                                value: project.id,
+                                                label: project.name,
+                                              })),
+                                            ]}
+                                          />
+                                        </FormControl>
                                       </FormItem>
                                     )}
                                   />

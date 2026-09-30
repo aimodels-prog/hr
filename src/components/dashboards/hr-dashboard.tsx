@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { DashboardCharts } from "./dashboard-charts";
+import { HrSetup } from "./hr-setup";
 import { StaffDataBoundary } from "@/components/layout/staff-data-boundary";
 import { DASHBOARD_MODULES } from "@/lib/data/staff-module-plan";
 import {
@@ -166,6 +167,7 @@ export function HrDashboard() {
 function OrganisationHrDashboard({ toolbar }: { toolbar: ReactNode }) {
   return (
     <div className="flex flex-col gap-4">
+      <HrSetup />
       <DashboardCharts scope="hr" toolbar={toolbar} />
       <StaffDataBoundary modules={DASHBOARD_MODULES.hr}>
         <OrganisationHrDashboardDetails />

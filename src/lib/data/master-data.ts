@@ -235,7 +235,7 @@ export class MasterDataService {
   }
 
   async createProject(input: NewRecord<Project>, context: ActorContext): Promise<Project> {
-    this.requireAdministrator(context, "create a project");
+    this.requireCreator("projects", context);
     if (!usesBrowserServerFunctions()) {
       this.validateProject(input);
       this.requireUniqueProject(input.name, input.code);
@@ -401,8 +401,13 @@ export class MasterDataService {
     throw new Error(`Only a Super Admin can ${action}.`);
   }
 
-  private requireCreator(collection: MasterDataCollection, context: ActorContext): void {
-    const hrManagedCollections: MasterDataCollection[] = [
+  private requireCreator(
+    collection: MasterDataCollection | "projects",
+    context: ActorContext,
+  ): void {
+    const hrManagedCollections: (MasterDataCollection | "projects")[] = [
+      "projects",
+      "grades",
       "departments",
       "positions",
       "locations",

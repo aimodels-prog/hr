@@ -142,6 +142,7 @@ export const createMasterDataFn = createServerFn({ method: "POST" })
     );
 
     const hrManagedCollections = new Set([
+      "grades",
       "departments",
       "positions",
       "locations",
@@ -474,11 +475,15 @@ export const createProjectFn = createServerFn({ method: "POST" })
     const { verified, actor, error } = await verifyServerActorRole(
       orgId,
       data.actorId,
-      "Super Admin",
+      undefined,
       data.actorEmail,
     );
 
-    if (!verified || !actor) {
+    if (
+      !verified ||
+      !actor ||
+      !actor.roles.some((role) => role === "HR" || role === "Super Admin")
+    ) {
       const db = getDatabaseClient();
       await db.insert(auditEvents).values({
         organisationId: orgId,
@@ -489,10 +494,10 @@ export const createProjectFn = createServerFn({ method: "POST" })
         module: "settings",
         entityType: "project",
         entityId: orgId,
-        reason: error ?? "Only a Super Admin can create a project.",
+        reason: error ?? "Only HR or a Super Admin can create a project.",
         riskLevel: "High",
       });
-      throw new Error(`Unauthorized: ${error ?? "Only a Super Admin can create a project."}`);
+      throw new Error(`Unauthorized: ${error ?? "Only HR or a Super Admin can create a project."}`);
     }
 
     const { name, code, startDate, endDate, costCentreId } = data.input;

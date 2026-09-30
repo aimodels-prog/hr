@@ -41,7 +41,7 @@ export const hrGuide = [
     [
       "A future start date or effective date is not permission to make a change early.",
       "Use the import page’s supplied format for multiple employees. Review errors and duplicates before completing an import.",
-      "If a location or job title is missing, ask the authorised person to add it to Company Setup; do not type a different spelling as a workaround.",
+      "In Update Employment Records, use Add department, Add position, Add work location, Add employment type, Add project or Add grade for a missing option. Enter its name (and start date for a project), then choose Add and select. Save Changes to assign it to the employee. Adding an option alone does not change the employee record.",
     ],
     "employee:manage_all",
   ),
@@ -789,7 +789,8 @@ export const hrGuide = [
     "/staff/requests",
     "google email connect approval reminders missing clockout morning calendar notification mail delivery",
     [
-      "Open Requests & approvals → the organisation view, or Interviews, and find Google Calendar & Meet. Connect the agreed HR account there.",
+      "On the HR dashboard, open HR setup and choose Enable emails or Connect calendar. Completed connections stay folded away. Office hours, leave policies and timesheet settings are also linked here where your role allows them.",
+      "For connection details or to pause emails, choose Manage connections. You can also find Google Calendar & Meet in Requests & approvals → Organisation Tracker, or Interviews.",
       "Grant the separate email permission when enabling Approval emails & reminders; calendar permission alone is not enough.",
       "Review the connection and email status before relying on delivery.",
       "Continue monitoring Requests & approvals and My Tasks for the actual decisions and outstanding work.",

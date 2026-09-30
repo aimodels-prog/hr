@@ -94,6 +94,19 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
   await employmentDialog.getByRole("button", { name: "Add and select" }).click();
   await expect(employmentDialog.getByLabel("Location", { exact: true })).toContainText(newLocation);
   await expect(employmentDialog.getByLabel("Note (optional)")).toBeVisible();
+  const newProject = `Browser Project ${unique}`;
+  await employmentDialog.getByRole("button", { name: "Add project", exact: true }).click();
+  await employmentDialog.getByLabel("New project", { exact: true }).fill(newProject);
+  await expect(employmentDialog.getByRole("button", { name: "Add and select" })).toBeDisabled();
+  await employmentDialog.getByLabel("Project start date").fill("2026-01-01");
+  await employmentDialog.getByRole("button", { name: "Add and select" }).click();
+  await expect(employmentDialog.getByLabel("Project", { exact: true })).toContainText(newProject);
+  const newGrade = `Browser Grade ${unique}`;
+  await employmentDialog.getByRole("button", { name: "Add grade", exact: true }).click();
+  await employmentDialog.getByLabel("New grade", { exact: true }).fill(newGrade);
+  await employmentDialog.getByRole("button", { name: "Add and select" }).click();
+  await expect(employmentDialog.getByLabel("Grade", { exact: true })).toContainText(newGrade);
+  await employmentDialog.getByLabel(/Reason for change/i).fill("Assign the new project and grade");
   await employmentDialog.getByRole("button", { name: "Save Changes", exact: true }).click();
   await expect(page.getByText("Employment details saved", { exact: true })).toBeVisible();
   await page.reload();
@@ -106,6 +119,8 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
     .click();
   await page.getByRole("button", { name: "Edit employment details" }).click();
   await expect(employmentDialog.getByLabel("Location", { exact: true })).toContainText(newLocation);
+  await expect(employmentDialog.getByLabel("Project", { exact: true })).toContainText(newProject);
+  await expect(employmentDialog.getByLabel("Grade", { exact: true })).toContainText(newGrade);
   await page.keyboard.press("Escape");
 
   // Company-head placement is independent of reporting lines and approval routing.
