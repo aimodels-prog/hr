@@ -46,15 +46,7 @@ export interface NavGroup {
 const navigation: NavGroup[] = [
   {
     label: "Home",
-    items: [
-      { title: "Dashboard", url: "/staff", icon: LayoutDashboard },
-      {
-        title: "Help & Knowledge",
-        url: "/staff/help",
-        icon: BookOpen,
-        keywords: "help guide knowledge support how instructions documentation",
-      },
-    ],
+    items: [{ title: "Dashboard", url: "/staff", icon: LayoutDashboard }],
   },
   {
     label: "My Workspace",
@@ -424,6 +416,17 @@ const navigation: NavGroup[] = [
         url: "/staff/audit",
         icon: Shield,
         requiredRoles: ["Super Admin"],
+      },
+    ],
+  },
+  {
+    label: "Support",
+    items: [
+      {
+        title: "Help & Knowledge",
+        url: "/staff/help",
+        icon: BookOpen,
+        keywords: "help guide knowledge support how instructions documentation",
       },
     ],
   },

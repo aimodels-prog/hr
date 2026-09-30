@@ -4,6 +4,10 @@ The authenticated `/staff/help` page provides searchable, task-based employee an
 
 ## Content ownership
 
+Help is pinned below the main sidebar navigation and is also available through the question-mark button beside notifications. The header menu offers the permitted guide for the current page and a link to search all help. Contextual guidance uses the same article roles plus page permissions; it never falls back to another role's guide.
+
+A short inline page tip links to the matching guide. Dismiss one tip, turn all tips off, or restore dismissed tips from the header Help menu. These display preferences are local to this browser, separately keyed by user and active role; they contain no business records and do not change permissions. Guide loading is asynchronous and does not block the page. Help pages themselves have no automatic tip.
+
 - `src/lib/help/employee-guide.ts`: personal employee workflows.
 - `src/lib/help/hr-guide.ts`: HR workflows and company setup procedures.
 - `src/lib/help/responsibilities-guide.ts`: manager, Finance and IT tasks, restricted by active role in the guide.

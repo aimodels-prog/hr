@@ -6,6 +6,7 @@ import { HrSidebar } from "@/components/hr-sidebar";
 import { SidebarSectionsProvider } from "@/components/layout/sidebar-sections-provider";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { NotificationDrawer } from "@/components/layout/notification-drawer";
+import { ContextualHelpProvider, HelpShortcut, PageTip } from "@/components/help/contextual-help";
 import { ApplicationBootScreen } from "@/components/layout/application-boot-screen";
 import { DevRoleSwitcher } from "@/components/dev-role-switcher";
 import { useCurrentUser } from "@/lib/auth";
@@ -133,68 +134,72 @@ function StaffWorkspace({ actor }: { actor: ActorContext }) {
   return (
     <StaffDataContext.Provider value={moduleLoader}>
       <SidebarProvider>
-        <SidebarSectionsProvider>
-          <div className="flex min-h-screen w-full bg-background">
-            <HrSidebar />
-            <div className="min-w-0 flex flex-1 flex-col">
-              <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border/70 bg-card/90 px-4 shadow-[0_1px_12px_oklch(0.3_0.08_253/0.04)] backdrop-blur-xl sm:px-6">
-                <SidebarTrigger className="h-9 w-9 rounded-xl border border-border/70 bg-background shadow-sm" />
-                <div className="hidden items-center gap-2 md:flex">
-                  <span className="font-display text-[15px] font-bold tracking-[-0.02em]">
-                    VIA HR System
-                  </span>
-                  <span className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-success">
-                    People operations
-                  </span>
-                </div>
+        <ContextualHelpProvider>
+          <SidebarSectionsProvider>
+            <div className="flex min-h-screen w-full bg-background">
+              <HrSidebar />
+              <div className="min-w-0 flex flex-1 flex-col">
+                <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border/70 bg-card/90 px-4 shadow-[0_1px_12px_oklch(0.3_0.08_253/0.04)] backdrop-blur-xl sm:px-6">
+                  <SidebarTrigger className="h-9 w-9 rounded-xl border border-border/70 bg-background shadow-sm" />
+                  <div className="hidden items-center gap-2 md:flex">
+                    <span className="font-display text-[15px] font-bold tracking-[-0.02em]">
+                      VIA HR System
+                    </span>
+                    <span className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-success">
+                      People operations
+                    </span>
+                  </div>
 
-                <div className="ml-auto flex items-center gap-2">
-                  {isDevelopmentPreview && (
-                    <div className="hidden items-center gap-1.5 rounded-full border border-primary/10 bg-primary/5 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-primary xl:flex">
-                      <Sparkles className="h-3 w-3" /> Demo workspace
+                  <div className="ml-auto flex items-center gap-2">
+                    {isDevelopmentPreview && (
+                      <div className="hidden items-center gap-1.5 rounded-full border border-primary/10 bg-primary/5 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-primary xl:flex">
+                        <Sparkles className="h-3 w-3" /> Demo workspace
+                      </div>
+                    )}
+                    <HelpShortcut />
+                    <NotificationDrawer />
+                    <DevRoleSwitcher />
+                  </div>
+                </header>
+                <main className="flex-1 bg-background p-4 sm:p-6 lg:p-8">
+                  {setupNeedsAttention && (
+                    <div className="mx-auto mb-5 flex max-w-7xl flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex gap-3">
+                        <ClipboardCheck className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+                        <div>
+                          <p className="font-medium">
+                            {employmentChangesRequested
+                              ? "Update your employment information"
+                              : awaitingEmploymentConfirmation &&
+                                  currentEmployee?.profileSetupStatus === "Completed"
+                                ? "Your employment information is with HR"
+                                : "Complete your employee record"}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            {employmentChangesRequested
+                              ? currentEmployee?.employmentReviewNote ||
+                                "HR requested changes before confirming your employment information."
+                              : awaitingEmploymentConfirmation &&
+                                  currentEmployee?.profileSetupStatus === "Completed"
+                                ? "Your details are saved. Leave, timesheets, travel and overtime become available after HR confirms your employment information."
+                                : "You can continue using essential work services while you finish your details and documents. Leave becomes available after HR confirms your employment information."}
+                          </p>
+                        </div>
+                      </div>
+                      <Button asChild size="sm" className="shrink-0">
+                        <Link to="/staff/me/onboarding">Continue setup</Link>
+                      </Button>
                     </div>
                   )}
-                  <NotificationDrawer />
-                  <DevRoleSwitcher />
-                </div>
-              </header>
-              <main className="flex-1 bg-background p-4 sm:p-6 lg:p-8">
-                {setupNeedsAttention && (
-                  <div className="mx-auto mb-5 flex max-w-7xl flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex gap-3">
-                      <ClipboardCheck className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
-                      <div>
-                        <p className="font-medium">
-                          {employmentChangesRequested
-                            ? "Update your employment information"
-                            : awaitingEmploymentConfirmation &&
-                                currentEmployee?.profileSetupStatus === "Completed"
-                              ? "Your employment information is with HR"
-                              : "Complete your employee record"}
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          {employmentChangesRequested
-                            ? currentEmployee?.employmentReviewNote ||
-                              "HR requested changes before confirming your employment information."
-                            : awaitingEmploymentConfirmation &&
-                                currentEmployee?.profileSetupStatus === "Completed"
-                              ? "Your details are saved. Leave, timesheets, travel and overtime become available after HR confirms your employment information."
-                              : "You can continue using essential work services while you finish your details and documents. Leave becomes available after HR confirms your employment information."}
-                        </p>
-                      </div>
-                    </div>
-                    <Button asChild size="sm" className="shrink-0">
-                      <Link to="/staff/me/onboarding">Continue setup</Link>
-                    </Button>
-                  </div>
-                )}
-                <StaffPageBoundary>
-                  <Outlet />
-                </StaffPageBoundary>
-              </main>
+                  <StaffPageBoundary>
+                    <PageTip />
+                    <Outlet />
+                  </StaffPageBoundary>
+                </main>
+              </div>
             </div>
-          </div>
-        </SidebarSectionsProvider>
+          </SidebarSectionsProvider>
+        </ContextualHelpProvider>
       </SidebarProvider>
     </StaffDataContext.Provider>
   );
