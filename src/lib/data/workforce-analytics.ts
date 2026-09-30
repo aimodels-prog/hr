@@ -202,11 +202,11 @@ export function calculateAttendanceAnalytics(input: {
         hours >= 0 &&
         hours <= 24;
       if (closed && !pendingVisit) day.worked += hours;
-      if (expected > 0) {
-        if (pendingVisit || (record && !closed)) day.review += 1;
-        else if (closed) day.recorded += 1;
-        else day.missing += 1;
-      }
+      // Actual evidence remains visible even before tracking is configured or on
+      // non-working days. Only infer a missing record when work was expected.
+      if (pendingVisit || (record && !closed)) day.review += 1;
+      else if (closed) day.recorded += 1;
+      else if (expected > 0) day.missing += 1;
     }
     day.worked = Math.round(day.worked * 100) / 100;
     day.expected = Math.round(day.expected * 100) / 100;

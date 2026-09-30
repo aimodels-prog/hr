@@ -67,7 +67,9 @@ function Panel({
       className="min-w-0 rounded-xl border border-border/70 bg-card p-5 sm:p-6"
       style={{
         order:
-          title === "Attendance trend" || title === "Worked hours vs expected hours"
+          title === "Attendance trend" ||
+          title === "Worked hours vs expected hours" ||
+          title === "Recorded hours"
             ? 0
             : title === "Approvals waiting"
               ? 1
@@ -380,6 +382,7 @@ export default function WorkforceCharts({
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
   });
   const data = query.data;
+  const hasExpectedHours = Boolean(data?.days.some((day) => day.expected > 0));
   const label =
     scope === "self" ? "My working hours" : employeeId ? "Employee insights" : "HR insights";
   const detail = (section: string, fallback: string) =>
@@ -517,8 +520,7 @@ export default function WorkforceCharts({
                     },
                     {
                       label: "Expected hours",
-                      value:
-                        data.attendanceTracked === false ? "—" : `${hours(data.totals.expected)} h`,
+                      value: !hasExpectedHours ? "—" : `${hours(data.totals.expected)} h`,
                       note: "Working calendar adjusted for leave",
                     },
                     {
@@ -546,11 +548,7 @@ export default function WorkforceCharts({
           <div className="grid min-w-0 gap-5 xl:grid-cols-2" data-testid="primary-dashboard-charts">
             {(scope === "self" || employeeId) && (
               <Panel
-                title={
-                  data.attendanceTracked === false
-                    ? "Recorded hours"
-                    : "Worked hours vs expected hours"
-                }
+                title={!hasExpectedHours ? "Recorded hours" : "Worked hours vs expected hours"}
                 description="Recorded, completed attendance—including approved site duty—against the working-calendar expectation."
                 link={detail(
                   "attendance",
@@ -580,7 +578,7 @@ export default function WorkforceCharts({
                       radius={[3, 3, 0, 0]}
                       isAnimationActive={false}
                     />
-                    {data.attendanceTracked !== false && (
+                    {hasExpectedHours && (
                       <Line
                         name="Expected hours"
                         dataKey="expected"
@@ -619,7 +617,7 @@ export default function WorkforceCharts({
               <>
                 <Panel
                   title="Attendance trend"
-                  description="Employee-days with expected work: completed records, pending review, or no confirmed record. Missing data is not a finding of absence."
+                  description="Completed attendance and records needing review, including saved punches before tracking was configured. No confirmed record is counted only when attendance was required. Today is excluded. Missing data is not a finding of absence."
                   link={detail("attendance", "/staff/attendance")}
                 >
                   <ChartContainer
@@ -657,6 +655,11 @@ export default function WorkforceCharts({
                       />
                     </BarChart>
                   </ChartContainer>
+                  {!data.days.some((day) => day.recorded || day.review || day.missing) && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      No attendance records or required attendance days in this period.
+                    </p>
+                  )}
                 </Panel>
                 <Panel
                   title="Approvals waiting"

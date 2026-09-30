@@ -1101,6 +1101,42 @@ test(
         /profile was not found/,
       );
       assert.equal(hrLeave.priorities.approvals.find((row) => row.name === "Leave · HR")?.count, 1);
+      // Production regression: a missing tracking setup must not hide actual
+      // attendance evidence. No absence is inferred for unconfigured staff.
+      await sql`UPDATE app_settings SET additional_settings = additional_settings - 'attendanceTracking'
+        WHERE organisation_id = ${organisationId}`;
+      for (const [date, closed] of [
+        ["2026-09-14", true],
+        ["2026-09-15", false],
+      ] as const) {
+        await sql`INSERT INTO attendance_records
+          (organisation_id, employee_id, date, clock_in_at, clock_out_at, calculated_hours, source, status, created_by, updated_by)
+          VALUES (${organisationId}, ${employeeId}, ${date}, ${`${date}T04:30:00Z`},
+            ${closed ? `${date}T13:30:00Z` : null}, ${closed ? 8 : 0}, 'Manual Entry', 'Present', ${hrUserId}, ${hrUserId})
+          ON CONFLICT (employee_id, date) DO UPDATE SET clock_in_at = EXCLUDED.clock_in_at,
+            clock_out_at = EXCLUDED.clock_out_at, calculated_hours = EXCLUDED.calculated_hours,
+            status = 'Present', archived_at = NULL`;
+      }
+      const untracked = await getWorkforceAnalytics(
+        organisationId,
+        employeeActor,
+        "self",
+        7,
+        chartAt,
+      );
+      const hrUntracked = await getWorkforceAnalytics(
+        organisationId,
+        hrActor,
+        "hr",
+        7,
+        chartAt,
+        employeeId,
+      );
+      assert.deepEqual(untracked.days, hrUntracked.days);
+      assert.equal(untracked.days.find((day) => day.date === "2026-09-14")!.recorded, 1);
+      assert.equal(untracked.days.find((day) => day.date === "2026-09-15")!.review, 1);
+      assert.equal(untracked.totals.expected, 0);
+      assert.equal(untracked.totals.missing, 0);
     } finally {
       delete process.env["VIA_HR_ATTENDANCE_NETWORK_ENFORCEMENT"];
       await sql.end();

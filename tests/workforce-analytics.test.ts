@@ -43,6 +43,7 @@ test("saved attendance counts without tracking while missing days have no expect
     dates: [date, "2026-09-15"],
   });
   assert.equal(days[0]?.worked, 7.6);
+  assert.equal(days[0]?.recorded, 1);
   assert.equal(days[0]?.expected, 0);
   assert.equal(days[1]?.missing, 0);
   assert.equal(days[1]?.review, 0);
@@ -57,6 +58,76 @@ test("saved attendance counts without tracking while missing days have no expect
   });
   assert.equal(today.recorded, 1);
   assert.equal(today.headcount, 1);
+});
+
+test("attendance evidence remains visible without tracking, on holidays and before eligibility starts", () => {
+  const date = base.dates[0]!;
+  const record = {
+    employeeId: employee.id,
+    date,
+    clockInAt: `${date}T04:30:00Z`,
+    clockOutAt: `${date}T13:30:00Z`,
+    calculatedHours: "8",
+    status: "Present",
+  };
+  for (const overrides of [
+    { tracking: null },
+    { workingDays: [] },
+    { holidays: [{ date, locationId: null }] },
+    { leave: [{ employeeId: employee.id, startDate: date, endDate: date, isHalfDay: false }] },
+    {
+      tracking: {
+        headOfficeLocationId: "office",
+        effectiveFrom: "2026-09-15",
+        revision: 1,
+        assignments: [],
+      },
+    },
+  ]) {
+    const input = { ...base, ...overrides };
+    const complete = calculateAttendanceAnalytics({ ...input, records: [record] })[0]!;
+    assert.equal(complete.recorded, 1);
+    assert.equal(complete.worked, 8);
+    assert.equal(complete.expected, 0);
+    assert.equal(complete.missing, 0);
+    const open = calculateAttendanceAnalytics({
+      ...input,
+      records: [{ ...record, clockOutAt: null }],
+    })[0]!;
+    assert.equal(open.review, 1);
+    assert.equal(open.recorded, 0);
+    assert.equal(open.worked, 0);
+    assert.equal(calculateAttendanceAnalytics(input)[0]!.missing, 0);
+  }
+});
+
+test("historical expectations survive a later change to not-required attendance", () => {
+  const result = calculateAttendanceAnalytics({
+    ...base,
+    dates: ["2026-09-14", "2026-09-15"],
+    tracking: {
+      headOfficeLocationId: "office",
+      effectiveFrom: "2026-09-14",
+      revision: 2,
+      assignments: [
+        {
+          employeeId: "a",
+          effectiveFrom: "2026-09-14",
+          mode: "Head Office biometric",
+          source: "override",
+        },
+        { employeeId: "a", effectiveFrom: "2026-09-15", mode: "Not required", source: "override" },
+      ],
+    },
+  });
+  assert.deepEqual(
+    result.map((day) => day.expected),
+    [8, 0],
+  );
+  assert.deepEqual(
+    result.map((day) => day.missing),
+    [1, 0],
+  );
 });
 
 test("untracked pending or incomplete punches are not counted as completed hours", () => {
