@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, useMemo } from "react";
 import {
@@ -2392,18 +2393,17 @@ function CandidateProfile({
           </DialogHeader>
           <div className="space-y-2">
             <Label>New owner</Label>
-            <Select value={reassignTarget} onValueChange={setReassignTarget}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select HR owner" />
-              </SelectTrigger>
-              <SelectContent>
-                {hrUsers.map((u) => (
-                  <SelectItem key={u.id} value={u.id}>
-                    {u.displayName}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={reassignTarget}
+              onValueChange={setReassignTarget}
+              placeholder={"Select HR owner"}
+              options={[
+                ...hrUsers.map((u) => ({
+                  value: u.id,
+                  label: `${u.displayName} · ${u.workspaceEmail}`,
+                })),
+              ]}
+            />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsReassignOpen(false)}>

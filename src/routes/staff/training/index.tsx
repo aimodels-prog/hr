@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { createFileRoute } from "@tanstack/react-router";
 import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
 import { useMemo, useState, type ReactNode } from "react";
@@ -782,21 +783,18 @@ function StaffTrainingRoute() {
           </DialogHeader>
           <div className="space-y-4">
             <Field label="Employee">
-              <Select
+              <SearchableSelect
                 value={assignment.employeeId}
                 onValueChange={(value) => setAssignment({ ...assignment, employeeId: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select employee" />
-                </SelectTrigger>
-                <SelectContent>
-                  {visibleEmployees.map((item) => (
-                    <SelectItem key={item.id} value={item.id}>
-                      {item.preferredName || item.legalName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                placeholder={"Select employee"}
+                options={[
+                  ...visibleEmployees.map((item) => ({
+                    value: item.id,
+                    label: `${item.preferredName || item.legalName} · ${item.employeeNumber}`,
+                    keywords: [item.legalName, item.workEmail],
+                  })),
+                ]}
+              />
             </Field>
             <Field label="Course">
               <Select

@@ -1,5 +1,6 @@
 import type { Role } from "../data/types.ts";
 import type { Permission } from "../auth/permissions.ts";
+import { helpWalkthroughs } from "./walkthroughs.ts";
 
 export interface HelpArticle {
   id: string;
@@ -103,7 +104,17 @@ export function searchHelp(articles: HelpArticle[], query: string) {
     .map((item, index) => {
       const title = normalize(item.title);
       const keywords = normalize(item.keywords + " " + item.category + " " + item.summary);
-      const body = normalize([...item.steps, item.after, ...item.checks].join(" "));
+      const walkthrough = helpWalkthroughs[item.id];
+      const body = normalize(
+        [
+          ...item.steps,
+          item.after,
+          ...item.checks,
+          ...(walkthrough?.before ?? []),
+          ...(walkthrough?.flow ?? []),
+          ...(walkthrough?.fields?.flatMap((field) => [field.label, field.meaning]) ?? []),
+        ].join(" "),
+      );
       let score = 0;
       for (const word of words) {
         const alternatives = [word, ...(aliases[word]?.split(" ") ?? [])];

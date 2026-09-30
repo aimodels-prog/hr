@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
+import { SearchablePeopleList } from "@/components/ui/searchable-people-list";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Info, Calendar, Users } from "lucide-react";
 import { InterviewService } from "@/lib/data/interview-service";
@@ -275,31 +275,14 @@ export function InterviewDialog({
             You are on the panel automatically. Add anyone else conducting this interview - they
             will be able to see it under their own Interviews page and submit their own scorecard.
           </p>
-          <div className="max-h-40 overflow-y-auto border rounded-md divide-y">
-            {otherUsers.length === 0 ? (
-              <p className="p-3 text-xs text-muted-foreground text-center">
-                No other users available.
-              </p>
-            ) : (
-              otherUsers.map((u) => (
-                <label
-                  key={u.id}
-                  className="flex items-center gap-2.5 p-2.5 text-sm cursor-pointer hover:bg-muted/50"
-                >
-                  <Checkbox
-                    checked={otherPanelUserIds.includes(u.id)}
-                    onCheckedChange={(checked) => togglePanelUser(u.id, checked === true)}
-                  />
-                  <span className="flex-1 truncate">{u.displayName}</span>
-                  {u.employee && (
-                    <span className="text-xs text-muted-foreground truncate">
-                      {u.employee.position}
-                    </span>
-                  )}
-                </label>
-              ))
-            )}
-          </div>
+          <SearchablePeopleList
+            selected={otherPanelUserIds}
+            onToggle={togglePanelUser}
+            options={otherUsers.map((u) => ({
+              value: u.id,
+              label: `${u.displayName} · ${u.employee?.workEmail || u.employee?.position || u.id}`,
+            }))}
+          />
         </div>
 
         <div className="border-t pt-4">

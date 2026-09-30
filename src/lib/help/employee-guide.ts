@@ -110,9 +110,9 @@ export const employeeGuide = [
     "annual holiday vacation sick maternity paternity nationality omani balance",
     [
       "Open My Leave Balances to check your allowance and the leave year.",
-      "Open the leave request form and select the appropriate leave type and dates.",
-      "Check the calculated days and attach any evidence the form asks for. Eligibility and evidence rules depend on the leave type.",
-      "Submit the request, then open Requests & approvals to follow its progress.",
+      "On My Leave Balances, choose Request Leave. Select Leave Type, Start Date and End Date.",
+      "Check the calculated days. Complete Reason for Leave and Covering Colleague when required, and attach any supporting evidence requested for that leave type.",
+      "Choose Submit Request. Check Request History or Requests & approvals to confirm the request appears and follow its progress.",
       "Wait for the final decision before treating your leave as approved.",
     ],
     "The request goes through the required reviews. HR is notified as well as the relevant manager; a notification alone is not approval.",
@@ -230,9 +230,9 @@ export const employeeGuide = [
     "quick visit site ministry home office return official duty mobile",
     [
       "Choose Quick visit on your dashboard or in My Workspace.",
-      "Enter where you are going and the requested visit details. Choose whether you are leaving from home or the office.",
-      "Enter the expected return or finish information if known, using the options provided when it is not yet known.",
-      "Submit and follow the approval status. If the plan changes, update or finish the visit using the available visit action.",
+      "Choose Visit type, enter Site / Destination and choose Home or Office under Starting from.",
+      "Open Change time, return or add details only if you need to change the suggested time or return plan. If the return time is unknown, keep the appropriate unknown-return choice.",
+      "Choose Send to HR and check the visit status. If the plan changes, update or finish the visit using the available visit action.",
     ],
     "Approved official-duty rules determine how attendance is recorded. Leaving from the office still requires your normal arrival clock-in.",
     [

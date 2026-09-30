@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -13,13 +14,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { SettingsService } from "@/lib/data/settings-service";
 import { employmentCalendarDate } from "@/lib/data/employment-change-policy";
@@ -322,19 +316,21 @@ function OrgChartRoute() {
                 <Crown className="h-4 w-4 text-primary" />
                 Company head
               </Label>
-              <Select value={selectedHead} onValueChange={setSelectedHead} disabled={saving}>
-                <SelectTrigger aria-label="Company head">
-                  <SelectValue placeholder="Choose company head" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Not set</SelectItem>
-                  {people.map((person) => (
-                    <SelectItem key={person.id} value={person.id}>
-                      {person.preferredName} · {person.position}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={selectedHead}
+                onValueChange={setSelectedHead}
+                disabled={saving}
+                aria-label="Company head"
+                placeholder={"Choose company head"}
+                options={[
+                  { value: "none", label: "Not set" },
+                  ...people.map((person) => ({
+                    value: person.id,
+                    label: `${person.preferredName} · ${person.employeeNumber}`,
+                    keywords: [person.legalName, person.workEmail, person.position],
+                  })),
+                ]}
+              />
               <p className="text-xs text-muted-foreground">
                 Shown at the top. Supervisors and approvals stay unchanged.
               </p>
@@ -347,7 +343,7 @@ function OrgChartRoute() {
             </fieldset>
             <fieldset disabled={saving} className="space-y-3 rounded-xl border p-4">
               <Label>Reporting line</Label>
-              <Select
+              <SearchableSelect
                 value={employeeId}
                 onValueChange={(id) => {
                   setEmployeeId(id);
@@ -356,37 +352,33 @@ function OrgChartRoute() {
                   );
                 }}
                 disabled={saving}
-              >
-                <SelectTrigger aria-label="Employee to arrange">
-                  <SelectValue placeholder="Choose employee" />
-                </SelectTrigger>
-                <SelectContent>
-                  {people.map((person) => (
-                    <SelectItem key={person.id} value={person.id}>
-                      {person.preferredName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
+                aria-label="Employee to arrange"
+                placeholder={"Choose employee"}
+                options={[
+                  ...people.map((person) => ({
+                    value: person.id,
+                    label: `${person.preferredName} · ${person.employeeNumber}`,
+                    keywords: [person.legalName, person.workEmail, person.position],
+                  })),
+                ]}
+              />
+              <SearchableSelect
                 value={supervisorId}
                 onValueChange={setSupervisorId}
                 disabled={!employeeId || saving}
-              >
-                <SelectTrigger aria-label="Reports to">
-                  <SelectValue placeholder="Reports to" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No supervisor</SelectItem>
-                  {people
+                aria-label="Reports to"
+                placeholder={"Reports to"}
+                options={[
+                  { value: "none", label: "No supervisor" },
+                  ...people
                     .filter((person) => person.id !== employeeId)
-                    .map((person) => (
-                      <SelectItem key={person.id} value={person.id}>
-                        {person.preferredName}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
+                    .map((person) => ({
+                      value: person.id,
+                      label: `${person.preferredName} · ${person.employeeNumber}`,
+                      keywords: [person.legalName, person.workEmail, person.position],
+                    })),
+                ]}
+              />
               <p className="text-xs text-muted-foreground">
                 Changes the employee's supervisor and approval routing.
               </p>

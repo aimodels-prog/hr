@@ -17,15 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { LeaveService } from "@/lib/data/leave-service";
@@ -41,10 +33,7 @@ import {
   FileText,
   Upload,
   X,
-  Check,
-  ChevronsUpDown,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 const MAX_EVIDENCE_SIZE = 10 * 1024 * 1024;
 const EVIDENCE_TYPES = ["application/pdf", "image/jpeg", "image/png"];
@@ -66,10 +55,12 @@ export function LeaveRequestDialog({
   const leaveService = useMemo(() => new LeaveService(), []);
   const empService = useMemo(() => new EmployeeService(), []);
 
-  const employees = empService.getEmployees(currentUser.getActorContext());
+  const employees = empService.getDirectoryEmployees(currentUser.getActorContext());
   const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
   const policies = leaveService.getEligiblePolicies(employeeId, actorContext);
-  const coveringColleagueCandidates = employees.filter((employee) => employee.id !== employeeId);
+  const coveringColleagueCandidates = employees.filter(
+    (employee) => employee.id !== employeeId && !["Inactive", "Archived"].includes(employee.status),
+  );
 
   const [policyId, setPolicyId] = useState<string>("");
   const [startDate, setStartDate] = useState("");
@@ -77,7 +68,6 @@ export function LeaveRequestDialog({
   const [isHalfDay, setIsHalfDay] = useState(false);
   const [reason, setReason] = useState("");
   const [handoverContactId, setHandoverContactId] = useState("");
-  const [handoverPickerOpen, setHandoverPickerOpen] = useState(false);
   const [attachment, setAttachment] = useState<File | null>(null);
 
   const [workingDays, setWorkingDays] = useState(0);
@@ -491,66 +481,21 @@ export function LeaveRequestDialog({
                   <span className="text-xs font-normal text-muted-foreground">(optional)</span>
                 )}
               </Label>
-              <Popover open={handoverPickerOpen} onOpenChange={setHandoverPickerOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={handoverPickerOpen}
-                    className="w-full justify-between font-normal"
-                  >
-                    {coveringColleagueCandidates.find(
-                      (employee) => employee.id === handoverContactId,
-                    )?.preferredName ?? (
-                      <span className="text-muted-foreground">
-                        Who will cover your work while you are away?
-                      </span>
-                    )}
-                    <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
-                  <Command>
-                    <CommandInput placeholder="Type a name to search..." />
-                    <CommandList>
-                      <CommandEmpty>No matching colleague found.</CommandEmpty>
-                      <CommandGroup>
-                        {!handoverRequired && handoverContactId && (
-                          <CommandItem
-                            value="__clear_handover_selection__"
-                            onSelect={() => {
-                              setHandoverContactId("");
-                              setHandoverPickerOpen(false);
-                            }}
-                            className="text-muted-foreground"
-                          >
-                            Clear selection
-                          </CommandItem>
-                        )}
-                        {coveringColleagueCandidates.map((employee) => (
-                          <CommandItem
-                            key={employee.id}
-                            value={employee.preferredName}
-                            onSelect={() => {
-                              setHandoverContactId(employee.id);
-                              setHandoverPickerOpen(false);
-                            }}
-                          >
-                            <Check
-                              className={cn(
-                                "mr-2 h-4 w-4",
-                                handoverContactId === employee.id ? "opacity-100" : "opacity-0",
-                              )}
-                            />
-                            {employee.preferredName}
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
+              <SearchableSelect
+                aria-label="Covering Colleague"
+                aria-required={handoverRequired}
+                value={handoverContactId}
+                onValueChange={setHandoverContactId}
+                placeholder="Search covering colleague…"
+                options={[
+                  ...(!handoverRequired ? [{ value: "", label: "No covering colleague" }] : []),
+                  ...coveringColleagueCandidates.map((employee) => ({
+                    value: employee.id,
+                    label: `${employee.preferredName} · ${employee.employeeNumber}`,
+                    keywords: [employee.legalName, employee.workEmail, employee.department],
+                  })),
+                ]}
+              />
             </div>
           </div>
 

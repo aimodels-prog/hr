@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, useMemo } from "react";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
@@ -1449,30 +1450,33 @@ function VacancyDetailRoute() {
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <Label>Candidate</Label>
-                    <Select
+                    <SearchableSelect
                       value={poolCandidateId}
                       onValueChange={(value) => {
                         setPoolCandidateId(value);
                         const candidate = candidates.find((item) => item.id === value);
                         setPoolCvRecordId(candidate?.latestCvRecordId || "");
                       }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a candidate" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {candidates
+                      placeholder={"Select a candidate"}
+                      options={[
+                        ...candidates
                           .filter(
                             (candidate) =>
                               !candidate.mergedIntoId && candidate.stage !== "Archived",
                           )
-                          .map((candidate) => (
-                            <SelectItem key={candidate.id} value={candidate.id}>
-                              {candidate.firstName} {candidate.lastName} · {candidate.email}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
+                          .map((candidate) => ({
+                            value: candidate.id,
+                            label:
+                              candidate.firstName +
+                              " " +
+                              candidate.lastName +
+                              " " +
+                              "·" +
+                              " " +
+                              candidate.email,
+                          })),
+                      ]}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label>CV version</Label>

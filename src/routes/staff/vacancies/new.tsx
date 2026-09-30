@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
 import {
@@ -440,20 +441,20 @@ function NewVacancy() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Hiring Manager</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value || ""}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select manager" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {employees.map((e) => (
-                          <SelectItem key={e.id} value={e.id}>
-                            {e.preferredName} {e.legalName}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      <SearchableSelect
+                        onValueChange={field.onChange}
+                        value={field.value || ""}
+                        placeholder={"Select manager"}
+                        options={[
+                          ...employees.map((e) => ({
+                            value: e.id,
+                            label: `${e.preferredName} · ${e.employeeNumber}`,
+                            keywords: [e.legalName, e.workEmail, e.position],
+                          })),
+                        ]}
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}

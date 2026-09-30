@@ -373,6 +373,15 @@ const CandidateCvDownload = z.object({
   reason: z.string().trim().min(3).max(500),
 });
 
+export const prepareCandidateCvZipFn = createServerFn({ method: "POST" })
+  .validator((input: z.infer<typeof CandidateExport>) => CandidateExport.parse(input))
+  .handler(async ({ data }) => {
+    const verified = await verifyRecruitmentActor(data.actor);
+    const { prepareCandidateCvExport } =
+      await import("../db/repositories/cv-export.repository.server.ts");
+    return prepareCandidateCvExport(verified.organisationId, data.candidateIds, verified.actor);
+  });
+
 export const downloadCandidateCvFn = createServerFn({ method: "POST" })
   .validator((input: z.infer<typeof CandidateCvDownload>) => CandidateCvDownload.parse(input))
   .handler(async ({ data }) => {

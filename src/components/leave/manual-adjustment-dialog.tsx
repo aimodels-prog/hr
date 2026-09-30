@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useEffect, useMemo, useState } from "react";
 import { Scale } from "lucide-react";
 import { toast } from "sonner";
@@ -150,25 +151,22 @@ export function ManualAdjustmentDialog({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="balance-employee">Employee</Label>
-              <Select
+              <SearchableSelect
                 value={employeeId}
                 onValueChange={(value) => {
                   setEmployeeId(value);
                   setPolicyId("");
                 }}
                 disabled={Boolean(defaultEmployeeId)}
-              >
-                <SelectTrigger id="balance-employee">
-                  <SelectValue placeholder="Select employee" />
-                </SelectTrigger>
-                <SelectContent>
-                  {employees.map((record) => (
-                    <SelectItem key={record.id} value={record.id}>
-                      {record.preferredName} · {record.employeeNumber}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                id="balance-employee"
+                placeholder={"Select employee"}
+                options={[
+                  ...employees.map((record) => ({
+                    value: record.id,
+                    label: record.preferredName + " " + "·" + " " + record.employeeNumber,
+                  })),
+                ]}
+              />
             </div>
 
             <div className="space-y-2">

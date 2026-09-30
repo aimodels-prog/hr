@@ -3,9 +3,11 @@ import { hrGuide, setupGuide } from "./hr-guide.ts";
 import { responsibilitiesGuide } from "./responsibilities-guide.ts";
 import { detailedGuide } from "./detailed-guide.ts";
 import type { Role } from "../data/types.ts";
+import { basicsGuide } from "./basics-guide.ts";
 
 export const helpArticles = [
   ...employeeGuide,
+  ...basicsGuide,
   ...hrGuide.map((item) =>
     ["hr-finance", "hr-payslip"].includes(item.id)
       ? {

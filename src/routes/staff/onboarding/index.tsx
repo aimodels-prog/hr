@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { format, parseISO } from "date-fns";
@@ -370,18 +371,17 @@ function OnboardingDashboard() {
             </DialogHeader>
             <div className="space-y-4">
               <Field label="Employee">
-                <Select value={employeeId} onValueChange={setEmployeeId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select an employee" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {employeesAvailableForOnboarding.map((employee) => (
-                      <SelectItem key={employee.id} value={employee.id}>
-                        {employee.legalName} · {employee.employeeNumber}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableSelect
+                  value={employeeId}
+                  onValueChange={setEmployeeId}
+                  placeholder={"Select an employee"}
+                  options={[
+                    ...employeesAvailableForOnboarding.map((employee) => ({
+                      value: employee.id,
+                      label: employee.legalName + " " + "·" + " " + employee.employeeNumber,
+                    })),
+                  ]}
+                />
                 {employeesAvailableForOnboarding.length === 0 && (
                   <p className="text-xs text-muted-foreground">
                     Every employee with Onboarding status already has an active case.
@@ -403,22 +403,18 @@ function OnboardingDashboard() {
                 </Select>
               </Field>
               <Field label="HR owner">
-                <Select
+                <SearchableSelect
                   value={assignedHRId || "automatic"}
                   onValueChange={(value) => setAssignedHRId(value === "automatic" ? "" : value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="automatic">Assign automatically</SelectItem>
-                    {hrOwners.map((user) => (
-                      <SelectItem key={user.id} value={user.id}>
-                        {user.displayName}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  placeholder={"Search person…"}
+                  options={[
+                    { value: "automatic", label: "Assign automatically" },
+                    ...hrOwners.map((user) => ({
+                      value: user.id,
+                      label: `${user.displayName} · ${user.workspaceEmail}`,
+                    })),
+                  ]}
+                />
               </Field>
             </div>
             <DialogFooter>

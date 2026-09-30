@@ -18,6 +18,8 @@ import { PageSections, SectionNavigation, SectionLink } from "@/components/ui/pa
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { ArticleWalkthrough } from "@/components/help/article-walkthrough";
+import { helpStart, helpWalkthroughs } from "@/lib/help/walkthroughs";
 
 export const Route = createFileRoute("/staff/help")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -49,6 +51,11 @@ function HelpWorkspace() {
   const articles = visibleArticles(helpArticles, guide, user.activeRole);
   const categories = [...new Set(articles.map((item) => item.category))];
   const selected = articles.find((item) => item.id === params.article);
+  const starter = helpStart(hr && guide === "employee" ? "Employee" : user.activeRole);
+  const startingArticles = starter.ids.flatMap(
+    (id) => articles.find((item) => item.id === id) ?? [],
+  );
+  const walkthrough = selected ? helpWalkthroughs[selected.id] : undefined;
   const topic = categories.includes(params.topic) ? params.topic : "";
   const [query, setQuery] = useState(params.q);
   const [copied, setCopied] = useState(false);
@@ -238,6 +245,13 @@ function HelpWorkspace() {
                   )}
                 </div>
                 <div className="space-y-8 p-6 sm:p-8">
+                  {walkthrough && (
+                    <ArticleWalkthrough
+                      key={selected.id}
+                      walkthrough={walkthrough}
+                      title={selected.title}
+                    />
+                  )}
                   <section aria-labelledby="help-steps">
                     <h3 id="help-steps" className="mb-5 font-semibold">
                       Step by step
@@ -316,10 +330,45 @@ function HelpWorkspace() {
                 <>
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <h2 className="text-lg font-semibold">
-                      {guide === "hr" ? "HR and employee help" : "Employee help"}
+                      {guide === "hr"
+                        ? "HR and employee help"
+                        : user.activeRole === "Accounts"
+                          ? "Finance and employee help"
+                          : user.activeRole === "Line Manager"
+                            ? "Manager and employee help"
+                            : user.activeRole === "IT"
+                              ? "IT and employee help"
+                              : "Employee help"}
                     </h2>
                     <p className="text-sm text-muted-foreground">Practical answers, step by step</p>
                   </div>
+                  <section
+                    aria-label="First-use checklist"
+                    className="rounded-2xl border bg-card p-5 sm:p-6"
+                  >
+                    <h2 className="mb-2 font-semibold">{starter.title}</h2>
+                    <p className="mb-4 text-sm text-muted-foreground">
+                      New here? Follow these guides in order. Nothing is submitted by opening a
+                      guide.
+                    </p>
+                    <ol className="grid gap-2 sm:grid-cols-2">
+                      {startingArticles.map((item, index) => (
+                        <li key={item.id}>
+                          <Link
+                            to="/staff/help"
+                            search={open(item.id)}
+                            className="flex min-h-14 items-center gap-3 rounded-lg border border-transparent px-3 py-2 text-sm hover:border-primary/20 hover:bg-primary/5"
+                          >
+                            <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 font-semibold text-primary">
+                              {index + 1}
+                            </span>
+                            <span className="flex-1">{item.title}</span>
+                            <ArrowRight className="size-4 shrink-0 text-primary" />
+                          </Link>
+                        </li>
+                      ))}
+                    </ol>
+                  </section>
                   <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                     {categories.map((category) => (
                       <button
@@ -339,28 +388,6 @@ function HelpWorkspace() {
                       </button>
                     ))}
                   </div>
-                  <section className="rounded-2xl border bg-card p-5 sm:p-6">
-                    <h2 className="mb-4 font-semibold">Start here</h2>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {(guide === "hr"
-                        ? ["hr-start", "hr-employee", "hr-approvals", "hr-machine"]
-                        : ["getting-started", "leave", "missing-clockout", "timesheets"]
-                      ).map((id) => {
-                        const item = articles.find((entry) => entry.id === id)!;
-                        return (
-                          <Link
-                            key={id}
-                            to="/staff/help"
-                            search={open(id)}
-                            className="flex min-h-12 items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm hover:bg-muted"
-                          >
-                            {item.title}
-                            <ArrowRight className="size-4 shrink-0 text-primary" />
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  </section>
                 </>
               ) : (
                 <>

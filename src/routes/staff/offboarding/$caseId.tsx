@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { format, parseISO } from "date-fns";
@@ -25,13 +26,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { EmployeeService } from "@/lib/data/employee-service";
@@ -506,26 +500,21 @@ function OffboardingCaseRoute() {
                           <div className="w-full md:w-56">
                             <label className="text-xs font-medium">
                               Named owner
-                              <Select
+                              <SearchableSelect
                                 value={task.assignedUserId ?? "role"}
                                 onValueChange={(value) => handleAssign(task, value)}
-                              >
-                                <SelectTrigger className="mt-1">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="role">
-                                    Anyone with this responsibility
-                                  </SelectItem>
-                                  {activeUsers
+                                className="mt-1"
+                                placeholder={"Search person…"}
+                                options={[
+                                  { value: "role", label: "Anyone with this responsibility" },
+                                  ...activeUsers
                                     .filter((u) => u.roles.includes(task.ownerRole))
-                                    .map((u) => (
-                                      <SelectItem key={u.id} value={u.id}>
-                                        {u.displayName}
-                                      </SelectItem>
-                                    ))}
-                                </SelectContent>
-                              </Select>
+                                    .map((u) => ({
+                                      value: u.id,
+                                      label: `${u.displayName} · ${u.workspaceEmail}`,
+                                    })),
+                                ]}
+                              />
                             </label>
                           </div>
                         )}

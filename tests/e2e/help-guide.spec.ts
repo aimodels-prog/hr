@@ -1,6 +1,34 @@
 import { expect, test, type Page } from "@playwright/test";
 
-async function helpAs(page: Page, role: "Employee" | "HR", path: string) {
+test("help guide: real form images enlarge on mobile and Finance gets its own first steps", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await helpAs(page, "Employee", "/staff/help?article=leave");
+  const picture = page.locator('img[src="/help/request-leave.png"]').first();
+  await expect(picture).toBeVisible();
+  await expect
+    .poll(() => picture.evaluate((image: HTMLImageElement) => image.naturalWidth))
+    .toBeGreaterThan(0);
+  await page.getByRole("button", { name: /Enlarge screen example/ }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await helpAs(page, "Accounts", "/staff/help");
+  await expect(
+    page.getByRole("heading", { name: "Finance and employee help", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("link", { name: /Upload or replace an employee payslip/ })
+    .first()
+    .click();
+  await expect(page.locator('img[src="/help/finance-payslip.png"]').first()).toBeVisible();
+  await helpAs(page, "HR", "/staff/help?guide=hr&article=hr-payslip");
+  await expect(page.locator('img[src="/help/finance-payslip.png"]')).toHaveCount(0);
+});
+
+async function helpAs(page: Page, role: "Employee" | "HR" | "Accounts", path: string) {
   await page.goto("/staff/help");
   await expect(page.getByRole("heading", { name: "Help & Knowledge", exact: true })).toBeVisible({
     timeout: 30_000,
@@ -12,7 +40,7 @@ async function helpAs(page: Page, role: "Employee" | "HR", path: string) {
         JSON.stringify({ userId: id, activeRole: role }),
       );
     },
-    { role, id: role === "HR" ? "user-rana" : "user-omar" },
+    { role, id: role === "HR" ? "user-rana" : role === "Accounts" ? "user-mariam" : "user-omar" },
   );
   await page.goto(path);
   await expect(page.getByRole("heading", { name: "Help & Knowledge", exact: true })).toBeVisible({
@@ -54,13 +82,13 @@ test("help guide: HR cannot search or open Finance instructions", async ({ page 
     page.getByText("This article is not available in your selected guide.", { exact: false }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Understand payroll approval and the Finance handover" }),
+    page.getByRole("heading", { name: "Prepare, approve and export a payroll period" }),
   ).toHaveCount(0);
   await page.getByLabel("Search help articles").fill("payroll");
   await page.getByRole("button", { name: "Search", exact: true }).click();
   await expect(
     page.getByRole("link", {
-      name: /Understand payroll approval|Have Finance upload|Use the approved overtime ledger/,
+      name: /Prepare, approve and export|Upload or replace an employee payslip|Use the approved overtime ledger/,
     }),
   ).toHaveCount(0);
   await page.goto("/staff/help?guide=hr&article=payslips");

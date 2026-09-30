@@ -4,7 +4,7 @@ import { toast } from "sonner";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import { SearchablePeopleList } from "@/components/ui/searchable-people-list";
 import {
   Dialog,
   DialogContent,
@@ -292,29 +292,14 @@ export function ManualInterviewDialog({
             You are included automatically. Every selected interviewer receives their own scorecard
             in the Interviews workspace.
           </p>
-          <div className="max-h-40 divide-y overflow-y-auto rounded-md border">
-            {otherUsers.length === 0 ? (
-              <p className="p-3 text-center text-xs text-muted-foreground">
-                No other active users.
-              </p>
-            ) : (
-              otherUsers.map((user) => (
-                <label
-                  key={user.id}
-                  className="flex cursor-pointer items-center gap-3 p-3 hover:bg-muted/50"
-                >
-                  <Checkbox
-                    checked={otherPanelUserIds.includes(user.id)}
-                    onCheckedChange={(checked) => togglePanelUser(user.id, checked === true)}
-                  />
-                  <span className="min-w-0 flex-1 truncate text-sm">{user.displayName}</span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {user.employee?.position || user.roles.join(", ")}
-                  </span>
-                </label>
-              ))
-            )}
-          </div>
+          <SearchablePeopleList
+            selected={otherPanelUserIds}
+            onToggle={togglePanelUser}
+            options={otherUsers.map((user) => ({
+              value: user.id,
+              label: `${user.displayName} · ${user.employee?.workEmail || user.employee?.position || user.id}`,
+            }))}
+          />
         </div>
 
         <div className="space-y-2 border-t pt-4">

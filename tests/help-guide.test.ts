@@ -7,6 +7,7 @@ import { getRolePermissions, ROLE_PERMISSIONS } from "../src/lib/auth/permission
 import { staffNavigation } from "../src/lib/navigation/staff-navigation.ts";
 import { staffPageModules } from "../src/lib/data/staff-module-plan.ts";
 import type { Role } from "../src/lib/data/types.ts";
+import { helpStart, helpWalkthroughs } from "../src/lib/help/walkthroughs.ts";
 
 test("help articles have unique shareable identities and complete instructions", () => {
   assert.equal(new Set(helpArticles.map((item) => item.id)).size, helpArticles.length);
@@ -90,7 +91,7 @@ test("Finance duties stay out of employee and HR guides, search and direct-link 
       );
       if (role !== "Accounts" && role !== "Super Admin") {
         assert.ok(searchHelp(articles, "payroll").every((item) => !financeIds.includes(item.id)));
-        assert.ok(!articles.some((item) => item.category === "Finance handover"));
+        assert.ok(!articles.some((item) => item.category === "Finance duties"));
         assert.ok(
           !articles.some((item) =>
             ["setup-costcentres", "setup-activitycodes", "setup-currencies"].includes(item.id),
@@ -100,6 +101,37 @@ test("Finance duties stay out of employee and HR guides, search and direct-link 
       if (role === "Accounts") assert.ok(articles.every((item) => item.guide !== "hr"));
     }
   }
+});
+
+test("role starting checklists only link to visible instructions", () => {
+  for (const role of Object.keys(ROLE_PERMISSIONS) as Role[]) {
+    const visible = visibleArticles(helpArticles, canReadHrGuide(role) ? "hr" : "employee", role);
+    for (const id of helpStart(role).ids)
+      assert.ok(
+        visible.some((item) => item.id === id),
+        `${role}: ${id}`,
+      );
+  }
+});
+
+test("visual walkthroughs have real small images, field explanations and matching articles", () => {
+  for (const [id, walkthrough] of Object.entries(helpWalkthroughs)) {
+    assert.ok(
+      helpArticles.some((item) => item.id === id),
+      id,
+    );
+    assert.ok(walkthrough.before.length > 0, id);
+    if (walkthrough.image) {
+      assert.ok(walkthrough.image.alt.length > 40, id);
+      assert.ok(walkthrough.fields && walkthrough.fields.length >= 3, id);
+      const file = readFileSync(`public/help/${walkthrough.image.name}.png`);
+      assert.equal(file.subarray(1, 4).toString(), "PNG");
+      assert.ok(file.byteLength < 150_000, `${id}: keep guide images light`);
+    }
+  }
+  const finance = visibleArticles(helpArticles, "employee", "Accounts");
+  assert.ok(searchHelp(finance, "cutoff").some((item) => item.id === "hr-finance"));
+  assert.ok(!visibleArticles(helpArticles, "hr", "HR").some((item) => item.id === "hr-finance"));
 });
 
 test("search matches plain questions, common alternatives and spelling variants", () => {

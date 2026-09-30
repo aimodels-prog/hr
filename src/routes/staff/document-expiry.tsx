@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useState, useMemo, useEffect } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
@@ -34,13 +35,6 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
@@ -385,23 +379,19 @@ function DocumentExpiryRoute() {
                                         render={({ field }) => (
                                           <FormItem>
                                             <FormLabel>Assign HR Owner</FormLabel>
-                                            <Select
-                                              onValueChange={field.onChange}
-                                              defaultValue={field.value as string}
-                                            >
-                                              <FormControl>
-                                                <SelectTrigger>
-                                                  <SelectValue />
-                                                </SelectTrigger>
-                                              </FormControl>
-                                              <SelectContent>
-                                                {hrUsers.map((u) => (
-                                                  <SelectItem key={u.id} value={u.id}>
-                                                    {u.displayName}
-                                                  </SelectItem>
-                                                ))}
-                                              </SelectContent>
-                                            </Select>
+                                            <FormControl>
+                                              <SearchableSelect
+                                                onValueChange={field.onChange}
+                                                defaultValue={field.value as string}
+                                                placeholder={"Search person…"}
+                                                options={[
+                                                  ...hrUsers.map((u) => ({
+                                                    value: u.id,
+                                                    label: `${u.displayName} · ${u.workspaceEmail}`,
+                                                  })),
+                                                ]}
+                                              />
+                                            </FormControl>
                                             <FormMessage />
                                           </FormItem>
                                         )}

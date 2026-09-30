@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useEffect, useMemo, useState } from "react";
 import { format, isAfter, startOfDay, subDays } from "date-fns";
 import {
@@ -412,19 +413,16 @@ export function AuditViewer({ entityId, entityType, global }: AuditViewerProps) 
                 onChange={(event) => setSearchTerm(event.target.value)}
               />
             </div>
-            <Select value={actor} onValueChange={setActor}>
-              <SelectTrigger aria-label="Filter by person">
-                <SelectValue placeholder="All people" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All people</SelectItem>
-                {actors.map((item) => (
-                  <SelectItem key={item.id} value={item.id}>
-                    {item.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={actor}
+              onValueChange={setActor}
+              aria-label="Filter by person"
+              placeholder={"All people"}
+              options={[
+                { value: "all", label: "All people" },
+                ...actors.map((item) => ({ value: item.id, label: item.name })),
+              ]}
+            />
             <Select value={role} onValueChange={setRole}>
               <SelectTrigger aria-label="Filter by role">
                 <SelectValue placeholder="All roles" />

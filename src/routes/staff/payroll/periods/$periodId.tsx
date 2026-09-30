@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, useMemo } from "react";
 import { PageHeader } from "@/components/ui/page-header";
@@ -579,18 +580,17 @@ function PayrollWorkbenchContent() {
           <div className="space-y-4 mt-2">
             <div className="space-y-1">
               <label className="text-sm font-medium">Employee</label>
-              <Select value={manualAdj.employeeId} onValueChange={handleManualEmployeeChange}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select employee" />
-                </SelectTrigger>
-                <SelectContent>
-                  {allEmployees.map((e) => (
-                    <SelectItem key={e.id} value={e.id}>
-                      {e.preferredName} ({e.id})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={manualAdj.employeeId}
+                onValueChange={handleManualEmployeeChange}
+                placeholder={"Select employee"}
+                options={[
+                  ...allEmployees.map((e) => ({
+                    value: e.id,
+                    label: e.preferredName + " " + "(" + " " + e.id + " " + ")",
+                  })),
+                ]}
+              />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">

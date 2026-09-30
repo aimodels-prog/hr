@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCurrentUser } from "@/lib/auth";
@@ -193,19 +194,17 @@ function Payslips() {
             Shared immediately with the employee. To correct an existing payslip, use Replace.
           </p>
           <Label htmlFor="payslip-employee">Employee</Label>
-          <select
+          <SearchableSelect
             id="payslip-employee"
             className="h-10 w-full rounded-md border bg-background px-3"
             value={employeeId}
-            onChange={(event) => setEmployeeId(event.target.value)}
-          >
-            <option value="">Choose employee</option>
-            {query.data.employees.map((employee) => (
-              <option key={employee.id} value={employee.id}>
-                {employee.name} — {employee.email}
-              </option>
-            ))}
-          </select>
+            onValueChange={setEmployeeId}
+            placeholder="Search employee…"
+            options={query.data.employees.map((employee) => ({
+              value: employee.id,
+              label: `${employee.name} — ${employee.email}`,
+            }))}
+          />
           <Label htmlFor="payslip-month">Pay month</Label>
           <Input
             id="payslip-month"

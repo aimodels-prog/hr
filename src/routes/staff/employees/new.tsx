@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useState, useMemo } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useForm } from "react-hook-form";
@@ -610,20 +611,20 @@ function NewEmployeeRoute() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Supervisor *</FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value as string}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select supervisor" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {activeEmployees.map((d) => (
-                            <SelectItem key={d.id} value={d.id}>
-                              {d.preferredName} ({d.position})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <FormControl>
+                        <SearchableSelect
+                          onValueChange={field.onChange}
+                          defaultValue={field.value as string}
+                          placeholder={"Select supervisor"}
+                          options={[
+                            ...activeEmployees.map((d) => ({
+                              value: d.id,
+                              label: `${d.preferredName} · ${d.employeeNumber}`,
+                              keywords: [d.legalName, d.workEmail, d.position],
+                            })),
+                          ]}
+                        />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}

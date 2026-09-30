@@ -1,3 +1,5 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { CvZipDownload } from "@/components/candidates/cv-zip-download";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
 import {
@@ -96,6 +98,15 @@ function CandidatesIndex() {
   const userById = useMemo(
     () =>
       new Map(empService.getUsers(currentUser.getActorContext()).map((u) => [u.id, u.displayName])),
+    [empService, currentUser],
+  );
+  const userSearchLabelById = useMemo(
+    () =>
+      new Map(
+        empService
+          .getUsers(currentUser.getActorContext())
+          .map((u) => [u.id, `${u.displayName} · ${u.workspaceEmail}`]),
+      ),
     [empService, currentUser],
   );
 
@@ -326,7 +337,7 @@ function CandidatesIndex() {
             connected.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <ToggleGroup
             type="single"
             value={viewMode}
@@ -342,6 +353,7 @@ function CandidatesIndex() {
           <Button variant="outline" onClick={exportCsv}>
             <Download className="mr-2 h-4 w-4" /> Export CSV
           </Button>
+          <CvZipDownload candidateIds={filteredCandidates.map((candidate) => candidate.id)} />
           <Button variant="outline" asChild>
             <Link to="/staff/candidates/intake">
               <Upload className="mr-2 h-4 w-4" /> Add Direct CV
@@ -504,33 +516,28 @@ function CandidatesIndex() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={ownerFilter} onValueChange={setOwnerFilter}>
-              <SelectTrigger>
-                <SelectValue placeholder="HR owner" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All HR Owners</SelectItem>
-                <SelectItem value="unassigned">Unassigned</SelectItem>
-                {ownerIds.map((id) => (
-                  <SelectItem key={id} value={id}>
-                    {userById.get(id) || "Unknown user"}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={recommenderFilter} onValueChange={setRecommenderFilter}>
-              <SelectTrigger>
-                <SelectValue placeholder="Recommender" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Recommenders</SelectItem>
-                {recommenders.map(([email, label]) => (
-                  <SelectItem key={email} value={email}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={ownerFilter}
+              onValueChange={setOwnerFilter}
+              placeholder={"HR owner"}
+              options={[
+                { value: "all", label: "All HR Owners" },
+                { value: "unassigned", label: "Unassigned" },
+                ...ownerIds.map((id) => ({
+                  value: id,
+                  label: userSearchLabelById.get(id) || "Unknown user",
+                })),
+              ]}
+            />
+            <SearchableSelect
+              value={recommenderFilter}
+              onValueChange={setRecommenderFilter}
+              placeholder={"Recommender"}
+              options={[
+                { value: "all", label: "All Recommenders" },
+                ...recommenders.map(([email, label]) => ({ value: email, label: label })),
+              ]}
+            />
             <Select value={followUpFilter} onValueChange={setFollowUpFilter}>
               <SelectTrigger>
                 <SelectValue placeholder="Follow-up" />

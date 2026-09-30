@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -429,20 +430,20 @@ export function ProjectsPanel() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Project Manager</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value ?? ""}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select Manager (Optional)" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {activeEmployees.map((e) => (
-                            <SelectItem key={e.id} value={e.id}>
-                              {e.preferredName} ({e.position})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <FormControl>
+                        <SearchableSelect
+                          onValueChange={field.onChange}
+                          value={field.value ?? ""}
+                          placeholder={"Select Manager (Optional)"}
+                          options={[
+                            ...activeEmployees.map((e) => ({
+                              value: e.id,
+                              label: `${e.preferredName} · ${e.employeeNumber}`,
+                              keywords: [e.legalName, e.workEmail, e.position],
+                            })),
+                          ]}
+                        />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}

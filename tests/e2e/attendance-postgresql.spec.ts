@@ -266,12 +266,9 @@ test("Finance shares and replaces a protected payslip with history on mobile", a
   await page.goto("/staff/payslips");
   await page.getByRole("button", { name: "Manage employee payslips" }).click();
   const employee = page.getByLabel("Employee", { exact: true });
-  const option = await employee
-    .locator("option")
-    .filter({ hasText: /Omar/ })
-    .first()
-    .getAttribute("value");
-  await employee.selectOption(option!);
+  await employee.click();
+  await page.getByRole("combobox", { name: "Type a name to search…", exact: true }).fill("Omar");
+  await page.getByRole("option", { name: /Omar/ }).first().click();
   await page.getByLabel("Pay month", { exact: true }).fill(month);
   await page.getByLabel("Payslip PDF (maximum 10 MB)").setInputFiles({
     name: "private-payslip.pdf",
@@ -331,13 +328,9 @@ test("HR grants date-specific sick leave permission from a phone", async ({ page
   await page.getByRole("button", { name: "Permit backdated sick leave" }).click();
   const dialog = page.getByRole("dialog", { name: "Permit backdated sick leave" });
   const employee = dialog.getByLabel("Employee", { exact: true });
-  const option = await employee
-    .locator("option")
-    .filter({ hasText: /Omar/ })
-    .first()
-    .getAttribute("value");
-  expect(option).toBeTruthy();
-  await employee.selectOption(option!);
+  await employee.click();
+  await page.getByRole("combobox", { name: "Type a name to search…", exact: true }).fill("Omar");
+  await page.getByRole("option", { name: /Omar/ }).first().click();
   const date = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
   await dialog.getByLabel("First sick day").fill(date);
   await dialog.getByLabel("Last sick day").fill(date);

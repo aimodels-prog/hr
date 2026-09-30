@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useEffect, useState, useMemo } from "react";
 import { DashboardCharts } from "@/components/dashboards/dashboard-charts";
 import { useNavigate, useLocation, Link } from "@tanstack/react-router";
@@ -1627,24 +1628,21 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                     render={({ field }) => (
                                       <FormItem>
                                         <FormLabel>Supervisor</FormLabel>
-                                        <Select
-                                          onValueChange={field.onChange}
-                                          defaultValue={field.value as string}
-                                        >
-                                          <FormControl>
-                                            <SelectTrigger>
-                                              <SelectValue placeholder="None" />
-                                            </SelectTrigger>
-                                          </FormControl>
-                                          <SelectContent>
-                                            <SelectItem value="none">None</SelectItem>
-                                            {allEmployees.map((d) => (
-                                              <SelectItem key={d.id} value={d.id}>
-                                                {d.preferredName} ({d.position})
-                                              </SelectItem>
-                                            ))}
-                                          </SelectContent>
-                                        </Select>
+                                        <FormControl>
+                                          <SearchableSelect
+                                            onValueChange={field.onChange}
+                                            defaultValue={field.value as string}
+                                            placeholder={"None"}
+                                            options={[
+                                              { value: "none", label: "None" },
+                                              ...allEmployees.map((d) => ({
+                                                value: d.id,
+                                                label: `${d.preferredName} · ${d.employeeNumber}`,
+                                                keywords: [d.legalName, d.workEmail, d.position],
+                                              })),
+                                            ]}
+                                          />
+                                        </FormControl>
                                       </FormItem>
                                     )}
                                   />

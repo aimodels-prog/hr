@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
 import { AttendanceTrackingSettings } from "@/components/attendance/tracking-settings";
@@ -1661,18 +1662,27 @@ function AttendanceAdminContent() {
               <label htmlFor="attendance-terminal-employee" className="text-sm font-medium">
                 Employee
               </label>
-              <Select value={mappingEmployeeId} onValueChange={setMappingEmployeeId}>
-                <SelectTrigger id="attendance-terminal-employee">
-                  <SelectValue placeholder="Select employee" />
-                </SelectTrigger>
-                <SelectContent>
-                  {employees.map((employee) => (
-                    <SelectItem key={employee.id} value={employee.id}>
-                      {employee.preferredName} · {employee.employeeNumber} · {employee.workEmail}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={mappingEmployeeId}
+                onValueChange={setMappingEmployeeId}
+                id="attendance-terminal-employee"
+                placeholder={"Select employee"}
+                options={[
+                  ...employees.map((employee) => ({
+                    value: employee.id,
+                    label:
+                      employee.preferredName +
+                      " " +
+                      "·" +
+                      " " +
+                      employee.employeeNumber +
+                      " " +
+                      "·" +
+                      " " +
+                      employee.workEmail,
+                  })),
+                ]}
+              />
             </div>
             <div className="space-y-2">
               <label htmlFor="attendance-terminal-mapping-reason" className="text-sm font-medium">
@@ -1713,18 +1723,17 @@ function AttendanceAdminContent() {
           <div className="grid gap-4 py-2 sm:grid-cols-2">
             <div className="space-y-2 sm:col-span-2">
               <label className="text-sm font-medium">Employee</label>
-              <Select value={manualEmployeeId} onValueChange={setManualEmployeeId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select employee" />
-                </SelectTrigger>
-                <SelectContent>
-                  {employees.map((employee) => (
-                    <SelectItem key={employee.id} value={employee.id}>
-                      {employee.preferredName} · {employee.employeeNumber}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={manualEmployeeId}
+                onValueChange={setManualEmployeeId}
+                placeholder={"Select employee"}
+                options={[
+                  ...employees.map((employee) => ({
+                    value: employee.id,
+                    label: employee.preferredName + " " + "·" + " " + employee.employeeNumber,
+                  })),
+                ]}
+              />
             </div>
             <div className="space-y-2 sm:col-span-2">
               <label className="text-sm font-medium">Shift / Roster Code</label>

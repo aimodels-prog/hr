@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useMemo, useState } from "react";
 import { AlertCircle, CheckCircle2, FileSearch, RotateCcw, Upload } from "lucide-react";
 
@@ -805,26 +806,29 @@ function CandidateIntakePage() {
                 )}
                 <div className="space-y-2">
                   <Label>Candidate record</Label>
-                  <Select value={candidateResolution} onValueChange={setCandidateResolution}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {duplicateMatches.length === 0 && (
-                        <SelectItem value="new">Create a new candidate profile</SelectItem>
-                      )}
-                      {duplicateMatches.map((candidate) => (
-                        <SelectItem key={candidate.id} value={`existing:${candidate.id}`}>
-                          Use {candidate.firstName} {candidate.lastName} · {candidate.email}
-                        </SelectItem>
-                      ))}
-                      {duplicateMatches.length > 0 && (
-                        <SelectItem value="new-separate">
-                          Confirmed different person · create separately
-                        </SelectItem>
-                      )}
-                    </SelectContent>
-                  </Select>
+                  <SearchableSelect
+                    value={candidateResolution}
+                    onValueChange={setCandidateResolution}
+                    aria-label="Candidate record"
+                    placeholder="Search candidate…"
+                    options={[
+                      ...(duplicateMatches.length === 0
+                        ? [{ value: "new", label: "Create a new candidate profile" }]
+                        : []),
+                      ...duplicateMatches.map((candidate) => ({
+                        value: `existing:${candidate.id}`,
+                        label: `Use ${candidate.firstName} ${candidate.lastName} · ${candidate.email}`,
+                      })),
+                      ...(duplicateMatches.length > 0
+                        ? [
+                            {
+                              value: "new-separate",
+                              label: "Confirmed different person · create separately",
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
                 </div>
                 {intake.recommendationPending ? (
                   vacancyId === "none" ? (

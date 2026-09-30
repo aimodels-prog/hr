@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -113,18 +114,17 @@ export function OvertimeOnBehalfDialog({
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2 sm:col-span-2">
             <Label>Employee</Label>
-            <Select value={employeeId} onValueChange={setEmployeeId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select employee" />
-              </SelectTrigger>
-              <SelectContent>
-                {employees.map((item) => (
-                  <SelectItem key={item.id} value={item.id}>
-                    {item.preferredName} · {item.employeeNumber}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={employeeId}
+              onValueChange={setEmployeeId}
+              placeholder={"Select employee"}
+              options={[
+                ...employees.map((item) => ({
+                  value: item.id,
+                  label: item.preferredName + " " + "·" + " " + item.employeeNumber,
+                })),
+              ]}
+            />
           </div>
           <div className="space-y-2">
             <Label>Date</Label>

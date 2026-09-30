@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useCurrentUser } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,7 +19,14 @@ import { toast } from "sonner";
 export function SickLeaveBackdateDialog({
   employees,
 }: {
-  employees: { id: string; legalName: string; databaseId?: string }[];
+  employees: {
+    id: string;
+    legalName: string;
+    databaseId?: string;
+    employeeNumber?: string;
+    preferredName?: string;
+    workEmail?: string;
+  }[];
 }) {
   const user = useCurrentUser();
   const [open, setOpen] = useState(false);
@@ -82,21 +90,20 @@ export function SickLeaveBackdateDialog({
           </DialogHeader>
           <div className="space-y-3">
             <Label htmlFor="backdate-employee">Employee</Label>
-            <select
+            <SearchableSelect
               id="backdate-employee"
               className="h-10 w-full rounded-md border bg-background px-3"
               value={employeeId}
-              onChange={(event) => setEmployeeId(event.target.value)}
-            >
-              <option value="">Select employee</option>
-              {employees
+              onValueChange={setEmployeeId}
+              placeholder="Search employee…"
+              options={employees
                 .filter((employee) => employee.id !== user.employeeId)
-                .map((employee) => (
-                  <option key={employee.id} value={employee.id}>
-                    {employee.legalName}
-                  </option>
-                ))}
-            </select>
+                .map((employee) => ({
+                  value: employee.id,
+                  label: `${employee.legalName}${employee.employeeNumber ? ` · ${employee.employeeNumber}` : ""}`,
+                  keywords: [employee.preferredName ?? "", employee.workEmail ?? ""],
+                }))}
+            />
             <Label htmlFor="backdate-start">First sick day</Label>
             <Input
               id="backdate-start"

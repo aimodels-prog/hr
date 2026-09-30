@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useCallback, useEffect, useState } from "react";
 import { Copy, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -413,28 +414,24 @@ export function OffboardingTemplatesPanel({ onChanged }: { onChanged?: () => voi
                           </Select>
                         </Field>
                         <Field label="Named owner">
-                          <Select
+                          <SearchableSelect
                             value={task.assignedUserId || "role"}
                             onValueChange={(value) =>
                               updateTask(task.id, {
                                 assignedUserId: value === "role" ? undefined : value,
                               })
                             }
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="role">Anyone with this responsibility</SelectItem>
-                              {users
+                            placeholder={"Search person…"}
+                            options={[
+                              { value: "role", label: "Anyone with this responsibility" },
+                              ...users
                                 .filter((user) => user.roles.includes(task.ownerRole))
-                                .map((user) => (
-                                  <SelectItem key={user.id} value={user.id}>
-                                    {user.displayName}
-                                  </SelectItem>
-                                ))}
-                            </SelectContent>
-                          </Select>
+                                .map((user) => ({
+                                  value: user.id,
+                                  label: `${user.displayName} · ${user.workspaceEmail}`,
+                                })),
+                            ]}
+                          />
                         </Field>
                         <Field label="Due date">
                           <Input

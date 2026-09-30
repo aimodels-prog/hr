@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
   Dialog,
   DialogContent,
@@ -292,20 +293,18 @@ export function OfferDialog({
 
         <div className="space-y-2">
           <Label htmlFor="offer-approver">Approval manager</Label>
-          <select
+          <SearchableSelect
             id="offer-approver"
             className="w-full rounded border p-2"
             disabled={isReadOnly || isSaving}
             value={approverUserId}
-            onChange={(event) => setApproverUserId(event.target.value)}
-          >
-            <option value="">Select an independent Line Manager</option>
-            {managers.map((manager) => (
-              <option key={manager.id} value={manager.id}>
-                {manager.name} — {manager.email}
-              </option>
-            ))}
-          </select>
+            onValueChange={setApproverUserId}
+            placeholder="Search an independent Line Manager…"
+            options={managers.map((manager) => ({
+              value: manager.id,
+              label: `${manager.name} — ${manager.email}`,
+            }))}
+          />
           <p className="text-sm text-muted-foreground">
             HR prepares the offer. The assigned manager approves or returns it from Offer approvals.
             HR then sends it.

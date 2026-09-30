@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/ui/page-header";
@@ -198,20 +199,19 @@ function OffboardingDashboard() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Employee</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select an employee" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {eligibleEmployees.map((e) => (
-                                <SelectItem key={e.id} value={e.id}>
-                                  {e.preferredName} — {e.position}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <FormControl>
+                            <SearchableSelect
+                              onValueChange={field.onChange}
+                              value={field.value}
+                              placeholder={"Select an employee"}
+                              options={[
+                                ...eligibleEmployees.map((e) => ({
+                                  value: e.id,
+                                  label: e.preferredName + " " + "—" + " " + e.position,
+                                })),
+                              ]}
+                            />
+                          </FormControl>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -246,26 +246,22 @@ function OffboardingDashboard() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>HR Case Owner</FormLabel>
-                          <Select
-                            onValueChange={(value) =>
-                              field.onChange(value === "automatic" ? "" : value)
-                            }
-                            value={field.value || "automatic"}
-                          >
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="automatic">Assign automatically</SelectItem>
-                              {hrOwners.map((u) => (
-                                <SelectItem key={u.id} value={u.id}>
-                                  {u.displayName}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <FormControl>
+                            <SearchableSelect
+                              onValueChange={(value) =>
+                                field.onChange(value === "automatic" ? "" : value)
+                              }
+                              value={field.value || "automatic"}
+                              placeholder={"Search person…"}
+                              options={[
+                                { value: "automatic", label: "Assign automatically" },
+                                ...hrOwners.map((u) => ({
+                                  value: u.id,
+                                  label: `${u.displayName} · ${u.workspaceEmail}`,
+                                })),
+                              ]}
+                            />
+                          </FormControl>
                           <FormMessage />
                         </FormItem>
                       )}
