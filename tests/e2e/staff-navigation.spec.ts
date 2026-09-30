@@ -81,7 +81,8 @@ test("company setup sections use the main sidebar and preserve direct links", as
     "aria-current",
     "page",
   );
-  await expect(page.locator("main aside")).toHaveCount(0);
+  // Contextual tips are complementary content, not a second page sidebar.
+  await expect(page.locator('main aside:not([aria-label="Page tip"])')).toHaveCount(0);
 });
 
 test("phone navigation closes after selecting a module or nested section", async ({ page }) => {
