@@ -578,7 +578,10 @@ test("closing the reimbursement produces Closed, and rejecting expenses clears s
   assert.equal(closed.closedBy, superAdmin.actor.userId);
 });
 
-test("late-closed reimbursement carries into the next payroll and keeps OMR separate from salary currency", async () => {
+test("late-closed reimbursement carries into the next payroll and keeps OMR separate from salary currency", async (t) => {
+  // The reimbursement must close within the payroll period below, regardless
+  // of the date on which this regression test runs.
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-09-26T10:00:00Z") });
   const { travel, files, storage } = harness();
   const employees = storage.readCollection<Employee>("employees");
   storage.writeCollection(
