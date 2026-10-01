@@ -394,9 +394,16 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   await expect(page.getByText("Approved", { exact: true }).first()).toBeVisible();
 
   await page.goto("/staff/me/attendance");
-  await page.getByRole("button", { name: "Previous" }).click();
-  await page.getByRole("button", { name: "Previous" }).click();
-  await page.getByRole("button", { name: "Previous" }).click();
+  // Attendance opens on the current month, not always September 2026.
+  const monthsSinceJune = await page.evaluate(() => {
+    const now = new Date();
+    return (now.getFullYear() - 2026) * 12 + now.getMonth() - 5;
+  });
+  expect(monthsSinceJune).toBeGreaterThanOrEqual(0);
+  for (let month = 0; month < monthsSinceJune; month++) {
+    await page.getByRole("button", { name: "Previous" }).click();
+  }
+  await expect(page.getByRole("heading", { name: "June 2026", exact: true })).toBeVisible();
   const correctedAttendanceRow = page.getByRole("row").filter({ hasText: "03 Jun" });
   await expect(correctedAttendanceRow).toContainText("Present");
   await expect(correctedAttendanceRow).toContainText("09:00");
