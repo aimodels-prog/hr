@@ -386,7 +386,7 @@ export const hrGuide = [
     "Configuration changes apply to new periods and timesheets. Closing a period stops employee creation, editing and submission in that period.",
     [
       "For Head Office staff, review the employee’s attendance-to-timesheet choice in attendance setup; it is not automatic approval.",
-      "Flexible arrival times do not remove the daily hours requirement or the configured lunch deduction.",
+      "Flexible arrival times do not remove the daily working-hours requirement. Recorded attendance and timesheets include the configured break: eight working hours plus one break hour is a nine-hour recorded day. Extra presence does not create an overtime claim. Previously approved timesheets are not rewritten.",
     ],
     "timesheet:admin_all",
   ),
@@ -791,6 +791,7 @@ export const hrGuide = [
       "Open Users & Access and find the correct person.",
       "Review their linked employee record, current account status and assigned roles.",
       "Use the available role or status controls only for the access you are authorised to grant.",
+      "To remove someone’s VIA HR access, choose Remove beside their name in User Management, then confirm. Their employee record and history are kept; their VIA Portal account and employment are not changed. To restore access, filter by Removed users, choose Manage, set the status to Active and save with a short reason. You cannot remove yourself. Reassign a supervisor’s direct reports before removing their access.",
       "Check the employee’s supervisor and ensure that anyone receiving approval tasks has the required approval access.",
       "Ask the person to select the correct role and verify the expected pages are available.",
     ],

@@ -132,8 +132,8 @@ test(
         const date = new Date(monday);
         date.setUTCDate(date.getUTCDate() + offset);
         const workDate = date.toISOString().slice(0, 10);
-        hours[workDate] = 8;
-        await sql`INSERT INTO attendance_records (id,organisation_id,employee_id,date,clock_in_at,clock_out_at,break_minutes,source,status,calculated_hours,created_by,updated_by) VALUES (${randomUUID()},${organisationId},${employeeId},${workDate},${`${workDate}T08:00:00.000Z`},${`${workDate}T16:00:00.000Z`},0,'Web','Present',8,${employeeUserId},${employeeUserId})`;
+        hours[workDate] = 9;
+        await sql`INSERT INTO attendance_records (id,organisation_id,employee_id,date,clock_in_at,clock_out_at,break_minutes,source,status,calculated_hours,created_by,updated_by) VALUES (${randomUUID()},${organisationId},${employeeId},${workDate},${`${workDate}T08:00:00.000Z`},${`${workDate}T17:00:00.000Z`},60,'Web','Present',8,${employeeUserId},${employeeUserId})`;
       }
       await saveTimesheetDraftInDatabase(
         organisationId,
@@ -153,6 +153,10 @@ test(
         employeeActor,
       );
       await submitTimesheetInDatabase(organisationId, timesheetId, employeeActor);
+      const [recordedTotals] =
+        await sql`SELECT expected_hours,total_hours FROM timesheets WHERE id=${timesheetId}`;
+      assert.equal(Number(recordedTotals!.expected_hours), 45);
+      assert.equal(Number(recordedTotals!.total_hours), 45);
       await assert.rejects(
         decideTimesheetInDatabase(
           organisationId,

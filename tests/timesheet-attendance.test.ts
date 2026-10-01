@@ -121,7 +121,7 @@ test("staff outside biometric tracking submit project hours without punch explan
   const { storage, timesheets, period } = harness();
   storage.writeCollection("attendanceTracking", []);
   const timesheet = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
-  addProjectHours(timesheet, "2026-08-17", 8);
+  addProjectHours(timesheet, "2026-08-17", 9);
   const saved = timesheets.saveTimesheetDraft(timesheet, employee);
   assert.equal(timesheets.reconcileAttendance(saved).unresolvedCount, 0);
   assert.equal(timesheets.submitTimesheet(saved.id, employee).status, "Pending Manager");
@@ -135,7 +135,7 @@ test("matching project and attendance hours reconcile without an explanation", (
   const { attendance, timesheets, period } = harness();
   addAttendance(attendance, "2026-08-17");
   const timesheet = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
-  addProjectHours(timesheet, "2026-08-17", 8);
+  addProjectHours(timesheet, "2026-08-17", 9);
   for (const entry of timesheet.entries) if (!entry.isLeave && !entry.isHoliday) entry.notes = "";
   const saved = timesheets.saveTimesheetDraft(timesheet, employee);
   const reconciliation = timesheets.reconcileAttendance(saved);
@@ -162,7 +162,7 @@ test("extra office presence does not become overtime or force extra ordinary tim
   const { attendance, timesheets, period, storage } = harness();
   addAttendance(attendance, "2026-08-17", "20:00");
   const sheet = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
-  addProjectHours(sheet, "2026-08-17", 8);
+  addProjectHours(sheet, "2026-08-17", 9);
   const saved = timesheets.saveTimesheetDraft(sheet, employee);
   assert.equal(timesheets.reconcileAttendance(saved).unresolvedCount, 0);
   const before = storage.readCollection("overtimeClaims").length;
@@ -210,7 +210,7 @@ test("a new attendance correction after submission is recalculated before manage
   const { attendance, timesheets, period } = harness();
   const record = addAttendance(attendance, "2026-08-17");
   const timesheet = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
-  addProjectHours(timesheet, "2026-08-17", 8);
+  addProjectHours(timesheet, "2026-08-17", 9);
   const saved = timesheets.saveTimesheetDraft(timesheet, employee);
   const submitted = timesheets.submitTimesheet(saved.id, employee);
 
@@ -225,7 +225,7 @@ test("Finance can read organisation timesheets but cannot approve them", () => {
   const { attendance, timesheets, period } = harness();
   addAttendance(attendance, "2026-08-17");
   const timesheet = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
-  addProjectHours(timesheet, "2026-08-17", 8);
+  addProjectHours(timesheet, "2026-08-17", 9);
   const submitted = timesheets.submitTimesheet(
     timesheets.saveTimesheetDraft(timesheet, employee).id,
     employee,

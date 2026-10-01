@@ -124,11 +124,7 @@ export function LiveAttendanceCard() {
         </button>
       )}
       {record && (record.breakStartAt || record.breakMinutes > 0) && (
-        <p className="mt-2 text-xs text-muted-foreground">
-          {record.breakStartAt
-            ? "Lunch 1–2 pm is excluded as it occurs"
-            : `${record.breakMinutes} min recorded break deducted`}
-        </p>
+        <p className="mt-2 text-xs text-muted-foreground">Break time is included.</p>
       )}
     </section>
   );

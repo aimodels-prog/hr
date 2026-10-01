@@ -138,7 +138,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
       ) {
         if (![5, 6].includes(cursor.getDay())) {
           const date = cursor.toISOString().slice(0, 10);
-          workHours[date] = 8;
+          workHours[date] = 9;
           explanations[date] = "Browser workflow test uses an approved manual attendance setup.";
         }
       }

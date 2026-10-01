@@ -17,10 +17,12 @@ import { employees, roles, userRoles, users } from "../schema/employee.ts";
 import { appSettings } from "../schema/organisation.ts";
 import { isAttendanceTracked, readAttendanceTracking } from "../../data/attendance-tracking.ts";
 import { ordinaryAttendanceHours } from "../../data/office-schedule.ts";
+import { recordedDailyHours, recordedAttendanceHours } from "../../data/recorded-hours.ts";
 import { leaveRequests } from "../schema/leave.ts";
 import { auditEvents, notifications } from "../schema/system.ts";
 import {
   attendanceRecords,
+  attendancePolicies,
   timesheetEntries,
   timesheetPeriods,
   timesheetSettings,
@@ -271,15 +273,32 @@ export async function submitTimesheetInDatabase(
       .from(timesheetEntries)
       .where(eq(timesheetEntries.timesheetId, timesheetId));
     if (!entryRows.length) throw new Error("Add at least one time entry before submitting.");
-    if (Number(sheet.totalHours) < Number(sheet.expectedHours))
-      throw new Error(
-        `Log the remaining ${Number(sheet.expectedHours) - Number(sheet.totalHours)} expected hours before submitting.`,
-      );
     const [settings] = await tx
       .select()
       .from(timesheetSettings)
       .where(eq(timesheetSettings.organisationId, organisationId))
       .limit(1);
+    const [submissionPeriod] = await tx
+      .select()
+      .from(timesheetPeriods)
+      .where(eq(timesheetPeriods.id, sheet.periodId))
+      .limit(1);
+    if (!submissionPeriod) throw new Error("Timesheet period not found.");
+    const expected = await expectedHoursForPeriod(
+      tx,
+      organisationId,
+      sheet.employeeId,
+      submissionPeriod,
+      Number(settings?.standardDailyHours ?? 8),
+    );
+    if (Number(sheet.totalHours) < expected)
+      throw new Error(
+        `Log the remaining ${expected - Number(sheet.totalHours)} expected hours before submitting.`,
+      );
+    await tx
+      .update(timesheets)
+      .set({ expectedHours: String(expected) })
+      .where(eq(timesheets.id, sheet.id));
     const tolerance = Number(
       settings?.attendanceVarianceToleranceHours ??
         DEFAULT_SETTINGS.attendanceVarianceToleranceHours,
@@ -297,6 +316,11 @@ export async function submitTimesheetInDatabase(
     const workByDate = new Map<string, number>();
     for (const entry of entryRows)
       workByDate.set(entry.workDate, (workByDate.get(entry.workDate) ?? 0) + Number(entry.hours));
+    const recordedDay = await recordedDayForOrganisation(
+      tx,
+      organisationId,
+      Number(settings?.standardDailyHours ?? 8),
+    );
     const attendanceByDate = new Map(attendance.map((item) => [item.date, item]));
     const dates = new Set([...workByDate.keys(), ...attendanceByDate.keys()]);
     const explanations = (sheet.attendanceDiscrepancyExplanations ?? {}) as Record<string, string>;
@@ -312,8 +336,8 @@ export async function submitTimesheetInDatabase(
       .map((date) => {
         const record = attendanceByDate.get(date);
         const attendanceHours = ordinaryAttendanceHours(
-          Number(record?.calculatedHours ?? 0),
-          Number(settings?.standardDailyHours ?? 8),
+          recordedAttendanceHours(record),
+          recordedDay,
         );
         const timesheetWorkHours = workByDate.get(date) ?? 0;
         const varianceHours = Number((timesheetWorkHours - attendanceHours).toFixed(2));
@@ -565,6 +589,11 @@ export async function listTimesheetSnapshotForActor(
   actor: AuditActorContext,
 ) {
   const db = getDatabaseClient();
+  const [breakPolicy] = await db
+    .select({ minutes: attendancePolicies.defaultBreakMinutes })
+    .from(attendancePolicies)
+    .where(eq(attendancePolicies.organisationId, organisationId))
+    .limit(1);
   const activeRole = role(actor);
   let employeeIds: string[] | undefined;
   if (activeRole === "Employee" || activeRole === "IT") {
@@ -640,6 +669,7 @@ export async function listTimesheetSnapshotForActor(
       ? {
           weeklyPeriodStartDay: settingsRow.weeklyPeriodStartDay,
           standardDailyHours: Number(settingsRow.standardDailyHours),
+          recordedBreakMinutes: breakPolicy?.minutes ?? 60,
           submissionDeadlineDays: settingsRow.submissionDeadlineDays,
           overtimeThresholdWeekly: Number(settingsRow.overtimeThresholdWeekly),
           allowCopyPreviousWeek: settingsRow.allowCopyPreviousWeek,
@@ -652,7 +682,7 @@ export async function listTimesheetSnapshotForActor(
           overtimeMaxMonthlyHours: Number(settingsRow.overtimeMaxMonthlyHours),
           attendanceVarianceToleranceHours: Number(settingsRow.attendanceVarianceToleranceHours),
         }
-      : DEFAULT_SETTINGS,
+      : { ...DEFAULT_SETTINGS, recordedBreakMinutes: breakPolicy?.minutes ?? 60 },
     periods: periodRows.map((item) => ({
       ...compatibleRecord(item),
       startDate: item.startDate,
@@ -900,6 +930,17 @@ export async function generateTimesheetPeriodsInDatabase(
   });
 }
 
+// Read the single, persisted break policy instead of changing the working-hours setting.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function recordedDayForOrganisation(tx: any, organisationId: string, workingHours: number) {
+  const [policy] = await tx
+    .select({ minutes: attendancePolicies.defaultBreakMinutes })
+    .from(attendancePolicies)
+    .where(eq(attendancePolicies.organisationId, organisationId))
+    .limit(1);
+  return recordedDailyHours(workingHours, policy?.minutes ?? 60);
+}
+
 async function expectedHoursForPeriod(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tx: any,
@@ -908,6 +949,7 @@ async function expectedHoursForPeriod(
   period: { startDate: string; endDate: string },
   dailyHours: number,
 ) {
+  dailyHours = await recordedDayForOrganisation(tx, organisationId, dailyHours);
   const [orgSettings] = await tx
     .select()
     .from(appSettings)
@@ -1002,6 +1044,11 @@ async function buildTimesheetReconciliation(
   const workByDate = new Map<string, number>();
   for (const entry of entries)
     workByDate.set(entry.workDate, (workByDate.get(entry.workDate) ?? 0) + Number(entry.hours));
+  const recordedDay = await recordedDayForOrganisation(
+    tx,
+    organisationId,
+    Number(settings?.standardDailyHours ?? 8),
+  );
   const recordByDate = new Map(records.map((item) => [item.date, item]));
   const explanations = (sheet.attendanceDiscrepancyExplanations ?? {}) as Record<string, string>;
   const [trackingSettings] = await tx
@@ -1015,10 +1062,7 @@ async function buildTimesheetReconciliation(
     .sort()
     .map((date) => {
       const record = recordByDate.get(date);
-      const attendanceHours = ordinaryAttendanceHours(
-        Number(record?.calculatedHours ?? 0),
-        Number(settings?.standardDailyHours ?? 8),
-      );
+      const attendanceHours = ordinaryAttendanceHours(recordedAttendanceHours(record), recordedDay);
       const timesheetWorkHours = workByDate.get(date) ?? 0;
       const varianceHours = Number((timesheetWorkHours - attendanceHours).toFixed(2));
       const incomplete = Boolean(record && (!record.clockInAt || !record.clockOutAt));
@@ -1232,10 +1276,23 @@ export async function saveTimesheetDraftInDatabase(
         })) as Array<typeof timesheetEntries.$inferInsert>,
       );
     const total = normalized.reduce((sum, item) => sum + item.hours, 0);
+    const [workingSettings] = await tx
+      .select()
+      .from(timesheetSettings)
+      .where(eq(timesheetSettings.organisationId, organisationId))
+      .limit(1);
+    const expectedHours = await expectedHoursForPeriod(
+      tx,
+      organisationId,
+      sheet.employeeId,
+      period,
+      Number(workingSettings?.standardDailyHours ?? DEFAULT_SETTINGS.standardDailyHours),
+    );
     await tx
       .update(timesheets)
       .set({
         totalHours: String(total),
+        expectedHours: String(expectedHours),
         draftPayload: entries,
         attendanceDiscrepancyExplanations: explanations,
         updatedAt: new Date(),

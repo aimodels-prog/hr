@@ -3,6 +3,8 @@ import type { BaseRecord, RecordId } from "./types";
 export interface TimesheetSettings {
   weeklyPeriodStartDay: number; // 0 = Sunday, 1 = Monday, etc.
   standardDailyHours: number;
+  /** Read from attendance policy, not a second editable copy of the break. */
+  recordedBreakMinutes?: number;
   submissionDeadlineDays: number; // e.g. 2 days after period end
   overtimeThresholdWeekly: number; // e.g. 40
   allowCopyPreviousWeek: boolean;

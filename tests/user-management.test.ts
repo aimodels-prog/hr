@@ -72,3 +72,48 @@ test("HR cannot change a Super Admin account and the denial is audited", () => {
 });
 
 test.after(() => configureApplicationDataServices(undefined));
+
+test("removing user access preserves the employee record and supports restoration", () => {
+  const { service } = setup();
+  const target = service.getUserRepository(SYSTEM_CONTEXT).getById("user-omar");
+  assert.ok(target);
+  const before = service.getById(target.employeeId, hr);
+  assert.ok(before);
+  const removed = service.updateUserAccess(
+    target.id,
+    target.roles,
+    "Archived",
+    "User removal confirmed",
+    hr,
+  );
+  assert.equal(removed.status, "Archived");
+  assert.ok(removed.archivedAt);
+  assert.deepEqual(service.getById(target.employeeId, hr), before);
+  assert.equal(
+    service.getUsers(hr).some((user) => user.id === target.id),
+    false,
+  );
+  const restored = service.updateUserAccess(
+    target.id,
+    target.roles,
+    "Active",
+    "Restore user access",
+    hr,
+  );
+  assert.equal(restored.status, "Active");
+  assert.equal(Boolean(restored.archivedAt), false);
+});
+
+test("employees cannot remove another user's access", () => {
+  const { service } = setup();
+  const target = service.getUserRepository(SYSTEM_CONTEXT).getById("user-omar");
+  assert.ok(target);
+  assert.throws(
+    () =>
+      service.updateUserAccess(target.id, target.roles, "Archived", "Remove this account", {
+        actor: { ...hr.actor, activeRole: "Employee", roles: ["Employee"] },
+      }),
+    /Only HR or a Super Admin/,
+  );
+  assert.equal(service.getUserRepository(SYSTEM_CONTEXT).getById(target.id)?.status, "Active");
+});

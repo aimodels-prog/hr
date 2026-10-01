@@ -1,4 +1,5 @@
 import { SYSTEM_CONTEXT } from "./types.ts";
+import { recordedAttendanceHours } from "./recorded-hours.ts";
 import { validateSiteVisitPlan } from "./site-visit.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { EmployeeService } from "./employee-service.ts";
@@ -1000,7 +1001,7 @@ export class AttendanceService {
           record.clockInAt,
           record.clockOutAt,
           record.breakMinutes,
-          record.calculatedHours,
+          recordedAttendanceHours(record),
           record.location,
           record.source,
           record.workMode,
@@ -2142,7 +2143,7 @@ export class AttendanceService {
           record.clockIn,
           record.clockOut,
           record.breakMinutes,
-          record.calculatedHours,
+          recordedAttendanceHours(record),
           record.location,
           record.source,
           record.workMode,
@@ -2162,7 +2163,9 @@ export class AttendanceService {
       late: records.filter((record) => record.status === "Late" || record.isLate).length,
       absent: records.filter((record) => record.status === "Absent").length,
       missingPunch: records.filter((record) => record.status === "Missing Punch").length,
-      hours: Number(records.reduce((sum, record) => sum + record.calculatedHours, 0).toFixed(2)),
+      hours: Number(
+        records.reduce((sum, record) => sum + recordedAttendanceHours(record), 0).toFixed(2),
+      ),
     };
   }
 

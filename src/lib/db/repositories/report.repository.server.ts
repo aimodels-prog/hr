@@ -230,7 +230,7 @@ const definitions: Record<ReportId, QueryDefinition> = {
     ],
     query: (org) =>
       getDatabaseClient().execute(
-        sql`select e.id as "__employeeId", (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department, ar.date, coalesce(l.name,'Not recorded') as location, coalesce(ar.calculated_hours,0)::double precision as hours, ar.status::text as status, case when ar.is_late then 'Yes' else 'No' end as late from attendance_records ar join employees e on e.id=ar.employee_id join departments d on d.id=e.department_id left join locations l on l.id=ar.location_id where ar.organisation_id=${org} and ar.archived_at is null order by ar.date desc`,
+        sql`select e.id as "__employeeId", (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department, ar.date, coalesce(l.name,'Not recorded') as location, case when ar.clock_in_at is not null and ar.clock_out_at >= ar.clock_in_at and ar.clock_out_at <= ar.clock_in_at + interval '24 hours' then round((extract(epoch from (ar.clock_out_at-ar.clock_in_at))/3600)::numeric,2)::double precision else 0 end as hours, ar.status::text as status, case when ar.is_late then 'Yes' else 'No' end as late from attendance_records ar join employees e on e.id=ar.employee_id join departments d on d.id=e.department_id left join locations l on l.id=ar.location_id where ar.organisation_id=${org} and ar.archived_at is null order by ar.date desc`,
       ),
   },
   overtime: {

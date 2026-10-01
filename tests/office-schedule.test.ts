@@ -24,7 +24,7 @@ test("partial attendance only deducts lunch actually overlapping attendance", ()
   assert.equal(attendanceBreakMinutes("08:30", "12:00", 60, "08:30", "17:30"), 0);
   assert.equal(attendanceBreakMinutes("09:00", "12:00", 15, "09:00", "18:00"), 15);
 });
-test("live minutes pause for lunch rather than deducting an hour in the morning", () => {
+test("live minutes include the lunch interval", () => {
   const record = {
     clockInAt: "2026-09-29T08:30:00+04:00",
     clockOutAt: null,
@@ -33,7 +33,7 @@ test("live minutes pause for lunch rather than deducting an hour in the morning"
     breakEndAt: "2026-09-29T14:00:00+04:00",
   };
   assert.equal(workedMinutes(record, Date.parse("2026-09-29T08:53:00+04:00")), 23);
-  assert.equal(workedMinutes(record, Date.parse("2026-09-29T13:30:00+04:00")), 270);
-  assert.equal(workedMinutes(record, Date.parse("2026-09-29T14:00:00+04:00")), 270);
-  assert.equal(workedMinutes(record, Date.parse("2026-09-29T17:30:00+04:00")), 480);
+  assert.equal(workedMinutes(record, Date.parse("2026-09-29T13:30:00+04:00")), 300);
+  assert.equal(workedMinutes(record, Date.parse("2026-09-29T14:00:00+04:00")), 330);
+  assert.equal(workedMinutes(record, Date.parse("2026-09-29T17:30:00+04:00")), 540);
 });

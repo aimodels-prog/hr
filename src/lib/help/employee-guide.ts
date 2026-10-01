@@ -172,7 +172,7 @@ export const employeeGuide = [
       "Clock out when you finish work, then check the recorded times and hours.",
       "If a time is missing or wrong, open that day and request a correction instead of creating another clock-in.",
     ],
-    "VIA allows flexible working hours. HR sets the daily working hours and scheduled break. With eight working hours and a one-hour lunch, an 8:30 am arrival normally means a 5:30 pm finish. The break is not counted as work.",
+    "VIA allows flexible working hours. HR sets the daily working hours and scheduled break. With eight working hours and a one-hour lunch, an 8:30 am arrival normally means a 5:30 pm finish. Attendance totals and timesheet hours include the break: 8:30 am to 5:30 pm is recorded as nine hours. Extra time in the office is not automatically approved overtime.",
     [
       "Coming earlier does not remove your required working hours. For example, 7:30 am–4:30 pm includes the usual lunch hour.",
       "Extra time in the office is not automatically overtime. Overtime needs a separate approved request.",

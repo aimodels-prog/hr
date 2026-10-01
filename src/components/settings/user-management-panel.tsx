@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { Search, Shield, UserRoundCog } from "lucide-react";
+import { Search, Shield, UserRoundCog, UserRoundMinus } from "lucide-react";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { toast } from "sonner";
 import { useCurrentUser } from "@/lib/auth";
 import { EmployeeService } from "@/lib/data/employee-service";
@@ -66,7 +67,7 @@ export function UserManagementPanel() {
   );
   const [query, setQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState<Role | "all">("all");
-  const [statusFilter, setStatusFilter] = useState<User["status"] | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<User["status"] | "all" | "current">("current");
   const [selected, setSelected] = useState<User | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
   const [status, setStatus] = useState<User["status"]>("Active");
@@ -86,7 +87,10 @@ export function UserManagementPanel() {
         return (
           searchText.includes(query.trim().toLowerCase()) &&
           (roleFilter === "all" || user.roles.includes(roleFilter)) &&
-          (statusFilter === "all" || user.status === statusFilter)
+          (statusFilter === "all" ||
+            (statusFilter === "current"
+              ? user.status !== "Archived"
+              : user.status === statusFilter))
         );
       }),
     [employees, query, roleFilter, statusFilter, users],
@@ -118,6 +122,19 @@ export function UserManagementPanel() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const remove = async (user: User) => {
+    await service.updateUserAccessAsync(
+      user.id,
+      user.roles,
+      "Archived",
+      "User access removed by administrator after confirmation",
+      getActorContext(),
+    );
+    setUsers(service.getUsers(getActorContext(), { includeArchived: true }));
+    refreshRecords();
+    toast.success(`${user.displayName}'s VIA HR access has been removed`);
   };
 
   return (
@@ -160,16 +177,17 @@ export function UserManagementPanel() {
           </Select>
           <Select
             value={statusFilter}
-            onValueChange={(value) => setStatusFilter(value as User["status"] | "all")}
+            onValueChange={(value) => setStatusFilter(value as User["status"] | "all" | "current")}
           >
             <SelectTrigger aria-label="Filter users by status">
               <SelectValue placeholder="All statuses" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="current">Current users</SelectItem>
               <SelectItem value="all">All statuses</SelectItem>
               <SelectItem value="Active">Active</SelectItem>
               <SelectItem value="Suspended">Suspended</SelectItem>
-              <SelectItem value="Archived">Archived</SelectItem>
+              <SelectItem value="Archived">Removed users</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -222,7 +240,9 @@ export function UserManagementPanel() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline">{user.status}</Badge>
+                        <Badge variant="outline">
+                          {user.status === "Archived" ? "Removed" : user.status}
+                        </Badge>
                       </TableCell>
                       <TableCell className="text-right">
                         <Button
@@ -241,6 +261,25 @@ export function UserManagementPanel() {
                           <UserRoundCog className="mr-1.5 h-4 w-4" />
                           Manage
                         </Button>
+                        {user.status !== "Archived" && (
+                          <ConfirmAction
+                            title={`Remove ${user.displayName}?`}
+                            description="This blocks their VIA HR access. Their employee record, attendance, payroll and other history will be kept. It does not remove their VIA Portal account or end their employment. To restore access later, choose Removed users, then Manage."
+                            confirmLabel="Remove user"
+                            onConfirm={() => remove(user)}
+                          >
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={locked}
+                              className="text-destructive"
+                              aria-label={`Remove ${user.displayName}`}
+                            >
+                              <UserRoundMinus className="mr-1.5 h-4 w-4" />
+                              Remove
+                            </Button>
+                          </ConfirmAction>
+                        )}
                       </TableCell>
                     </TableRow>
                   );
@@ -272,7 +311,9 @@ export function UserManagementPanel() {
                 <SelectContent>
                   <SelectItem value="Active">Active</SelectItem>
                   <SelectItem value="Suspended">Suspended (cannot sign in)</SelectItem>
-                  <SelectItem value="Archived">Archived</SelectItem>
+                  <SelectItem value="Archived" disabled>
+                    Removed (use Remove user)
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>

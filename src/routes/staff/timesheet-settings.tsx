@@ -189,7 +189,8 @@ function TimesheetSettingsRoute() {
                   }
                 />
                 <p className="text-xs text-muted-foreground">
-                  Working hours only, excluding breaks. Shared with attendance and company settings.
+                  Working hours only. Timesheets include the configured break on top of this. Shared
+                  with attendance and company settings.
                 </p>
               </div>
               <div className="space-y-2">

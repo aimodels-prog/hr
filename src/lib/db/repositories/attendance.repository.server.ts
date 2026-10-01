@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { recordedDailyHours } from "../../data/recorded-hours.ts";
 import {
   attendanceBreakMinutes,
   flexibleOfficeSchedule,
@@ -2129,7 +2130,12 @@ export async function getMyLiveAttendance(organisationId: string, actor: AuditAc
         sql`${leaveRequests.endDate} >= ${date}`,
       ),
     );
-  let targetMinutes = Math.round(Number(policy?.standardDailyHours ?? settings?.hours ?? 8) * 60);
+  let targetMinutes = Math.round(
+    recordedDailyHours(
+      Number(policy?.standardDailyHours ?? settings?.hours ?? 8),
+      policy?.defaultBreakMinutes ?? 60,
+    ) * 60,
+  );
   if (record?.source === "Site Visit Auto" && record.expectedClockIn && record.expectedClockOut) {
     const minutes = (time: string) => {
       const [h, m] = time.split(":").map(Number);
@@ -2137,7 +2143,7 @@ export async function getMyLiveAttendance(organisationId: string, actor: AuditAc
     };
     let span = minutes(record.expectedClockOut) - minutes(record.expectedClockIn);
     if (span < 0) span += 1440;
-    targetMinutes = Math.max(0, span - (policy?.defaultBreakMinutes ?? 0));
+    targetMinutes = Math.max(0, span);
   }
   const leaveFraction = Math.min(
     1,

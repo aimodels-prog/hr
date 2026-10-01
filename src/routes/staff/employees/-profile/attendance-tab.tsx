@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { recordedAttendanceHours } from "@/lib/data/recorded-hours";
 import { AttendanceTrackingSettings } from "@/components/attendance/tracking-settings";
 import { Link, useLocation } from "@tanstack/react-router";
 import { employeeSearch } from "@/components/employees/employee-filter";
@@ -153,7 +154,7 @@ export function AttendanceTab({ employeeId }: { employeeId: string }) {
                       {r.isLate && <span className="text-amber-600 text-xs ml-1">Late</span>}
                     </TableCell>
                     <TableCell className="text-sm">{r.clockOut || "-"}</TableCell>
-                    <TableCell className="text-sm">{r.calculatedHours}h</TableCell>
+                    <TableCell className="text-sm">{recordedAttendanceHours(r)}h</TableCell>
                     <TableCell>
                       <Badge
                         variant={

@@ -1,4 +1,5 @@
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { recordedAttendanceHours } from "@/lib/data/recorded-hours";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
 import { AttendanceTrackingSettings } from "@/components/attendance/tracking-settings";
@@ -801,7 +802,9 @@ function AttendanceAdminContent() {
                       </TableCell>
                       <TableCell>{row.clockIn ?? "—"}</TableCell>
                       <TableCell>{row.clockOut ?? "—"}</TableCell>
-                      <TableCell>{row.calculatedHours ? `${row.calculatedHours}h` : "—"}</TableCell>
+                      <TableCell>
+                        {recordedAttendanceHours(row) ? `${recordedAttendanceHours(row)}h` : "—"}
+                      </TableCell>
                       <TableCell>{"location" in row ? (row.location ?? "—") : "—"}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{row.source}</TableCell>
                       <TableCell className="text-right">

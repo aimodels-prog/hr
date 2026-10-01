@@ -758,6 +758,9 @@ export async function updateUserAccessInDatabase(
   reason: string,
   actor: AuditActorContext,
 ): Promise<User> {
+  if (actor.activeRole !== "HR" && actor.activeRole !== "Super Admin") {
+    throw new Error("Only HR or a Super Admin can change user access.");
+  }
   const db = getDatabaseClient();
   return db.transaction(async (tx) => {
     const [target] = await tx

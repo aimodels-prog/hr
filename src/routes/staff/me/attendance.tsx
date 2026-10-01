@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { recordedAttendanceHours } from "@/lib/data/recorded-hours";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { eachDayOfInterval, endOfMonth, format, parseISO, startOfMonth } from "date-fns";
 import {
@@ -707,7 +708,9 @@ function MyAttendanceRoute() {
                           <TableCell>{row.clockIn ?? "—"}</TableCell>
                           <TableCell>{row.clockOut ?? "—"}</TableCell>
                           <TableCell>
-                            {row.calculatedHours ? `${row.calculatedHours}h` : "—"}
+                            {recordedAttendanceHours(row)
+                              ? `${recordedAttendanceHours(row)}h`
+                              : "—"}
                           </TableCell>
                           <TableCell>{row.workMode ?? "—"}</TableCell>
                           <TableCell className="text-right">

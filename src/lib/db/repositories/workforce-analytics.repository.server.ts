@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { recordedDailyHours, recordedAttendanceHours } from "../../data/recorded-hours.ts";
 import { getAttendanceTrackingPolicy } from "./attendance-tracking.repository.server.ts";
 import { isAttendanceTracked } from "../../data/attendance-tracking.ts";
 import { and, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
@@ -48,7 +49,10 @@ export async function getWorkforceAnalytics(
       .where(eq(appSettings.organisationId, organisationId))
       .limit(1),
     db
-      .select({ dailyHours: attendancePolicies.standardDailyHours })
+      .select({
+        dailyHours: attendancePolicies.standardDailyHours,
+        breakMinutes: attendancePolicies.defaultBreakMinutes,
+      })
       .from(attendancePolicies)
       .where(eq(attendancePolicies.organisationId, organisationId))
       .limit(1),
@@ -93,7 +97,10 @@ export async function getWorkforceAnalytics(
   const startDate = dates[0]!;
   const endDate = dates[dates.length - 1]!;
   const ids = people.map((employee) => employee.id);
-  const dailyHours = Number(policyRows[0]?.dailyHours ?? settings.dailyHours);
+  const dailyHours = recordedDailyHours(
+    Number(policyRows[0]?.dailyHours ?? settings.dailyHours),
+    policyRows[0]?.breakMinutes ?? 60,
+  );
   const [records, leave, holidays, pendingVisits, recruitment, leaveQueue, visits] =
     await Promise.all([
       ids.length
@@ -234,7 +241,10 @@ export async function getWorkforceAnalytics(
     employees: people,
     workingDays: settings.workingDays,
     dailyHours,
-    records,
+    records: records.map((record) => ({
+      ...record,
+      calculatedHours: recordedAttendanceHours(record),
+    })),
     leave,
     holidays,
     pendingVisits,

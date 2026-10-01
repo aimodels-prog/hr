@@ -1,4 +1,5 @@
 import { SYSTEM_CONTEXT } from "./types.ts";
+import { recordedAttendanceHours } from "./recorded-hours.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { LeaveService } from "./leave-service.ts";
 import { TimesheetService } from "./timesheet-service.ts";
@@ -645,7 +646,7 @@ export class ReportService {
             employee: employeeName(record.employeeId),
             date: record.date,
             location: record.location ?? "Not recorded",
-            hours: record.calculatedHours,
+            hours: recordedAttendanceHours(record),
             status: record.status,
             late: record.isLate ? "Yes" : "No",
           })),

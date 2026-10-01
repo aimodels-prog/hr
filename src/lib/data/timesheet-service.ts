@@ -26,6 +26,7 @@ import type { ActorContext, User } from "./types.ts";
 import { LeaveService } from "./leave-service.ts";
 import { AttendanceService } from "./attendance-service.ts";
 import { ordinaryAttendanceHours } from "./office-schedule.ts";
+import { recordedDailyHours, recordedAttendanceHours } from "./recorded-hours.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { SettingsService, syncWorkingHoursCompatibilityCache } from "./settings-service.ts";
 
@@ -398,6 +399,13 @@ export class TimesheetService {
     return stored ? { ...DEFAULT_SETTINGS, ...stored } : DEFAULT_SETTINGS;
   }
 
+  getRecordedDailyHours(settings = this.getSettings()): number {
+    return recordedDailyHours(
+      settings.standardDailyHours,
+      settings.recordedBreakMinutes ?? this.attendanceService.getPolicy().defaultBreakMinutes,
+    );
+  }
+
   saveSettings(settings: TimesheetSettings, context: ActorContext) {
     this.requireTimesheetAdmin(context, "change timesheet settings");
     if (
@@ -684,8 +692,8 @@ export class TimesheetService {
           else workHours += hours;
         }
         const attendanceHours = ordinaryAttendanceHours(
-          record?.calculatedHours ?? 0,
-          settings.standardDailyHours,
+          recordedAttendanceHours(record),
+          this.getRecordedDailyHours(settings),
         );
         const attendanceStatus = record?.status ?? virtualStatus ?? "No Record";
         const completeAttendance = Boolean(record?.clockIn && record?.clockOut);
@@ -764,7 +772,7 @@ export class TimesheetService {
     let expectedHours = 0;
     for (const day of interval) {
       if (workingDays.includes(day.getDay())) {
-        expectedHours += settings.standardDailyHours;
+        expectedHours += this.getRecordedDailyHours(settings);
       }
     }
     return { status: "Not Started", totalHours: 0, expectedHours };
@@ -812,7 +820,7 @@ export class TimesheetService {
 
     interval.forEach((day) => {
       if (workingDays.includes(day.getDay())) {
-        expectedHours += settings.standardDailyHours;
+        expectedHours += this.getRecordedDailyHours(settings);
       }
 
       const dayStr = format(day, "yyyy-MM-dd");
@@ -826,7 +834,7 @@ export class TimesheetService {
         );
       });
       if (isH) {
-        holidayHours[dayStr] = settings.standardDailyHours;
+        holidayHours[dayStr] = this.getRecordedDailyHours(settings);
         return; // Skip checking leave if holiday
       }
 
@@ -838,7 +846,7 @@ export class TimesheetService {
       });
 
       if (isL && workingDays.includes(day.getDay())) {
-        leaveHours[dayStr] = settings.standardDailyHours;
+        leaveHours[dayStr] = this.getRecordedDailyHours(settings);
       }
     });
 
@@ -999,7 +1007,7 @@ export class TimesheetService {
             const leaveHrs = ts.entries
               .filter((e) => e.isLeave || e.isHoliday)
               .reduce((sum, e) => sum + (e.hours[date] || 0), 0);
-            if (leaveHrs >= settings.standardDailyHours) {
+            if (leaveHrs >= this.getRecordedDailyHours(settings)) {
               throw new Error(
                 `Cannot log standard hours on ${date} as it is marked as full-day leave/holiday.`,
               );

@@ -7,13 +7,13 @@ test("07:00 clock-in reaches 23 minutes and survives a fresh calculation", () =>
   assert.equal(workedMinutes(record, Date.parse("2026-09-29T07:23:00+04:00")), 23);
   assert.equal(workedMinutes(record, Date.parse("2026-09-29T08:05:00+04:00")), 65);
 });
-test("clock-out freezes the total and recorded breaks are deducted", () => {
+test("clock-out freezes the total and recorded breaks remain included", () => {
   const record = {
     clockInAt: "2026-09-29T03:00:00Z",
     clockOutAt: "2026-09-29T05:00:00Z",
     breakMinutes: 30,
   };
-  assert.equal(workedMinutes(record, Date.parse("2026-09-29T09:00:00Z")), 90);
+  assert.equal(workedMinutes(record, Date.parse("2026-09-29T09:00:00Z")), 120);
 });
 test("future, missing and invalid punches never produce negative or invalid minutes", () => {
   assert.equal(workedMinutes(null, Date.now()), 0);
