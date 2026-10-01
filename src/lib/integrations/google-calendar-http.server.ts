@@ -10,6 +10,7 @@ import {
   calendarEmailFromSettings,
 } from "../db/repositories/calendar-settings.repository.server.ts";
 import { appSettings } from "../db/schema/organisation.ts";
+import { googleAuthorisationPage } from "./google-authorisation-page.ts";
 import {
   googleCalendarConnections as connections,
   googleCalendarOAuthStates as states,
@@ -208,18 +209,14 @@ export async function resolveGoogleCalendarRequest(
           expiresAt: new Date(Date.now() + 10 * 60_000),
         });
       });
-      return new Response(null, {
-        status: 303,
-        headers: {
-          ...headers,
-          location: calendarAuthorisationUrl(
-            state,
-            verifier,
-            url.searchParams.get("email") === "enable",
-            await getCalendarOrganiserEmail(principal.organisationId),
-          ),
-        },
-      });
+      return googleAuthorisationPage(
+        calendarAuthorisationUrl(
+          state,
+          verifier,
+          url.searchParams.get("email") === "enable",
+          await getCalendarOrganiserEmail(principal.organisationId),
+        ),
+      );
     }
     return Response.json({ error: "method_not_allowed" }, { status: 405, headers });
   } catch {
