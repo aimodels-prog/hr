@@ -98,6 +98,33 @@ test("Authorisation requests offline Calendar access without placing secrets in 
   );
   await assert.rejects(
     () => exchangeCalendarCode("code", "verifier", "other@example.test"),
-    /Connect the other/,
+    /account-mismatch/,
+  );
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json({
+      access_token: "test",
+      scope: "https://www.googleapis.com/auth/calendar.events",
+    }),
+  );
+  await assert.rejects(
+    () => exchangeCalendarCode("code", "verifier", "hr@via-int.com"),
+    /offline-access-missing/,
+  );
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json(
+      { error: "invalid_client", error_description: "private provider details" },
+      { status: 401 },
+    ),
+  );
+  await assert.rejects(
+    () => exchangeCalendarCode("code", "verifier", "hr@via-int.com"),
+    /client-rejected/,
+  );
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json({ error: "invalid_grant" }, { status: 400 }),
+  );
+  await assert.rejects(
+    () => exchangeCalendarCode("code", "verifier", "hr@via-int.com"),
+    /code-rejected/,
   );
 });

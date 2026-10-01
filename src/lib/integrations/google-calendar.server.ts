@@ -1,6 +1,7 @@
 import "@tanstack/react-start/server-only";
 import { createHash } from "node:crypto";
 import * as z from "zod";
+import { GoogleConnectionError } from "./google-connection-result.ts";
 
 export const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events";
 export const GOOGLE_EMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.send";
@@ -72,20 +73,28 @@ export async function exchangeCalendarCode(code: string, verifier: string, accou
       grant_type: "authorization_code",
     }),
   });
-  if (!response.ok) throw new Error("Google did not accept the connection. Please reconnect.");
-  const tokens = Tokens.parse(await response.json());
-  if (!tokens.refresh_token || !tokens.scope?.split(" ").includes(GOOGLE_CALENDAR_SCOPE))
-    throw new Error("Google Calendar permission and offline access are required.");
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({}));
+    throw new GoogleConnectionError(
+      failure?.error === "invalid_client" ? "client-rejected" : "code-rejected",
+    );
+  }
+  const parsed = Tokens.safeParse(await response.json());
+  if (!parsed.success) throw new GoogleConnectionError("invalid-response");
+  const tokens = parsed.data;
+  if (!tokens.scope?.split(" ").includes(GOOGLE_CALENDAR_SCOPE))
+    throw new GoogleConnectionError("calendar-permission-missing");
+  if (!tokens.refresh_token) throw new GoogleConnectionError("offline-access-missing");
   const identityResponse = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
     headers: { Authorization: `Bearer ${tokens.access_token}` },
     signal: AbortSignal.timeout(20_000),
   });
-  if (!identityResponse.ok) throw new Error("The organising account could not be verified.");
+  if (!identityResponse.ok) throw new GoogleConnectionError("identity-failed");
   const identity = z
     .object({ email: z.string().email(), email_verified: z.literal(true) })
     .parse(await identityResponse.json());
   if (identity.email.trim().toLowerCase() !== accountEmail)
-    throw new Error(`Connect the ${accountEmail} Google account.`);
+    throw new GoogleConnectionError("account-mismatch");
   return {
     email: accountEmail,
     refreshToken: tokens.refresh_token,

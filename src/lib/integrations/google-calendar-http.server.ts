@@ -11,6 +11,7 @@ import {
 } from "../db/repositories/calendar-settings.repository.server.ts";
 import { appSettings } from "../db/schema/organisation.ts";
 import { googleAuthorisationPage } from "./google-authorisation-page.ts";
+import { GoogleConnectionError, googleConnectionResult } from "./google-connection-result.ts";
 import {
   googleCalendarConnections as connections,
   googleCalendarOAuthStates as states,
@@ -29,13 +30,20 @@ export async function resolveGoogleCalendarRequest(
   request: Request,
 ): Promise<Response | undefined> {
   const url = new URL(request.url);
+  if (url.pathname === "/auth/google-calendar/result" && request.method === "GET")
+    return googleConnectionResult(url.searchParams.get("result") ?? "connection-failed");
   const callback = url.pathname === "/auth/google-calendar/callback";
   const api = url.pathname === "/api/integrations/google-calendar";
   if (!callback && !api) return undefined;
   const redirect = (result: string) =>
     new Response(null, {
       status: 303,
-      headers: { ...headers, location: `${destination}?calendar=${result}` },
+      headers: {
+        ...headers,
+        location: callback
+          ? `/auth/google-calendar/result?result=${encodeURIComponent(result)}`
+          : `${destination}?calendar=${result}`,
+      },
     });
   try {
     const principal = await getPortalPrincipalForRequest(request);
@@ -113,7 +121,7 @@ export async function resolveGoogleCalendarRequest(
     }
     if (callback && request.method === "GET") {
       const state = url.searchParams.get("state") ?? "";
-      if (!/^[A-Za-z0-9_-]{43}$/.test(state)) return redirect("connection-failed");
+      if (!/^[A-Za-z0-9_-]{43}$/.test(state)) return redirect("approval-expired");
       const [pending] = await db
         .delete(states)
         .where(
@@ -126,7 +134,8 @@ export async function resolveGoogleCalendarRequest(
           ),
         )
         .returning();
-      if (!pending || url.searchParams.has("error")) return redirect("connection-failed");
+      if (!pending) return redirect("approval-expired");
+      if (url.searchParams.has("error")) return redirect("permission-declined");
       const code = url.searchParams.get("code");
       if (!code || code.length > 8_192) return redirect("connection-failed");
       const account = await exchangeCalendarCode(
@@ -141,7 +150,7 @@ export async function resolveGoogleCalendarRequest(
           .where(eq(appSettings.organisationId, principal.organisationId))
           .for("update");
         if (!settings || calendarEmailFromSettings(settings.additionalSettings) !== account.email)
-          throw new Error("Calendar account changed. Connect again.");
+          throw new GoogleConnectionError("account-changed");
         await tx
           .insert(connections)
           .values({
@@ -219,10 +228,17 @@ export async function resolveGoogleCalendarRequest(
       );
     }
     return Response.json({ error: "method_not_allowed" }, { status: 405, headers });
-  } catch {
+  } catch (error) {
     // Never log OAuth codes, token responses, request URLs or provider exceptions.
+    const reason =
+      error instanceof GoogleConnectionError
+        ? error.reason
+        : error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name)
+          ? "google-unavailable"
+          : "connection-failed";
+    if (callback) console.warn("Google connection callback failed", { reason });
     return callback
-      ? redirect("connection-failed")
+      ? redirect(reason)
       : Response.json(
           { error: "Calendar connection is unavailable. Contact your administrator." },
           { status: 503, headers },
