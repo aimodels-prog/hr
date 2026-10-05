@@ -228,7 +228,7 @@ const AttendanceDeviceMapping = z
     deviceId: z.string().uuid(),
     deviceUserId: z.string().trim().min(1).max(128),
     employeeId: z.string().uuid(),
-    reason: z.string().trim().min(5).max(1000),
+    reason: z.string().trim().max(1000).default(""),
   })
   .strict();
 export const mapAttendanceDeviceUserFn = createServerFn({ method: "POST" })
@@ -257,7 +257,7 @@ const ConfigureOffice = z
     longitude: z.number().min(-180).max(180),
     accuracyMeters: z.number().nonnegative().max(10_000),
     radiusMeters: z.number().int().min(25).max(10_000),
-    reason: z.string().trim().min(5).max(1000),
+    reason: z.string().trim().max(1000).default(""),
   })
   .strict();
 export const configureAttendanceOfficeFn = createServerFn({ method: "POST" })

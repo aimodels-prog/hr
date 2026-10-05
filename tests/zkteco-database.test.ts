@@ -108,7 +108,7 @@ test(
         hrActor,
       );
       const previousKeyId = process.env["VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID"];
-      await assert.rejects(
+      await assert.doesNotReject(
         saveAttendanceDeviceInDatabase(
           organisationId,
           {
@@ -117,12 +117,13 @@ test(
             code: "front-door",
             name: "Renamed terminal",
             locationId,
+            serialNumber: "SN-TEST-001",
+            model: "ZKTeco F18",
             isActive: true,
           },
           "",
           hrActor,
         ),
-        /Explain the device change/,
       );
       const previousKeys = process.env["VIA_HR_FIELD_ENCRYPTION_KEYS"];
       process.env["VIA_HR_ACTIVE_FIELD_ENCRYPTION_KEY_ID"] = "test";
@@ -187,7 +188,7 @@ test(
           model: "ZKTeco F18/ID",
           isActive: true,
         },
-        "Confirm the terminal model",
+        "",
         hrActor,
       );
       await assert.rejects(
@@ -293,8 +294,21 @@ test(
           deviceUserId: "terminal-unknown-7",
           employeeId: secondEmployeeId,
         },
-        "HR verified this terminal identity",
+        "",
         hrActor,
+      );
+      await assert.rejects(
+        mapAttendanceDeviceUserInDatabase(
+          organisationId,
+          {
+            deviceId,
+            deviceUserId: "terminal-unknown-7",
+            employeeId,
+          },
+          "",
+          hrActor,
+        ),
+        /reassigned/,
       );
       const afterMapping = await listAttendanceDeviceAdministration(organisationId, hrActor);
       assert.equal(afterMapping.unmatched.length, 0);

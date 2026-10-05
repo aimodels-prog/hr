@@ -805,8 +805,9 @@ export async function saveAttendanceDeviceInDatabase(
     throw new Error("Device code must contain 2-64 lowercase letters, numbers or hyphens.");
   }
   if (input.name.trim().length < 2) throw new Error("Enter the terminal name.");
-  if (input.id && reason.trim().length < 5) throw new Error("Explain the device change.");
-  reason = reason.trim() || "Attendance terminal registered";
+  reason =
+    reason.trim() ||
+    (input.id ? "Attendance terminal settings updated" : "Attendance terminal registered");
   const db = getDatabaseClient();
   return db.transaction(async (tx) => {
     const [location] = await tx
@@ -910,9 +911,11 @@ export async function mapAttendanceDeviceUserInDatabase(
 ): Promise<number> {
   requireAttendanceAdministrator(actor);
   if (!input.deviceUserId.trim()) throw new Error("Enter the terminal user ID.");
-  if (reason.trim().length < 5) throw new Error("Explain the employee mapping.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${organisationId + input.deviceId + input.deviceUserId.trim()}, 0))`,
+    );
     const [[device], [employee]] = await Promise.all([
       tx
         .select({ id: attendanceDevices.id })
@@ -950,6 +953,11 @@ export async function mapAttendanceDeviceUserInDatabase(
       .for("update")
       .limit(1);
     const id = existing?.id ?? randomUUID();
+    if (existing && existing.employeeId !== input.employeeId && reason.trim().length < 5)
+      throw new Error(
+        "Explain why this terminal identity is being reassigned to a different employee.",
+      );
+    reason = reason.trim() || "Terminal identity matched to employee after confirmation";
     if (existing) {
       await tx
         .update(attendanceDeviceEmployeeMappings)

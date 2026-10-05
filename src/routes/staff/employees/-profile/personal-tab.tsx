@@ -640,24 +640,32 @@ export function PersonalTab({
                         control={form.control}
                         name="changeReason"
                         render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>
-                              {personalReasonRequired(
-                                changedRecordFields({ ...employee }, form.watch()).filter(
-                                  (key) => key !== "changeReason",
-                                ),
-                              )
-                                ? "Reason for change *"
-                                : "Note (optional)"}
-                            </FormLabel>
-                            <FormControl>
-                              <Textarea
-                                placeholder="For example: Corrected after checking the employee's documents"
-                                {...field}
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
+                          <ChangeNote
+                            required={personalReasonRequired(
+                              changedRecordFields({ ...employee }, form.watch()).filter(
+                                (key) => key !== "changeReason",
+                              ),
+                            )}
+                          >
+                            <FormItem>
+                              <FormLabel>
+                                {personalReasonRequired(
+                                  changedRecordFields({ ...employee }, form.watch()).filter(
+                                    (key) => key !== "changeReason",
+                                  ),
+                                )
+                                  ? "Reason for change *"
+                                  : "Note (optional)"}
+                              </FormLabel>
+                              <FormControl>
+                                <Textarea
+                                  placeholder="For example: Corrected after checking the employee's documents"
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          </ChangeNote>
                         )}
                       />
                     )}
@@ -781,3 +789,4 @@ export function PersonalTab({
     </div>
   );
 }
+import { ChangeNote } from "@/components/ui/change-note";

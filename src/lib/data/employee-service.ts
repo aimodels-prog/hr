@@ -586,8 +586,15 @@ export class EmployeeService {
       throw new Error("Only HR or a Super Admin can change user access.");
     }
 
-    const trimmedReason = reason.trim();
-    if (trimmedReason.length < 5) {
+    const trimmedReason =
+      reason.trim() ||
+      (accessReasonRequired(target.roles, requestedRoles, target.status, status)
+        ? ""
+        : "User access updated by administrator");
+    if (
+      accessReasonRequired(target.roles, requestedRoles, target.status, status) &&
+      trimmedReason.length < 5
+    ) {
       throw new Error("Please give a short reason for this change.");
     }
 
@@ -1478,7 +1485,7 @@ export class EmployeeService {
     if (!employee) throw new Error("Employee not found.");
     const fields = changedRecordFields({ ...employee }, { ...changes });
     if (!fields.length) throw new Error("No personal details were changed.");
-    reason = changeReason(reason, personalReasonRequired(fields), "Contact details updated by HR");
+    reason = changeReason(reason, personalReasonRequired(fields), "Personal details updated by HR");
 
     return this.employeeRepo.update(employeeId, changes, {
       actor: actorContext.actor,
@@ -1680,3 +1687,4 @@ export class EmployeeService {
     );
   }
 }
+import { accessReasonRequired } from "./change-reason-policy.ts";

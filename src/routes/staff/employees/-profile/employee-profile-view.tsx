@@ -1786,23 +1786,30 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                     control={form.control}
                                     name="reason"
                                     render={({ field }) => (
-                                      <FormItem className="mt-4">
-                                        <FormLabel>
-                                          {employmentReasonRequired(
-                                            Object.keys(employmentFormChanges(form.watch())),
-                                            employee.employmentConfirmationStatus,
-                                          )
-                                            ? "Reason for change *"
-                                            : "Note (optional)"}
-                                        </FormLabel>
-                                        <FormControl>
-                                          <Textarea
-                                            placeholder="e.g. Annual promotion, Department restructure"
-                                            {...field}
-                                          />
-                                        </FormControl>
-                                        <FormMessage />
-                                      </FormItem>
+                                      <ChangeNote
+                                        required={employmentReasonRequired(
+                                          Object.keys(employmentFormChanges(form.watch())),
+                                          employee.employmentConfirmationStatus,
+                                        )}
+                                      >
+                                        <FormItem className="mt-4">
+                                          <FormLabel>
+                                            {employmentReasonRequired(
+                                              Object.keys(employmentFormChanges(form.watch())),
+                                              employee.employmentConfirmationStatus,
+                                            )
+                                              ? "Reason for change *"
+                                              : "Note (optional)"}
+                                          </FormLabel>
+                                          <FormControl>
+                                            <Textarea
+                                              placeholder="Add context if needed"
+                                              {...field}
+                                            />
+                                          </FormControl>
+                                          <FormMessage />
+                                        </FormItem>
+                                      </ChangeNote>
                                     )}
                                   />
                                 </div>
@@ -2347,3 +2354,4 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
     </div>
   );
 }
+import { ChangeNote } from "@/components/ui/change-note";

@@ -1687,16 +1687,16 @@ function AttendanceAdminContent() {
             </label>
             <div className="space-y-2 sm:col-span-2">
               <label htmlFor="attendance-terminal-reason" className="text-sm font-medium">
-                {editingDevice ? "Reason for change" : "Note (optional)"}
+                <span className="sr-only">Note (optional)</span>
               </label>
-              <Textarea
-                id="attendance-terminal-reason"
-                value={deviceReason}
-                onChange={(event) => setDeviceReason(event.target.value)}
-                placeholder={
-                  editingDevice ? "Why is this terminal changing?" : "Add a note if needed"
-                }
-              />
+              <ChangeNote>
+                <Textarea
+                  id="attendance-terminal-reason"
+                  value={deviceReason}
+                  onChange={(event) => setDeviceReason(event.target.value)}
+                  placeholder="Add a note if needed"
+                />
+              </ChangeNote>
             </div>
           </div>
           <DialogFooter>
@@ -1705,11 +1705,7 @@ function AttendanceAdminContent() {
             </Button>
             <Button
               disabled={
-                !deviceCode.trim() ||
-                !deviceName.trim() ||
-                !deviceLocationId ||
-                (Boolean(editingDevice) && deviceReason.trim().length < 5) ||
-                savingDevice
+                !deviceCode.trim() || !deviceName.trim() || !deviceLocationId || savingDevice
               }
               onClick={() => void saveDevice()}
             >
@@ -1756,9 +1752,9 @@ function AttendanceAdminContent() {
                 ]}
               />
             </div>
-            <div className="space-y-2">
+            <ChangeNote>
               <label htmlFor="attendance-terminal-mapping-reason" className="text-sm font-medium">
-                Reason
+                Note (required only when reassigning an existing identity)
               </label>
               <Textarea
                 id="attendance-terminal-mapping-reason"
@@ -1766,14 +1762,14 @@ function AttendanceAdminContent() {
                 onChange={(event) => setMappingReason(event.target.value)}
                 placeholder="Confirm how this terminal identity was verified"
               />
-            </div>
+            </ChangeNote>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setMappingPunch(null)}>
               Cancel
             </Button>
             <Button
-              disabled={!mappingEmployeeId || mappingReason.trim().length < 5 || savingMapping}
+              disabled={!mappingEmployeeId || savingMapping}
               onClick={() => void saveDeviceMapping()}
             >
               {savingMapping ? "Matching..." : "Confirm Match"}
@@ -1971,3 +1967,4 @@ function AttendanceAdminContent() {
     </div>
   );
 }
+import { ChangeNote } from "@/components/ui/change-note";

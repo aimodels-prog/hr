@@ -20,13 +20,49 @@ export function employmentReasonRequired(
     confirmationStatus ?? "",
   );
   if (initial) return false;
-  return fields.some((field) => !["location", "projectId", "costCentreId"].includes(field));
+  return fields.some(
+    (field) =>
+      ![
+        "location",
+        "projectId",
+        "costCentreId",
+        "department",
+        "departmentId",
+        "position",
+        "positionId",
+        "lineManagerId",
+      ].includes(field),
+  );
 }
 
 export function personalReasonRequired(fields: string[]): boolean {
   return fields.some(
     (field) =>
-      !["preferredName", "phone", "personalEmail", "address", "emergencyContacts"].includes(field),
+      ![
+        "preferredName",
+        "phone",
+        "personalEmail",
+        "address",
+        "emergencyContacts",
+        "dateOfBirth",
+        "gender",
+        "nationality",
+        "maritalStatus",
+        "dependants",
+      ].includes(field),
+  );
+}
+
+export function accessReasonRequired(
+  before: string[],
+  after: string[],
+  beforeStatus: string,
+  afterStatus: string,
+) {
+  return (
+    before.includes("Super Admin") !== after.includes("Super Admin") ||
+    (beforeStatus !== afterStatus &&
+      (before.includes("Super Admin") || after.includes("Super Admin")))
   );
 }
 

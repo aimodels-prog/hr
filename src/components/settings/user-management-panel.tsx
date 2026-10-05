@@ -351,27 +351,38 @@ export function UserManagementPanel() {
                 })}
               </div>
             </div>
-            <div>
+            <ChangeNote
+              required={
+                !!selected && accessReasonRequired(selected.roles, roles, selected.status, status)
+              }
+            >
               <label htmlFor="change-reason" className="text-sm font-medium">
-                Reason for change
+                {selected && accessReasonRequired(selected.roles, roles, selected.status, status)
+                  ? "Explain this Super Admin access change *"
+                  : "Note"}
               </label>
               <Textarea
                 id="change-reason"
                 value={reason}
                 onChange={(event) => setReason(event.target.value)}
-                placeholder="For example: Promoted to Finance Manager"
+                placeholder="Add context if needed"
                 className="mt-1.5 min-h-20"
               />
-              <p className="mt-1 text-xs text-muted-foreground">
-                This helps HR understand why access changed.
-              </p>
-            </div>
+            </ChangeNote>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSelected(null)}>
               Cancel
             </Button>
-            <Button onClick={save} disabled={saving || reason.trim().length < 5}>
+            <Button
+              onClick={save}
+              disabled={
+                saving ||
+                (!!selected &&
+                  accessReasonRequired(selected.roles, roles, selected.status, status) &&
+                  reason.trim().length < 5)
+              }
+            >
               {saving ? "Saving..." : "Save Changes"}
             </Button>
           </DialogFooter>
@@ -380,3 +391,5 @@ export function UserManagementPanel() {
     </Card>
   );
 }
+import { accessReasonRequired } from "@/lib/data/change-reason-policy";
+import { ChangeNote } from "@/components/ui/change-note";

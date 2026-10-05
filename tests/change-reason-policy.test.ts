@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   changedRecordFields,
+  accessReasonRequired,
   changeReason,
   employmentReasonRequired,
   personalReasonRequired,
@@ -30,28 +31,47 @@ test("initial assignment notes are optional but compensation always requires a r
     assert.equal(employmentReasonRequired(["position", "employmentType"], status), false);
     assert.equal(employmentReasonRequired(["salary"], status), true);
   }
-  for (const field of [
-    "salary",
-    "position",
-    "grade",
-    "employmentType",
-    "weeklyHours",
-    "lineManagerId",
-    "startDate",
-  ]) {
+  for (const field of ["salary", "grade", "employmentType", "weeklyHours", "startDate"]) {
     assert.equal(employmentReasonRequired(["location", field], "Confirmed"), true);
     assert.equal(employmentReasonRequired([field]), true);
   }
 });
 
-test("contact corrections are optional; sensitive personal changes still require explanation", () => {
+test("routine profile and family corrections are optional; legal identity changes require explanation", () => {
   assert.equal(
     personalReasonRequired(["phone", "address", "personalEmail", "emergencyContacts"]),
     false,
   );
-  for (const field of ["dateOfBirth", "nationality", "dependants", "legalName"]) {
+  for (const field of ["dateOfBirth", "nationality", "dependants", "gender", "maritalStatus"]) {
+    assert.equal(personalReasonRequired(["phone", field]), false);
+  }
+  for (const field of ["legalName"]) {
     assert.equal(personalReasonRequired(["phone", field]), true);
   }
+});
+
+test("routine employment and access edits need no explanation but Super Admin changes do", () => {
+  for (const field of [
+    "position",
+    "positionId",
+    "department",
+    "departmentId",
+    "lineManagerId",
+    "location",
+    "projectId",
+  ])
+    assert.equal(employmentReasonRequired([field], "Confirmed"), false);
+  assert.equal(accessReasonRequired(["Employee"], ["Employee", "HR"], "Active", "Active"), false);
+  assert.equal(
+    accessReasonRequired(["Employee"], ["Employee", "Super Admin"], "Active", "Active"),
+    true,
+  );
+  assert.equal(accessReasonRequired(["Super Admin"], ["Employee"], "Active", "Active"), true);
+  assert.equal(accessReasonRequired(["Super Admin"], ["Super Admin"], "Active", "Suspended"), true);
+  assert.equal(
+    accessReasonRequired(["Super Admin"], ["Super Admin", "Line Manager"], "Active", "Active"),
+    false,
+  );
 });
 
 test("only free training and standard HR mandatory assignments waive justification", () => {

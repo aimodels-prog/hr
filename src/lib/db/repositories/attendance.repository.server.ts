@@ -560,7 +560,6 @@ export async function configureAttendanceOfficeInDatabase(
     input.radiusMeters > 10_000
   )
     throw new Error("Office radius must be between 25 and 10,000 metres.");
-  if (reason.trim().length < 5) throw new Error("Explain why the office location is changing.");
   const db = getDatabaseClient();
   return db.transaction(async (tx) => {
     const [policy] = await tx
@@ -579,6 +578,9 @@ export async function configureAttendanceOfficeInDatabase(
       .for("update")
       .limit(1);
     if (!existing || !existing.isActive) throw new Error("Select an active VIA office location.");
+    if (existing.isClockInSite && reason.trim().length < 5)
+      throw new Error("Explain why the existing office attendance boundary is changing.");
+    reason = reason.trim() || "Office attendance location configured";
     const [updated] = await tx
       .update(locations)
       .set({

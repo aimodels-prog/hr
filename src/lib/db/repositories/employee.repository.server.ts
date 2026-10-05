@@ -424,7 +424,7 @@ export async function updatePersonalRecordInDatabase(
     if (!current) throw new Error("Employee not found.");
     fields = changedRecordFields({ ...current }, { ...changes });
     if (!fields.length) throw new Error("No personal details were changed.");
-    reason = changeReason(reason, personalReasonRequired(fields), "Contact details updated by HR");
+    reason = changeReason(reason, personalReasonRequired(fields), "Personal details updated by HR");
     await tx
       .update(employees)
       .set({
@@ -782,6 +782,11 @@ export async function updateUserAccessInDatabase(
       .where(and(eq(userRoles.organisationId, organisationId), eq(userRoles.userId, target.id)));
     const currentRoles = currentRoleRows.map((row) => row.code as Role);
     const desiredRoles = Array.from(new Set<Role>(["Employee", ...requestedRoles]));
+    reason = changeReason(
+      reason,
+      accessReasonRequired(currentRoles, desiredRoles, target.status, status),
+      "User access updated by administrator",
+    );
     if (actor.activeRole === "HR" && currentRoles.includes("Super Admin")) {
       throw new Error("Only a Super Admin can change a Super Admin account.");
     }
@@ -1955,3 +1960,4 @@ export async function createEmployeeInDatabase(
     return { employeeId: employee.id, userId: user.id };
   });
 }
+import { accessReasonRequired } from "../../data/change-reason-policy.ts";

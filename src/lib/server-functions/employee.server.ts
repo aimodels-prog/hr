@@ -113,7 +113,7 @@ const UserAccessInput = z
     userId: z.string().uuid(),
     roles: z.array(z.enum(ROLE_VALUES)),
     status: z.enum(["Active", "Suspended", "Archived"]),
-    reason: z.string().trim().min(5).max(500),
+    reason: z.string().trim().max(500).default(""),
   })
   .strict();
 
