@@ -99,6 +99,13 @@ const navigation: NavGroup[] = [
         requiredPermission: "timesheet:view_self",
       },
       {
+        title: "Time Away",
+        url: "/staff/time-away",
+        keywords: "hospital appointment absence personal time away team",
+        icon: Clock,
+        requiredPermission: "attendance:view_self",
+      },
+      {
         title: "My Travel",
         url: "/staff/travel",
         icon: Plane,

@@ -486,6 +486,9 @@ function MyAttendanceRoute() {
           }
         />
 
+        <Button asChild variant="outline" className="self-start">
+          <a href="/staff/time-away">Record / view time away</a>
+        </Button>
         {todayVisits.map((visit) => (
           <Alert key={visit.id}>
             <Navigation className="h-4 w-4" />

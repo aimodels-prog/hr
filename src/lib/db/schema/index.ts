@@ -16,3 +16,4 @@ export * from "./google-calendar.ts";
 export * from "./profile-photos.ts";
 export * from "./recruitment-mailboxes.ts";
 export * from "./workflow-email.ts";
+export * from "./time-away.ts";

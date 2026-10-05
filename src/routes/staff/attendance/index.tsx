@@ -660,6 +660,9 @@ function AttendanceAdminContent() {
         }
       />
 
+      <Button asChild variant="outline" className="self-start">
+        <a href="/staff/time-away">Time away / HR review</a>
+      </Button>
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {[
           ["Staff roster", employees.length],

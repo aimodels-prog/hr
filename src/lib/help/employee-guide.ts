@@ -2,6 +2,24 @@ import { article } from "./guide.ts";
 
 export const employeeGuide = [
   article(
+    "time-away",
+    "employee",
+    "Attendance",
+    "Record time away during work",
+    "Record appointments or personal absences after clocking in.",
+    "/staff/time-away",
+    "hospital appointment personal time away absence manager",
+    [
+      "Open My Attendance and choose Record / view time away. Choose the date, then Record time away.",
+      "Choose yourself, or a member of your team if you are using the Line Manager role. Enter departure and return times and a category. A note is optional; do not include medical details.",
+      "Submit for HR review. You can record an earlier date. If times are wrong, cancel the pending record and submit the correct times.",
+      "HR approves or rejects the record. Check the result and any instructions in the app notification. A rejected record can be submitted again with corrected details.",
+    ],
+    "Clock-in/out remains unchanged. Time away is recorded separately and does not automatically deduct salary or leave. Use Quick visit for official duties, not this form.",
+    ["Another HR reviewer must decide a record about themselves or one they submitted."],
+    "attendance:view_self",
+  ),
+  article(
     "profile-photo",
     "employee",
     "Your profile",

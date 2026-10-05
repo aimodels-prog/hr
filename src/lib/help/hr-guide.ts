@@ -2,6 +2,27 @@ import { article } from "./guide.ts";
 
 export const hrGuide = [
   article(
+    "hr-time-away",
+    "hr",
+    "Attendance",
+    "Review time away during work",
+    "Record substantial absences without changing original clock-in/out records.",
+    "/staff/time-away",
+    "hospital appointment personal absence paid unpaid leave time away",
+    [
+      "Open Manage attendance and choose Time away / HR review, or open the review notification. Choose the relevant date.",
+      "Check departure and return times. HR can record time away for any employee; line managers can record it for their team.",
+      "Choose Review, then approve as Paid time, Unpaid time or Leave. If rejecting, explain what needs correcting.",
+      "Unpaid time and Leave record your decision only. Process any payroll adjustment or leave request through its normal approval process; no amount or balance is automatically deducted.",
+      "Another HR reviewer must decide your own record or one you submitted. Pending records can be cancelled and re-entered if incorrect.",
+    ],
+    "The employee receives the decision in the app. Emails also follow the organisation's existing enabled email settings. Official visits remain working time in Quick Visit.",
+    [
+      "Check whether leave or a payroll adjustment still needs processing; recording a treatment is not a deduction.",
+    ],
+    "attendance:manage_all",
+  ),
+  article(
     "hr-family-documents",
     "hr",
     "Employee records",
