@@ -10,7 +10,7 @@ import { getDatabaseClient } from "../client.ts";
 import { readObjectFile, saveObjectFile } from "../object-storage.server.ts";
 import { documentVersions, employeeDocuments, fileMetadata } from "../schema/documents.ts";
 import { employees, roles, userRoles, users } from "../schema/employee.ts";
-import { auditEvents } from "../schema/system.ts";
+import { auditEvents, notifications } from "../schema/system.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 
 const documentTypes = new Set<DocumentType>([
@@ -59,6 +59,7 @@ export async function listEmployeeDocumentsForActor(
   return rows
     .filter(({ document, managerId }) => {
       if (actor.activeRole === "HR" || actor.activeRole === "Super Admin") return true;
+      if (document.employeeId === actor.employeeId) return true;
       if (
         ["visa", "work_permit"].includes(document.type) &&
         (!document.documentNumberEncrypted ||
@@ -67,7 +68,7 @@ export async function listEmployeeDocumentsForActor(
           !document.issuingAuthority)
       )
         return false;
-      if (document.employeeId === actor.employeeId) return true;
+      if (document.dependantId) return false;
       if (actor.activeRole === "Accounts" && document.type === "bank_evidence") return true;
       if (document.type === "insurance_card" || document.type === "insurance_benefits")
         return false;
@@ -86,6 +87,10 @@ export async function listEmployeeDocumentsForActor(
       ...(document.archivedAt ? { archivedAt: requiredIso(document.archivedAt) } : {}),
       recordVersion: document.recordVersion,
       employeeId: document.employeeId,
+      ...(document.dependantId ? { dependantId: document.dependantId } : {}),
+      ...(document.dependantDocumentKind
+        ? { dependantDocumentKind: document.dependantDocumentKind }
+        : {}),
       type: document.type,
       fileId: document.fileId,
       ...(document.documentNumberEncrypted
@@ -154,7 +159,7 @@ export async function decideEmployeeDocumentInDatabase(
     const expiryDate = verifiedDetails?.expiryDate;
     if (
       decision === "verify" &&
-      identityDocumentTypes.has(document.type) &&
+      (identityDocumentTypes.has(document.type) || !!document.dependantId) &&
       (!(documentNumber || document.documentNumberEncrypted) ||
         !(issuingAuthority || document.issuingAuthority) ||
         !(issueDate || document.issueDate) ||
@@ -188,9 +193,10 @@ export async function decideEmployeeDocumentInDatabase(
           : {}),
         ...(decision === "verify" && verifiedDetails?.visibility
           ? {
-              visibility: document.type.startsWith("insurance_")
-                ? ("Restricted" as const)
-                : verifiedDetails.visibility,
+              visibility:
+                document.dependantId || document.type.startsWith("insurance_")
+                  ? ("Restricted" as const)
+                  : verifiedDetails.visibility,
             }
           : {}),
         updatedAt: new Date(),
@@ -217,6 +223,42 @@ export async function decideEmployeeDocumentInDatabase(
       reason: decision === "reject" ? reason!.trim() : "Verified employee document",
       riskLevel: "High",
     } as typeof auditEvents.$inferInsert);
+    const recipients = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(
+        and(
+          eq(users.organisationId, organisationId),
+          eq(users.employeeId, document.employeeId),
+          eq(users.status, "Active"),
+          isNull(users.archivedAt),
+        ),
+      );
+    for (const recipient of recipients)
+      await tx
+        .insert(notifications)
+        .values({
+          organisationId,
+          recipientUserId: recipient.id,
+          type: `employee-document.${decision === "verify" ? "approved" : "rejected"}`,
+          title:
+            decision === "verify"
+              ? "HR verified your document"
+              : "Your document needs a replacement",
+          message:
+            decision === "verify"
+              ? `HR verified your ${document.dependantId ? "dependant's " : ""}${document.dependantDocumentKind ?? document.type} document. No further action is needed for this upload.`
+              : `HR could not verify your ${document.dependantId ? "dependant's " : ""}${document.dependantDocumentKind ?? document.type} document. Open Documents to read HR's explanation and upload a replacement.`,
+          link: {
+            entityType: "employee-document",
+            entityId: document.id,
+            path: "/staff/me/profile",
+          },
+          deduplicationKey: `document-decision:${document.id}:${decision}`,
+          createdBy: actor.userId!,
+          updatedBy: actor.userId!,
+        })
+        .onConflictDoNothing();
   });
 }
 
@@ -243,6 +285,7 @@ export async function readEmployeeDocumentInDatabase(
   if (!row) throw new Error("Employee document not found.");
   if (
     !["HR", "Super Admin"].includes(actor.activeRole) &&
+    row.document.employeeId !== actor.employeeId &&
     ["visa", "work_permit"].includes(row.document.type) &&
     (!row.document.documentNumberEncrypted ||
       !row.document.issueDate ||
@@ -254,8 +297,11 @@ export async function readEmployeeDocumentInDatabase(
     actor.activeRole === "HR" ||
     actor.activeRole === "Super Admin" ||
     row.document.employeeId === actor.employeeId ||
-    (actor.activeRole === "Accounts" && row.document.type === "bank_evidence") ||
+    (!row.document.dependantId &&
+      actor.activeRole === "Accounts" &&
+      row.document.type === "bank_evidence") ||
     (actor.activeRole === "Line Manager" &&
+      !row.document.dependantId &&
       !row.document.type.startsWith("insurance_") &&
       row.managerId === actor.employeeId &&
       row.document.visibility === "Public");
@@ -358,6 +404,8 @@ export async function uploadEmployeeDocumentToDatabase(
   input: {
     employeeId: string;
     type: DocumentType;
+    dependantId?: string;
+    dependantDocumentKind?: "passport" | "national_id" | "visa";
     fileName: string;
     mimeType: string;
     bytes: Uint8Array;
@@ -379,6 +427,11 @@ export async function uploadEmployeeDocumentToDatabase(
     throw new Error("You do not have permission to upload this employee document.");
   }
   if (!documentTypes.has(input.type)) throw new Error("Unsupported employee document type.");
+  if (
+    !!input.dependantId !== !!input.dependantDocumentKind ||
+    (input.dependantId && input.type !== "other")
+  )
+    throw new Error("Choose the dependant and family document type.");
   assertHrDocumentWrite(input.type, actor.activeRole);
   if (!input.fileName.trim() || input.bytes.byteLength === 0)
     throw new Error("A non-empty document is required.");
@@ -416,17 +469,26 @@ export async function uploadEmployeeDocumentToDatabase(
   try {
     await db.transaction(async (tx) => {
       const [employee] = await tx
-        .select({ id: employees.id })
+        .select({
+          id: employees.id,
+          dependants: employees.dependants,
+          preferredName: employees.preferredName,
+          legalName: employees.legalName,
+        })
         .from(employees)
         .where(
           and(eq(employees.organisationId, organisationId), eq(employees.id, input.employeeId)),
         )
         .limit(1);
       if (!employee) throw new Error("Employee not found.");
+      if (input.dependantId && !employee.dependants?.some((d) => d.id === input.dependantId))
+        throw new Error("Save this dependant's details before uploading their documents.");
       await tx.insert(employeeDocuments).values({
         id: documentId,
         organisationId,
         employeeId: input.employeeId,
+        dependantId: input.dependantId,
+        dependantDocumentKind: input.dependantDocumentKind,
         type: input.type,
         fileId,
         documentNumberEncrypted: input.documentNumber
@@ -437,9 +499,10 @@ export async function uploadEmployeeDocumentToDatabase(
         issuingAuthority: input.issuingAuthority,
         issuingCountry: input.issuingCountry,
         notes: input.notes,
-        visibility: input.type.startsWith("insurance_")
-          ? "Restricted"
-          : (input.visibility ?? "Restricted"),
+        visibility:
+          input.dependantId || input.type.startsWith("insurance_")
+            ? "Restricted"
+            : (input.visibility ?? "Restricted"),
         status: "Pending Verification",
         createdBy: actor.userId,
         updatedBy: actor.userId,
@@ -473,6 +536,42 @@ export async function uploadEmployeeDocumentToDatabase(
         reason: "Uploaded an employee document",
         riskLevel: "High",
       } as typeof auditEvents.$inferInsert);
+      const reviewers = await tx
+        .selectDistinct({ id: users.id })
+        .from(users)
+        .innerJoin(
+          userRoles,
+          and(eq(userRoles.userId, users.id), eq(userRoles.organisationId, organisationId)),
+        )
+        .innerJoin(roles, eq(roles.id, userRoles.roleId))
+        .where(
+          and(
+            eq(users.organisationId, organisationId),
+            eq(users.status, "Active"),
+            isNull(users.archivedAt),
+            sql`${roles.code} IN ('HR','Super Admin')`,
+            sql`${users.employeeId} <> ${input.employeeId}`,
+          ),
+        );
+      for (const reviewer of reviewers)
+        await tx
+          .insert(notifications)
+          .values({
+            organisationId,
+            recipientUserId: reviewer.id,
+            type: "employee-document.approval_required",
+            title: "Document uploaded — HR verification required",
+            message: `${employee.preferredName || employee.legalName} has a new ${input.dependantId ? "family " : ""}${input.dependantDocumentKind ?? input.type} document awaiting HR verification. Open Documents to check the file, complete the official details and verify or return it.`,
+            link: {
+              entityType: "employee-document",
+              entityId: documentId,
+              path: `/staff/employees/${input.employeeId}`,
+            },
+            deduplicationKey: `document-upload:${documentId}`,
+            createdBy: actor.userId!,
+            updatedBy: actor.userId!,
+          })
+          .onConflictDoNothing();
     });
     return documentId;
   } catch (error) {
@@ -595,6 +694,8 @@ export async function replaceEmployeeDocumentInDatabase(
         id: replacementId,
         organisationId,
         employeeId: old.employeeId,
+        dependantId: old.dependantId,
+        dependantDocumentKind: old.dependantDocumentKind,
         type: old.type,
         fileId,
         documentNumberEncrypted: input.documentNumber
@@ -605,9 +706,10 @@ export async function replaceEmployeeDocumentInDatabase(
         issuingAuthority: input.issuingAuthority ?? old.issuingAuthority,
         issuingCountry: input.issuingCountry ?? old.issuingCountry,
         notes: input.notes ?? old.notes,
-        visibility: old.type.startsWith("insurance_")
-          ? "Restricted"
-          : (input.visibility ?? old.visibility),
+        visibility:
+          old.dependantId || old.type.startsWith("insurance_")
+            ? "Restricted"
+            : (input.visibility ?? old.visibility),
         status: "Pending Verification",
         createdBy: actor.userId,
         updatedBy: actor.userId,

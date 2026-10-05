@@ -94,6 +94,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { OverviewTab } from "./overview-tab";
 import { PersonalTab } from "./personal-tab";
+import { ProfilePhoto } from "@/components/employees/profile-photo";
 import { DocumentsTab } from "./documents-tab";
 import { OnboardingOffboardingTab } from "./onboarding-offboarding-tab";
 import { LeaveTab } from "./leave-tab";
@@ -797,9 +798,16 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
         <div className="absolute -right-16 -top-28 h-72 w-72 rounded-full border-[46px] border-white/5" />
         <div className="relative flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex min-w-0 flex-col gap-5 sm:flex-row sm:items-center">
-            <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl border border-white/20 bg-white/12 font-display text-2xl font-bold shadow-inner backdrop-blur-sm">
-              {initials}
-            </div>
+            <ProfilePhoto
+              employeeId={(employee as { databaseId?: string }).databaseId ?? employee.id}
+              name={employee.legalName}
+              initials={initials}
+              editable={
+                isSelf ||
+                currentUser.activeRole === "HR" ||
+                currentUser.activeRole === "Super Admin"
+              }
+            />
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="truncate font-display text-3xl font-bold tracking-[-0.04em] sm:text-4xl">
@@ -2094,7 +2102,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
           </TabsContent>
 
           <TabsContent value="documents" className="mt-0">
-            <DocumentsTab employeeId={employeeId} />
+            <DocumentsTab employeeId={employeeId} dependants={employee?.dependants ?? []} />
           </TabsContent>
 
           <TabsContent value="leave" className="mt-0">
@@ -2178,6 +2186,16 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                         <div className="font-medium">{d.name}</div>
                         <div className="text-muted-foreground">{d.relationship}</div>
                         <div>{d.dateOfBirth}</div>
+                        <div>
+                          Phone: {d.phone || "Missing — add a contact or guardian's number"}
+                        </div>
+                        <div>Nationality: {d.nationality || "Missing"}</div>
+                        {d.email && <div>{d.email}</div>}
+                        <div>Visa required: {d.visaRequired || "Not confirmed"}</div>
+                        <p className="mt-2 text-muted-foreground">
+                          Upload passport/ID and any required visa under Documents, selecting this
+                          dependant.
+                        </p>
                       </div>
                     ))}
                   </div>

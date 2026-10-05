@@ -37,8 +37,9 @@ export function LiveAttendanceCard() {
   const stale = elapsed > 120_000;
   const now = data ? Date.parse(data.serverNow) + Math.min(elapsed, 120_000) : 0;
   const record = data?.record ?? null;
-  const status =
-    record?.clockOutAt && Date.parse(record.clockOutAt) <= now
+  const status = record?.officeExceptionLabel
+    ? record.officeExceptionLabel
+    : record?.clockOutAt && Date.parse(record.clockOutAt) <= now
       ? "Clocked out"
       : record?.clockInAt && Date.parse(record.clockInAt) <= now
         ? "Working"

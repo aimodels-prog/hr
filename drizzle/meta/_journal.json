@@ -407,6 +407,41 @@
       "when": 1790769603000,
       "tag": "0057_editable_reminder_rules",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1791173641653,
+      "tag": "0058_office_exceptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1791180558625,
+      "tag": "0059_recruitment_mailboxes",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1791185712832,
+      "tag": "0060_dependant_documents",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1791188018795,
+      "tag": "0061_employee_profile_photos",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1791189364918,
+      "tag": "0062_shared_insurance_benefits",
+      "breakpoints": true
     }
   ]
 }

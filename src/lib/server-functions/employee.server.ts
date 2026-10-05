@@ -1,3 +1,4 @@
+import { dependantSchema } from "../data/dependants.ts";
 import { createServerFn } from "@tanstack/react-start";
 import * as z from "zod";
 
@@ -204,17 +205,7 @@ const EmployeeInput = z
           .strict(),
       )
       .optional(),
-    dependants: z
-      .array(
-        z
-          .object({
-            name: z.string().trim().min(1),
-            relationship: z.string().trim().min(1),
-            dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-          })
-          .strict(),
-      )
-      .optional(),
+    dependants: z.array(dependantSchema).max(20).optional(),
     dateOfBirth: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)

@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { officeCredits } from "./office-exception.repository.server.ts";
 import { recordedDailyHours, recordedAttendanceHours } from "../../data/recorded-hours.ts";
 import { getAttendanceTrackingPolicy } from "./attendance-tracking.repository.server.ts";
 import { isAttendanceTracked } from "../../data/attendance-tracking.ts";
@@ -235,13 +236,34 @@ export async function getWorkforceAnalytics(
         : [],
     ]);
   const tracking = await getAttendanceTrackingPolicy(organisationId);
+  const effectiveRecords: Array<(typeof records)[number] & { creditedHours?: number }> = [
+    ...records,
+  ];
+  for (const credit of await officeCredits(organisationId, ids, startDate, today)) {
+    const index = effectiveRecords.findIndex(
+      (r) => r.employeeId === credit.employeeId && r.date === credit.date,
+    );
+    const original = effectiveRecords[index];
+    const row = {
+      ...original,
+      employeeId: credit.employeeId,
+      date: credit.date,
+      clockInAt: original?.clockInAt ?? null,
+      clockOutAt: original?.clockOutAt ?? null,
+      status: "Present" as const,
+      calculatedHours: String(credit.hours),
+      creditedHours: credit.hours,
+    };
+    if (index >= 0) effectiveRecords[index] = row;
+    else effectiveRecords.push(row);
+  }
   const daily = calculateAttendanceAnalytics({
     tracking,
     dates,
     employees: people,
     workingDays: settings.workingDays,
     dailyHours,
-    records: records.map((record) => ({
+    records: effectiveRecords.map((record) => ({
       ...record,
       calculatedHours: recordedAttendanceHours(record),
     })),
@@ -274,7 +296,7 @@ export async function getWorkforceAnalytics(
       date: today,
       now: at,
       people,
-      records,
+      records: effectiveRecords,
       leave,
       pendingVisits,
       tracking,

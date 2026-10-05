@@ -1,4 +1,5 @@
 export interface LiveAttendanceRecord {
+  creditedHours?: number | undefined;
   clockInAt: string | null;
   clockOutAt: string | null;
   breakMinutes: number;
@@ -8,6 +9,7 @@ export interface LiveAttendanceRecord {
 
 /** Display only: never writes attendance or approves overtime. */
 export function workedMinutes(record: LiveAttendanceRecord | null, now: number): number {
+  if (record?.creditedHours !== undefined) return Math.round(record.creditedHours * 60);
   if (!record?.clockInAt) return 0;
   const start = Date.parse(record.clockInAt);
   const end = record.clockOutAt ? Math.min(now, Date.parse(record.clockOutAt)) : now;

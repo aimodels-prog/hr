@@ -7,6 +7,8 @@ import { resolveHealthRequest } from "./lib/health.server";
 import { addSecurityHeaders, enforceRequestSecurity } from "./lib/http-security.server";
 import { resolvePortalAuthenticationRequest } from "./lib/auth/portal-auth-http.server";
 import { resolveGoogleCalendarRequest } from "./lib/integrations/google-calendar-http.server";
+import { resolveProfilePhotoRequest } from "./lib/profile-photo-http.server";
+import { resolveRecruitmentMailboxRequest } from "./lib/integrations/recruitment-mailbox-http.server";
 import { resolvePublicRecruitmentRequest } from "./lib/recruitment/public-recruitment-http.server";
 import { resolveAppSurfaceRequest } from "./lib/app-surface.server";
 import { resolveZktecoIntegrationRequest } from "./lib/integrations/zkteco-http.server";
@@ -84,7 +86,11 @@ export default {
       const publicRecruitmentResponse = await resolvePublicRecruitmentRequest(request);
       if (publicRecruitmentResponse) return addSecurityHeaders(request, publicRecruitmentResponse);
       const calendarResponse = await resolveGoogleCalendarRequest(request);
+      const photoResponse = await resolveProfilePhotoRequest(request);
+      if (photoResponse) return addSecurityHeaders(request, photoResponse);
       if (calendarResponse) return addSecurityHeaders(request, calendarResponse);
+      const mailboxResponse = await resolveRecruitmentMailboxRequest(request);
+      if (mailboxResponse) return addSecurityHeaders(request, mailboxResponse);
       const authenticationResponse = await resolvePortalAuthenticationRequest(request);
       if (authenticationResponse) return addSecurityHeaders(request, authenticationResponse);
 

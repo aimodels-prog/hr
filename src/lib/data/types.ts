@@ -159,7 +159,7 @@ export interface Employee extends BaseRecord {
   address?: string | undefined;
   emergencyContacts?:
     { name: string; relationship: string; phone: string; email?: string }[] | undefined;
-  dependants?: { name: string; relationship: string; dateOfBirth: string }[] | undefined;
+  dependants?: import("./dependants.ts").Dependant[] | undefined;
 
   // Personal details - standard across every HRIS, used for benefits eligibility,
   // statutory/diversity reporting, and (nationality) work-permit/quota compliance.
@@ -205,6 +205,8 @@ export type DocumentVisibility = "Public" | "Restricted";
 export type DocumentStatus = "Pending Verification" | "Valid" | "Rejected" | "Replaced"; // Missing and Expiring/Expired will be computed dynamically
 
 export interface EmployeeDocument extends BaseRecord {
+  dependantId?: string;
+  dependantDocumentKind?: import("./dependants.ts").DependantDocumentKind;
   employeeId: RecordId;
   type: DocumentType;
   fileId: string; // Required for all actual documents (missing ones are computed)

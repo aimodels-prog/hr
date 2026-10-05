@@ -589,6 +589,7 @@ export const createAssessmentBatchFn = createServerFn({ method: "POST" })
         actor: RecruitmentActor,
         vacancyId: z.string().uuid(),
         targetSize: z.number().int().min(1),
+        sourceFilter: z.enum(["all", "portal", "email", "manual", "referral"]).optional(),
       })
       .strict()
       .parse(input),
@@ -600,6 +601,7 @@ export const createAssessmentBatchFn = createServerFn({ method: "POST" })
       data.vacancyId,
       data.targetSize,
       verified.actor,
+      data.sourceFilter,
     );
   });
 

@@ -194,6 +194,7 @@ export class CandidatePreparationService {
     vacancyId: string,
     targetSize: number,
     context: ActorContext,
+    sourceFilter: import("../recruitment/cv-source-filter.ts").CvSourceFilter = "all",
   ): Promise<CandidateAssessmentBatch> {
     const { createAssessmentBatchFn } = await import("../server-functions/candidate.server.ts");
     const id = await createAssessmentBatchFn({
@@ -201,6 +202,7 @@ export class CandidatePreparationService {
         actor: this.serverActor(context),
         vacancyId: this.databaseVacancyId(vacancyId),
         targetSize,
+        sourceFilter,
       },
     });
     await this.refreshFromDatabase(context);

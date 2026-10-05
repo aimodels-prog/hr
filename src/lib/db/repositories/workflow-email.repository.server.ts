@@ -4,6 +4,7 @@ import { getDatabaseClient } from "../client.ts";
 import { decryptSensitiveJson } from "../encryption.server.ts";
 import { calendarAccessToken } from "../../integrations/google-calendar.server.ts";
 import { missingClockoutEmailDate } from "./missing-clockout.repository.server.ts";
+import { dependantCompletionStillMissing } from "./dependant-reminder.repository.server.ts";
 import { sendWorkflowEmail, WorkflowEmailError } from "../../integrations/workflow-email.server.ts";
 
 /** Mirrors durable workflow notifications; does not send historic backlog on first connection. */
@@ -14,7 +15,7 @@ export async function enqueueWorkflowEmails() {
     SELECT n.id,n.organisation_id FROM notifications n
     JOIN google_calendar_connections c ON c.organisation_id=n.organisation_id AND c.email_enabled_at IS NOT NULL
     JOIN users u ON u.id=n.recipient_user_id AND u.organisation_id=n.organisation_id AND u.status='Active' AND u.archived_at IS NULL
-    WHERE n.archived_at IS NULL AND n.created_at>=c.email_enabled_at
+    WHERE n.archived_at IS NULL AND n.status<>'Dismissed' AND n.created_at>=c.email_enabled_at
       AND n.type NOT IN ('attendance.sign_out','attendance.sign_out_reminder')
       AND (n.type='workflow.request_update' OR NOT EXISTS (
         SELECT 1 FROM notifications receipt WHERE receipt.type='workflow.request_update'
@@ -46,10 +47,10 @@ export async function processWorkflowEmails() {
     const org = String(claimed["organisation_id"]);
     try {
       const [recipient] =
-        await db.execute(sql`SELECT u.workspace_email,c.refresh_token_encrypted,c.account_email,n.type FROM notifications n
+        await db.execute(sql`SELECT u.id AS recipient_id,u.workspace_email,c.refresh_token_encrypted,c.account_email,n.type,n.title,n.message,n.link FROM notifications n
         JOIN users u ON u.id=n.recipient_user_id AND u.organisation_id=n.organisation_id AND u.status='Active' AND u.archived_at IS NULL
         JOIN google_calendar_connections c ON c.organisation_id=n.organisation_id AND c.email_enabled_at IS NOT NULL
-        WHERE n.id=${id}::uuid AND n.organisation_id=${org}::uuid AND n.archived_at IS NULL`);
+        WHERE n.id=${id}::uuid AND n.organisation_id=${org}::uuid AND n.archived_at IS NULL AND n.status<>'Dismissed'`);
       if (!recipient) {
         await db.execute(
           sql`UPDATE workflow_notification_emails SET status='Skipped',last_error='Recipient or authorised sender is no longer available.',updated_at=now() WHERE notification_id=${id}::uuid`,
@@ -57,6 +58,15 @@ export async function processWorkflowEmails() {
         continue;
       }
       let token: string;
+      if (
+        recipient["type"] === "dependants.missing_information_reminder" &&
+        !(await dependantCompletionStillMissing(org, String(recipient["recipient_id"])))
+      ) {
+        await db.execute(
+          sql`UPDATE workflow_notification_emails SET status='Skipped',last_error='Family information is already complete.',updated_at=now() WHERE notification_id=${id}::uuid`,
+        );
+        continue;
+      }
       try {
         token = await calendarAccessToken(
           decryptSensitiveJson<string>(String(recipient["refresh_token_encrypted"])),
@@ -84,6 +94,12 @@ export async function processWorkflowEmails() {
         id,
         String(recipient["account_email"]),
         date ?? undefined,
+        {
+          title: String(recipient["title"]),
+          message: String(recipient["message"]),
+          type: String(recipient["type"]),
+          path: (recipient["link"] as { path?: string } | null)?.path,
+        },
       );
       await db.execute(
         sql`UPDATE workflow_notification_emails SET status='Sent',provider_message_id=${reference},sent_at=now(),last_error=NULL,updated_at=now() WHERE notification_id=${id}::uuid`,

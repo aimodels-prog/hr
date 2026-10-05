@@ -23,6 +23,29 @@ import { activityCodes, costCentres, locations, projects } from "./master-data.t
 import { organisations } from "./organisation.ts";
 import { payrollPeriods } from "./travel-payroll.ts";
 
+export const officeExceptions = pgTable(
+  "office_exceptions",
+  {
+    ...mutableRecordColumns,
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "restrict" }),
+    title: text("title").notNull(),
+    kind: text("kind").notNull(),
+    startDate: date("start_date", { mode: "string" }).notNull(),
+    endDate: date("end_date", { mode: "string" }).notNull(),
+    employeeIds: uuid("employee_ids").array().notNull(),
+    scopeLabel: text("scope_label").notNull(),
+    dailyHours: numeric("daily_hours", { precision: 5, scale: 2 }).notNull(),
+    countAsWorked: boolean("count_as_worked").notNull(),
+  },
+  (t) => [
+    index("office_exceptions_org_dates_idx").on(t.organisationId, t.startDate, t.endDate),
+    check("office_exceptions_date_order", sql`${t.endDate} >= ${t.startDate}`),
+    check("office_exceptions_hours", sql`${t.dailyHours} > 0 AND ${t.dailyHours} <= 24`),
+  ],
+);
+
 export const timesheetSettings = pgTable(
   "timesheet_settings",
   {

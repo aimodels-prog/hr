@@ -94,6 +94,10 @@ export const employeeDocuments = pgTable(
       .notNull()
       .references(() => employees.id, { onDelete: "restrict" }),
     type: documentType("type").notNull(),
+    dependantId: uuid("dependant_id"),
+    dependantDocumentKind: text("dependant_document_kind").$type<
+      "passport" | "national_id" | "visa"
+    >(),
     fileId: uuid("file_id")
       .notNull()
       .references(() => fileMetadata.id, { onDelete: "restrict" }),

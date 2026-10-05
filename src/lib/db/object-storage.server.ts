@@ -269,6 +269,7 @@ export async function readObjectFile(
   fileId: string,
   actor: FileAuditActor,
   reason: string,
+  riskLevel: "Low" | "Medium" | "High" = "High",
 ): Promise<{ metadata: FileMetadata; bytes: Uint8Array }> {
   const metadata = await verifyObjectFile(organisationId, fileId);
   const db = getDatabaseClient();
@@ -300,7 +301,7 @@ export async function readObjectFile(
     entityType: "file",
     entityId: fileId,
     reason,
-    riskLevel: "High",
+    riskLevel,
   });
   return { metadata, bytes };
 }

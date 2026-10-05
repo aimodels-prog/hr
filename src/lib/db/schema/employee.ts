@@ -154,7 +154,7 @@ export const employees = pgTable(
       .notNull()
       .default([]),
     dependants: jsonb("dependants")
-      .$type<Array<{ name: string; relationship: string; dateOfBirth: string }>>()
+      .$type<import("../../data/dependants.ts").Dependant[]>()
       .notNull()
       .default([]),
     dateOfBirth: date("date_of_birth", { mode: "string" }),

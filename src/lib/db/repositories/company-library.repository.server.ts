@@ -1,9 +1,9 @@
 import "@tanstack/react-start/server-only";
 import { randomUUID } from "node:crypto";
-import { and, eq, desc, inArray, sql } from "drizzle-orm";
+import { and, eq, desc, inArray, sql, isNull } from "drizzle-orm";
 import { getDatabaseClient } from "../client.ts";
 import { companyLibrary as docs } from "../schema/company-library.ts";
-import { users, userRoles, roles } from "../schema/employee.ts";
+import { users, userRoles, roles, employees } from "../schema/employee.ts";
 import { notifications, auditEvents } from "../schema/system.ts";
 import { decryptSensitiveJson, encryptSensitiveJson } from "../encryption.server.ts";
 import { saveObjectFile, readObjectFile, deleteObjectFile } from "../object-storage.server.ts";
@@ -17,6 +17,17 @@ import type { AuditActorContext } from "./master-data.repository.server.ts";
 
 export function libraryHr(actor: AuditActorContext) {
   return ["HR", "Super Admin"].includes(actor.activeRole ?? "");
+}
+export async function libraryEmployeeOptions(org: string, actor: AuditActorContext) {
+  requireHr(actor);
+  return getDatabaseClient()
+    .select({ id: employees.id, name: employees.legalName, email: employees.workEmail })
+    .from(employees)
+    .where(and(eq(employees.organisationId, org), isNull(employees.archivedAt)))
+    .orderBy(employees.legalName);
+}
+function audienceAccess(actor: AuditActorContext) {
+  return sql`(${docs.audience} = 'All staff' OR (${docs.kind} = 'Insurance' AND ${docs.audience} = 'Selected employees' AND ${actor.employeeId ?? null}::uuid = ANY(${docs.employeeIds})))`;
 }
 function requireHr(actor: AuditActorContext) {
   if (!libraryHr(actor) || !actor.userId) throw new Error("Only HR can manage company documents.");
@@ -49,6 +60,7 @@ export async function libraryList(org: string, actor: AuditActorContext) {
       category: docs.category,
       kind: docs.kind,
       audience: docs.audience,
+      employeeIds: docs.employeeIds,
       status: docs.status,
       processing: docs.processing,
       issueDate: docs.issueDate,
@@ -61,14 +73,14 @@ export async function libraryList(org: string, actor: AuditActorContext) {
         ...(libraryHr(actor)
           ? []
           : [
-              eq(docs.kind, "Library"),
-              eq(docs.audience, "All staff"),
+              inArray(docs.kind, ["Library", "Insurance"]),
+              audienceAccess(actor),
               eq(docs.status, "Published"),
             ]),
       ),
     )
     .orderBy(desc(docs.createdAt));
-  return rows;
+  return rows.map((row) => ({ ...row, employeeIds: libraryHr(actor) ? row.employeeIds : [] }));
 }
 async function accessible(org: string, id: string, actor: AuditActorContext) {
   const [doc] = await getDatabaseClient()
@@ -79,7 +91,15 @@ async function accessible(org: string, id: string, actor: AuditActorContext) {
   if (
     !doc ||
     (!libraryHr(actor) &&
-      (doc.kind !== "Library" || doc.audience !== "All staff" || doc.status !== "Published"))
+      (!["Library", "Insurance"].includes(doc.kind) ||
+        doc.status !== "Published" ||
+        !(
+          doc.audience === "All staff" ||
+          (doc.kind === "Insurance" &&
+            doc.audience === "Selected employees" &&
+            !!actor.employeeId &&
+            doc.employeeIds.includes(actor.employeeId))
+        )))
   )
     throw new Error("This document is not available to you.");
   return doc;
@@ -93,8 +113,9 @@ export async function libraryUpload(
   input: {
     title: string;
     category: string;
-    kind: "Library" | "Company";
-    audience: "All staff" | "HR only";
+    kind: "Library" | "Company" | "Insurance";
+    audience: "All staff" | "HR only" | "Selected employees";
+    employeeIds?: string[] | undefined;
     familyId?: string | undefined;
     issueDate?: string | undefined;
     expiryDate?: string | undefined;
@@ -104,6 +125,23 @@ export async function libraryUpload(
   actor: AuditActorContext,
 ) {
   requireHr(actor);
+  const employeeIds = [...new Set(input.employeeIds ?? [])];
+  if (input.audience === "Selected employees") {
+    if (input.kind !== "Insurance" || !employeeIds.length)
+      throw new Error("Select at least one employee for this insurance scheme.");
+    const matches = await getDatabaseClient()
+      .select({ id: employees.id })
+      .from(employees)
+      .where(
+        and(
+          eq(employees.organisationId, org),
+          isNull(employees.archivedAt),
+          inArray(employees.id, employeeIds),
+        ),
+      );
+    if (matches.length !== employeeIds.length)
+      throw new Error("Select employees from your organisation.");
+  }
   if (input.expiryDate && input.issueDate && input.expiryDate < input.issueDate)
     throw new Error("Expiry must not precede issue date.");
   if (Buffer.from(input.bytes.subarray(0, 5)).toString() !== "%PDF-")
@@ -138,6 +176,7 @@ export async function libraryUpload(
         category: input.category,
         kind: input.kind,
         audience: input.kind === "Company" ? "HR only" : input.audience,
+        employeeIds: input.audience === "Selected employees" ? employeeIds : [],
         issueDate: input.issueDate,
         expiryDate: input.expiryDate,
         fileId: file.id,

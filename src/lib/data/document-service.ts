@@ -303,16 +303,16 @@ export class DocumentService {
   ): Promise<EmployeeDocument> {
     this.assertCanManage(employeeId, actorContext);
     if (
-      ["visa", "work_permit"].includes(metadata.type) &&
+      ["work_permit", "insurance_benefits"].includes(metadata.type) &&
       !["HR", "Super Admin"].includes(actorContext.actor.activeRole ?? "Employee")
     )
-      throw new Error("Only HR can upload or change visa and work-permit documents.");
+      throw new Error("Only HR can upload work permits and Tables of Benefits.");
     if (fileBlob.size === 0) throw new Error("The selected document is empty.");
     if (fileBlob.size > MAX_DOCUMENT_SIZE) throw new Error("Documents cannot exceed 10 MB.");
     if (!ALLOWED_DOCUMENT_TYPES.has(fileBlob.type)) {
       throw new Error("Documents must be PDF, JPG or PNG files.");
     }
-    assertValidDocumentMetadata(metadata);
+    if (metadata.type !== "visa" || metadata.documentNumber) assertValidDocumentMetadata(metadata);
 
     if (typeof window !== "undefined") {
       const { storage } = getApplicationDataServices();
@@ -326,6 +326,10 @@ export class DocumentService {
           actor: await this.serverActor(actorContext),
           employeeId: employee?.databaseId ?? employeeId,
           type: metadata.type,
+          ...(metadata.dependantId ? { dependantId: metadata.dependantId } : {}),
+          ...(metadata.dependantDocumentKind
+            ? { dependantDocumentKind: metadata.dependantDocumentKind }
+            : {}),
           fileName: filename,
           mimeType: fileBlob.type as "application/pdf" | "image/jpeg" | "image/png",
           bytes: Array.from(new Uint8Array(await fileBlob.arrayBuffer())),

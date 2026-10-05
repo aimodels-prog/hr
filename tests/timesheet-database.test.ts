@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { saveOfficeException } from "../src/lib/db/repositories/office-exception.repository.server.ts";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
@@ -133,6 +134,22 @@ test(
         date.setUTCDate(date.getUTCDate() + offset);
         const workDate = date.toISOString().slice(0, 10);
         hours[workDate] = 9;
+        if (offset === 0) {
+          await saveOfficeException(
+            organisationId,
+            {
+              title: "Team training day",
+              kind: "Training",
+              startDate: workDate,
+              endDate: workDate,
+              scope: "Employees",
+              employeeIds: [employeeId],
+              countAsWorked: true,
+            },
+            hrActor,
+          );
+          continue;
+        }
         await sql`INSERT INTO attendance_records (id,organisation_id,employee_id,date,clock_in_at,clock_out_at,break_minutes,source,status,calculated_hours,created_by,updated_by) VALUES (${randomUUID()},${organisationId},${employeeId},${workDate},${`${workDate}T08:00:00.000Z`},${`${workDate}T17:00:00.000Z`},60,'Web','Present',8,${employeeUserId},${employeeUserId})`;
       }
       await saveTimesheetDraftInDatabase(

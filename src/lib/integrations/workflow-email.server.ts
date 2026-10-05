@@ -10,31 +10,47 @@ export class WorkflowEmailError extends Error {
     super(message);
   }
 }
+export interface WorkflowEmailContext {
+  title: string;
+  message: string;
+  path?: string | undefined;
+  type?: string;
+}
+export function workflowEmailDestination(origin: string, path?: string): string {
+  if (!path || !path.startsWith("/staff/") || path.includes("\\") || /[\r\n]/.test(path))
+    return `${origin}/staff/requests`;
+  const target = new URL(path, origin);
+  return target.origin === origin ? target.toString() : `${origin}/staff/requests`;
+}
 export function workflowEmailRaw(
   recipient: string,
   notificationId: string,
   accountEmail: string,
   missingClockoutDate?: string,
+  context?: WorkflowEmailContext,
 ) {
   z.string().email().parse(recipient);
   z.string().uuid().parse(notificationId);
   z.string().email().parse(accountEmail);
   const { origin } = googleCalendarConfig();
-  // Keep personal, medical, compensation and candidate information inside the authenticated app.
+  // No attachments or identity numbers are copied into emails. Family details stay in the app.
   if (missingClockoutDate)
     z.string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)
       .parse(missingClockoutDate);
   const body = missingClockoutDate
     ? `Your clock-in was recorded on ${missingClockoutDate}, but no clock-out was received. Please enter the time you left for HR to confirm.\r\n\r\nCorrect clock-out:\r\n${origin}/staff/me/attendance?correct=${missingClockoutDate}\r\n\r\nIf you have already corrected this record, no action is needed. Sign in to see the current status.\r\n`
-    : `You have an approval-related update or reminder in VIA HR.\r\n\r\nOpen VIA HR to view your requests, decisions and tasks:\r\n${origin}/staff/requests\r\n\r\nAn email notification is not an approval. Sign in to see the current status.\r\n`;
+    : context
+      ? `Why you received this email: ${context.title.slice(0, 200)}\r\n\r\n${context.type === "dependants.missing_information_reminder" ? "Your family record is missing required details or documents. Open your profile to see the exact checklist for each dependant." : context.message.slice(0, 2000)}\r\n\r\nNext step: Open the update in VIA HR to check the current status and any action required.\r\n${workflowEmailDestination(origin, context.path)}\r\n\r\nThis email was sent because this update was addressed to your VIA HR account. An email is not an approval.\r\n`
+      : `You have a request update in VIA HR. Open your requests to see the event and any action required:\r\n${origin}/staff/requests\r\n`;
+  const subject = context
+    ? `Subject: =?UTF-8?B?${Buffer.from(`VIA HR - ${context.title.replace(/[\r\n]/g, " ").slice(0, 160)}`).toString("base64")}?=`
+    : "Subject: VIA HR - request update or reminder";
   return Buffer.from(
     [
       `From: VIA HR <${accountEmail}>`,
       `To: ${recipient}`,
-      missingClockoutDate
-        ? "Subject: VIA HR - Missing clock-out for yesterday"
-        : "Subject: VIA HR - request update or reminder",
+      missingClockoutDate ? "Subject: VIA HR - Missing clock-out for yesterday" : subject,
       `Message-ID: <via-notification-${notificationId}@via-int.com>`,
       "MIME-Version: 1.0",
       'Content-Type: text/plain; charset="UTF-8"',
@@ -50,8 +66,15 @@ export async function sendWorkflowEmail(
   notificationId: string,
   accountEmail: string,
   missingClockoutDate?: string,
+  context?: WorkflowEmailContext,
 ) {
-  const raw = workflowEmailRaw(recipient, notificationId, accountEmail, missingClockoutDate);
+  const raw = workflowEmailRaw(
+    recipient,
+    notificationId,
+    accountEmail,
+    missingClockoutDate,
+    context,
+  );
   let response: Response;
   try {
     response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {

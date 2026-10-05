@@ -90,6 +90,8 @@ export interface UnmatchedAttendancePunch {
 }
 
 export interface AttendanceRecord extends BaseRecord {
+  officeExceptionLabel?: string | undefined;
+  creditedHours?: number | undefined;
   databaseId?: string | undefined;
   employeeId: RecordId;
   date: string;

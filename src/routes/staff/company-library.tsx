@@ -22,6 +22,7 @@ import {
 import { toast } from "sonner";
 import {
   getCompanyLibraryFn,
+  getInsuranceEmployeeOptionsFn,
   uploadCompanyDocumentFn,
   downloadCompanyDocumentFn,
   prepareCompanyDocumentFn,
@@ -51,8 +52,17 @@ function CompanyLibrary() {
   const [prior, setPrior] = useState<Document | null>(null);
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("SOP");
-  const [kind, setKind] = useState<"Library" | "Company">("Library");
-  const [audience, setAudience] = useState<"All staff" | "HR only">("All staff");
+  const [kind, setKind] = useState<"Library" | "Company" | "Insurance">("Library");
+  const [audience, setAudience] = useState<"All staff" | "HR only" | "Selected employees">(
+    "All staff",
+  );
+  const [employeeIds, setEmployeeIds] = useState<string[]>([]);
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const employeeQuery = useQuery({
+    queryKey: ["insurance-employees", user.id, user.activeRole],
+    queryFn: () => getInsuranceEmployeeOptionsFn({ data: { actor } }),
+    enabled: hr && open && kind === "Insurance",
+  });
   const [issueDate, setIssueDate] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
   const [noExpiry, setNoExpiry] = useState(false);
@@ -91,6 +101,7 @@ function CompanyLibrary() {
           category,
           kind,
           audience,
+          employeeIds: audience === "Selected employees" ? employeeIds : [],
           ...(prior ? { familyId: prior.familyId } : {}),
           ...(issueDate ? { issueDate } : {}),
           ...(!noExpiry && expiryDate ? { expiryDate } : {}),
@@ -119,8 +130,10 @@ function CompanyLibrary() {
     setPrior(doc ?? null);
     setTitle(doc?.title ?? "");
     setCategory(doc?.category ?? "SOP");
-    setKind((doc?.kind as "Library" | "Company") ?? "Library");
-    setAudience((doc?.audience as "All staff" | "HR only") ?? "All staff");
+    setKind((doc?.kind as typeof kind) ?? "Library");
+    setAudience((doc?.audience as typeof audience) ?? "All staff");
+    setEmployeeIds(doc?.employeeIds ?? []);
+    setEmployeeSearch("");
     setIssueDate("");
     setExpiryDate("");
     setNoExpiry(false);
@@ -140,13 +153,15 @@ function CompanyLibrary() {
       </header>
       <PageSections value={tab} onValueChange={setTab}>
         <SectionNavigation>
-          {["Library", "Ask policies", ...(hr ? ["Company"] : [])].map((value) => (
+          {["Library", "Insurance", "Ask policies", ...(hr ? ["Company"] : [])].map((value) => (
             <SectionLink key={value} value={value}>
               {value === "Library"
                 ? "SOPs & Policies"
                 : value === "Company"
                   ? "Company register"
-                  : "Ask VIA Policies"}
+                  : value === "Insurance"
+                    ? "Health insurance"
+                    : "Ask VIA Policies"}
             </SectionLink>
           ))}
         </SectionNavigation>
@@ -300,7 +315,7 @@ function CompanyLibrary() {
                               </Button>
                             </>
                           )}
-                          {doc.status === "Draft" && doc.kind === "Company" && (
+                          {doc.status === "Draft" && doc.kind !== "Library" && (
                             <Button
                               disabled={busy}
                               onClick={() =>
@@ -310,7 +325,9 @@ function CompanyLibrary() {
                                 })
                               }
                             >
-                              Publish to register
+                              {doc.kind === "Insurance"
+                                ? "Publish benefits"
+                                : "Publish to register"}
                             </Button>
                           )}
                           {doc.status === "Published" && (
@@ -358,11 +375,17 @@ function CompanyLibrary() {
             id="doc-kind"
             disabled={!!prior}
             value={kind}
-            onChange={(event) => setKind(event.target.value as "Library" | "Company")}
+            onChange={(event) => {
+              setKind(event.target.value as typeof kind);
+              setAudience("All staff");
+              setEmployeeIds([]);
+              if (event.target.value === "Insurance") setCategory("Table of Benefits");
+            }}
             className="h-10 rounded-md border bg-background"
           >
             <option value="Library">SOP or policy</option>
             <option value="Company">Company document</option>
+            <option value="Insurance">Insurance Table of Benefits</option>
           </select>
           <Label htmlFor="doc-category">Category</Label>
           <Input
@@ -371,18 +394,79 @@ function CompanyLibrary() {
             onChange={(event) => setCategory(event.target.value)}
             placeholder="SOP, policy, registration, insurance…"
           />
-          {kind === "Library" ? (
+          {kind !== "Company" ? (
             <>
               <Label htmlFor="doc-audience">Who can read it?</Label>
               <select
                 id="doc-audience"
                 value={audience}
-                onChange={(event) => setAudience(event.target.value as "All staff" | "HR only")}
+                onChange={(event) => setAudience(event.target.value as typeof audience)}
                 className="h-10 rounded-md border bg-background"
               >
                 <option>All staff</option>
                 <option>HR only</option>
+                {kind === "Insurance" && <option>Selected employees</option>}
               </select>
+              {kind === "Insurance" && audience === "All staff" && (
+                <p className="text-sm text-muted-foreground">
+                  Available to all current and future employees. Use selected employees for a
+                  separate management scheme.
+                </p>
+              )}
+              {kind === "Insurance" && audience === "Selected employees" && (
+                <div className="space-y-2">
+                  <Label htmlFor="insurance-people">
+                    Employees ({employeeIds.length} selected)
+                  </Label>
+                  <Input
+                    id="insurance-people"
+                    placeholder="Search name or email"
+                    value={employeeSearch}
+                    onChange={(e) => setEmployeeSearch(e.target.value)}
+                  />
+                  {employeeQuery.isError && (
+                    <p role="alert">
+                      Employees could not be loaded.{" "}
+                      <button type="button" onClick={() => void employeeQuery.refetch()}>
+                        Retry
+                      </button>
+                    </p>
+                  )}
+                  {employeeQuery.isPending && <p role="status">Loading employees…</p>}
+                  <div className="max-h-48 overflow-y-auto rounded-md border p-2">
+                    {(employeeQuery.data ?? [])
+                      .filter((employee) =>
+                        `${employee.name} ${employee.email}`
+                          .toLowerCase()
+                          .includes(employeeSearch.toLowerCase()),
+                      )
+                      .map((employee) => (
+                        <label
+                          key={employee.id}
+                          className="flex min-h-11 items-center gap-3 p-2 text-sm"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={employeeIds.includes(employee.id)}
+                            onChange={(e) =>
+                              setEmployeeIds((previous) =>
+                                e.target.checked
+                                  ? [...previous, employee.id]
+                                  : previous.filter((id) => id !== employee.id),
+                              )
+                            }
+                          />
+                          <span>
+                            {employee.name}
+                            <span className="block text-xs text-muted-foreground">
+                              {employee.email}
+                            </span>
+                          </span>
+                        </label>
+                      ))}
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <>
@@ -428,6 +512,7 @@ function CompanyLibrary() {
               !file ||
               title.trim().length < 3 ||
               category.trim().length < 2 ||
+              (audience === "Selected employees" && !employeeIds.length) ||
               (kind === "Company" && !noExpiry && !expiryDate)
             }
             onClick={() => void upload()}

@@ -253,6 +253,9 @@ export class AttendanceService {
       return {
         id,
         databaseId: row.id,
+        ...(row.officeExceptionLabel
+          ? { officeExceptionLabel: row.officeExceptionLabel, creditedHours: row.creditedHours }
+          : {}),
         employeeId,
         date: row.date,
         ...(row.shiftId ? { shiftId: row.shiftId } : {}),
@@ -997,7 +1000,7 @@ export class AttendanceService {
           record.employeeNumber,
           record.employeeName,
           record.date,
-          record.status,
+          record.officeExceptionLabel ?? record.status,
           record.clockInAt,
           record.clockOutAt,
           record.breakMinutes,
@@ -1408,13 +1411,15 @@ export class AttendanceService {
             this.isTrackingRequired(record.employeeId, record.date) &&
             Boolean(record.clockIn) &&
             !record.clockOut &&
-            record.date < today,
+            record.date < today &&
+            !record.officeExceptionLabel,
         )
         .sort((a, b) => b.date.localeCompare(a.date))[0] ?? null
     );
   }
 
   calculateStatus(record: Partial<AttendanceRecord>, at = this.now()): AttendanceStatus {
+    if (record.officeExceptionLabel) return "Present";
     if (record.status === "Corrected" || record.status === "Correction Pending") {
       return record.status;
     }
@@ -2139,7 +2144,7 @@ export class AttendanceService {
         [
           record.employeeId,
           record.date,
-          record.status,
+          record.officeExceptionLabel ?? record.status,
           record.clockIn,
           record.clockOut,
           record.breakMinutes,
@@ -2262,6 +2267,8 @@ export class AttendanceService {
   }
 
   private presentRecord(record: AttendanceRecord): AttendanceRecord {
+    if (record.officeExceptionLabel)
+      return { ...record, status: "Present", isLate: false, isEarlyDeparture: false };
     if (!this.isTrackingRequired(record.employeeId, record.date)) {
       // A real punch remains evidence even before eligibility is configured or
       // after a transfer. Do not infer lateness or missing-punch penalties here.

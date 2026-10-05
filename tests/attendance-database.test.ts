@@ -4,6 +4,12 @@ import { test } from "node:test";
 
 import postgres from "postgres";
 import {
+  saveOfficeException,
+  cancelOfficeException,
+  officeCredits,
+} from "../src/lib/db/repositories/office-exception.repository.server.ts";
+import { recordedAttendanceHours } from "../src/lib/data/recorded-hours.ts";
+import {
   enqueueMissingClockoutReminders,
   missingClockoutCandidates,
 } from "../src/lib/db/repositories/missing-clockout.repository.server.ts";
@@ -527,6 +533,24 @@ test(
         missingClockoutCandidates(muscatMorning),
       );
       assert.ok(localMorning.some((item) => item["employee_id"] === reminderEmployeeId));
+      const reminderException = await saveOfficeException(
+        organisationId,
+        {
+          title: "Flooding - excused closure",
+          kind: "Excused closure",
+          startDate: scheduledDate,
+          endDate: scheduledDate,
+          scope: "Employees",
+          employeeIds: [reminderEmployeeId],
+          countAsWorked: false,
+        },
+        hrActor,
+      );
+      const suppressed = await getDatabaseClient().execute(
+        missingClockoutCandidates(muscatMorning),
+      );
+      assert.ok(!suppressed.some((item) => item["employee_id"] === reminderEmployeeId));
+      await cancelOfficeException(organisationId, reminderException, hrActor);
       const tooEarly = await getDatabaseClient().execute(
         missingClockoutCandidates(new Date(muscatMorning.getTime() - 60_000)),
       );
@@ -1138,6 +1162,56 @@ test(
       assert.equal(untracked.days.find((day) => day.date === "2026-09-15")!.review, 1);
       assert.equal(untracked.totals.expected, 0);
       assert.equal(untracked.totals.missing, 0);
+      await sql`UPDATE app_settings SET working_days=ARRAY[0,1,2,3,4] WHERE organisation_id=${organisationId}`;
+      const officeInput = {
+        title: "Company training",
+        kind: "Training" as const,
+        startDate: "2026-09-14",
+        endDate: "2026-09-15",
+        scope: "Employees" as const,
+        employeeIds: [employeeId],
+        countAsWorked: true,
+      };
+      await assert.rejects(
+        saveOfficeException(organisationId, officeInput, employeeActor),
+        /Only HR/,
+      );
+      const exceptionId = await saveOfficeException(organisationId, officeInput, hrActor);
+      await assert.rejects(
+        saveOfficeException(organisationId, officeInput, hrActor),
+        /already covers/,
+      );
+      const credits = await officeCredits(organisationId, [employeeId], "2026-09-14", "2026-09-15");
+      assert.equal(credits.length, 1, "Approved leave is not replaced by the office exception");
+      const effective = await listAttendanceForActor(organisationId, employeeActor);
+      const credited = effective.records.find((r) => r.date === "2026-09-15");
+      assert.equal(credited?.officeExceptionLabel, "Training");
+      assert.equal(recordedAttendanceHours(credited), credits[0]!.hours);
+      assert.equal(credited?.clockOutAt, null, "No fake clock-out is created");
+      const chart = await getWorkforceAnalytics(organisationId, employeeActor, "self", 7, chartAt);
+      assert.equal(chart.days.find((d) => d.date === "2026-09-15")?.review, 0);
+      assert.equal(chart.days.find((d) => d.date === "2026-09-15")?.recorded, 1);
+      const other = await officeCredits(organisationId, [hrEmployeeId], "2026-09-14", "2026-09-15");
+      assert.equal(other.length, 0);
+      const exceptionExport = await exportAttendanceRecordsFromDatabase(
+        organisationId,
+        "2026-09-15",
+        hrActor,
+        [employeeId],
+      );
+      assert.equal(exceptionExport[0]?.officeExceptionLabel, "Training");
+      assert.equal(recordedAttendanceHours(exceptionExport[0]), credits[0]!.hours);
+      await sql`UPDATE leave_requests SET is_half_day=true WHERE organisation_id=${organisationId} AND employee_id=${employeeId} AND start_date='2026-09-14' AND status='Approved'`;
+      const halfDay = await officeCredits(organisationId, [employeeId], "2026-09-14", "2026-09-14");
+      assert.equal(halfDay[0]?.hours, credits[0]!.hours / 2);
+      await cancelOfficeException(organisationId, exceptionId, hrActor);
+      assert.equal(
+        (await officeCredits(organisationId, [employeeId], "2026-09-14", "2026-09-15")).length,
+        0,
+      );
+      const original =
+        await sql`SELECT clock_out_at FROM attendance_records WHERE organisation_id=${organisationId} AND employee_id=${employeeId} AND date='2026-09-15'`;
+      assert.equal(original[0]?.clock_out_at, null);
     } finally {
       delete process.env["VIA_HR_ATTENDANCE_NETWORK_ENFORCEMENT"];
       await sql.end();

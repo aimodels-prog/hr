@@ -2,6 +2,44 @@ import { article } from "./guide.ts";
 
 export const employeeGuide = [
   article(
+    "profile-photo",
+    "employee",
+    "Your profile",
+    "Upload or change your profile photo",
+    "Replace your initials with a clear photo.",
+    "/staff/me/profile",
+    "photo picture avatar profile upload change",
+    [
+      "Open My Profile and choose Upload photo underneath your initials.",
+      "Choose a JPG or PNG photo smaller than 5 MB. The app prepares a smaller copy so your profile loads quickly.",
+      "Wait for Profile photo saved. Your photo replaces the initials. Choose Change photo whenever you need to replace it.",
+    ],
+    "Your photo remains after you sign out. Signed-in colleagues in your organisation can see it; only you or an authorised HR administrator can change it.",
+    ["If uploading fails, your previous photo is kept. Check your connection and try again."],
+  ),
+  article(
+    "family-documents",
+    "employee",
+    "Your profile",
+    "Complete your family's details and documents",
+    "Keep spouse and child information up to date.",
+    "/staff/me/profile",
+    "dependant dependent spouse wife husband child family passport visa ID guardian phone",
+    [
+      "Open My Profile, then Personal. Add each dependant's name, relationship, date of birth, nationality and contact phone. For a child, use a parent or guardian's phone. Email is optional.",
+      "Choose whether a visa is required. Choose No if it does not apply; do not upload an unrelated document just to complete the record.",
+      "Save your details. If the change needs HR approval, wait until it is confirmed before uploading documents for a new dependant.",
+      "Open Documents, choose Upload Document, then choose the dependant. Select Passport, ID card or Visa and attach a PDF, JPG or PNG up to 10 MB. Upload a passport or ID for each dependant and a visa when required.",
+      "HR checks each upload and confirms the official details. You receive a notification when it is verified or needs replacing. A file awaiting verification does not need to be uploaded again.",
+      "If you completed your profile previously, your information is kept. A notification and the Documents checklist show what is still missing. Only you and HR-authorised users can view family documents.",
+    ],
+    "In-app notifications appear under the bell. Eligible updates are also emailed to your work email when HR has enabled company email sending.",
+    [
+      "Check that each uploaded document shows the correct dependant's name. If a new dependant is missing from the list, ask HR whether your personal-details change is still awaiting approval.",
+    ],
+    "document:view_self",
+  ),
+  article(
     "getting-started",
     "employee",
     "Getting started",
@@ -170,6 +208,7 @@ export const employeeGuide = [
       "Use your office’s approved clock-in method when you arrive. Head Office may use the fingerprint machine.",
       "Open My Attendance to check that today’s clock-in appears. Allow the office connection to send the record.",
       "Clock out when you finish work, then check the recorded times and hours.",
+      "If HR records a company activity, training, approved remote work or an excused closure, your attendance shows that label with credited hours. You do not need to invent clock times. Allocate those hours in your timesheet as usual and submit it for approval. Ask HR if the covered day is incorrect.",
       "If a time is missing or wrong, open that day and request a correction instead of creating another clock-in.",
     ],
     "VIA allows flexible working hours. HR sets the daily working hours and scheduled break. With eight working hours and a one-hour lunch, an 8:30 am arrival normally means a 5:30 pm finish. Attendance totals and timesheet hours include the break: 8:30 am to 5:30 pm is recorded as nine hours. Extra time in the office is not automatically approved overtime.",
@@ -352,7 +391,8 @@ export const employeeGuide = [
       "Open My Profile and choose Documents or the relevant insurance section.",
       "Read the requested document type and upload the document only where you are allowed to do so.",
       "Check the document details and any expiry date displayed.",
-      "Ask HR to correct visa, work-permit or insurance details that are managed by HR.",
+      "Upload your own visa and health insurance card under My Profile, Documents, Upload Document. HR reviews your upload and confirms official visa details. Work permits remain managed by HR.",
+      "Open Policies & Company Documents and choose Health insurance to download the Table of Benefits assigned to you. HR uploads these shared documents; you do not need to upload your own copy.",
     ],
     "Your personal records are not the same as the colleague contact directory. Access depends on the document and the viewer’s responsibilities.",
     [

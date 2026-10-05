@@ -30,6 +30,12 @@ import {
 import { saveObjectFile } from "../db/object-storage.server.ts";
 import { resolveOrganisationIdForActor, verifyServerActorRole } from "../db/utils.server.ts";
 import { ROLE_VALUES } from "../data/types.ts";
+import { OFFICE_EXCEPTION_TYPES } from "../data/office-exceptions.ts";
+import {
+  listOfficeExceptions,
+  saveOfficeException,
+  cancelOfficeException,
+} from "../db/repositories/office-exception.repository.server.ts";
 import {
   getAttendanceTrackingPolicy,
   saveAttendanceTrackingPolicy,
@@ -70,6 +76,46 @@ const Actor = z.object({
   actorEmail: z.string().email().optional(),
   activeRole: z.enum(ROLE_VALUES),
 });
+const officeDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine(
+    (v) => Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v,
+    "Enter a valid date",
+  );
+export const listOfficeExceptionsFn = createServerFn({ method: "POST" })
+  .validator((input) => z.object({ actor: Actor }).parse(input))
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    return listOfficeExceptions(v.organisationId, v.actor);
+  });
+export const saveOfficeExceptionFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: Actor,
+        title: z.string().trim().min(3).max(160),
+        kind: z.enum(OFFICE_EXCEPTION_TYPES),
+        startDate: officeDate,
+        endDate: officeDate,
+        scope: z.enum(["Everyone", "Location", "Department", "Employees"]),
+        scopeId: z.string().uuid().optional(),
+        employeeIds: z.array(z.string().uuid()).max(10000),
+        countAsWorked: z.boolean(),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    return saveOfficeException(v.organisationId, data, v.actor);
+  });
+export const cancelOfficeExceptionFn = createServerFn({ method: "POST" })
+  .validator((input) => z.object({ actor: Actor, id: z.string().uuid() }).strict().parse(input))
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    return cancelOfficeException(v.organisationId, data.id, v.actor);
+  });
 async function verify(actor: z.infer<typeof Actor>) {
   const organisationId = await resolveOrganisationIdForActor(actor.actorId, actor.actorEmail);
   const result = await verifyServerActorRole(

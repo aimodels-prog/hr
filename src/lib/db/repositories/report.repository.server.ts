@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { officeCredits } from "./office-exception.repository.server.ts";
 import { getAttendanceTrackingPolicy } from "./attendance-tracking.repository.server.ts";
 import { isAttendanceTracked } from "../../data/attendance-tracking.ts";
 
@@ -483,11 +484,47 @@ export async function generateReportInDatabase(
       ? await resolveLeaveReportYears(organisationId, filters.leaveYear)
       : undefined;
   const result = await definition.query(organisationId, leaveYears);
+  const effectiveRows = Array.from(result as Iterable<Record<string, unknown>>);
+  if (reportId === "attendance") {
+    const people = await getDatabaseClient().execute(
+      sql`SELECT e.id, e.legal_name AS employee, d.name AS department, l.name AS location FROM employees e LEFT JOIN departments d ON d.id=e.department_id LEFT JOIN locations l ON l.id=e.location_id WHERE e.organisation_id=${organisationId}::uuid`,
+    );
+    const credits = await officeCredits(
+      organisationId,
+      people.map((p) => String(p["id"])),
+    );
+    for (const credit of credits) {
+      const index = effectiveRows.findIndex(
+        (r) =>
+          r["__employeeId"] === credit.employeeId &&
+          (r["date"] instanceof Date ? r["date"].toISOString() : String(r["date"])).slice(0, 10) ===
+            credit.date,
+      );
+      const person = people.find((p) => p["id"] === credit.employeeId);
+      const row = {
+        ...(effectiveRows[index] ?? {
+          __employeeId: credit.employeeId,
+          employee: person?.["employee"],
+          department: person?.["department"],
+          workLocation: person?.["location"],
+          location: person?.["location"],
+          date: credit.date,
+        }),
+        hours: credit.hours,
+        status: credit.label,
+        late: "No",
+        officeException: true,
+      };
+      if (index >= 0) effectiveRows[index] = row;
+      else effectiveRows.push(row);
+    }
+  }
   const tracking =
     reportId === "attendance" ? await getAttendanceTrackingPolicy(organisationId) : null;
-  const eligible = Array.from(result as Iterable<Record<string, unknown>>).filter(
+  const eligible = effectiveRows.filter(
     (row) =>
       reportId !== "attendance" ||
+      row["officeException"] === true ||
       isAttendanceTracked(tracking, String(row["__employeeId"]), String(row["date"]).slice(0, 10)),
   );
   const rows = eligible.map((row) =>

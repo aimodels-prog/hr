@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { RecruitmentMailboxes } from "@/components/recruitment/recruitment-mailboxes";
 import { useMemo, useState } from "react";
 import { AlertCircle, CheckCircle2, FileSearch, RotateCcw, Upload } from "lucide-react";
 
@@ -398,6 +399,7 @@ function CandidateIntakePage() {
         description="Save a directly received CV, review the extracted details and connect the person to a vacancy or future talent pool."
       />
 
+      <RecruitmentMailboxes vacancies={vacancies} />
       {savedIntakes.length > 0 && (
         <Card>
           <CardHeader className="pb-3">

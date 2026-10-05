@@ -226,6 +226,8 @@ export async function uploadCandidateCvIntakeToDatabase(
     vacancyId?: string | undefined;
     notes?: string | undefined;
     isRecommended: boolean;
+    /** Server-generated mailbox attachment ID; never accepted from upload forms. */
+    intakeId?: string;
   },
   actor: AuditActorContext,
 ): Promise<{ cvRecordId: string; jobId: string }> {
@@ -239,6 +241,19 @@ export async function uploadCandidateCvIntakeToDatabase(
     Buffer.from(input.bytes),
   );
   const db = getDatabaseClient();
+  if (input.intakeId) {
+    const [existing] = await db
+      .select({ id: candidateCvRecords.id })
+      .from(candidateCvRecords)
+      .where(
+        and(
+          eq(candidateCvRecords.organisationId, organisationId),
+          eq(candidateCvRecords.id, input.intakeId),
+        ),
+      )
+      .limit(1);
+    if (existing) return { cvRecordId: existing.id, jobId: "" };
+  }
   if (input.vacancyId) {
     const [vacancy] = await db
       .select({ id: vacancies.id })
@@ -253,7 +268,7 @@ export async function uploadCandidateCvIntakeToDatabase(
       .limit(1);
     if (!vacancy) throw new Error("Select an open vacancy.");
   }
-  const cvRecordId = randomUUID();
+  const cvRecordId = input.intakeId ?? randomUUID();
   const documentId = randomUUID();
   const jobId = randomUUID();
   const metadata = await saveObjectFile({

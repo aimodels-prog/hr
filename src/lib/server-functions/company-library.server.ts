@@ -4,6 +4,7 @@ import { ROLE_VALUES } from "../data/types.ts";
 import { resolveOrganisationIdForActor, verifyServerActorRole } from "../db/utils.server.ts";
 import {
   libraryList,
+  libraryEmployeeOptions,
   libraryUpload,
   libraryDownload,
   libraryPrepare,
@@ -31,6 +32,12 @@ export const getCompanyLibraryFn = createServerFn({ method: "GET" })
     const v = await verify(data.actor);
     return libraryList(v.org, v.actor);
   });
+export const getInsuranceEmployeeOptionsFn = createServerFn({ method: "GET" })
+  .validator((input) => z.object({ actor: Actor }).strict().parse(input))
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    return libraryEmployeeOptions(v.org, v.actor);
+  });
 export const uploadCompanyDocumentFn = createServerFn({ method: "POST" })
   .validator((input) =>
     z
@@ -38,8 +45,9 @@ export const uploadCompanyDocumentFn = createServerFn({ method: "POST" })
         actor: Actor,
         title: z.string().trim().min(3).max(200),
         category: z.string().trim().min(2).max(100),
-        kind: z.enum(["Library", "Company"]),
-        audience: z.enum(["All staff", "HR only"]),
+        kind: z.enum(["Library", "Company", "Insurance"]),
+        audience: z.enum(["All staff", "HR only", "Selected employees"]),
+        employeeIds: z.array(z.string().uuid()).max(10000).optional(),
         familyId: z.string().uuid().optional(),
         issueDate: z.string().date().optional(),
         expiryDate: z.string().date().optional(),

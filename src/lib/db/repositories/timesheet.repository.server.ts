@@ -18,6 +18,7 @@ import { appSettings } from "../schema/organisation.ts";
 import { isAttendanceTracked, readAttendanceTracking } from "../../data/attendance-tracking.ts";
 import { ordinaryAttendanceHours } from "../../data/office-schedule.ts";
 import { recordedDailyHours, recordedAttendanceHours } from "../../data/recorded-hours.ts";
+import { officeCredits, applyOfficeCredits } from "./office-exception.repository.server.ts";
 import { leaveRequests } from "../schema/leave.ts";
 import { auditEvents, notifications } from "../schema/system.ts";
 import {
@@ -321,7 +322,18 @@ export async function submitTimesheetInDatabase(
       organisationId,
       Number(settings?.standardDailyHours ?? 8),
     );
-    const attendanceByDate = new Map(attendance.map((item) => [item.date, item]));
+    const attendanceByDate = new Map(
+      applyOfficeCredits(
+        attendance,
+        await officeCredits(
+          organisationId,
+          [sheet.employeeId],
+          submissionPeriod.startDate,
+          submissionPeriod.endDate,
+          tx,
+        ),
+      ).map((item) => [item.date, item]),
+    );
     const dates = new Set([...workByDate.keys(), ...attendanceByDate.keys()]);
     const explanations = (sheet.attendanceDiscrepancyExplanations ?? {}) as Record<string, string>;
     const [trackingSettings] = await tx
@@ -1049,7 +1061,12 @@ async function buildTimesheetReconciliation(
     organisationId,
     Number(settings?.standardDailyHours ?? 8),
   );
-  const recordByDate = new Map(records.map((item) => [item.date, item]));
+  const recordByDate = new Map(
+    applyOfficeCredits(
+      records,
+      await officeCredits(organisationId, [sheet.employeeId], period.startDate, period.endDate, tx),
+    ).map((item) => [item.date, item]),
+  );
   const explanations = (sheet.attendanceDiscrepancyExplanations ?? {}) as Record<string, string>;
   const [trackingSettings] = await tx
     .select({ additional: appSettings.additionalSettings })
@@ -1065,7 +1082,9 @@ async function buildTimesheetReconciliation(
       const attendanceHours = ordinaryAttendanceHours(recordedAttendanceHours(record), recordedDay);
       const timesheetWorkHours = workByDate.get(date) ?? 0;
       const varianceHours = Number((timesheetWorkHours - attendanceHours).toFixed(2));
-      const incomplete = Boolean(record && (!record.clockInAt || !record.clockOutAt));
+      const incomplete = Boolean(
+        record && !record.officeExceptionLabel && (!record.clockInAt || !record.clockOutAt),
+      );
       const requiresExplanation = !record || incomplete || Math.abs(varianceHours) > toleranceHours;
       const explanation = explanations[date]?.trim();
       const status = !record

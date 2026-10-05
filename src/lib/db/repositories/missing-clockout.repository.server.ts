@@ -13,6 +13,8 @@ export function missingClockoutCandidates(at = new Date()) {
       AND a.clock_in_at IS NOT NULL AND a.clock_out_at IS NULL
       AND a.status NOT IN ('Correction Pending','On Leave','Holiday','Rest Day')
       AND a.source <> 'Site Visit Auto'
+      AND NOT EXISTS (SELECT 1 FROM office_exceptions x WHERE x.organisation_id=a.organisation_id
+        AND x.archived_at IS NULL AND a.employee_id=ANY(x.employee_ids) AND a.date BETWEEN x.start_date AND x.end_date)
       AND a.date = (${at.toISOString()}::timestamptz AT TIME ZONE s.timezone)::date - 1
       AND coalesce((s.additional_settings->'reminderRules'->>'missingClockoutEnabled')::boolean,true)
       AND (${at.toISOString()}::timestamptz AT TIME ZONE s.timezone)::time >= coalesce(s.additional_settings->'reminderRules'->>'missingClockoutStart','09:00')::time

@@ -57,7 +57,13 @@ export function attendanceToday(input: {
   date: string;
   now: Date;
   people: AnalyticsEmployee[];
-  records: { employeeId: string; date: string; clockInAt: string | null; status: string }[];
+  records: {
+    employeeId: string;
+    date: string;
+    clockInAt: string | null;
+    status: string;
+    creditedHours?: number;
+  }[];
   leave: { employeeId: string; startDate: string; endDate: string }[];
   pendingVisits: { employeeId: string; date: string }[];
 }) {
@@ -66,12 +72,13 @@ export function attendanceToday(input: {
       .filter(
         (record) =>
           record.date === input.date &&
-          !!record.clockInAt &&
-          Date.parse(record.clockInAt) <= input.now.getTime() &&
+          (record.creditedHours !== undefined ||
+            (!!record.clockInAt && Date.parse(record.clockInAt) <= input.now.getTime())) &&
           !["Absent", "Correction Pending"].includes(record.status) &&
-          !input.pendingVisits.some(
-            (visit) => visit.employeeId === record.employeeId && visit.date === input.date,
-          ),
+          (record.creditedHours !== undefined ||
+            !input.pendingVisits.some(
+              (visit) => visit.employeeId === record.employeeId && visit.date === input.date,
+            )),
       )
       .map((record) => record.employeeId),
   );
@@ -101,7 +108,7 @@ export function attendanceToday(input: {
             record.date === input.date &&
             current.has(record.employeeId) &&
             recordedPeople.has(record.employeeId) &&
-            !pending.has(record.employeeId),
+            (record.creditedHours !== undefined || !pending.has(record.employeeId)),
         )
         .map((record) => record.employeeId),
     ).size,
@@ -143,6 +150,7 @@ export function calculateAttendanceAnalytics(input: {
     clockInAt: string | null;
     clockOutAt: string | null;
     calculatedHours: string | number;
+    creditedHours?: number;
     status: string;
   }[];
   pendingVisits: { employeeId: string; date: string }[];
@@ -192,11 +200,12 @@ export function calculateAttendanceAnalytics(input: {
       day.expected += expected;
       if (scheduled) day.leaveDays += leaveFraction;
       const record = records.get(`${employee.id}:${date}`);
-      const pendingVisit = pendingVisits.has(`${employee.id}:${date}`);
+      const pendingVisit =
+        record?.creditedHours === undefined && pendingVisits.has(`${employee.id}:${date}`);
       const hours = Number(record?.calculatedHours ?? 0);
       const closed =
-        !!record?.clockInAt &&
-        !!record.clockOutAt &&
+        !!record &&
+        (record.creditedHours !== undefined || (!!record.clockInAt && !!record.clockOutAt)) &&
         !["Correction Pending", "Absent"].includes(record.status) &&
         Number.isFinite(hours) &&
         hours >= 0 &&

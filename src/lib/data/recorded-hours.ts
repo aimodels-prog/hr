@@ -3,6 +3,7 @@ export function recordedAttendanceHours(
   record:
     | {
         clockInAt?: string | Date | null | undefined;
+        creditedHours?: number | undefined;
         clockOutAt?: string | Date | null | undefined;
         clockIn?: string | undefined;
         clockOut?: string | undefined;
@@ -11,6 +12,7 @@ export function recordedAttendanceHours(
     | undefined,
 ): number {
   if (!record) return 0;
+  if (record.creditedHours !== undefined) return record.creditedHours;
   let minutes = 0;
   if (record.clockInAt && record.clockOutAt) {
     minutes =

@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { officeCredits, applyOfficeCredits } from "./office-exception.repository.server.ts";
 import { recordedDailyHours } from "../../data/recorded-hours.ts";
 import {
   attendanceBreakMinutes,
@@ -471,7 +472,46 @@ export async function exportAttendanceRecordsFromDatabase(
     )
     .orderBy(employees.preferredName);
   // Export the same saved evidence shown in attendance, irrespective of eligibility.
-  const rows = storedRows;
+  const people = await db
+    .select({
+      id: employees.id,
+      employeeNumber: employees.employeeNumber,
+      name: employees.preferredName,
+    })
+    .from(employees)
+    .where(eq(employees.organisationId, organisationId));
+  const rows: Array<
+    (typeof storedRows)[number] & { creditedHours?: number; officeExceptionLabel?: string }
+  > = [...storedRows];
+  for (const credit of await officeCredits(
+    organisationId,
+    employeeIds ?? people.map((p) => p.id),
+    date,
+    date,
+  )) {
+    const index = rows.findIndex((r) => r.employeeId === credit.employeeId);
+    const person = people.find((p) => p.id === credit.employeeId);
+    const row = {
+      ...(rows[index] ?? {
+        employeeId: credit.employeeId,
+        employeeNumber: person?.employeeNumber ?? "",
+        employeeName: person?.name ?? "",
+        date,
+        clockInAt: null,
+        clockOutAt: null,
+        breakMinutes: 0,
+        location: null,
+        source: "Manual Entry" as const,
+        workMode: null,
+      }),
+      status: "Present" as const,
+      calculatedHours: String(credit.hours),
+      creditedHours: credit.hours,
+      officeExceptionLabel: credit.label,
+    };
+    if (index >= 0) rows[index] = row;
+    else rows.push(row);
+  }
   await db.insert(auditEvents).values({
     organisationId,
     actorUserId: actor.userId,
@@ -2167,17 +2207,30 @@ export async function getMyLiveAttendance(organisationId: string, actor: AuditAc
           policy,
         )
       : null;
+  const [credit] = await officeCredits(organisationId, [actor.employeeId], date, date);
+  const liveRecord = credit
+    ? {
+        ...record,
+        clockInAt: record?.clockInAt ?? null,
+        clockOutAt: record?.clockOutAt ?? null,
+        breakMinutes: record?.breakMinutes ?? 0,
+        creditedHours: credit.hours,
+        officeExceptionLabel: credit.label,
+      }
+    : record
+      ? { ...record, creditedHours: undefined, officeExceptionLabel: undefined }
+      : null;
   return {
-    tracked: isAttendanceTracked(tracking, actor.employeeId, date),
+    tracked: Boolean(credit) || isAttendanceTracked(tracking, actor.employeeId, date),
     date,
     timezone,
     serverNow: now.toISOString(),
     targetMinutes,
-    expectedDeparture: flexible?.expectedOut ?? null,
+    expectedDeparture: credit ? null : (flexible?.expectedOut ?? null),
     departureDayOffset: flexible?.departureDayOffset ?? 0,
-    record: record
+    record: liveRecord
       ? {
-          ...record,
+          ...liveRecord,
           ...(flexible
             ? {
                 breakStartAt: zonedDateTimeToUtc(
@@ -2297,7 +2350,7 @@ export async function listAttendanceForActor(organisationId: string, actor: Audi
           assignments: tracking.assignments.filter((item) => employeeIds.includes(item.employeeId)),
         }
       : null,
-    records,
+    records: applyOfficeCredits(records, await officeCredits(organisationId, employeeIds)),
     corrections,
     siteVisits: visits,
     exceptions,

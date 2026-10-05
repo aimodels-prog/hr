@@ -9,14 +9,14 @@ import {
 
 test("HR-owned tasks are not employee setup requirements", () => {
   assert.equal(isHrOwnedSetupTask({ selfServiceFormKey: "employment_details" }), true);
-  assert.equal(isHrOwnedSetupTask({ documentType: "visa" }), true);
+  assert.equal(isHrOwnedSetupTask({ documentType: "visa" }), false);
   assert.equal(isHrOwnedSetupTask({ documentType: "work_permit" }), true);
   assert.equal(isHrOwnedSetupTask({ selfServiceFormKey: "personal_details" }), false);
   assert.equal(isHrOwnedSetupTask({ documentType: "passport" }), false);
 });
 
-test("direct employee immigration uploads are rejected before any storage or database write", async () => {
-  for (const type of ["visa", "work_permit"]) {
+test("HR-managed document uploads are rejected before any storage or database write", async () => {
+  for (const type of ["insurance_benefits", "work_permit"]) {
     await assert.rejects(
       uploadEmployeeDocumentToDatabase(
         "test-org",
@@ -43,7 +43,9 @@ test("employment visibility follows confirmation and immigration writes are HR-o
   for (const role of ["Employee", "Accounts", "Line Manager", "IT"]) {
     assert.equal(canSeeEmploymentDetails("Pending HR Review", role), false);
     assert.equal(canSeeEmploymentDetails("Confirmed", role), true);
-    assert.throws(() => assertHrDocumentWrite("visa", role), /Only HR/);
+    assert.doesNotThrow(() => assertHrDocumentWrite("visa", role));
+    assert.doesNotThrow(() => assertHrDocumentWrite("insurance_card", role));
+    assert.throws(() => assertHrDocumentWrite("insurance_benefits", role), /Only HR/);
     assert.throws(() => assertHrDocumentWrite("work_permit", role), /Only HR/);
     assert.doesNotThrow(() => assertHrDocumentWrite("passport", role));
   }

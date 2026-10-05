@@ -16,6 +16,10 @@ export const companyLibrary = pgTable(
     category: text("category").notNull(),
     kind: text("kind").notNull(),
     audience: text("audience").notNull(),
+    employeeIds: uuid("employee_ids")
+      .array()
+      .notNull()
+      .default(sql`'{}'::uuid[]`),
     status: text("status").notNull().default("Draft"),
     processing: text("processing").notNull().default("Not prepared"),
     encryptedPages: text("encrypted_pages"),
@@ -35,10 +39,10 @@ export const companyLibrary = pgTable(
     uniqueIndex("company_library_current_unique")
       .on(table.organisationId, table.familyId)
       .where(sql`${table.status} = 'Published'`),
-    check("company_library_kind", sql`${table.kind} IN ('Library', 'Company')`),
+    check("company_library_kind", sql`${table.kind} IN ('Library', 'Company', 'Insurance')`),
     check(
       "company_library_access",
-      sql`${table.audience} IN ('All staff', 'HR only') AND (${table.kind} <> 'Company' OR ${table.audience} = 'HR only')`,
+      sql`(${table.audience} IN ('All staff', 'HR only') OR (${table.kind} = 'Insurance' AND ${table.audience} = 'Selected employees' AND cardinality(${table.employeeIds}) > 0)) AND (${table.kind} <> 'Company' OR ${table.audience} = 'HR only')`,
     ),
   ],
 );

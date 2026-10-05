@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from "react";
+import { missingDependantInformation } from "@/lib/data/dependants";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -99,11 +100,21 @@ const documentSchema = z
 
 const MANDATORY_DOCS: DocumentType[] = ["contract", "national_id"];
 
-export function DocumentsTab({ employeeId }: { employeeId: string }) {
+export function DocumentsTab({
+  employeeId,
+  dependants = [],
+}: {
+  employeeId: string;
+  dependants?: import("@/lib/data/dependants").Dependant[];
+}) {
   const currentUser = useCurrentUser();
   const documentService = useMemo(() => new DocumentService(), []);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isReplacing, setIsReplacing] = useState<string | null>(null);
+  const [dependantId, setDependantId] = useState("employee");
+  const [dependantDocumentKind, setDependantDocumentKind] = useState<
+    "passport" | "national_id" | "visa"
+  >("passport");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [, setRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -224,6 +235,9 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
 
       const metadata = {
         type: values.type,
+        ...(dependantId !== "employee"
+          ? { type: "other" as const, dependantId, dependantDocumentKind }
+          : {}),
         visibility: hrCompletesVisaDetails ? ("Restricted" as const) : values.visibility,
         ...(!hrCompletesVisaDetails && values.documentNumber
           ? { documentNumber: values.documentNumber }
@@ -320,9 +334,9 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
 
   const confirmVerification = async () => {
     if (!verifyingDocument) return;
-    const requiresOfficialDetails = ["passport", "visa", "national_id", "work_permit"].includes(
-      verifyingDocument.type,
-    );
+    const requiresOfficialDetails =
+      !!verifyingDocument.dependantId ||
+      ["passport", "visa", "national_id", "work_permit"].includes(verifyingDocument.type);
     if (
       requiresOfficialDetails &&
       (!verificationDetails.documentNumber.trim() ||
@@ -407,8 +421,37 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
     <div className="space-y-6">
       {loading && <p className="text-sm text-muted-foreground">Loading employee documents...</p>}
       {loadError && <p className="text-sm text-destructive">{loadError}</p>}
+      {!loading &&
+        !loadError &&
+        (isSelf || isHrOrAdmin) &&
+        dependants.some((d) => missingDependantInformation(d, allDocs).length) && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Complete family information</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {dependants.map((d) => {
+                const missing = missingDependantInformation(d, allDocs);
+                return missing.length ? (
+                  <p key={d.id ?? d.name}>
+                    <strong>{d.name}:</strong> {missing.join(", ")}.{" "}
+                  </p>
+                ) : null;
+              })}
+              <p className="text-muted-foreground">
+                Update contact details under Personal. For documents, choose Upload Document and
+                select the dependant. Files awaiting HR verification do not need uploading again.
+              </p>
+            </CardContent>
+          </Card>
+        )}
       <div className="flex justify-between items-center">
         <h3 className="text-lg font-medium">Digital Employee File</h3>
+        {(isSelf || isHrOrAdmin) && (
+          <a className="text-sm text-primary underline" href="/staff/company-library">
+            Insurance benefits
+          </a>
+        )}
         {(isSelf || isHrOrAdmin) && (
           <Dialog
             open={isUploadOpen}
@@ -418,6 +461,7 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
                 setIsReplacing(null);
                 setSelectedFile(null);
                 form.reset();
+                setDependantId("employee");
               }
             }}
           >
@@ -432,6 +476,49 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
               </DialogHeader>
               <Form {...form}>
                 <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                  {!isReplacing && (
+                    <div className="space-y-2">
+                      <Label htmlFor="document-person">Who is this document for?</Label>
+                      <select
+                        id="document-person"
+                        className="h-10 w-full rounded-md border bg-background px-3"
+                        value={dependantId}
+                        onChange={(e) => {
+                          setDependantId(e.target.value);
+                          if (e.target.value !== "employee") form.setValue("type", "other");
+                        }}
+                      >
+                        <option value="employee">Employee</option>
+                        {dependants
+                          .filter((d) => d.id)
+                          .map((d) => (
+                            <option key={d.id} value={d.id}>
+                              {d.name} ({d.relationship})
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  )}
+                  {!isReplacing && dependantId !== "employee" && (
+                    <div className="space-y-2">
+                      <Label htmlFor="family-document-kind">Family document</Label>
+                      <select
+                        id="family-document-kind"
+                        className="h-10 w-full rounded-md border bg-background px-3"
+                        value={dependantDocumentKind}
+                        onChange={(e) =>
+                          setDependantDocumentKind(e.target.value as typeof dependantDocumentKind)
+                        }
+                      >
+                        <option value="passport">Passport</option>
+                        <option value="national_id">ID card</option>
+                        <option value="visa">Visa</option>
+                      </select>
+                      <p className="text-xs text-muted-foreground">
+                        Only you and HR can access this document. HR verifies the official details.
+                      </p>
+                    </div>
+                  )}
                   <FormField
                     control={form.control}
                     name="type"
@@ -441,7 +528,7 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
                         <Select
                           onValueChange={field.onChange}
                           defaultValue={field.value as string}
-                          disabled={!!isReplacing}
+                          disabled={!!isReplacing || dependantId !== "employee"}
                         >
                           <FormControl>
                             <SelectTrigger>
@@ -464,7 +551,10 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
                               "insurance_benefits",
                               "other",
                             ]
-                              .filter((t) => !["visa", "work_permit"].includes(t) || isHrOrAdmin)
+                              .filter(
+                                (t) =>
+                                  !["work_permit", "insurance_benefits"].includes(t) || isHrOrAdmin,
+                              )
                               .map((t) => (
                                 <SelectItem key={t} value={t}>
                                   {t === "insurance_benefits"
@@ -692,7 +782,16 @@ export function DocumentsTab({ employeeId }: { employeeId: string }) {
                   className={doc.computedStatus === "Replaced" ? "opacity-50" : ""}
                 >
                   <TableCell>
-                    <div className="font-medium capitalize">{doc.type.replace("_", " ")}</div>
+                    <div className="font-medium capitalize">
+                      {doc.dependantId
+                        ? `Family ${doc.dependantDocumentKind?.replace("_", " ") ?? "document"}`
+                        : doc.type.replace("_", " ")}
+                    </div>
+                    {doc.dependantId && (
+                      <div className="text-xs text-muted-foreground">
+                        {dependants.find((d) => d.id === doc.dependantId)?.name ?? "Dependant"}
+                      </div>
+                    )}
                     {doc.visibility === "Restricted" && (
                       <div className="text-xs text-orange-600">Restricted</div>
                     )}

@@ -1,6 +1,7 @@
 import "@tanstack/react-start/server-only";
 
 import { randomUUID } from "node:crypto";
+import { sourcesForCvFilter, type CvSourceFilter } from "../../recruitment/cv-source-filter.ts";
 import { latestPreparationPerCandidate } from "../../data/current-preparation.ts";
 import {
   currentPreliminaryRules,
@@ -761,6 +762,7 @@ export async function createAssessmentBatchInDatabase(
   vacancyId: string,
   targetSize: number,
   actor: AuditActorContext,
+  sourceFilter: CvSourceFilter = "all",
 ): Promise<string> {
   recruiter(actor);
   if (!Number.isInteger(targetSize) || targetSize < 1)
@@ -787,7 +789,25 @@ export async function createAssessmentBatchInDatabase(
         ),
       )
       .orderBy(desc(candidatePreparationRuns.createdAt), desc(candidatePreparationRuns.id));
-    const latest = latestPreparationPerCandidate(runs);
+    const allowedSources = sourcesForCvFilter(sourceFilter);
+    const allowedCvs = allowedSources
+      ? await tx
+          .select({ id: candidateCvRecords.id })
+          .from(candidateCvRecords)
+          .where(
+            and(
+              eq(candidateCvRecords.organisationId, organisationId),
+              inArray(candidateCvRecords.source, allowedSources),
+            ),
+          )
+      : null;
+    const allowedIds = allowedCvs ? new Set(allowedCvs.map((cv) => cv.id)) : null;
+    // Pick the current preparation first. Never fall back to an older CV to match a source.
+    const latest = new Map(
+      [...latestPreparationPerCandidate(runs)].filter(
+        ([, run]) => !allowedIds || allowedIds.has(run.cvRecordId),
+      ),
+    );
     const ranked = [...latest.values()].sort(
       (a, b) => Number(b.preliminaryScore ?? -1) - Number(a.preliminaryScore ?? -1),
     );
@@ -867,7 +887,12 @@ export async function createAssessmentBatchInDatabase(
       module: "recruitment",
       entityType: "candidate-assessment-batch",
       entityId: id,
-      afterSummary: { targetSize, selectedCandidateIds: selected, pinnedCandidateIds: pinned },
+      afterSummary: {
+        targetSize,
+        sourceFilter,
+        selectedCandidateIds: selected,
+        pinnedCandidateIds: pinned,
+      },
       reason: "Selected the group for detailed assessment",
       riskLevel: "High",
     });

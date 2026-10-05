@@ -690,8 +690,9 @@ function MyAttendanceRoute() {
                     {monthlyRows.map((row) => {
                       const correction = correctionByRecord.get(row.id);
                       const canCorrect =
-                        ["Absent", "Late", "Missing Punch"].includes(row.status) ||
-                        Boolean(row.clockIn && !row.clockOut && row.date < todayKey);
+                        !("officeExceptionLabel" in row && row.officeExceptionLabel) &&
+                        (["Absent", "Late", "Missing Punch"].includes(row.status) ||
+                          Boolean(row.clockIn && !row.clockOut && row.date < todayKey));
                       return (
                         <TableRow key={row.date}>
                           <TableCell>
@@ -703,7 +704,10 @@ function MyAttendanceRoute() {
                             </span>
                           </TableCell>
                           <TableCell>
-                            <Badge variant={statusVariant(row.status)}>{row.status}</Badge>
+                            <Badge variant={statusVariant(row.status)}>
+                              {("officeExceptionLabel" in row && row.officeExceptionLabel) ||
+                                row.status}
+                            </Badge>
                           </TableCell>
                           <TableCell>{row.clockIn ?? "—"}</TableCell>
                           <TableCell>{row.clockOut ?? "—"}</TableCell>

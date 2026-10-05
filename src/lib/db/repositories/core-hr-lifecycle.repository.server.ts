@@ -1410,7 +1410,7 @@ export async function saveOnboardingSelfServiceInDatabase(
           personalEmail?: string;
           address: string;
           emergencyContacts: Array<{ name: string; relationship: string; phone: string }>;
-          dependants?: Array<{ name: string; relationship: string; dateOfBirth: string }>;
+          dependants?: import("../../data/dependants.ts").Dependant[];
         };
       }
     | {
@@ -1721,7 +1721,10 @@ export async function saveOnboardingSelfServiceInDatabase(
           personalEmail: details.personalEmail?.trim().toLowerCase() || null,
           address: details.address.trim(),
           emergencyContacts: details.emergencyContacts,
-          dependants: details.dependants ?? [],
+          dependants: (details.dependants ?? []).map((d) => ({
+            ...d,
+            id: d.id ?? crypto.randomUUID(),
+          })),
           updatedAt: new Date(),
           updatedBy: actor.userId,
           recordVersion: sql`${employees.recordVersion} + 1`,

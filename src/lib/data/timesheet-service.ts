@@ -696,7 +696,9 @@ export class TimesheetService {
           this.getRecordedDailyHours(settings),
         );
         const attendanceStatus = record?.status ?? virtualStatus ?? "No Record";
-        const completeAttendance = Boolean(record?.clockIn && record?.clockOut);
+        const completeAttendance = Boolean(
+          record?.officeExceptionLabel || (record?.clockIn && record?.clockOut),
+        );
         let status: DailyAttendanceReconciliation["status"] = "Matched";
         let requiresExplanation = false;
 

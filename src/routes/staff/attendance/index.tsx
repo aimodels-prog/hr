@@ -3,6 +3,7 @@ import { recordedAttendanceHours } from "@/lib/data/recorded-hours";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
 import { AttendanceTrackingSettings } from "@/components/attendance/tracking-settings";
+import { OfficeExceptions } from "@/components/attendance/office-exceptions";
 import { VIA_OFFICE_SCHEDULE } from "@/lib/data/office-schedule";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
@@ -691,6 +692,7 @@ function AttendanceAdminContent() {
             </TabsTrigger>
             <TabsTrigger value="import">Import & Manual Entry</TabsTrigger>
             <TabsTrigger value="setup">Office Setup</TabsTrigger>
+            <TabsTrigger value="office-exceptions">Office Exceptions</TabsTrigger>
           </TabsList>
         </div>
 
@@ -797,7 +799,8 @@ function AttendanceAdminContent() {
                                 : "outline"
                           }
                         >
-                          {row.status}
+                          {("officeExceptionLabel" in row && row.officeExceptionLabel) ||
+                            row.status}
                         </Badge>
                       </TableCell>
                       <TableCell>{row.clockIn ?? "—"}</TableCell>
@@ -806,7 +809,11 @@ function AttendanceAdminContent() {
                         {recordedAttendanceHours(row) ? `${recordedAttendanceHours(row)}h` : "—"}
                       </TableCell>
                       <TableCell>{"location" in row ? (row.location ?? "—") : "—"}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{row.source}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {"officeExceptionLabel" in row && row.officeExceptionLabel
+                          ? "HR office exception"
+                          : row.source}
+                      </TableCell>
                       <TableCell className="text-right">
                         {!row.id.startsWith("virtual-") && (
                           <Button
@@ -817,6 +824,12 @@ function AttendanceAdminContent() {
                                 (record) => record.id === row.id,
                               );
                               if (!storedRecord) return;
+                              if (storedRecord.officeExceptionLabel) {
+                                toast.info(
+                                  "Manage this day under Office Exceptions. Original punches are kept.",
+                                );
+                                return;
+                              }
                               setEditingRecordId(row.id);
                               setManualEmployeeId(row.employee.id);
                               setManualClockIn(row.clockIn ?? "");
@@ -844,6 +857,14 @@ function AttendanceAdminContent() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="office-exceptions">
+          <OfficeExceptions
+            onSaved={async () => {
+              await attendanceService.hydrateFromDatabase(currentUser.getActorContext());
+              setRevision((v) => v + 1);
+            }}
+          />
+        </TabsContent>
         <TabsContent value="terminals" className="space-y-4">
           <Alert>
             <DoorOpen className="h-4 w-4" />

@@ -1,3 +1,4 @@
+import { dependantSchema } from "@/lib/data/dependants";
 import { useEffect, useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Employee } from "@/lib/data/types";
@@ -60,15 +61,7 @@ const personalFormSchema = z.object({
       }),
     )
     .optional(),
-  dependants: z
-    .array(
-      z.object({
-        name: z.string().min(1),
-        relationship: z.string().min(1),
-        dateOfBirth: z.string().min(1),
-      }),
-    )
-    .optional(),
+  dependants: z.array(dependantSchema).max(20).optional(),
   changeReason: z.string().optional(),
 });
 
@@ -552,6 +545,55 @@ export function PersonalTab({
                                 <FormControl>
                                   <Input {...field} />
                                 </FormControl>
+                              </FormItem>
+                            )}
+                          />
+                          {(["phone", "nationality", "email"] as const).map((key) => (
+                            <FormField
+                              key={key}
+                              control={form.control}
+                              name={`dependants.${index}.${key}`}
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>
+                                    {key === "phone"
+                                      ? "Phone (or guardian's phone)"
+                                      : key === "nationality"
+                                        ? "Nationality"
+                                        : "Email (optional)"}
+                                  </FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      {...field}
+                                      value={field.value ?? ""}
+                                      type={
+                                        key === "email" ? "email" : key === "phone" ? "tel" : "text"
+                                      }
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          ))}
+                          <FormField
+                            control={form.control}
+                            name={`dependants.${index}.visaRequired`}
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Visa required?</FormLabel>
+                                <FormControl>
+                                  <select
+                                    className="h-10 w-full rounded-md border bg-background px-3"
+                                    {...field}
+                                    value={field.value ?? "Not confirmed"}
+                                  >
+                                    <option>Not confirmed</option>
+                                    <option>Yes</option>
+                                    <option>No</option>
+                                  </select>
+                                </FormControl>
+                                <FormMessage />
                               </FormItem>
                             )}
                           />

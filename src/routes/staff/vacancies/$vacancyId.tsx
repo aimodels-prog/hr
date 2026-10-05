@@ -263,6 +263,8 @@ function VacancyDetailRoute() {
   const [shortlist, setShortlist] = useState<ShortlistSnapshot | undefined>(initialShortlist);
   const [isShortlistMode, setIsShortlistMode] = useState(false);
   const [targetSize, setTargetSize] = useState(Math.max(1, initialShortlist?.targetSize ?? 5));
+  const [cvSourceFilter, setCvSourceFilter] =
+    useState<import("@/lib/recruitment/cv-source-filter").CvSourceFilter>("all");
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<string>>(
     new Set(initialShortlist?.selectedCandidateIds || []),
   );
@@ -396,6 +398,7 @@ function VacancyDetailRoute() {
         vacancy.id,
         targetSize,
         getActorContext("Selected the group for detailed assessment"),
+        cvSourceFilter,
       );
       setAssessmentBatch(batch);
       setSelectedCandidateIds(new Set(batch.selectedCandidateIds));
@@ -1129,6 +1132,28 @@ function VacancyDetailRoute() {
                             setTargetSize(Number.isFinite(value) ? Math.max(1, value) : 1);
                           }}
                         />
+                      </div>
+                      <div className="w-52">
+                        <label
+                          className="mb-1 block text-xs font-medium"
+                          htmlFor="assessment-source"
+                        >
+                          CV source
+                        </label>
+                        <select
+                          id="assessment-source"
+                          className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                          value={cvSourceFilter}
+                          onChange={(event) =>
+                            setCvSourceFilter(event.target.value as typeof cvSourceFilter)
+                          }
+                        >
+                          <option value="all">All sources</option>
+                          <option value="portal">Portal applications</option>
+                          <option value="email">Email CVs</option>
+                          <option value="manual">Manual / other uploads</option>
+                          <option value="referral">Employee referrals</option>
+                        </select>
                       </div>
                       <Button
                         variant="outline"

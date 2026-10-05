@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { processDependantCompletionNotices } from "../src/lib/db/repositories/dependant-reminder.repository.server.ts";
+import { processRecruitmentMailbox } from "../src/lib/db/repositories/recruitment-mailbox.repository.server.ts";
 
 import { processNextCandidateCvJob } from "../src/lib/db/repositories/candidate-cv-intake.repository.server.ts";
 import { processAttendanceScheduledWork } from "../src/lib/db/repositories/attendance.repository.server.ts";
@@ -33,6 +35,18 @@ const buildVersion = process.env["VIA_HR_IMAGE_TAG"]?.trim() || "development";
 let stopping = false;
 
 const tasks: Array<WorkerTaskDefinition & { run: () => Promise<unknown> }> = [
+  {
+    name: "dependant-completion-notices",
+    intervalSeconds: 3600,
+    run: () => processDependantCompletionNotices(),
+  },
+  {
+    name: "recruitment-mailbox-import",
+    intervalSeconds: 15,
+    leaseSeconds: 3600,
+    suppressFalseResult: true,
+    run: () => processRecruitmentMailbox(),
+  },
   {
     name: "scheduled-employment-changes",
     intervalSeconds: 60,

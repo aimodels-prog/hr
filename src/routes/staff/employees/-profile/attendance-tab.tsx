@@ -165,7 +165,7 @@ export function AttendanceTab({ employeeId }: { employeeId: string }) {
                               : "secondary"
                         }
                       >
-                        {r.status}
+                        {r.officeExceptionLabel ?? r.status}
                       </Badge>
                     </TableCell>
                   </TableRow>

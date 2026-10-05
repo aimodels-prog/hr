@@ -1,3 +1,4 @@
+import { dependantSchema } from "../data/dependants.ts";
 import { createServerFn } from "@tanstack/react-start";
 import * as z from "zod";
 
@@ -465,18 +466,7 @@ const PersonalOnboardingDetails = z
       )
       .min(1)
       .max(10),
-    dependants: z
-      .array(
-        z
-          .object({
-            name: z.string().trim().min(1).max(150),
-            relationship: z.string().trim().min(1).max(100),
-            dateOfBirth: IsoDate,
-          })
-          .strict(),
-      )
-      .max(20)
-      .optional(),
+    dependants: z.array(dependantSchema).max(20).optional(),
   })
   .strict();
 const BankOnboardingDetails = z
@@ -816,6 +806,8 @@ const UploadEmployeeDocument = z
     actor: Actor,
     employeeId: z.string().uuid(),
     type: DocumentType,
+    dependantId: z.string().uuid().optional(),
+    dependantDocumentKind: z.enum(["passport", "national_id", "visa"]).optional(),
     fileName: z.string().trim().min(1).max(255),
     mimeType: z.enum(["application/pdf", "image/jpeg", "image/png"]),
     bytes: DocumentBytes,
@@ -838,6 +830,10 @@ export const uploadEmployeeDocumentFn = createServerFn({ method: "POST" })
       {
         employeeId: data.employeeId,
         type: data.type,
+        ...(data.dependantId ? { dependantId: data.dependantId } : {}),
+        ...(data.dependantDocumentKind
+          ? { dependantDocumentKind: data.dependantDocumentKind }
+          : {}),
         fileName: data.fileName,
         mimeType: data.mimeType,
         bytes: Uint8Array.from(data.bytes),

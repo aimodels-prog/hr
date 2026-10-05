@@ -396,7 +396,8 @@ function personalEmployeeValues(changes: PersonalRecordChanges) {
   if (changes.nationality !== undefined) values.nationality = changes.nationality || null;
   if (changes.maritalStatus !== undefined) values.maritalStatus = changes.maritalStatus || null;
   if (changes.emergencyContacts !== undefined) values.emergencyContacts = changes.emergencyContacts;
-  if (changes.dependants !== undefined) values.dependants = changes.dependants;
+  if (changes.dependants !== undefined)
+    values.dependants = changes.dependants.map((d) => ({ ...d, id: d.id ?? crypto.randomUUID() }));
   return values;
 }
 
@@ -1816,7 +1817,10 @@ export async function createEmployeeInDatabase(
         status: input.status,
         address: input.address,
         emergencyContacts: input.emergencyContacts ?? [],
-        dependants: input.dependants ?? [],
+        dependants: (input.dependants ?? []).map((d) => ({
+          ...d,
+          id: d.id ?? crypto.randomUUID(),
+        })),
         dateOfBirth: input.dateOfBirth,
         gender: input.gender,
         nationality: input.nationality,
