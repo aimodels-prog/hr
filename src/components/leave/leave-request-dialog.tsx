@@ -21,6 +21,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { LeaveService } from "@/lib/data/leave-service";
+import { SettingsService } from "@/lib/data/settings-service";
 import { EmployeeService } from "@/lib/data/employee-service";
 import type { LeavePolicy, LeaveBalanceReport } from "@/lib/data/leave-types";
 import { useCurrentUser } from "@/lib/auth";
@@ -73,6 +74,23 @@ export function LeaveRequestDialog({
   const [workingDays, setWorkingDays] = useState(0);
   const [balance, setBalance] = useState<LeaveBalanceReport | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [settingsReady, setSettingsReady] = useState(false);
+  useEffect(() => {
+    setSettingsReady(false);
+    if (!open) return;
+    let active = true;
+    void new SettingsService()
+      .getAppSettings()
+      .then(() => {
+        if (active) setSettingsReady(true);
+      })
+      .catch(() => {
+        if (active) toast.error("Could not load leave settings. Close this form and try again.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [open]);
   const [sickPayBreakdown, setSickPayBreakdown] = useState<
     Array<{ fromDay: number; toDay: number; payPercentage: number; days: number }>
   >([]);
@@ -81,7 +99,7 @@ export function LeaveRequestDialog({
 
   // Recalculate working days and fetch balance when inputs change
   useEffect(() => {
-    if (policyId && startDate && endDate) {
+    if (settingsReady && policyId && startDate && endDate) {
       try {
         const days = leaveService.calculateWorkingDays(startDate, endDate, isHalfDay);
         setWorkingDays(days);
@@ -113,12 +131,14 @@ export function LeaveRequestDialog({
     selectedPolicy,
     leaveService,
     actorContext,
+    settingsReady,
   ]);
 
   const handoverRequired = selectedPolicy?.requiresHandoverContact ?? true;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!settingsReady) return;
     if (
       !policyId ||
       !startDate ||
@@ -135,7 +155,7 @@ export function LeaveRequestDialog({
     }
 
     if (workingDays <= 0) {
-      toast.error("Requested period contains no working days.");
+      toast.error("No leave days are counted for these dates. Check the leave settings.");
       return;
     }
 
@@ -441,11 +461,11 @@ export function LeaveRequestDialog({
                   <strong>Notice Rules Apply:</strong>
                   <ul className="list-disc pl-4 mt-1">
                     <li>
-                      &gt; {selectedPolicy.noticeRules.shortLeaveMaxDays} working days requires{" "}
+                      &gt; {selectedPolicy.noticeRules.shortLeaveMaxDays} leave days requires{" "}
                       {selectedPolicy.noticeRules.longLeaveNoticeDays}+ calendar days notice.
                     </li>
                     <li>
-                      ≤ {selectedPolicy.noticeRules.shortLeaveMaxDays} working days requires{" "}
+                      ≤ {selectedPolicy.noticeRules.shortLeaveMaxDays} leave days requires{" "}
                       {selectedPolicy.noticeRules.shortLeaveNoticeDays}+ calendar days notice.
                     </li>
                   </ul>
@@ -507,6 +527,7 @@ export function LeaveRequestDialog({
               type="submit"
               disabled={
                 isSubmitting ||
+                !settingsReady ||
                 workingDays <= 0 ||
                 Boolean(selectedPolicy?.requiresAttachment && !attachment) ||
                 (handoverRequired && !handoverContactId)

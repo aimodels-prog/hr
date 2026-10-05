@@ -4,6 +4,10 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 import postgres from "postgres";
+import {
+  getAppSettings,
+  saveAppSettings,
+} from "../src/lib/db/repositories/settings.repository.server.ts";
 import { processLeaveUsageReminders } from "../src/lib/db/repositories/leave-reminder.repository.server.ts";
 
 import {
@@ -151,6 +155,12 @@ test(
           ${hrUserId}, ${hrUserId}
         )
       `;
+      assert.equal(
+        (await getAppSettings(organisationId)).leaveIncludesWeekends,
+        true,
+        "unset defaults to including weekends",
+      );
+      await sql`UPDATE app_settings SET additional_settings='{"leaveIncludesWeekends":false}'::jsonb WHERE organisation_id=${organisationId}`;
       await sql`
         INSERT INTO public_holidays (
           id, organisation_id, name, code, holiday_date, location_id, is_active, order_index,
@@ -626,6 +636,70 @@ test(
       const none =
         await sql`SELECT * FROM notifications WHERE organisation_id=${organisationId} AND deduplication_key=${`leave-use:${reminderBalanceId}:annual:2090-06`}`;
       assert.equal(none.length, 0);
+      // Count weekends from the saved PostgreSQL setting, preserve unrelated settings
+      // and keep submitted totals stable when the setting subsequently changes.
+      await sql`UPDATE app_settings SET additional_settings='{"unrelatedSetting":"keep"}'::jsonb WHERE organisation_id=${organisationId}`;
+      const currentSettings = await getAppSettings(organisationId);
+      const enabled = await saveAppSettings(
+        organisationId,
+        { ...currentSettings, leaveIncludesWeekends: true },
+        hrActor,
+      );
+      assert.equal(enabled.leaveIncludesWeekends, true);
+      const [storedSettings] =
+        await sql`SELECT additional_settings FROM app_settings WHERE organisation_id=${organisationId}`;
+      assert.equal(storedSettings.additional_settings.unrelatedSetting, "keep");
+      const weekendRequest = await createLeaveRequestInDatabase(
+        organisationId,
+        {
+          employeeId,
+          policyId: sickPolicyId,
+          startDate: "2091-09-13",
+          endDate: "2091-10-01",
+          reason: "Weekend counting test",
+        },
+        employeeActor,
+      );
+      const [counted] =
+        await sql`SELECT working_days_requested, policy_snapshot FROM leave_requests WHERE id=${weekendRequest}`;
+      assert.equal(Number(counted.working_days_requested), 19);
+      assert.equal(counted.policy_snapshot.workingDates.length, 19);
+      await approveLeaveRequestInDatabase(organisationId, weekendRequest, managerActor, "approve");
+      await approveLeaveRequestInDatabase(organisationId, weekendRequest, hrActor, "approve");
+      await requestLeaveChangeInDatabase(
+        organisationId,
+        weekendRequest,
+        {
+          kind: "amend",
+          startDate: "2091-10-10",
+          endDate: "2091-10-16",
+          reason: "New dates",
+        },
+        employeeActor,
+      );
+      const proposed = (
+        await listLeaveSnapshotForActor(organisationId, employeeActor)
+      ).requests.find((item) => item.id === weekendRequest)!;
+      assert.equal(proposed.pendingAmendment?.proposedWorkingDays, 7);
+      await saveAppSettings(organisationId, { ...enabled, leaveIncludesWeekends: false }, hrActor);
+      assert.equal((await getAppSettings(organisationId)).leaveIncludesWeekends, false);
+      const [preserved] =
+        await sql`SELECT working_days_requested FROM leave_requests WHERE id=${weekendRequest}`;
+      assert.equal(Number(preserved.working_days_requested), 19);
+      const workingWeekRequest = await createLeaveRequestInDatabase(
+        organisationId,
+        {
+          employeeId,
+          policyId: sickPolicyId,
+          startDate: "2092-09-13",
+          endDate: "2092-09-19",
+          reason: "Working-day counting test",
+        },
+        employeeActor,
+      );
+      const [workingWeek] =
+        await sql`SELECT working_days_requested FROM leave_requests WHERE id=${workingWeekRequest}`;
+      assert.equal(Number(workingWeek.working_days_requested), 5);
     } finally {
       await sql.end();
     }

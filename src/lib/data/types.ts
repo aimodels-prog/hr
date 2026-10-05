@@ -903,6 +903,7 @@ export interface AppSettings extends BaseRecord {
   standardWeeklyHours: number;
   probationDurationMonths: number;
   leaveYearStart: string;
+  leaveIncludesWeekends?: boolean | undefined;
   leaveYearEnd: string;
   documentReminderDays: number[];
   employeeNumberFormat: string;

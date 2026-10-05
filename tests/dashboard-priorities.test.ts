@@ -26,6 +26,11 @@ test("annual leave separates used from booked without counting weekends or holid
   };
   assert.deepEqual(splitLeaveDays(input), { used: 2, booked: 2 });
   assert.deepEqual(
+    splitLeaveDays({ ...input, workingDates: ["2026-09-13", "2026-09-14", "2026-09-18"] }),
+    { used: 2, booked: 1 },
+    "charts honour recorded dates, including weekends, rather than today's calendar",
+  );
+  assert.deepEqual(
     splitLeaveDays({ ...input, startDate: "2026-09-16", endDate: "2026-09-16", halfDay: true }),
     { used: 0, booked: 0.5 },
   );

@@ -51,6 +51,7 @@ export class SettingsService {
       standardWeeklyHours: 40,
       probationDurationMonths: 3,
       leaveYearStart: "01-01",
+      leaveIncludesWeekends: true,
       leaveYearEnd: "12-31",
       documentReminderDays: [30, 15, 7],
       requireOnboardingCompletionBeforeDashboard: false,
@@ -100,7 +101,9 @@ export class SettingsService {
     const isSuperAdmin = context.actor.activeRole === "Super Admin";
     const isHr = context.actor.activeRole === "HR";
     const hrReminderOnly =
-      isHr && changedKeys.length > 0 && changedKeys.every((key) => key === "documentReminderDays");
+      isHr &&
+      changedKeys.length > 0 &&
+      changedKeys.every((key) => ["documentReminderDays", "leaveIncludesWeekends"].includes(key));
 
     if (!isSuperAdmin && !hrReminderOnly) {
       try {

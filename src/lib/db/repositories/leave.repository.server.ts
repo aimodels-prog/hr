@@ -503,7 +503,11 @@ export async function createLeaveRequestInDatabase(
         throw new Error("The attachment does not belong to this employee.");
     }
     const [settings] = await tx
-      .select({ workingDays: appSettings.workingDays, timezone: appSettings.timezone })
+      .select({
+        workingDays: appSettings.workingDays,
+        timezone: appSettings.timezone,
+        additionalSettings: appSettings.additionalSettings,
+      })
       .from(appSettings)
       .where(eq(appSettings.organisationId, organisationId))
       .limit(1);
@@ -548,6 +552,7 @@ export async function createLeaveRequestInDatabase(
       new Set(holidays.map((h) => h.date)),
       settings.workingDays,
       input.isHalfDay ?? false,
+      settings.additionalSettings["leaveIncludesWeekends"] !== false,
     );
     const days = workingDates.length * (input.isHalfDay ? 0.5 : 1);
     if (days <= 0) throw new Error("The selected dates contain no working days.");
@@ -1499,7 +1504,10 @@ export async function requestLeaveChangeInDatabase(
       )
         throw new Error("Choose valid future leave dates.");
       const [settings] = await tx
-        .select({ workingDays: appSettings.workingDays })
+        .select({
+          workingDays: appSettings.workingDays,
+          additionalSettings: appSettings.additionalSettings,
+        })
         .from(appSettings)
         .where(eq(appSettings.organisationId, organisationId))
         .limit(1);
@@ -1522,6 +1530,7 @@ export async function requestLeaveChangeInDatabase(
         new Set(holidays.map((item) => item.date)),
         settings?.workingDays ?? [],
         row.request.isHalfDay,
+        settings?.additionalSettings["leaveIncludesWeekends"] !== false,
       );
       const proposedDays = proposedWorkingDates.length * (row.request.isHalfDay ? 0.5 : 1);
       if (proposedDays <= 0) throw new Error("The proposed dates contain no working days.");

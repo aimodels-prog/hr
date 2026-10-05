@@ -1531,7 +1531,8 @@ export class LeaveService {
   }
 
   calculateWorkingDates(startDate: string, endDate: string, isHalfDay: boolean): string[] {
-    const workingDaysOfWeek = new SettingsService().getAppSettingsSync().workingDays;
+    const settings = new SettingsService().getAppSettingsSync();
+    const workingDaysOfWeek = settings.workingDays;
     const publicHolidayDates = new Set(
       getMasterDataRepository("publicHolidays")
         .list()
@@ -1546,7 +1547,14 @@ export class LeaveService {
         })
         .filter((date): date is string => Boolean(date)),
     );
-    return leaveWorkingDates(startDate, endDate, publicHolidayDates, workingDaysOfWeek, isHalfDay);
+    return leaveWorkingDates(
+      startDate,
+      endDate,
+      publicHolidayDates,
+      workingDaysOfWeek,
+      isHalfDay,
+      settings.leaveIncludesWeekends !== false,
+    );
   }
 
   async submitLeaveRequest(

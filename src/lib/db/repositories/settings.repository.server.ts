@@ -29,6 +29,7 @@ function mapAppSettings(
     standardWeeklyHours: Number(settingsRow.standardWeeklyHours),
     probationDurationMonths: settingsRow.probationDurationMonths ?? 3,
     leaveYearStart: settingsRow.leaveYearStart,
+    leaveIncludesWeekends: settingsRow.additionalSettings["leaveIncludesWeekends"] !== false,
     leaveYearEnd: settingsRow.leaveYearEnd,
     documentReminderDays: settingsRow.documentReminderDays ?? [],
     employeeNumberFormat: settingsRow.employeeNumberFormat,
@@ -104,6 +105,10 @@ export async function saveAppSettings(
         standardWeeklyHours: String(settings.standardWeeklyHours),
         probationDurationMonths: settings.probationDurationMonths,
         leaveYearStart: settings.leaveYearStart,
+        additionalSettings:
+          settings.leaveIncludesWeekends === undefined
+            ? appSettings.additionalSettings
+            : sql`${appSettings.additionalSettings} || ${JSON.stringify({ leaveIncludesWeekends: settings.leaveIncludesWeekends })}::jsonb`,
         leaveYearEnd: settings.leaveYearEnd,
         documentReminderDays: settings.documentReminderDays,
         employeeNumberFormat: settings.employeeNumberFormat,

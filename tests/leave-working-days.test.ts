@@ -18,6 +18,32 @@ const noFallback = (): string[] => {
   throw new Error("Snapshot must not use the current calendar");
 };
 
+test("weekends can be included without changing holiday or half-day rules", () => {
+  const weekdays = [0, 1, 2, 3, 4];
+  assert.equal(
+    leaveWorkingDates("2026-09-13", "2026-10-01", new Set(), weekdays, false, true).length,
+    19,
+  );
+  assert.equal(
+    leaveWorkingDates("2026-09-13", "2026-10-01", new Set(), weekdays, false, false).length,
+    15,
+  );
+  assert.equal(
+    leaveWorkingDates("2026-09-13", "2026-10-01", new Set(["2026-09-20"]), weekdays, false, true)
+      .length,
+    18,
+  );
+  assert.equal(
+    leaveWorkingDates("2026-09-18", "2026-09-18", new Set(), weekdays, true, true).length * 0.5,
+    0.5,
+  );
+  assert.equal(leaveWorkingDates("2026-09-18", "2026-09-18", new Set(), weekdays, false).length, 0);
+  assert.deepEqual(
+    leaveWorkingDates("2026-10-01", "2026-09-13", new Set(), weekdays, false, true),
+    [],
+  );
+});
+
 test("working dates exclude holidays and use the configured weekend", () => {
   assert.deepEqual(
     leaveWorkingDates(leave.startDate, leave.endDate, new Set(["2026-09-29"]), week, false),

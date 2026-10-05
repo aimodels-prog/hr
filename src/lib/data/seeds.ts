@@ -328,6 +328,7 @@ const settings: AppSettings[] = [
     standardWeeklyHours: 40,
     probationDurationMonths: 3,
     leaveYearStart: "01-01",
+    leaveIncludesWeekends: true,
     leaveYearEnd: "12-31",
     documentReminderDays: [90, 60, 30, 14, 7, 1],
     employeeNumberFormat: "VIA-{0000}",

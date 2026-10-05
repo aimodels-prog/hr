@@ -68,6 +68,7 @@ export async function dashboardPriorities(input: {
               startDate: leaveRequests.startDate,
               endDate: leaveRequests.endDate,
               halfDay: leaveRequests.isHalfDay,
+              policySnapshot: leaveRequests.policySnapshot,
             })
             .from(leaveRequests)
             .where(
@@ -193,6 +194,7 @@ export async function dashboardPriorities(input: {
     for (const request of requestsByKey.get(key) ?? []) {
       const split = splitLeaveDays({
         ...request,
+        workingDates: (request.policySnapshot as { workingDates?: string[] }).workingDates,
         yearStart,
         nextYearStart,
         today,

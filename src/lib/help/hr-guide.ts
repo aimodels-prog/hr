@@ -352,6 +352,7 @@ export const hrGuide = [
     "policy nationality omani only evidence notice annual sick carryover expiry year start accrual",
     [
       "Open HR Settings → Leave Policies and choose the leave type or policy to review.",
+      "Under Counting leave days, turn Include weekends on to count weekends, or off to count only company working days, then Save. Public holidays remain excluded. This applies to new requests and date amendments for all leave types; existing recorded totals do not change. For example, 13 September to 1 October is 19 days when weekends count and there are no public holidays.",
       "Set the applicable allowance, eligibility, notice and evidence requirements shown in the form.",
       "Review nationality conditions for leave restricted to Omanis, and check the carryover and expiry rules where available.",
       "Save the policy, then check a relevant employee’s eligibility and balance before announcing the change.",

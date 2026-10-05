@@ -35,6 +35,7 @@ import { LeaveService } from "@/lib/data/leave-service";
 import type { LeavePolicy } from "@/lib/data/leave-types";
 import { useCurrentUser } from "@/lib/auth";
 import { toast } from "sonner";
+import { LeaveDayCounting } from "./leave-day-counting";
 
 export function LeavePolicyConfig() {
   const currentUser = useCurrentUser();
@@ -85,6 +86,7 @@ export function LeavePolicyConfig() {
 
   return (
     <div className="space-y-6">
+      <LeaveDayCounting />
       <Card>
         <CardHeader>
           <CardTitle>Leave Policies</CardTitle>

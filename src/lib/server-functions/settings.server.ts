@@ -20,6 +20,7 @@ const AppSettingsInputSchema = z.object({
   standardWeeklyHours: z.number().positive().max(168, "Weekly hours cannot exceed 168"),
   probationDurationMonths: z.number().int().min(0).max(36),
   leaveYearStart: z.string().regex(/^\d{2}-\d{2}$/, "Format must be MM-DD"),
+  leaveIncludesWeekends: z.boolean().optional(),
   leaveYearEnd: z.string().regex(/^\d{2}-\d{2}$/, "Format must be MM-DD"),
   documentReminderDays: z.array(z.number().int().min(1).max(3650)),
   employeeNumberFormat: z.string().min(1).includes("{0000}", { message: "Must include {0000}" }),
@@ -110,7 +111,9 @@ export const saveAppSettingsFn = createServerFn({ method: "POST" })
     const isHr = actor.roles.includes("HR");
 
     const hrReminderOnly =
-      isHr && changedKeys.length > 0 && changedKeys.every((key) => key === "documentReminderDays");
+      isHr &&
+      changedKeys.length > 0 &&
+      changedKeys.every((key) => ["documentReminderDays", "leaveIncludesWeekends"].includes(key));
 
     if (!isSuperAdmin && !hrReminderOnly) {
       const db = getDatabaseClient();

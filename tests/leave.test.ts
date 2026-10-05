@@ -4,6 +4,7 @@ import test from "node:test";
 import { configureApplicationDataServices } from "../src/lib/data/application-data.ts";
 import { AuditService } from "../src/lib/data/audit-service.ts";
 import { LeaveService } from "../src/lib/data/leave-service.ts";
+import { SettingsService } from "../src/lib/data/settings-service.ts";
 import { getLeaveEligibility, isOmaniNationality } from "../src/lib/data/leave-eligibility.ts";
 import type { LeavePolicy, LeaveTransaction } from "../src/lib/data/leave-types.ts";
 import { NotificationService } from "../src/lib/data/notification-service.ts";
@@ -104,6 +105,12 @@ function harness() {
   const notifications = new NotificationService(storage, audit);
   const files = fakeFileRepository();
   configureApplicationDataServices({ storage, audit, notifications, files });
+  const settings = new SettingsService();
+  // These existing scenarios exercise the explicitly selected working-days policy.
+  void settings.saveAppSettings(
+    { ...settings.getAppSettingsSync(), leaveIncludesWeekends: false },
+    superAdmin,
+  );
   return { service: new LeaveService(), audit, storage, files };
 }
 
@@ -608,7 +615,7 @@ test("employees cannot edit leave balances and the denial is audited", () => {
   );
 });
 
-test("working days are computed from the configured working week, not a hardcoded Sat/Sun weekend", () => {
+test("weekends count when enabled and can be excluded using the configured working week", async () => {
   const { service } = harness();
   // Oman's seeded working week is Sun-Thu (days 0-4); Fri (5) and Sat (6) are rest days.
   // 2026-08-23 is a Sunday and 2026-08-27 is a Thursday - a full Sun-Thu working week with
@@ -617,6 +624,12 @@ test("working days are computed from the configured working week, not a hardcode
   assert.equal(service.calculateWorkingDays("2026-08-23", "2026-08-27", false), 5);
   // 2026-08-28 (Fri) and 2026-08-29 (Sat) are both rest days under the configured week.
   assert.equal(service.calculateWorkingDays("2026-08-28", "2026-08-29", false), 0);
+  const settings = new SettingsService();
+  await settings.saveAppSettings(
+    { ...settings.getAppSettingsSync(), leaveIncludesWeekends: true },
+    superAdmin,
+  );
+  assert.equal(service.calculateWorkingDays("2026-09-13", "2026-10-01", false), 19);
 });
 
 test("annual leave needs no explanation and still notifies the manager and HR", async () => {

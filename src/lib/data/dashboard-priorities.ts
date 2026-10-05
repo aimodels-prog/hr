@@ -30,6 +30,7 @@ export function splitLeaveDays(input: {
   halfDay: boolean;
   workingDays: number[];
   holidays: Set<string>;
+  workingDates?: string[] | undefined;
 }) {
   let used = 0,
     booked = 0;
@@ -37,7 +38,12 @@ export function splitLeaveDays(input: {
   for (const day = new Date(`${start}T12:00:00Z`); ; day.setUTCDate(day.getUTCDate() + 1)) {
     const date = day.toISOString().slice(0, 10);
     if (date > input.endDate || date >= input.nextYearStart) break;
-    if (!input.workingDays.includes(day.getUTCDay()) || input.holidays.has(date)) continue;
+    if (
+      input.workingDates
+        ? !input.workingDates.includes(date)
+        : !input.workingDays.includes(day.getUTCDay()) || input.holidays.has(date)
+    )
+      continue;
     const amount = input.halfDay ? 0.5 : 1;
     if (date < input.today) used += amount;
     else booked += amount;

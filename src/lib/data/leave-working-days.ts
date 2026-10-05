@@ -5,13 +5,15 @@ export function leaveWorkingDates(
   holidays: ReadonlySet<string>,
   workingDays: readonly number[],
   halfDay: boolean,
+  includeWeekends = false,
 ): string[] {
   if (!validDate(start) || !validDate(end) || start > end || (halfDay && start !== end)) return [];
   const dates: string[] = [];
   const cursor = new Date(`${start}T00:00:00Z`);
   while (cursor.toISOString().slice(0, 10) <= end) {
     const date = cursor.toISOString().slice(0, 10);
-    if (workingDays.includes(cursor.getUTCDay()) && !holidays.has(date)) dates.push(date);
+    if ((includeWeekends || workingDays.includes(cursor.getUTCDay())) && !holidays.has(date))
+      dates.push(date);
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
   return dates;
