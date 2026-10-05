@@ -782,11 +782,7 @@ export async function updateUserAccessInDatabase(
       .where(and(eq(userRoles.organisationId, organisationId), eq(userRoles.userId, target.id)));
     const currentRoles = currentRoleRows.map((row) => row.code as Role);
     const desiredRoles = Array.from(new Set<Role>(["Employee", ...requestedRoles]));
-    reason = changeReason(
-      reason,
-      accessReasonRequired(currentRoles, desiredRoles, target.status, status),
-      "User access updated by administrator",
-    );
+    reason = reason.trim() || "User access updated by administrator";
     if (actor.activeRole === "HR" && currentRoles.includes("Super Admin")) {
       throw new Error("Only a Super Admin can change a Super Admin account.");
     }
@@ -1960,4 +1956,3 @@ export async function createEmployeeInDatabase(
     return { employeeId: employee.id, userId: user.id };
   });
 }
-import { accessReasonRequired } from "../../data/change-reason-policy.ts";

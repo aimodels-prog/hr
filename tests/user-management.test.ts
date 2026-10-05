@@ -73,7 +73,7 @@ test("HR cannot change a Super Admin account and the denial is audited", () => {
 
 test.after(() => configureApplicationDataServices(undefined));
 
-test("routine access changes save with automatic audit text; Super Admin grants need explanation", () => {
+test("authorised access changes including Super Admin save without a reason and remain audited", () => {
   const { service, audit } = setup();
   const target = service.getUserRepository(SYSTEM_CONTEXT).getById("user-omar");
   assert.ok(target);
@@ -84,19 +84,21 @@ test("routine access changes save with automatic audit text; Super Admin grants 
     .list()
     .find((user) => user.roles.includes("Super Admin"));
   assert.ok(admin);
-  assert.throws(
-    () =>
-      service.updateUserAccess(target.id, ["Employee", "Super Admin"], "Active", "", {
-        actor: {
-          userId: admin.id,
-          employeeId: admin.employeeId,
-          displayName: admin.displayName,
-          activeRole: "Super Admin",
-          roles: admin.roles,
-        },
-      }),
-    /reason/,
+  assert.doesNotThrow(() =>
+    service.updateUserAccess(target.id, ["Employee", "Super Admin"], "Active", "", {
+      actor: {
+        userId: admin.id,
+        employeeId: admin.employeeId,
+        displayName: admin.displayName,
+        activeRole: "Super Admin",
+        roles: admin.roles,
+      },
+    }),
   );
+  assert.ok(
+    service.getUserRepository(SYSTEM_CONTEXT).getById(target.id)?.roles.includes("Super Admin"),
+  );
+  assert.equal(audit.list().at(-1)?.reason, "User access updated by administrator");
 });
 
 test("removing user access preserves the employee record and supports restoration", () => {

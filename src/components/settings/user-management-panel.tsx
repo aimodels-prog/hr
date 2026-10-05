@@ -33,7 +33,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 
 const badgeClass: Record<Role, string> = {
   Employee: "bg-slate-500/15 text-slate-700",
@@ -71,7 +70,6 @@ export function UserManagementPanel() {
   const [selected, setSelected] = useState<User | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
   const [status, setStatus] = useState<User["status"]>("Active");
-  const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
 
   const employees = useMemo(
@@ -100,7 +98,6 @@ export function UserManagementPanel() {
     setSelected(user);
     setRoles(user.roles.includes("Employee") ? user.roles : ["Employee", ...user.roles]);
     setStatus(user.status);
-    setReason("");
   };
 
   const toggle = (role: Role, checked: boolean) =>
@@ -112,7 +109,7 @@ export function UserManagementPanel() {
     if (!selected) return;
     setSaving(true);
     try {
-      await service.updateUserAccessAsync(selected.id, roles, status, reason, getActorContext());
+      await service.updateUserAccessAsync(selected.id, roles, status, "", getActorContext());
       toast.success(`${selected.displayName}'s access has been updated`);
       setSelected(null);
       setUsers(service.getUsers(getActorContext(), { includeArchived: true }));
@@ -351,38 +348,12 @@ export function UserManagementPanel() {
                 })}
               </div>
             </div>
-            <ChangeNote
-              required={
-                !!selected && accessReasonRequired(selected.roles, roles, selected.status, status)
-              }
-            >
-              <label htmlFor="change-reason" className="text-sm font-medium">
-                {selected && accessReasonRequired(selected.roles, roles, selected.status, status)
-                  ? "Explain this Super Admin access change *"
-                  : "Note"}
-              </label>
-              <Textarea
-                id="change-reason"
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-                placeholder="Add context if needed"
-                className="mt-1.5 min-h-20"
-              />
-            </ChangeNote>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSelected(null)}>
               Cancel
             </Button>
-            <Button
-              onClick={save}
-              disabled={
-                saving ||
-                (!!selected &&
-                  accessReasonRequired(selected.roles, roles, selected.status, status) &&
-                  reason.trim().length < 5)
-              }
-            >
+            <Button onClick={save} disabled={saving}>
               {saving ? "Saving..." : "Save Changes"}
             </Button>
           </DialogFooter>
@@ -391,5 +362,3 @@ export function UserManagementPanel() {
     </Card>
   );
 }
-import { accessReasonRequired } from "@/lib/data/change-reason-policy";
-import { ChangeNote } from "@/components/ui/change-note";

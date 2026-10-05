@@ -586,17 +586,7 @@ export class EmployeeService {
       throw new Error("Only HR or a Super Admin can change user access.");
     }
 
-    const trimmedReason =
-      reason.trim() ||
-      (accessReasonRequired(target.roles, requestedRoles, target.status, status)
-        ? ""
-        : "User access updated by administrator");
-    if (
-      accessReasonRequired(target.roles, requestedRoles, target.status, status) &&
-      trimmedReason.length < 5
-    ) {
-      throw new Error("Please give a short reason for this change.");
-    }
+    const trimmedReason = reason.trim() || "User access updated by administrator";
 
     const roles = Array.from(new Set<Role>(["Employee", ...requestedRoles]));
     const changesAccess =
@@ -1687,4 +1677,3 @@ export class EmployeeService {
     );
   }
 }
-import { accessReasonRequired } from "./change-reason-policy.ts";

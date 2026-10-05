@@ -53,19 +53,6 @@ export function personalReasonRequired(fields: string[]): boolean {
   );
 }
 
-export function accessReasonRequired(
-  before: string[],
-  after: string[],
-  beforeStatus: string,
-  afterStatus: string,
-) {
-  return (
-    before.includes("Super Admin") !== after.includes("Super Admin") ||
-    (beforeStatus !== afterStatus &&
-      (before.includes("Super Admin") || after.includes("Super Admin")))
-  );
-}
-
 export function trainingReasonRequired(
   course: { cost: number | string; isMandatory: boolean },
   origin: string,

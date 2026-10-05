@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   changedRecordFields,
-  accessReasonRequired,
   changeReason,
   employmentReasonRequired,
   personalReasonRequired,
@@ -50,7 +49,7 @@ test("routine profile and family corrections are optional; legal identity change
   }
 });
 
-test("routine employment and access edits need no explanation but Super Admin changes do", () => {
+test("routine employment edits need no explanation", () => {
   for (const field of [
     "position",
     "positionId",
@@ -61,17 +60,6 @@ test("routine employment and access edits need no explanation but Super Admin ch
     "projectId",
   ])
     assert.equal(employmentReasonRequired([field], "Confirmed"), false);
-  assert.equal(accessReasonRequired(["Employee"], ["Employee", "HR"], "Active", "Active"), false);
-  assert.equal(
-    accessReasonRequired(["Employee"], ["Employee", "Super Admin"], "Active", "Active"),
-    true,
-  );
-  assert.equal(accessReasonRequired(["Super Admin"], ["Employee"], "Active", "Active"), true);
-  assert.equal(accessReasonRequired(["Super Admin"], ["Super Admin"], "Active", "Suspended"), true);
-  assert.equal(
-    accessReasonRequired(["Super Admin"], ["Super Admin", "Line Manager"], "Active", "Active"),
-    false,
-  );
 });
 
 test("only free training and standard HR mandatory assignments waive justification", () => {

@@ -879,7 +879,7 @@ export const hrGuide = [
     [
       "Open Users & Access and find the correct person.",
       "Review their linked employee record, current account status and assigned roles.",
-      "Use the available role or status controls only for the access you are authorised to grant. Routine changes need no explanation; Add note is optional. Granting or removing Super Admin, or changing a Super Admin's sign-in status, requires an explanation. The app records who changed the access and what changed.",
+      "Use the role or status controls only for the access you are authorised to grant, then Save Changes. No written reason is needed, including for Super Admin changes. The app automatically records who changed the access and what changed. Only a Super Admin can grant or remove Super Admin access.",
       "To remove someone’s VIA HR access, choose Remove beside their name in User Management, then confirm. Their employee record and history are kept; their VIA Portal account and employment are not changed. To restore access, filter by Removed users, choose Manage, set the status to Active and save. You cannot remove yourself. Reassign a supervisor’s direct reports before removing their access.",
       "Check the employee’s supervisor and ensure that anyone receiving approval tasks has the required approval access.",
       "Ask the person to select the correct role and verify the expected pages are available.",
