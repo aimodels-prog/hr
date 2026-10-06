@@ -105,6 +105,7 @@ export async function listEmployeeDocumentsForActor(
       status: document.status,
       ...(document.rejectionReason ? { rejectionReason: document.rejectionReason } : {}),
       ...(document.replacedById ? { replacedById: document.replacedById } : {}),
+      ...(document.replacesDocumentId ? { replacesDocumentId: document.replacesDocumentId } : {}),
       ...(document.assignedOwnerId ? { assignedOwnerId: document.assignedOwnerId } : {}),
       ...(document.snoozedUntil ? { snoozedUntil: document.snoozedUntil } : {}),
       ...(document.snoozeReason ? { snoozeReason: document.snoozeReason } : {}),
@@ -135,7 +136,21 @@ export async function decideEmployeeDocumentInDatabase(
     throw new Error("Explain why the document is being rejected.");
   }
   const db = getDatabaseClient();
+  const [identity] = await db
+    .select({ employeeId: employeeDocuments.employeeId })
+    .from(employeeDocuments)
+    .where(
+      and(
+        eq(employeeDocuments.organisationId, organisationId),
+        eq(employeeDocuments.id, documentId),
+      ),
+    )
+    .limit(1);
+  if (!identity) throw new Error("Document not found.");
   await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${organisationId + ":documents:" + identity.employeeId}))`,
+    );
     const [document] = await tx
       .select()
       .from(employeeDocuments)
@@ -152,6 +167,38 @@ export async function decideEmployeeDocumentInDatabase(
     }
     if (document.employeeId === actor.employeeId) {
       throw new Error("You cannot review your own employee document.");
+    }
+    if (decision === "verify" && document.replacesDocumentId) {
+      const [previous] = await tx
+        .select()
+        .from(employeeDocuments)
+        .where(
+          and(
+            eq(employeeDocuments.organisationId, organisationId),
+            eq(employeeDocuments.id, document.replacesDocumentId),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (
+        !previous ||
+        previous.employeeId !== document.employeeId ||
+        previous.archivedAt ||
+        (previous.status === "Replaced" && previous.replacedById !== document.id)
+      )
+        throw new Error(
+          "The previous document changed. Refresh before reviewing this replacement.",
+        );
+      await tx
+        .update(employeeDocuments)
+        .set({
+          status: "Replaced",
+          replacedById: document.id,
+          updatedAt: new Date(),
+          updatedBy: actor.userId,
+          recordVersion: sql`${employeeDocuments.recordVersion} + 1`,
+        })
+        .where(eq(employeeDocuments.id, previous.id));
     }
     const documentNumber = verifiedDetails?.documentNumber?.trim();
     const issuingAuthority = verifiedDetails?.issuingAuthority?.trim();
@@ -652,8 +699,6 @@ export async function replaceEmployeeDocumentInDatabase(
   },
   actor: AuditActorContext,
 ): Promise<string> {
-  if (actor.activeRole !== "HR" && actor.activeRole !== "Super Admin")
-    throw new Error("Only HR or a Super Admin can replace employee documents.");
   if (input.reason.trim().length < 3)
     throw new Error("Explain why this document is being replaced.");
   if (!allowedMimeTypes.has(input.mimeType) || input.bytes.byteLength > 10 * 1024 * 1024)
@@ -662,6 +707,24 @@ export async function replaceEmployeeDocumentInDatabase(
     throw new Error("Expiry date cannot be before issue date.");
   const db = getDatabaseClient();
   const replacementId = randomUUID();
+  const [permitted] = await db
+    .select()
+    .from(employeeDocuments)
+    .where(
+      and(
+        eq(employeeDocuments.organisationId, organisationId),
+        eq(employeeDocuments.id, documentId),
+      ),
+    )
+    .limit(1);
+  if (
+    !permitted ||
+    (!["HR", "Super Admin"].includes(actor.activeRole) && permitted.employeeId !== actor.employeeId)
+  )
+    throw new Error("You cannot replace this employee document.");
+  assertHrDocumentWrite(permitted.type, actor.activeRole);
+  if (!input.fileName.trim() || input.bytes.byteLength === 0)
+    throw new Error("A non-empty document is required.");
   const fileId = randomUUID();
   const stored = await saveObjectFile({
     id: fileId,
@@ -674,6 +737,9 @@ export async function replaceEmployeeDocumentInDatabase(
   });
   try {
     await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext(${organisationId + ":documents:" + permitted.employeeId}))`,
+      );
       const [old] = await tx
         .select()
         .from(employeeDocuments)
@@ -684,14 +750,59 @@ export async function replaceEmployeeDocumentInDatabase(
           ),
         )
         .limit(1);
-      if (!old) throw new Error("Employee document not found.");
+      if (!old || old.archivedAt || old.status === "Replaced")
+        throw new Error("This document has changed. Refresh and try again.");
+      const targetId = old.status === "Valid" ? old.id : (old.replacesDocumentId ?? old.id);
+      const [target] = await tx
+        .select()
+        .from(employeeDocuments)
+        .where(
+          and(
+            eq(employeeDocuments.organisationId, organisationId),
+            eq(employeeDocuments.id, targetId),
+          ),
+        )
+        .limit(1);
+      if (
+        !target ||
+        target.archivedAt ||
+        (target.status === "Replaced" && target.replacedById !== old.id)
+      )
+        throw new Error("A newer document version exists. Refresh and revise the current version.");
+      const [pending] = await tx
+        .select({ id: employeeDocuments.id })
+        .from(employeeDocuments)
+        .where(
+          and(
+            eq(employeeDocuments.organisationId, organisationId),
+            eq(employeeDocuments.replacesDocumentId, targetId),
+            eq(employeeDocuments.status, "Pending Verification"),
+            isNull(employeeDocuments.archivedAt),
+          ),
+        )
+        .limit(1);
+      if (pending && pending.id !== old.id)
+        throw new Error(
+          "A replacement is already awaiting HR review. Update that pending version instead.",
+        );
       const [latest] = await tx
         .select({ version: sql<number>`coalesce(max(${documentVersions.versionNumber}), 0)` })
         .from(documentVersions)
         .where(eq(documentVersions.documentId, documentId));
       const version = Number(latest?.version ?? 0) + 1;
+      if (old.status !== "Valid")
+        await tx
+          .update(employeeDocuments)
+          .set({
+            status: "Replaced",
+            updatedAt: new Date(),
+            updatedBy: actor.userId,
+            recordVersion: sql`${employeeDocuments.recordVersion} + 1`,
+          })
+          .where(eq(employeeDocuments.id, old.id));
       await tx.insert(employeeDocuments).values({
         id: replacementId,
+        replacesDocumentId: targetId,
         organisationId,
         employeeId: old.employeeId,
         dependantId: old.dependantId,
@@ -714,16 +825,28 @@ export async function replaceEmployeeDocumentInDatabase(
         createdBy: actor.userId,
         updatedBy: actor.userId,
       } as typeof employeeDocuments.$inferInsert);
-      await tx
-        .update(employeeDocuments)
-        .set({
-          status: "Replaced",
-          replacedById: replacementId,
-          updatedAt: new Date(),
-          updatedBy: actor.userId,
-          recordVersion: sql`${employeeDocuments.recordVersion} + 1`,
-        })
-        .where(eq(employeeDocuments.id, documentId));
+      if (old.status !== "Valid")
+        await tx
+          .update(employeeDocuments)
+          .set({
+            status: "Replaced",
+            replacedById: replacementId,
+            updatedAt: new Date(),
+            updatedBy: actor.userId,
+            recordVersion: sql`${employeeDocuments.recordVersion} + 1`,
+          })
+          .where(eq(employeeDocuments.id, documentId));
+      if (target.status === "Replaced" && target.id !== old.id) {
+        await tx
+          .update(employeeDocuments)
+          .set({
+            replacedById: replacementId,
+            updatedAt: new Date(),
+            updatedBy: actor.userId,
+            recordVersion: sql`${employeeDocuments.recordVersion} + 1`,
+          })
+          .where(eq(employeeDocuments.id, target.id));
+      }
       await tx.insert(documentVersions).values({
         id: randomUUID(),
         organisationId,
@@ -733,6 +856,43 @@ export async function replaceEmployeeDocumentInDatabase(
         createdBy: actor.userId,
         reason: input.reason.trim(),
       } as typeof documentVersions.$inferInsert);
+      const reviewers = await tx
+        .selectDistinct({ id: users.id })
+        .from(users)
+        .innerJoin(
+          userRoles,
+          and(eq(userRoles.userId, users.id), eq(userRoles.organisationId, organisationId)),
+        )
+        .innerJoin(roles, eq(roles.id, userRoles.roleId))
+        .where(
+          and(
+            eq(users.organisationId, organisationId),
+            eq(users.status, "Active"),
+            isNull(users.archivedAt),
+            sql`${roles.code} IN ('HR','Super Admin')`,
+            sql`${users.employeeId} <> ${old.employeeId}`,
+          ),
+        );
+      for (const reviewer of reviewers)
+        await tx
+          .insert(notifications)
+          .values({
+            organisationId,
+            recipientUserId: reviewer.id,
+            type: "employee-document.approval_required",
+            title: "Document replacement awaiting review",
+            message:
+              "Review the proposed replacement. The previously approved document remains current until verification.",
+            link: {
+              entityType: "employee-document",
+              entityId: replacementId,
+              path: `/staff/employees/${old.employeeId}`,
+            },
+            deduplicationKey: `document-replacement:${replacementId}`,
+            createdBy: actor.userId!,
+            updatedBy: actor.userId!,
+          })
+          .onConflictDoNothing();
       await tx.insert(auditEvents).values({
         organisationId,
         actorUserId: actor.userId,

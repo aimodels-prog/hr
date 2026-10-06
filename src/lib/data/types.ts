@@ -220,6 +220,7 @@ export interface EmployeeDocument extends BaseRecord {
   status: DocumentStatus;
   rejectionReason?: string | undefined;
   replacedById?: RecordId | undefined; // ID of the newer version
+  replacesDocumentId?: RecordId | undefined; // Approved record kept current during review
   assignedOwnerId?: RecordId | undefined; // HR personnel assigned to follow up
   snoozedUntil?: string | undefined; // ISO Date string to pause reminders
   snoozeReason?: string | undefined;

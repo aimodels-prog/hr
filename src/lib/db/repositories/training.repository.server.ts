@@ -1556,6 +1556,10 @@ export async function decideTrainingRecordInDatabase(
       .for("update")
       .limit(1);
     if (!record) throw new Error("Training record not found.");
+    if (record.hrVerified || record.rejectedAt)
+      throw new Error(
+        "This certificate decision is locked. Submit a corrected certificate as a new record for HR review.",
+      );
     if (actor.employeeId === record.employeeId)
       throw new Error("You cannot verify your own certificate.");
     if (decision === "Verify" && !record.certificateFileId)

@@ -21,6 +21,15 @@ const employee: ActorContext = {
     roles: ["Employee"],
   },
 };
+const hr: ActorContext = {
+  actor: {
+    userId: "user-rana",
+    employeeId: "employee-rana",
+    displayName: "Rana",
+    activeRole: "HR",
+    roles: ["Employee", "HR"],
+  },
+};
 
 function fakeFileRepository(): FileRepository {
   const files = new Map<string, { metadata: FileMetadata; blob: Blob }>();
@@ -163,7 +172,7 @@ test("document types that don't require a document number still upload without o
   assert.equal(doc.documentNumber, undefined);
 });
 
-test("replaceDocument marks the old document Replaced and links it to the new one", async () => {
+test("approved documents stay current until HR verifies a replacement", async () => {
   setup();
   const documents = new DocumentService();
 
@@ -182,6 +191,7 @@ test("replaceDocument marks the old document Replaced and links it to the new on
     employee,
   );
 
+  documents.verifyDocument(original.id, hr);
   const replacement = await documents.replaceDocument(
     original.id,
     new Blob(["v2"], { type: "application/pdf" }),
@@ -198,10 +208,88 @@ test("replaceDocument marks the old document Replaced and links it to the new on
   );
 
   const oldReloaded = documents.getDocumentRepository(SYSTEM_CONTEXT).getById(original.id);
-  assert.equal(oldReloaded?.status, "Replaced");
-  assert.equal(oldReloaded?.replacedById, replacement.id);
+  assert.equal(oldReloaded?.status, "Valid");
+  assert.equal(oldReloaded?.replacedById, undefined);
+  assert.equal(replacement.replacesDocumentId, original.id);
   assert.equal(replacement.documentNumber, "P7654321");
   assert.equal(replacement.status, "Pending Verification");
+  documents.verifyDocument(replacement.id, hr);
+  assert.equal(
+    documents.getDocumentRepository(SYSTEM_CONTEXT).getById(original.id)?.status,
+    "Replaced",
+  );
+  assert.equal(
+    documents.getDocumentRepository(SYSTEM_CONTEXT).getById(original.id)?.replacedById,
+    replacement.id,
+  );
+});
+
+test("rejected replacement preserves approved document and corrected submission needs new approval", async () => {
+  setup();
+  const documents = new DocumentService();
+  const metadata = { type: "contract" as const, visibility: "Restricted" as const };
+  const file = new Blob(["original"], { type: "application/pdf" });
+  const original = await documents.uploadDocument(
+    "employee-omar",
+    file,
+    "contract.pdf",
+    metadata,
+    employee,
+  );
+  documents.verifyDocument(original.id, hr);
+  const revision = await documents.replaceDocument(
+    original.id,
+    file,
+    "revision.pdf",
+    metadata,
+    employee,
+  );
+  await assert.rejects(
+    documents.replaceDocument(original.id, file, "duplicate.pdf", metadata, employee),
+    /already awaiting/,
+  );
+  documents.rejectDocument(revision.id, "Please correct the document", hr);
+  assert.equal(
+    documents.getDocumentRepository(SYSTEM_CONTEXT).getById(original.id)?.status,
+    "Valid",
+  );
+  const corrected = await documents.replaceDocument(
+    revision.id,
+    file,
+    "corrected.pdf",
+    metadata,
+    employee,
+  );
+  assert.equal(corrected.status, "Pending Verification");
+  assert.throws(() => documents.verifyDocument(revision.id, hr), /not pending/);
+  assert.throws(() => documents.verifyDocument(corrected.id, employee), /Only HR/);
+  documents.verifyDocument(corrected.id, hr);
+  assert.equal(
+    documents.getDocumentRepository(SYSTEM_CONTEXT).getById(original.id)?.replacedById,
+    corrected.id,
+  );
+});
+
+test("unapproved document can be corrected repeatedly without allowing outdated approval", async () => {
+  setup();
+  const documents = new DocumentService();
+  const metadata = { type: "contract" as const, visibility: "Restricted" as const };
+  const file = new Blob(["draft"], { type: "application/pdf" });
+  const original = await documents.uploadDocument(
+    "employee-omar",
+    file,
+    "contract.pdf",
+    metadata,
+    employee,
+  );
+  const first = await documents.replaceDocument(original.id, file, "first.pdf", metadata, employee);
+  const second = await documents.replaceDocument(first.id, file, "second.pdf", metadata, employee);
+  assert.throws(() => documents.verifyDocument(first.id, hr), /not pending/);
+  documents.verifyDocument(second.id, hr);
+  assert.equal(
+    documents.getDocumentRepository(SYSTEM_CONTEXT).getById(original.id)?.replacedById,
+    second.id,
+  );
 });
 
 test.after(() => configureApplicationDataServices(undefined));

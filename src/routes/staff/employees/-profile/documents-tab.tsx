@@ -472,7 +472,15 @@ export function DocumentsTab({
             </DialogTrigger>
             <DialogContent className="max-w-md">
               <DialogHeader>
-                <DialogTitle>{isReplacing ? "Replace Document" : "Upload Document"}</DialogTitle>
+                <DialogTitle>
+                  {isReplacing ? "Submit document revision" : "Upload Document"}
+                </DialogTitle>
+                {isReplacing && (
+                  <p className="text-sm text-muted-foreground">
+                    HR will review this version. Any approved version stays current until the
+                    replacement is approved.
+                  </p>
+                )}
               </DialogHeader>
               <Form {...form}>
                 <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
@@ -829,12 +837,12 @@ export function DocumentsTab({
                   </TableCell>
                   <TableCell className="text-right space-x-1">
                     {doc.computedStatus !== "Replaced" &&
-                      doc.computedStatus !== "Rejected" &&
-                      (isSelf || isHrOrAdmin) && (
+                      (isHrOrAdmin ||
+                        (isSelf && !["work_permit", "insurance_benefits"].includes(doc.type))) && (
                         <Button
                           variant="ghost"
                           size="icon"
-                          title="Replace with new version"
+                          title="Submit a corrected or renewed version for HR review"
                           onClick={() => openReplace(doc)}
                         >
                           <RefreshCcw className="h-4 w-4" />

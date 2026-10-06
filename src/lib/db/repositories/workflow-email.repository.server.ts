@@ -6,6 +6,7 @@ import { calendarAccessToken } from "../../integrations/google-calendar.server.t
 import { missingClockoutEmailDate } from "./missing-clockout.repository.server.ts";
 import { dependantCompletionStillMissing } from "./dependant-reminder.repository.server.ts";
 import { sendWorkflowEmail, WorkflowEmailError } from "../../integrations/workflow-email.server.ts";
+import { workflowEmailRecipientPolicy } from "./workflow-email-policy.server.ts";
 
 /** Mirrors durable workflow notifications; does not send historic backlog on first connection. */
 export async function enqueueWorkflowEmails() {
@@ -16,6 +17,7 @@ export async function enqueueWorkflowEmails() {
     JOIN google_calendar_connections c ON c.organisation_id=n.organisation_id AND c.email_enabled_at IS NOT NULL
     JOIN users u ON u.id=n.recipient_user_id AND u.organisation_id=n.organisation_id AND u.status='Active' AND u.archived_at IS NULL
     WHERE n.archived_at IS NULL AND n.status<>'Dismissed' AND n.created_at>=c.email_enabled_at
+      AND ${workflowEmailRecipientPolicy()}
       AND n.type NOT IN ('attendance.sign_out','attendance.sign_out_reminder')
       AND (n.type='workflow.request_update' OR NOT EXISTS (
         SELECT 1 FROM notifications receipt WHERE receipt.type='workflow.request_update'
@@ -50,10 +52,11 @@ export async function processWorkflowEmails() {
         await db.execute(sql`SELECT u.id AS recipient_id,u.workspace_email,c.refresh_token_encrypted,c.account_email,n.type,n.title,n.message,n.link FROM notifications n
         JOIN users u ON u.id=n.recipient_user_id AND u.organisation_id=n.organisation_id AND u.status='Active' AND u.archived_at IS NULL
         JOIN google_calendar_connections c ON c.organisation_id=n.organisation_id AND c.email_enabled_at IS NOT NULL
-        WHERE n.id=${id}::uuid AND n.organisation_id=${org}::uuid AND n.archived_at IS NULL AND n.status<>'Dismissed'`);
+        WHERE n.id=${id}::uuid AND n.organisation_id=${org}::uuid AND n.archived_at IS NULL AND n.status<>'Dismissed'
+          AND ${workflowEmailRecipientPolicy()}`);
       if (!recipient) {
         await db.execute(
-          sql`UPDATE workflow_notification_emails SET status='Skipped',last_error='Recipient or authorised sender is no longer available.',updated_at=now() WHERE notification_id=${id}::uuid`,
+          sql`UPDATE workflow_notification_emails SET status='Skipped',last_error='Recipient is no longer eligible for this email, or the authorised sender is unavailable.',updated_at=now() WHERE notification_id=${id}::uuid`,
         );
         continue;
       }

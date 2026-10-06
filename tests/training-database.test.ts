@@ -299,6 +299,16 @@ test(
         /reason for rejecting/,
       );
       await decideTrainingRecordInDatabase(ids.org!, manualRecordId, "Verify", "", hrActor);
+      await assert.rejects(
+        decideTrainingRecordInDatabase(
+          ids.org!,
+          manualRecordId,
+          "Reject",
+          "Changed decision",
+          hrActor,
+        ),
+        /decision is locked/,
+      );
 
       const mandatoryCourseId = await saveTrainingCourseInDatabase(
         ids.org!,

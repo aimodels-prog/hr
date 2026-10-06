@@ -393,7 +393,11 @@ export function TrainingTab({ employeeId }: { employeeId: string }) {
                             variant={record.hrVerified ? "default" : "secondary"}
                             className="rounded-full"
                           >
-                            {record.hrVerified ? "Verified" : "Awaiting HR"}
+                            {record.hrVerified
+                              ? "Verified"
+                              : record.rejectedAt
+                                ? "Returned"
+                                : "Awaiting HR"}
                           </Badge>
                           {record.certificateFileId && (
                             <Button
@@ -405,7 +409,7 @@ export function TrainingTab({ employeeId }: { employeeId: string }) {
                               <Eye /> Certificate
                             </Button>
                           )}
-                          {canManageTraining && !record.hrVerified && (
+                          {canManageTraining && !record.hrVerified && !record.rejectedAt && (
                             <Button
                               type="button"
                               variant="outline"

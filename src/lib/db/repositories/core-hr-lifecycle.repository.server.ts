@@ -1179,6 +1179,8 @@ export async function updateOnboardingTaskInDatabase(
       .for("update")
       .limit(1);
     if (!row) throw new Error("Onboarding task not found.");
+    if (["Completed", "Waived"].includes(row.task.status))
+      throw new Error("This completed task is locked. Its recorded outcome cannot be overwritten.");
     if (row.lifecycle.status !== "In Progress")
       throw new Error("This onboarding case is not active.");
     const explicitlyAssigned = row.task.assignedUserId === actor.userId;
@@ -2425,6 +2427,8 @@ export async function updateOffboardingTaskInDatabase(
       .for("update")
       .limit(1);
     if (!row) throw new Error("Offboarding task not found.");
+    if (["Completed", "Waived"].includes(row.task.status))
+      throw new Error("This completed task is locked. Its recorded outcome cannot be overwritten.");
     if (
       actor.employeeId === row.employee.id &&
       ["HR", "Accounts", "Super Admin"].includes(actor.activeRole) &&

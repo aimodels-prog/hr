@@ -111,6 +111,12 @@ export const employeeDocuments = pgTable(
     visibility: documentVisibility("visibility").notNull().default("Restricted"),
     status: documentStatus("status").notNull().default("Pending Verification"),
     rejectionReason: text("rejection_reason"),
+    replacesDocumentId: uuid("replaces_document_id").references(
+      (): AnyPgColumn => employeeDocuments.id,
+      {
+        onDelete: "restrict",
+      },
+    ),
     replacedById: uuid("replaced_by_id").references((): AnyPgColumn => employeeDocuments.id, {
       onDelete: "restrict",
     }),
@@ -122,6 +128,9 @@ export const employeeDocuments = pgTable(
     waiverReason: text("waiver_reason"),
   },
   (table) => [
+    uniqueIndex("employee_documents_one_pending_replacement")
+      .on(table.organisationId, table.replacesDocumentId)
+      .where(sql`${table.status} = 'Pending Verification' AND ${table.archivedAt} IS NULL`),
     index("employee_documents_org_employee_idx").on(
       table.organisationId,
       table.employeeId,

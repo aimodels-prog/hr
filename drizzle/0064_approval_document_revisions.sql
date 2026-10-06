@@ -1,0 +1,3 @@
+ALTER TABLE "employee_documents" ADD COLUMN "replaces_document_id" uuid;--> statement-breakpoint
+ALTER TABLE "employee_documents" ADD CONSTRAINT "employee_documents_replaces_document_id_employee_documents_id_fk" FOREIGN KEY ("replaces_document_id") REFERENCES "public"."employee_documents"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+CREATE UNIQUE INDEX "employee_documents_one_pending_replacement" ON "employee_documents" USING btree ("organisation_id","replaces_document_id") WHERE "employee_documents"."status" = 'Pending Verification' AND "employee_documents"."archived_at" IS NULL;

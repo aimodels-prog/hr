@@ -738,31 +738,34 @@ function StaffTrainingRoute() {
                           View
                         </Button>
                       )}
-                      {isHr && record.certificateFileId && !record.hrVerified && (
-                        <>
-                          <Button
-                            size="sm"
-                            onClick={() =>
-                              run(
-                                () => service.decideRecordAsync(record.id, "Verify", "", context),
-                                "Certificate verified",
-                              )
-                            }
-                          >
-                            Verify
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              setReasonAction({ kind: "Reject Certificate", id: record.id });
-                              setReason("");
-                            }}
-                          >
-                            Return
-                          </Button>
-                        </>
-                      )}
+                      {isHr &&
+                        record.certificateFileId &&
+                        !record.hrVerified &&
+                        !record.rejectedAt && (
+                          <>
+                            <Button
+                              size="sm"
+                              onClick={() =>
+                                run(
+                                  () => service.decideRecordAsync(record.id, "Verify", "", context),
+                                  "Certificate verified",
+                                )
+                              }
+                            >
+                              Verify
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setReasonAction({ kind: "Reject Certificate", id: record.id });
+                                setReason("");
+                              }}
+                            >
+                              Return
+                            </Button>
+                          </>
+                        )}
                     </TableCell>
                   </TableRow>
                 ))}

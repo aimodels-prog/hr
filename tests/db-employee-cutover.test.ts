@@ -214,6 +214,14 @@ test(
         actor,
       );
       lifecycle = await listCoreHrLifecycleForActor(organisationId, actor);
+      await assert.rejects(
+        updateOnboardingTaskInDatabase(
+          organisationId,
+          { caseId: onboardingCaseId, taskId: managerTask.id, status: "Pending" },
+          actor,
+        ),
+        /completed task is locked/,
+      );
       assert.equal(
         lifecycle.onboardingCases
           .find((item) => item.id === onboardingCaseId)
@@ -266,8 +274,8 @@ test(
           organisationId,
           {
             employeeId: created.employeeId,
-            type: "visa",
-            fileName: "visa.pdf",
+            type: "work_permit",
+            fileName: "work-permit.pdf",
             mimeType: "application/pdf",
             bytes: new TextEncoder().encode("%PDF-1.4"),
           },
@@ -338,11 +346,93 @@ test(
       employeeDocuments = await listEmployeeDocumentsForActor(organisationId, actor);
       assert.equal(
         employeeDocuments.find((document) => document.id === documentId)?.status,
+        "Valid",
+      );
+      await decideEmployeeDocumentInDatabase(
+        organisationId,
+        replacementId,
+        "verify",
+        undefined,
+        actor,
+      );
+      employeeDocuments = await listEmployeeDocumentsForActor(organisationId, actor);
+      assert.equal(
+        employeeDocuments.find((document) => document.id === documentId)?.status,
         "Replaced",
       );
       assert.equal(
         employeeDocuments.find((document) => document.id === replacementId)?.documentNumber,
         "P-TEST-200",
+      );
+      const revisionInput = {
+        fileName: "passport-correction.pdf",
+        mimeType: "application/pdf",
+        bytes: new TextEncoder().encode("%PDF-1.4 corrected employee passport"),
+        reason: "Corrected employee upload",
+      };
+      const documentOwner = {
+        ...actor,
+        employeeId: created.employeeId,
+        activeRole: "Employee" as const,
+      };
+      const pendingRevision = await replaceEmployeeDocumentInDatabase(
+        organisationId,
+        replacementId,
+        revisionInput,
+        documentOwner,
+      );
+      await assert.rejects(
+        replaceEmployeeDocumentInDatabase(
+          organisationId,
+          replacementId,
+          revisionInput,
+          documentOwner,
+        ),
+        /already awaiting/,
+      );
+      await decideEmployeeDocumentInDatabase(
+        organisationId,
+        pendingRevision,
+        "reject",
+        "Please correct this upload",
+        actor,
+      );
+      employeeDocuments = await listEmployeeDocumentsForActor(organisationId, actor);
+      assert.equal(
+        employeeDocuments.find((document) => document.id === replacementId)?.status,
+        "Valid",
+      );
+      const correctedRevision = await replaceEmployeeDocumentInDatabase(
+        organisationId,
+        pendingRevision,
+        revisionInput,
+        documentOwner,
+      );
+      await assert.rejects(
+        decideEmployeeDocumentInDatabase(
+          organisationId,
+          pendingRevision,
+          "verify",
+          undefined,
+          actor,
+        ),
+        /not awaiting/,
+      );
+      await decideEmployeeDocumentInDatabase(
+        organisationId,
+        correctedRevision,
+        "verify",
+        undefined,
+        actor,
+      );
+      employeeDocuments = await listEmployeeDocumentsForActor(organisationId, actor);
+      assert.equal(
+        employeeDocuments.find((document) => document.id === replacementId)?.status,
+        "Replaced",
+      );
+      assert.equal(
+        employeeDocuments.find((document) => document.id === correctedRevision)?.status,
+        "Valid",
       );
       const assetAssignmentId = await assignCompanyAssetInDatabase(
         organisationId,

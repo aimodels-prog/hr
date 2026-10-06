@@ -170,6 +170,45 @@ test(
       const [again] =
         await sql`SELECT count(*)::int count FROM workflow_notification_emails WHERE organisation_id=${ids.org}`;
       assert.equal(again!.count, 1);
+      // Administrative access alone is not an email duty. Keep personal receipts.
+      await sql`INSERT INTO user_roles (organisation_id,user_id,role_id,assigned_by,reason)
+        SELECT ${ids.org},${ids.managerUser},id,${ids.managerUser},'Email routing test' FROM roles WHERE code='Super Admin' ON CONFLICT DO NOTHING`;
+      await sql`DELETE FROM user_roles WHERE organisation_id=${ids.org} AND user_id=${ids.managerUser} AND role_id IN (SELECT id FROM roles WHERE code='Line Manager')`;
+      const hrNotice = randomUUID();
+      const personalNotice = randomUUID();
+      await sql`INSERT INTO notifications (id,organisation_id,recipient_user_id,type,title,message,link,created_by,updated_by) VALUES
+        (${hrNotice},${ids.org},${ids.managerUser},'employee-document.approval_required','Review document','HR review required',${sql.json({ entityType: "employee-document", entityId: randomUUID() })},${ids.managerUser},${ids.managerUser}),
+        (${personalNotice},${ids.org},${ids.managerUser},'employee-document.approved','Your document was approved','Personal employee update',${sql.json({ entityType: "employee-document", entityId: randomUUID() })},${ids.managerUser},${ids.managerUser})`;
+      await processTaskAutomationInDatabase(ids.org!);
+      await enqueueWorkflowEmails();
+      const adminEmails =
+        await sql`SELECT n.id,n.type FROM workflow_notification_emails q JOIN notifications n ON n.id=q.notification_id WHERE n.organisation_id=${ids.org} AND n.recipient_user_id=${ids.managerUser}`;
+      assert.ok(
+        adminEmails.some((n) => n.id === personalNotice),
+        "Super Admin retains personal employee emails",
+      );
+      assert.ok(
+        !adminEmails.some((n) => n.id === hrNotice),
+        "Super Admin alone must not receive HR broadcast emails",
+      );
+      assert.ok(
+        !adminEmails.some((n) => n.type === "approval.reminder"),
+        "Super Admin-only approval reminders must not be emailed",
+      );
+      await sql`INSERT INTO user_roles (organisation_id,user_id,role_id,assigned_by,reason)
+        SELECT ${ids.org},${ids.managerUser},id,${ids.managerUser},'HR email duty' FROM roles WHERE code='HR' ON CONFLICT DO NOTHING`;
+      await processTaskAutomationInDatabase(ids.org!);
+      await enqueueWorkflowEmails();
+      const hrEmails =
+        await sql`SELECT n.id,n.type FROM workflow_notification_emails q JOIN notifications n ON n.id=q.notification_id WHERE n.organisation_id=${ids.org} AND n.recipient_user_id=${ids.managerUser}`;
+      assert.ok(
+        hrEmails.some((n) => n.id === hrNotice),
+        "An explicit HR role enables HR email even if Super Admin is also assigned",
+      );
+      assert.ok(
+        hrEmails.some((n) => n.type === "approval.reminder"),
+        "HR receives its approval reminders",
+      );
     } finally {
       await sql`DELETE FROM google_calendar_connections WHERE organisation_id=${ids.org}`;
       await sql.end({ timeout: 5 });

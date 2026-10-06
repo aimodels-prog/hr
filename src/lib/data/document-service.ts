@@ -361,11 +361,7 @@ export class DocumentService {
     );
 
     // 2. Save document metadata
-    // If the uploader is HR/Super Admin, they might immediately mark it Valid.
-    // Employee uploads await HR review; HR and Super Admin uploads are treated as verified.
-    const isHr =
-      actorContext.actor.activeRole === "HR" || actorContext.actor.activeRole === "Super Admin";
-    const initialStatus = isHr ? "Valid" : "Pending Verification";
+    const initialStatus = "Pending Verification";
 
     try {
       return this.documentRepo.create(
@@ -409,13 +405,37 @@ export class DocumentService {
     const oldDoc = this.documentRepo.getById(oldDocumentId);
     if (!oldDoc) throw new Error("Document to replace not found.");
     this.assertCanManage(oldDoc.employeeId, actorContext);
+    if (oldDoc.status === "Replaced") throw new Error("This version has already been replaced.");
+    const targetId =
+      oldDoc.status === "Valid" ? oldDoc.id : (oldDoc.replacesDocumentId ?? oldDoc.id);
+    const target = this.documentRepo.getById(targetId);
+    if (
+      !target ||
+      target.archivedAt ||
+      (target.status === "Replaced" && target.replacedById !== oldDoc.id)
+    )
+      throw new Error("A newer document version exists. Refresh and revise the current version.");
+    if (
+      this.documentRepo
+        .list()
+        .some(
+          (doc) =>
+            doc.replacesDocumentId === targetId &&
+            doc.status === "Pending Verification" &&
+            doc.id !== oldDoc.id,
+        )
+    )
+      throw new Error(
+        "A replacement is already awaiting HR review. Update that pending version instead.",
+      );
 
     if (typeof window !== "undefined") {
       if (fileBlob.size === 0 || fileBlob.size > MAX_DOCUMENT_SIZE)
         throw new Error("Replacement documents must be between 1 byte and 10 MB.");
       if (!ALLOWED_DOCUMENT_TYPES.has(fileBlob.type))
         throw new Error("Documents must be PDF, JPG or PNG files.");
-      assertValidDocumentMetadata(metadata);
+      if (metadata.type !== "visa" || metadata.documentNumber)
+        assertValidDocumentMetadata(metadata);
       const { replaceEmployeeDocumentFn } =
         await import("../server-functions/core-hr-lifecycle.server.ts");
       const replacementId = await replaceEmployeeDocumentFn({
@@ -441,9 +461,7 @@ export class DocumentService {
       return replacement;
     }
 
-    // Uploading the new document and marking the old one Replaced are two separate writes - if
-    // the second fails, the old document must not be left looking Valid/current alongside the
-    // new one, with no version chain linking them.
+    // Keep the approved version current until HR verifies its replacement.
     const { storage, files } = getApplicationDataServices();
     const snapshot = storage.exportState();
     let newDoc: EmployeeDocument | undefined;
@@ -453,19 +471,22 @@ export class DocumentService {
         oldDoc.employeeId,
         fileBlob,
         filename,
-        metadata,
+        { ...metadata, replacesDocumentId: targetId },
         actorContext,
       );
 
       // Update old document status to replaced and link it
-      this.documentRepo.update(
-        oldDoc.id,
-        {
-          status: "Replaced",
-          replacedById: newDoc.id,
-        },
-        actorContext,
-      );
+      if (oldDoc.status !== "Valid")
+        this.documentRepo.update(
+          oldDoc.id,
+          {
+            status: "Replaced",
+            replacedById: newDoc.id,
+          },
+          actorContext,
+        );
+      if (target.status === "Replaced" && target.id !== oldDoc.id)
+        this.documentRepo.update(target.id, { replacedById: newDoc.id }, actorContext);
 
       return newDoc;
     } catch (err) {
@@ -501,6 +522,23 @@ export class DocumentService {
       );
     }
 
+    if (doc.replacesDocumentId) {
+      const previous = this.documentRepo.getById(doc.replacesDocumentId);
+      if (
+        !previous ||
+        previous.archivedAt ||
+        previous.employeeId !== doc.employeeId ||
+        (previous.status === "Replaced" && previous.replacedById !== doc.id)
+      )
+        throw new Error(
+          "The previous document changed. Refresh before reviewing this replacement.",
+        );
+      this.documentRepo.update(
+        previous.id,
+        { status: "Replaced", replacedById: doc.id },
+        actorContext,
+      );
+    }
     this.documentRepo.update(documentId, { status: "Valid" }, actorContext);
   }
 
