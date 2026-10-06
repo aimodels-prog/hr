@@ -50,6 +50,8 @@ const EMPLOYEE_FIELD_ACCESS = {
   status: "directory",
   personalEmail: "personnel",
   address: "personnel",
+  homeCountryPhone: "personnel",
+  homeCountryAddress: "personnel",
   emergencyContacts: "personnel",
   dependants: "personnel",
   dateOfBirth: "personnel",

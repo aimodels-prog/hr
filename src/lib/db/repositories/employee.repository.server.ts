@@ -180,6 +180,8 @@ export async function listEmployeesForOrganisation(organisationId: string): Prom
       ...(row.offerId ? { offerId: row.offerId } : {}),
       status: row.status,
       ...(row.address ? { address: row.address } : {}),
+      ...(row.homeCountryPhone ? { homeCountryPhone: row.homeCountryPhone } : {}),
+      ...(row.homeCountryAddress ? { homeCountryAddress: row.homeCountryAddress } : {}),
       emergencyContacts: row.emergencyContacts,
       dependants: row.dependants,
       ...(row.dateOfBirth ? { dateOfBirth: row.dateOfBirth } : {}),
@@ -376,6 +378,8 @@ export type PersonalRecordChanges = Pick<
   | "phone"
   | "personalEmail"
   | "address"
+  | "homeCountryPhone"
+  | "homeCountryAddress"
   | "dateOfBirth"
   | "gender"
   | "nationality"
@@ -391,6 +395,10 @@ function personalEmployeeValues(changes: PersonalRecordChanges) {
   if (changes.personalEmail !== undefined)
     values.personalEmail = changes.personalEmail?.trim().toLowerCase() || null;
   if (changes.address !== undefined) values.address = changes.address || null;
+  if (changes.homeCountryPhone !== undefined)
+    values.homeCountryPhone = changes.homeCountryPhone || null;
+  if (changes.homeCountryAddress !== undefined)
+    values.homeCountryAddress = changes.homeCountryAddress || null;
   if (changes.dateOfBirth !== undefined) values.dateOfBirth = changes.dateOfBirth || null;
   if (changes.gender !== undefined) values.gender = changes.gender || null;
   if (changes.nationality !== undefined) values.nationality = changes.nationality || null;
@@ -1817,6 +1825,8 @@ export async function createEmployeeInDatabase(
         offerId: input.offerId,
         status: input.status,
         address: input.address,
+        homeCountryPhone: input.homeCountryPhone,
+        homeCountryAddress: input.homeCountryAddress,
         emergencyContacts: input.emergencyContacts ?? [],
         dependants: (input.dependants ?? []).map((d) => ({
           ...d,

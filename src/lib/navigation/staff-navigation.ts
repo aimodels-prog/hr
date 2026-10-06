@@ -388,6 +388,13 @@ const navigation: NavGroup[] = [
     label: "HR Settings",
     items: [
       {
+        title: "Document Requirements",
+        url: "/staff/settings?section=documentRequirements",
+        keywords: "documents education degree passport CV certificates required uploads",
+        icon: Settings,
+        requiredRoles: ["HR", "Super Admin"],
+      },
+      {
         title: "Company Setup",
         url: "/staff/settings",
         keywords: "department position employment type location working week company setup",

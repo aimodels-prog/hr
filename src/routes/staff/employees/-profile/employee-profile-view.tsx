@@ -271,6 +271,8 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
           ...base,
           dateOfBirth: undefined,
           address: undefined,
+          homeCountryPhone: undefined,
+          homeCountryAddress: undefined,
           maritalStatus: undefined,
           dependants: undefined,
           emergencyContacts: undefined,
@@ -2259,6 +2261,11 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                         <div className="text-muted-foreground">Bank Name</div>
                         <div className="font-medium">
                           {employee.bankDetails?.bankName || "Restricted"}
+                          {employee.bankDetails?.accountHolderName && (
+                            <div className="mt-2">
+                              Account holder: {employee.bankDetails.accountHolderName}
+                            </div>
+                          )}
                         </div>
                       </div>
                       <div>

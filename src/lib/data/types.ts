@@ -72,6 +72,7 @@ export interface User extends BaseRecord {
 }
 
 export interface BankDetails {
+  accountHolderName?: string | undefined;
   bankName: string;
   accountNumber: string;
   iban: string;
@@ -157,6 +158,8 @@ export interface Employee extends BaseRecord {
   projectId?: RecordId | undefined;
   costCentreId?: RecordId | undefined;
   address?: string | undefined;
+  homeCountryPhone?: string | undefined;
+  homeCountryAddress?: string | undefined;
   emergencyContacts?:
     { name: string; relationship: string; phone: string; email?: string }[] | undefined;
   dependants?: import("./dependants.ts").Dependant[] | undefined;
@@ -205,6 +208,9 @@ export type DocumentVisibility = "Public" | "Restricted";
 export type DocumentStatus = "Pending Verification" | "Valid" | "Rejected" | "Replaced"; // Missing and Expiring/Expired will be computed dynamically
 
 export interface EmployeeDocument extends BaseRecord {
+  requirementId?: string | undefined;
+  requirementSnapshot?: import("./document-requirements.ts").DocumentRequirement | undefined;
+  answers?: Record<string, string> | undefined;
   dependantId?: string;
   dependantDocumentKind?: import("./dependants.ts").DependantDocumentKind;
   employeeId: RecordId;

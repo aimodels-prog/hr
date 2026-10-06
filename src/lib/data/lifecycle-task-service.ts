@@ -99,7 +99,14 @@ export class LifecycleTaskService {
     file: File,
     metadata: Pick<
       EmployeeDocument,
-      "type" | "documentNumber" | "issueDate" | "expiryDate" | "issuingAuthority" | "notes"
+      | "type"
+      | "documentNumber"
+      | "issueDate"
+      | "expiryDate"
+      | "issuingAuthority"
+      | "notes"
+      | "requirementId"
+      | "answers"
     >,
     context: ActorContext,
   ): Promise<OnboardingCase> {
@@ -114,7 +121,10 @@ export class LifecycleTaskService {
     if (task.documentType && metadata.type !== task.documentType) {
       throw new Error("The selected document type does not match this onboarding task.");
     }
-    if (["passport", "visa", "national_id", "work_permit"].includes(metadata.type)) {
+    if (
+      !metadata.requirementId &&
+      ["passport", "visa", "national_id", "work_permit"].includes(metadata.type)
+    ) {
       if (
         !metadata.documentNumber?.trim() ||
         !metadata.issuingAuthority?.trim() ||
@@ -151,6 +161,8 @@ export class LifecycleTaskService {
           taskId,
           employeeId,
           type: metadata.type,
+          requirementId: metadata.requirementId,
+          answers: metadata.answers,
           fileName: file.name,
           mimeType: file.type as "application/pdf" | "image/jpeg" | "image/png",
           bytes: Array.from(new Uint8Array(await file.arrayBuffer())),

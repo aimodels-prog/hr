@@ -1,4 +1,10 @@
 import { dependantSchema } from "@/lib/data/dependants";
+import { RequirementFields } from "@/components/documents/requirement-fields";
+import { getDocumentRequirementsFn } from "@/lib/server-functions/document-requirements.server";
+import {
+  validateDocumentAnswers,
+  type DocumentRequirement,
+} from "@/lib/data/document-requirements";
 import { useEffect, useRef, useState } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -70,6 +76,8 @@ const personalSchema = z.object({
   phone: z.string().min(1, "A contact phone number is required"),
   personalEmail: z.string().email("Invalid email").optional().or(z.literal("")),
   address: z.string().min(1, "Residential address is required"),
+  homeCountryPhone: z.string().max(50).optional(),
+  homeCountryAddress: z.string().max(1000).optional(),
   emergencyContacts: z
     .array(
       z.object({
@@ -84,6 +92,7 @@ const personalSchema = z.object({
 
 const bankSchema = z.object({
   bankName: z.string().min(1, "Bank name is required"),
+  accountHolderName: z.string().max(150).optional(),
   accountNumber: z.string().min(1, "Account number is required"),
   iban: z.string().min(1, "IBAN is required"),
   swiftCode: z.string().optional(),
@@ -373,6 +382,12 @@ export function SelfServiceOnboardingForm({
                     phone: changes.phone,
                     ...(changes.personalEmail ? { personalEmail: changes.personalEmail } : {}),
                     address: changes.address,
+                    ...(changes.homeCountryPhone
+                      ? { homeCountryPhone: changes.homeCountryPhone }
+                      : {}),
+                    ...(changes.homeCountryAddress
+                      ? { homeCountryAddress: changes.homeCountryAddress }
+                      : {}),
                     emergencyContacts: changes.emergencyContacts,
                     ...(changes.dependants ? { dependants: changes.dependants } : {}),
                   },
@@ -405,6 +420,9 @@ export function SelfServiceOnboardingForm({
                   kind: "bank_details",
                   details: {
                     bankName: bankDetails.bankName,
+                    ...(bankDetails.accountHolderName
+                      ? { accountHolderName: bankDetails.accountHolderName }
+                      : {}),
                     accountNumber: bankDetails.accountNumber,
                     iban: bankDetails.iban,
                     ...(bankDetails.swiftCode ? { swiftCode: bankDetails.swiftCode } : {}),
@@ -426,6 +444,7 @@ export function SelfServiceOnboardingForm({
       {documentTasks.map((task) => (
         <DocumentUploadSection
           key={task.id}
+          employeeId={employeeId}
           task={task}
           done={isTaskDone(task)}
           onUpload={async (file, metadata) => {
@@ -740,6 +759,8 @@ function PersonalDetailsSection({
       phone: employee.phone || "",
       personalEmail: employee.personalEmail || "",
       address: employee.address || "",
+      homeCountryPhone: employee.homeCountryPhone || "",
+      homeCountryAddress: employee.homeCountryAddress || "",
       emergencyContacts: employee.emergencyContacts?.length
         ? employee.emergencyContacts
         : [{ name: "", relationship: "", phone: "" }],
@@ -870,7 +891,7 @@ function PersonalDetailsSection({
             name="address"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Residential Address *</FormLabel>
+                <FormLabel>Local residential address *</FormLabel>
                 <FormControl>
                   <Textarea {...field} />
                 </FormControl>
@@ -879,6 +900,27 @@ function PersonalDetailsSection({
             )}
           />
 
+          {(
+            [
+              ["homeCountryPhone", "Home-country phone"],
+              ["homeCountryAddress", "Home-country address"],
+            ] as const
+          ).map(([name, label]) => (
+            <FormField
+              key={name}
+              control={form.control}
+              name={name}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{label}</FormLabel>
+                  <FormControl>
+                    <Input {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          ))}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-medium">Emergency Contacts *</h4>
@@ -1080,6 +1122,7 @@ function BankDetailsSection({
     resolver: zodResolver(bankSchema),
     defaultValues: {
       bankName: employee.bankDetails?.bankName || "",
+      accountHolderName: employee.bankDetails?.accountHolderName || "",
       accountNumber: employee.bankDetails?.accountNumber || "",
       iban: employee.bankDetails?.iban || "",
       swiftCode: employee.bankDetails?.swiftCode || "",
@@ -1096,6 +1139,19 @@ function BankDetailsSection({
     >
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <FormField
+            control={form.control}
+            name="accountHolderName"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Account holder name</FormLabel>
+                <FormControl>
+                  <Input {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <FormField
               control={form.control}
@@ -1173,15 +1229,19 @@ function BankDetailsSection({
 }
 
 function DocumentUploadSection({
+  employeeId,
   task,
   done,
   onUpload,
 }: {
+  employeeId: string;
   task: OnboardingTask;
   done: boolean;
   onUpload: (
     file: File,
     metadata: {
+      requirementId?: string;
+      answers?: Record<string, string>;
       documentNumber?: string;
       issueDate?: string;
       expiryDate?: string;
@@ -1191,6 +1251,35 @@ function DocumentUploadSection({
   ) => Promise<void>;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const user = useCurrentUser();
+  const [requirement, setRequirement] = useState<DocumentRequirement>();
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [requirementError, setRequirementError] = useState("");
+  const actorKey = JSON.stringify({
+    actorId: user.id,
+    actorEmail: user.workspaceEmail,
+    activeRole: user.activeRole,
+  });
+  useEffect(() => {
+    let active = true;
+    void getDocumentRequirementsFn({ data: { actor: JSON.parse(actorKey), employeeId } })
+      .then((result) => {
+        if (!active) return;
+        const found = result.definitions.find((r) => r.id === (task.documentType || "other"));
+        if (found) setRequirement(found);
+        else
+          setRequirementError(
+            "HR has changed this requirement. Open My Profile → Documents or ask HR to update this checklist.",
+          );
+      })
+      .catch(() => {
+        if (active)
+          setRequirementError("Document requirements could not be loaded. Reload and try again.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [actorKey, employeeId, task.documentType]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [documentNumber, setDocumentNumber] = useState("");
   const [issueDate, setIssueDate] = useState("");
@@ -1229,7 +1318,16 @@ function DocumentUploadSection({
       done={done}
     >
       <div className="space-y-4">
-        {requiresIdentityMetadata && (
+        {requirement && (
+          <RequirementFields
+            requirement={requirement}
+            answers={answers}
+            onChange={setAnswers}
+            isHr={["HR", "Super Admin"].includes(user.activeRole)}
+          />
+        )}
+        {requirementError && <p role="alert">{requirementError}</p>}
+        {!requirement && requiresIdentityMetadata && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <label className="text-sm font-medium" htmlFor={`${task.id}-number`}>
@@ -1294,8 +1392,10 @@ function DocumentUploadSection({
             type="button"
             disabled={
               busy ||
+              !requirement ||
               !selectedFile ||
-              (requiresIdentityMetadata &&
+              (!requirement &&
+                requiresIdentityMetadata &&
                 (!documentNumber.trim() || !issuingAuthority.trim() || !issueDate || !expiryDate))
             }
             onClick={async () => {
@@ -1307,12 +1407,24 @@ function DocumentUploadSection({
               setBusy(true);
               try {
                 await onUpload(selectedFile, {
+                  ...(requirement
+                    ? {
+                        requirementId: requirement.id,
+                        answers: validateDocumentAnswers(
+                          requirement,
+                          answers,
+                          ["HR", "Super Admin"].includes(user.activeRole),
+                        ),
+                      }
+                    : {}),
                   ...(documentNumber.trim() ? { documentNumber: documentNumber.trim() } : {}),
                   ...(issuingAuthority.trim() ? { issuingAuthority: issuingAuthority.trim() } : {}),
                   ...(issueDate ? { issueDate } : {}),
                   ...(expiryDate ? { expiryDate } : {}),
                 });
                 setSelectedFile(null);
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : "Upload failed");
               } finally {
                 setBusy(false);
               }

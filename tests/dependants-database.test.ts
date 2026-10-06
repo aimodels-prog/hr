@@ -81,8 +81,12 @@ test(
       );
       await sql`UPDATE employees SET dependants=${sql.json([{ ...dependant, phone: "Guardian number", nationality: "Omani", visaRequired: "No" }])} WHERE id=${employee}`;
       await processDependantCompletionNotices();
-      const [notice] = await sql`SELECT status FROM notifications WHERE organisation_id=${org}`;
+      const [notice] = await sql`SELECT status FROM notifications WHERE id=${notices[0]!.id}`;
       assert.equal(notice!.status, "Dismissed");
+      const outstanding =
+        await sql`SELECT message FROM notifications WHERE organisation_id=${org} AND status<>'Dismissed'`;
+      assert.equal(outstanding.length, 1, "Missing own documents remain in one combined reminder");
+      assert.match(outstanding[0]!.message, /Your documents/);
     } finally {
       await sql`DELETE FROM notifications WHERE organisation_id=${org}`;
       await sql`DELETE FROM employee_documents WHERE id=${doc}`;

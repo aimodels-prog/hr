@@ -2,6 +2,29 @@ import { article } from "./guide.ts";
 
 export const hrGuide = [
   article(
+    "hr-document-requirements",
+    "hr",
+    "Employee records",
+    "Set up document requirements",
+    "Choose which documents staff upload and the details needed for each.",
+    "/staff/settings?section=documentRequirements",
+    "documents requirements custom fields education degree institution graduation CV resident card engineering certificate",
+    [
+      "Open HR Settings → Document Requirements. Select a document to edit it, or choose Add document.",
+      "Give it a clear name, choose its category, and mark it required or optional. Choose whether staff or HR upload it. Allow multiple documents for qualifications such as several degrees.",
+      "Under Who needs it, choose everyone or search for departments, positions, locations or selected employees.",
+      "Add the details you need. For each field, choose Text, Date or Year, whether it is required, and whether the employee or HR completes it. Visa and work-permit details stay HR-only.",
+      "Save requirements. Staff see applicable choices in My Profile → Documents and their form changes to match the selected document. Required missing documents appear in their checklist.",
+      "For review, open the employee's Documents, check the file, complete any HR-only fields and verify or return it. You cannot verify your own document.",
+      "Turn off a requirement to stop new uploads without deleting existing files. Existing uploads keep the original form details. Replacing an approved file creates a new version for review; the approved file remains current until the replacement is verified.",
+    ],
+    "The requirements are shared across the company. Missing documents and family information use a combined profile reminder, subject to email settings.",
+    [
+      "If a staff member cannot see a document, check that it is available and that the person matches the selected audience.",
+    ],
+    "employee:manage_all",
+  ),
+  article(
     "hr-time-away",
     "hr",
     "Attendance",

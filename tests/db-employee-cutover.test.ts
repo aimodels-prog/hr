@@ -3,6 +3,11 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
 import postgres from "postgres";
+import {
+  getDocumentRequirementSettings,
+  saveDocumentRequirementSettings,
+  getEmployeeRequirements,
+} from "../src/lib/db/repositories/document-requirements.repository.server.ts";
 
 import {
   createEmployeeInDatabase,
@@ -241,6 +246,139 @@ test(
         organisationId,
         {
           employeeId: created.employeeId,
+          type: "other",
+          requirementId: "cv",
+          answers: {},
+          fileName: "cv.pdf",
+          mimeType: "application/pdf",
+          bytes: new TextEncoder().encode("%PDF-1.4 CV unchanged bytes"),
+          visibility: "Public",
+        },
+        selfActor,
+      );
+      const config = await getDocumentRequirementSettings(organisationId);
+      await assert.rejects(
+        saveDocumentRequirementSettings(
+          organisationId,
+          config.definitions,
+          config.version,
+          selfActor,
+        ),
+        /Only HR/,
+      );
+      await assert.rejects(
+        getEmployeeRequirements(organisationId, managerEmployeeId, selfActor),
+        /cannot view/,
+      );
+      const cv = (await listEmployeeDocumentsForActor(organisationId, actor)).find(
+        (d) => d.id === documentId,
+      )!;
+      assert.equal(cv.visibility, "Restricted");
+      assert.equal(cv.requirementSnapshot?.name, "Updated CV");
+      await decideEmployeeDocumentInDatabase(
+        organisationId,
+        documentId,
+        "verify",
+        undefined,
+        actor,
+      );
+      const changedConfig = config.definitions.map((r) =>
+        r.id === "cv" ? { ...r, name: "Employee CV" } : r,
+      );
+      await saveDocumentRequirementSettings(organisationId, changedConfig, config.version, actor);
+      await assert.rejects(
+        saveDocumentRequirementSettings(organisationId, changedConfig, config.version, actor),
+        /Reload/,
+      );
+      const replacement = await replaceEmployeeDocumentInDatabase(
+        organisationId,
+        documentId,
+        {
+          fileName: "new-cv.pdf",
+          mimeType: "application/pdf",
+          bytes: new TextEncoder().encode("%PDF-1.4 replacement"),
+          reason: "New CV",
+          answers: {},
+        },
+        selfActor,
+      );
+      let cvDocs = await listEmployeeDocumentsForActor(organisationId, actor);
+      assert.equal(cvDocs.find((d) => d.id === documentId)?.status, "Valid");
+      assert.equal(
+        cvDocs.find((d) => d.id === replacement)?.requirementSnapshot?.name,
+        "Updated CV",
+      );
+      await decideEmployeeDocumentInDatabase(
+        organisationId,
+        replacement,
+        "verify",
+        undefined,
+        actor,
+      );
+      cvDocs = await listEmployeeDocumentsForActor(organisationId, actor);
+      assert.equal(cvDocs.find((d) => d.id === documentId)?.status, "Replaced");
+      await assert.rejects(
+        uploadEmployeeDocumentToDatabase(
+          organisationId,
+          {
+            employeeId: created.employeeId,
+            type: "other",
+            requirementId: "cv",
+            answers: {},
+            fileName: "duplicate.pdf",
+            mimeType: "application/pdf",
+            bytes: new TextEncoder().encode("%PDF-1.4 duplicate"),
+          },
+          selfActor,
+        ),
+        /already exists/,
+      );
+      await assert.rejects(
+        uploadEmployeeDocumentToDatabase(
+          organisationId,
+          {
+            employeeId: created.employeeId,
+            type: "education_certificate",
+            requirementId: "education_certificate",
+            answers: {},
+            fileName: "degree.pdf",
+            mimeType: "application/pdf",
+            bytes: new TextEncoder().encode("%PDF-1.4"),
+          },
+          selfActor,
+        ),
+        /required/,
+      );
+      const degreeId = await uploadEmployeeDocumentToDatabase(
+        organisationId,
+        {
+          employeeId: created.employeeId,
+          type: "education_certificate",
+          requirementId: "education_certificate",
+          answers: {
+            qualification: "BEng",
+            institution: "Private Institution",
+            graduationYear: "2020",
+          },
+          fileName: "degree.pdf",
+          mimeType: "application/pdf",
+          bytes: new TextEncoder().encode("%PDF-1.4 degree"),
+        },
+        selfActor,
+      );
+      const [storedAnswers] =
+        await sql`SELECT answers_encrypted FROM employee_documents WHERE id=${degreeId}`;
+      assert.doesNotMatch(String(storedAnswers!.answers_encrypted), /Private Institution|BEng/);
+      assert.equal(
+        (await listEmployeeDocumentsForActor(organisationId, selfActor)).find(
+          (d) => d.id === degreeId,
+        )?.answers?.["graduationYear"],
+        "2020",
+      );
+      const passportId = await uploadEmployeeDocumentToDatabase(
+        organisationId,
+        {
+          employeeId: created.employeeId,
           type: "passport",
           fileName: "passport.pdf",
           mimeType: "application/pdf",
@@ -254,19 +392,19 @@ test(
         actor,
       );
       let employeeDocuments = await listEmployeeDocumentsForActor(organisationId, actor);
-      const passport = employeeDocuments.find((document) => document.id === documentId);
+      const passport = employeeDocuments.find((document) => document.id === passportId);
       assert.equal(passport?.documentNumber, "P-TEST-100");
       assert.equal(passport?.status, "Pending Verification");
       await decideEmployeeDocumentInDatabase(
         organisationId,
-        documentId,
+        passportId,
         "verify",
         undefined,
         actor,
       );
       employeeDocuments = await listEmployeeDocumentsForActor(organisationId, actor);
       assert.equal(
-        employeeDocuments.find((document) => document.id === documentId)?.status,
+        employeeDocuments.find((document) => document.id === passportId)?.status,
         "Valid",
       );
       await assert.rejects(
@@ -331,7 +469,7 @@ test(
       assert.equal(repeatedReminderResult.anniversaryNotifications, 0);
       const replacementId = await replaceEmployeeDocumentInDatabase(
         organisationId,
-        documentId,
+        passportId,
         {
           fileName: "passport-renewed.pdf",
           mimeType: "application/pdf",
@@ -345,7 +483,7 @@ test(
       );
       employeeDocuments = await listEmployeeDocumentsForActor(organisationId, actor);
       assert.equal(
-        employeeDocuments.find((document) => document.id === documentId)?.status,
+        employeeDocuments.find((document) => document.id === passportId)?.status,
         "Valid",
       );
       await decideEmployeeDocumentInDatabase(
@@ -357,7 +495,7 @@ test(
       );
       employeeDocuments = await listEmployeeDocumentsForActor(organisationId, actor);
       assert.equal(
-        employeeDocuments.find((document) => document.id === documentId)?.status,
+        employeeDocuments.find((document) => document.id === passportId)?.status,
         "Replaced",
       );
       assert.equal(

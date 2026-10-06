@@ -193,6 +193,8 @@ const EmployeeInput = z
     projectId: z.string().uuid().optional(),
     costCentreId: z.string().uuid().optional(),
     address: z.string().trim().max(1000).optional(),
+    homeCountryPhone: z.string().trim().max(50).optional(),
+    homeCountryAddress: z.string().trim().max(1000).optional(),
     emergencyContacts: z
       .array(
         z
@@ -241,6 +243,7 @@ const EmployeeInput = z
     bankDetails: z
       .object({
         bankName: z.string().trim().min(1),
+        accountHolderName: z.string().trim().max(150).optional(),
         accountNumber: z.string().trim().min(1),
         iban: z.string().trim().min(1),
         swiftCode: z.string().trim().optional(),
@@ -447,6 +450,8 @@ const PersonalChangesInput = EmployeeInput.pick({
   phone: true,
   personalEmail: true,
   address: true,
+  homeCountryPhone: true,
+  homeCountryAddress: true,
   dateOfBirth: true,
   gender: true,
   nationality: true,

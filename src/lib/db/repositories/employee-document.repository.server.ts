@@ -1,4 +1,6 @@
 import "@tanstack/react-start/server-only";
+import { getEmployeeRequirements } from "./document-requirements.repository.server.ts";
+import { validateDocumentAnswers, standardDocumentKeys } from "../../data/document-requirements.ts";
 import { assertHrDocumentWrite } from "../../data/hr-owned-fields.ts";
 
 import { randomUUID } from "node:crypto";
@@ -92,6 +94,15 @@ export async function listEmployeeDocumentsForActor(
         ? { dependantDocumentKind: document.dependantDocumentKind }
         : {}),
       type: document.type,
+      ...(document.requirementSnapshot
+        ? {
+            requirementSnapshot: document.requirementSnapshot,
+            requirementId: document.requirementSnapshot.id,
+          }
+        : {}),
+      ...(document.answersEncrypted
+        ? { answers: decryptSensitiveJson<Record<string, string>>(document.answersEncrypted) }
+        : {}),
       fileId: document.fileId,
       ...(document.documentNumberEncrypted
         ? { documentNumber: decryptSensitiveJson<string>(document.documentNumberEncrypted) }
@@ -120,6 +131,7 @@ export async function decideEmployeeDocumentInDatabase(
   reason: string | undefined,
   actor: AuditActorContext,
   verifiedDetails?: {
+    answers?: Record<string, string> | undefined;
     documentNumber?: string;
     issueDate?: string;
     expiryDate?: string;
@@ -200,12 +212,31 @@ export async function decideEmployeeDocumentInDatabase(
         })
         .where(eq(employeeDocuments.id, previous.id));
     }
+    const configuredAnswers =
+      document.requirementSnapshot && decision === "verify"
+        ? validateDocumentAnswers(
+            document.requirementSnapshot,
+            verifiedDetails?.answers ??
+              (document.answersEncrypted
+                ? decryptSensitiveJson<Record<string, string>>(document.answersEncrypted)
+                : {}),
+            true,
+            true,
+          )
+        : undefined;
+    if (configuredAnswers) {
+      verifiedDetails = {
+        ...verifiedDetails,
+        ...Object.fromEntries(standardDocumentKeys.map((k) => [k, configuredAnswers[k]])),
+      };
+    }
     const documentNumber = verifiedDetails?.documentNumber?.trim();
     const issuingAuthority = verifiedDetails?.issuingAuthority?.trim();
     const issueDate = verifiedDetails?.issueDate;
     const expiryDate = verifiedDetails?.expiryDate;
     if (
       decision === "verify" &&
+      !document.requirementSnapshot &&
       (identityDocumentTypes.has(document.type) || !!document.dependantId) &&
       (!(documentNumber || document.documentNumberEncrypted) ||
         !(issuingAuthority || document.issuingAuthority) ||
@@ -225,6 +256,7 @@ export async function decideEmployeeDocumentInDatabase(
       .update(employeeDocuments)
       .set({
         status: decision === "verify" ? "Valid" : "Rejected",
+        ...(configuredAnswers ? { answersEncrypted: encryptSensitiveJson(configuredAnswers) } : {}),
         rejectionReason: decision === "reject" ? reason!.trim() : null,
         ...(decision === "verify" && documentNumber
           ? { documentNumberEncrypted: encryptSensitiveJson(documentNumber) }
@@ -241,7 +273,9 @@ export async function decideEmployeeDocumentInDatabase(
         ...(decision === "verify" && verifiedDetails?.visibility
           ? {
               visibility:
-                document.dependantId || document.type.startsWith("insurance_")
+                document.requirementSnapshot ||
+                document.dependantId ||
+                document.type.startsWith("insurance_")
                   ? ("Restricted" as const)
                   : verifiedDetails.visibility,
             }
@@ -450,6 +484,8 @@ export async function uploadEmployeeDocumentToDatabase(
   organisationId: string,
   input: {
     employeeId: string;
+    requirementId?: string | undefined;
+    answers?: Record<string, string> | undefined;
     type: DocumentType;
     dependantId?: string;
     dependantDocumentKind?: "passport" | "national_id" | "visa";
@@ -480,6 +516,23 @@ export async function uploadEmployeeDocumentToDatabase(
   )
     throw new Error("Choose the dependant and family document type.");
   assertHrDocumentWrite(input.type, actor.activeRole);
+  const isHr = ["HR", "Super Admin"].includes(actor.activeRole);
+  const requirement = input.requirementId
+    ? (await getEmployeeRequirements(organisationId, input.employeeId, actor)).find(
+        (r) => r.id === input.requirementId,
+      )
+    : undefined;
+  if (input.requirementId && (!requirement || requirement.type !== input.type || input.dependantId))
+    throw new Error("This document requirement does not apply to this employee.");
+  if (requirement?.uploadBy === "HR" && !isHr) throw new Error("Only HR can upload this document.");
+  const answers = requirement
+    ? validateDocumentAnswers(requirement, input.answers ?? {}, isHr)
+    : undefined;
+  if (answers)
+    for (const key of standardDocumentKeys) {
+      delete input[key];
+      if (answers[key]) input[key] = answers[key]!;
+    }
   if (!input.fileName.trim() || input.bytes.byteLength === 0)
     throw new Error("A non-empty document is required.");
   if (input.bytes.byteLength > 10 * 1024 * 1024)
@@ -488,6 +541,7 @@ export async function uploadEmployeeDocumentToDatabase(
     throw new Error("Employee documents must be PDF, JPG or PNG files.");
   if (
     identityDocumentTypes.has(input.type) &&
+    !requirement &&
     !(
       actor.employeeId === input.employeeId &&
       (input.type === "visa" || input.type === "work_permit")
@@ -515,6 +569,28 @@ export async function uploadEmployeeDocumentToDatabase(
   });
   try {
     await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext(${organisationId + ":documents:" + input.employeeId}))`,
+      );
+      if (requirement && !requirement.multiple) {
+        const duplicate = await tx
+          .select({ id: employeeDocuments.id })
+          .from(employeeDocuments)
+          .where(
+            and(
+              eq(employeeDocuments.organisationId, organisationId),
+              eq(employeeDocuments.employeeId, input.employeeId),
+              isNull(employeeDocuments.archivedAt),
+              sql`${employeeDocuments.status} IN ('Valid','Pending Verification')`,
+              sql`(${employeeDocuments.requirementSnapshot}->>'id' = ${requirement.id} OR (${employeeDocuments.requirementSnapshot} IS NULL AND ${employeeDocuments.dependantId} IS NULL AND ${requirement.id === requirement.type} AND ${employeeDocuments.type} = ${requirement.type}))`,
+            ),
+          )
+          .limit(1);
+        if (duplicate.length)
+          throw new Error(
+            "This document already exists. Use Replace to submit a new version for HR review.",
+          );
+      }
       const [employee] = await tx
         .select({
           id: employees.id,
@@ -537,6 +613,8 @@ export async function uploadEmployeeDocumentToDatabase(
         dependantId: input.dependantId,
         dependantDocumentKind: input.dependantDocumentKind,
         type: input.type,
+        requirementSnapshot: requirement,
+        answersEncrypted: answers ? encryptSensitiveJson(answers) : null,
         fileId,
         documentNumberEncrypted: input.documentNumber
           ? encryptSensitiveJson(input.documentNumber)
@@ -547,7 +625,7 @@ export async function uploadEmployeeDocumentToDatabase(
         issuingCountry: input.issuingCountry,
         notes: input.notes,
         visibility:
-          input.dependantId || input.type.startsWith("insurance_")
+          !isHr || !!requirement || input.dependantId || input.type.startsWith("insurance_")
             ? "Restricted"
             : (input.visibility ?? "Restricted"),
         status: "Pending Verification",
@@ -685,6 +763,7 @@ export async function replaceEmployeeDocumentInDatabase(
   organisationId: string,
   documentId: string,
   input: {
+    answers?: Record<string, string> | undefined;
     fileName: string;
     mimeType: string;
     bytes: Uint8Array;
@@ -723,6 +802,17 @@ export async function replaceEmployeeDocumentInDatabase(
   )
     throw new Error("You cannot replace this employee document.");
   assertHrDocumentWrite(permitted.type, actor.activeRole);
+  const isHr = ["HR", "Super Admin"].includes(actor.activeRole);
+  if (permitted.requirementSnapshot?.uploadBy === "HR" && !isHr)
+    throw new Error("Only HR can replace this document.");
+  const answers = permitted.requirementSnapshot
+    ? validateDocumentAnswers(permitted.requirementSnapshot, input.answers ?? {}, isHr)
+    : undefined;
+  if (answers)
+    for (const key of standardDocumentKeys) {
+      delete input[key];
+      if (answers[key]) input[key] = answers[key]!;
+    }
   if (!input.fileName.trim() || input.bytes.byteLength === 0)
     throw new Error("A non-empty document is required.");
   const fileId = randomUUID();
@@ -805,6 +895,8 @@ export async function replaceEmployeeDocumentInDatabase(
         replacesDocumentId: targetId,
         organisationId,
         employeeId: old.employeeId,
+        requirementSnapshot: old.requirementSnapshot,
+        answersEncrypted: answers ? encryptSensitiveJson(answers) : old.answersEncrypted,
         dependantId: old.dependantId,
         dependantDocumentKind: old.dependantDocumentKind,
         type: old.type,
@@ -818,7 +910,7 @@ export async function replaceEmployeeDocumentInDatabase(
         issuingCountry: input.issuingCountry ?? old.issuingCountry,
         notes: input.notes ?? old.notes,
         visibility:
-          old.dependantId || old.type.startsWith("insurance_")
+          !isHr || !!old.requirementSnapshot || old.dependantId || old.type.startsWith("insurance_")
             ? "Restricted"
             : (input.visibility ?? old.visibility),
         status: "Pending Verification",

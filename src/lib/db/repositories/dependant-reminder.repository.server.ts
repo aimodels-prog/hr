@@ -6,6 +6,32 @@ import { employees, users } from "../schema/employee.ts";
 import { employeeDocuments } from "../schema/documents.ts";
 import { notifications } from "../schema/system.ts";
 import { missingDependantInformation } from "../../data/dependants.ts";
+import { getDocumentRequirementSettings } from "./document-requirements.repository.server.ts";
+import { requirementApplies, type DocumentRequirement } from "../../data/document-requirements.ts";
+
+function missingEmployeeDocuments(
+  definitions: DocumentRequirement[],
+  employee: typeof employees.$inferSelect,
+  documents: Array<typeof employeeDocuments.$inferSelect>,
+) {
+  const today = new Date().toISOString().slice(0, 10);
+  return definitions
+    .filter(
+      (r) =>
+        r.required &&
+        r.uploadBy === "Employee" &&
+        requirementApplies(r, employee) &&
+        !documents.some(
+          (d) =>
+            !d.dependantId &&
+            (d.requirementSnapshot?.id === r.id ||
+              (!d.requirementSnapshot && r.id === r.type && d.type === r.type)) &&
+            (d.status === "Pending Verification" ||
+              (d.status === "Valid" && (!d.expiryDate || d.expiryDate >= today))),
+        ),
+    )
+    .map((r) => r.name);
+}
 
 export async function dependantCompletionStillMissing(
   organisationId: string,
@@ -35,8 +61,12 @@ export async function dependantCompletionStillMissing(
         isNull(employeeDocuments.archivedAt),
       ),
     );
-  return (row.employee.dependants ?? []).some(
-    (d) => missingDependantInformation(d, documents).length > 0,
+  const settings = await getDocumentRequirementSettings(organisationId);
+  return (
+    missingEmployeeDocuments(settings.definitions, row.employee, documents).length > 0 ||
+    (row.employee.dependants ?? []).some(
+      (d) => missingDependantInformation(d, documents).length > 0,
+    )
   );
 }
 
@@ -54,7 +84,7 @@ export async function processDependantCompletionNotices() {
         eq(users.status, "Active"),
         isNull(users.archivedAt),
         isNull(employees.archivedAt),
-        eq(employees.status, "Active"),
+        sql`${employees.status} IN ('Active','Onboarding','Probation')`,
       ),
     );
   let created = 0;
@@ -69,9 +99,13 @@ export async function processDependantCompletionNotices() {
           isNull(employeeDocuments.archivedAt),
         ),
       );
+    const settings = await getDocumentRequirementSettings(employee.organisationId);
     const missing = (employee.dependants ?? [])
       .map((d) => ({ name: d.name, missing: missingDependantInformation(d, documents) }))
       .filter((d) => d.missing.length);
+    const missingDocuments = missingEmployeeDocuments(settings.definitions, employee, documents);
+    if (missingDocuments.length)
+      missing.push({ name: "Your documents", missing: missingDocuments });
     const key = missing.length
       ? `dependants-completion:${employee.id}:${createHash("sha256").update(JSON.stringify(missing)).digest("hex").slice(0, 24)}`
       : "";
@@ -95,8 +129,8 @@ export async function processDependantCompletionNotices() {
         organisationId: employee.organisationId,
         recipientUserId: userId,
         type: "dependants.missing_information_reminder",
-        title: "Please complete your dependant information",
-        message: `Your existing family details have been kept. Please complete: ${missing.map((d) => `${d.name}: ${d.missing.join(", ")}`).join("; ")}. Edit Personal details and upload family documents under Documents.`,
+        title: "Please complete your profile and documents",
+        message: `Please complete: ${missing.map((d) => `${d.name}: ${d.missing.join(", ")}`).join("; ")}. Your existing information is kept. Open My Profile to update details and upload missing documents.`,
         priority: "Normal",
         status: "Unread",
         deduplicationKey: key,

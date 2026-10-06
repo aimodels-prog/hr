@@ -312,7 +312,8 @@ export class DocumentService {
     if (!ALLOWED_DOCUMENT_TYPES.has(fileBlob.type)) {
       throw new Error("Documents must be PDF, JPG or PNG files.");
     }
-    if (metadata.type !== "visa" || metadata.documentNumber) assertValidDocumentMetadata(metadata);
+    if (!metadata.requirementId && (metadata.type !== "visa" || metadata.documentNumber))
+      assertValidDocumentMetadata(metadata);
 
     if (typeof window !== "undefined") {
       const { storage } = getApplicationDataServices();
@@ -326,6 +327,8 @@ export class DocumentService {
           actor: await this.serverActor(actorContext),
           employeeId: employee?.databaseId ?? employeeId,
           type: metadata.type,
+          requirementId: metadata.requirementId,
+          answers: metadata.answers,
           ...(metadata.dependantId ? { dependantId: metadata.dependantId } : {}),
           ...(metadata.dependantDocumentKind
             ? { dependantDocumentKind: metadata.dependantDocumentKind }
@@ -434,7 +437,7 @@ export class DocumentService {
         throw new Error("Replacement documents must be between 1 byte and 10 MB.");
       if (!ALLOWED_DOCUMENT_TYPES.has(fileBlob.type))
         throw new Error("Documents must be PDF, JPG or PNG files.");
-      if (metadata.type !== "visa" || metadata.documentNumber)
+      if (!metadata.requirementId && (metadata.type !== "visa" || metadata.documentNumber))
         assertValidDocumentMetadata(metadata);
       const { replaceEmployeeDocumentFn } =
         await import("../server-functions/core-hr-lifecycle.server.ts");
@@ -442,6 +445,7 @@ export class DocumentService {
         data: {
           actor: await this.serverActor(actorContext),
           documentId: oldDocumentId,
+          answers: metadata.answers,
           fileName: filename,
           mimeType: fileBlob.type as "application/pdf" | "image/jpeg" | "image/png",
           bytes: Array.from(new Uint8Array(await fileBlob.arrayBuffer())),
@@ -546,6 +550,7 @@ export class DocumentService {
     documentId: string,
     actorContext: ActorContext,
     details?: {
+      answers?: Record<string, string>;
       documentNumber?: string;
       issueDate?: string;
       expiryDate?: string;

@@ -22,6 +22,7 @@ import {
 } from "@/components/settings/organisation-settings-panel";
 import { ProjectsPanel } from "@/components/settings/projects-panel";
 import { ReminderSettingsPanel } from "@/components/settings/reminder-settings-panel";
+import { DocumentRequirementsPanel } from "@/components/settings/document-requirements-panel";
 
 import {
   AlertDialog,
@@ -80,6 +81,11 @@ const SETTINGS_GROUPS = [
     label: "Recruitment and lifecycle",
     icon: ClipboardCheck,
     items: [
+      {
+        key: "documentRequirements",
+        label: "Document requirements",
+        description: "Required documents and upload fields",
+      },
       {
         key: "interviewTemplates",
         label: "Interview scorecards",
@@ -147,6 +153,16 @@ function SettingsRoute() {
   const currentUser = useCurrentUser();
   const navigate = Route.useNavigate();
   const { section } = Route.useSearch();
+  if (
+    section === "documentRequirements" &&
+    ["HR", "Super Admin"].includes(currentUser.activeRole)
+  ) {
+    return (
+      <div className="mx-auto max-w-6xl space-y-6">
+        <DocumentRequirementsPanel />
+      </div>
+    );
+  }
   if (section === "reminders" && ["HR", "Super Admin"].includes(currentUser.activeRole)) {
     return (
       <div className="max-w-5xl mx-auto space-y-6">
@@ -216,6 +232,8 @@ function SettingsRoute() {
 
 function SettingsSectionContent({ section }: { section: SettingsSection }) {
   switch (section) {
+    case "documentRequirements":
+      return <DocumentRequirementsPanel />;
     case "reminders":
       return <ReminderSettingsPanel />;
     case "org":

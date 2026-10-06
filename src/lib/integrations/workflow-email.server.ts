@@ -47,14 +47,14 @@ export function workflowEmailRaw(
     heading: missingClockoutDate
       ? "A clock-out needs your attention"
       : family
-        ? "Complete your family record"
+        ? "Complete your profile and documents"
         : documentReview
           ? "Employee document awaiting review"
           : context?.title.slice(0, 200) || "You have an update",
     message: missingClockoutDate
       ? `Your clock-in was recorded on ${missingClockoutDate}, but no clock-out was received. Please enter the time you left for HR to confirm.`
       : family
-        ? "Your family record is missing required details or documents. Open your profile to see the checklist for each dependant."
+        ? "Your profile is missing required details or documents. Open your profile to see one checklist of everything that needs your attention."
         : context?.message.slice(0, 2000) ||
           "There is an update to your request. Open VIA HR Application to see the details.",
     category: missingClockoutDate

@@ -33,6 +33,8 @@ const PERSONAL_PROFILE_FIELDS = new Set<keyof Employee>([
   "phone",
   "personalEmail",
   "address",
+  "homeCountryPhone",
+  "homeCountryAddress",
   "dateOfBirth",
   "gender",
   "nationality",
@@ -426,6 +428,8 @@ export class EmployeeService {
         performanceNotes: _performanceNotes,
         personalEmail: _personalEmail,
         address: _address,
+        homeCountryPhone: _homeCountryPhone,
+        homeCountryAddress: _homeCountryAddress,
         emergencyContacts: _emergencyContacts,
         dependants: _dependants,
         dateOfBirth: _dateOfBirth,
@@ -932,6 +936,8 @@ export class EmployeeService {
         | "nationality"
         | "maritalStatus"
         | "address"
+        | "homeCountryPhone"
+        | "homeCountryAddress"
         | "emergencyContacts"
         | "dependants"
         | "bankDetails"

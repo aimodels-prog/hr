@@ -19,6 +19,18 @@ import { mutableRecordColumns } from "./common.ts";
 import { employees, users } from "./employee.ts";
 import { organisations } from "./organisation.ts";
 
+export const documentRequirementSettings = pgTable("document_requirement_settings", {
+  organisationId: uuid("organisation_id")
+    .primaryKey()
+    .references(() => organisations.id, { onDelete: "cascade" }),
+  definitions: jsonb("definitions")
+    .$type<import("../../data/document-requirements.ts").DocumentRequirement[]>()
+    .notNull(),
+  version: integer("version").notNull().default(1),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedBy: uuid("updated_by"),
+});
+
 export const fileStorageStatus = pgEnum("file_storage_status", [
   "Pending Upload",
   "Available",
@@ -94,6 +106,11 @@ export const employeeDocuments = pgTable(
       .notNull()
       .references(() => employees.id, { onDelete: "restrict" }),
     type: documentType("type").notNull(),
+    requirementSnapshot:
+      jsonb("requirement_snapshot").$type<
+        import("../../data/document-requirements.ts").DocumentRequirement
+      >(),
+    answersEncrypted: text("answers_encrypted"),
     dependantId: uuid("dependant_id"),
     dependantDocumentKind: text("dependant_document_kind").$type<
       "passport" | "national_id" | "visa"

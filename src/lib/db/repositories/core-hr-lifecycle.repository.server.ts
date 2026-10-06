@@ -1411,6 +1411,8 @@ export async function saveOnboardingSelfServiceInDatabase(
           phone: string;
           personalEmail?: string;
           address: string;
+          homeCountryPhone?: string;
+          homeCountryAddress?: string;
           emergencyContacts: Array<{ name: string; relationship: string; phone: string }>;
           dependants?: import("../../data/dependants.ts").Dependant[];
         };
@@ -1421,6 +1423,7 @@ export async function saveOnboardingSelfServiceInDatabase(
         kind: "bank_details";
         details: {
           bankName: string;
+          accountHolderName?: string;
           accountNumber: string;
           iban: string;
           swiftCode?: string;
@@ -1722,6 +1725,8 @@ export async function saveOnboardingSelfServiceInDatabase(
           phone: details.phone.trim(),
           personalEmail: details.personalEmail?.trim().toLowerCase() || null,
           address: details.address.trim(),
+          homeCountryPhone: details.homeCountryPhone?.trim() || null,
+          homeCountryAddress: details.homeCountryAddress?.trim() || null,
           emergencyContacts: details.emergencyContacts,
           dependants: (details.dependants ?? []).map((d) => ({
             ...d,
@@ -1738,6 +1743,7 @@ export async function saveOnboardingSelfServiceInDatabase(
         throw new Error("Bank name, account number and IBAN are required.");
       const encryptedPayload = encryptSensitiveJson({
         bankName: details.bankName.trim(),
+        accountHolderName: details.accountHolderName?.trim(),
         accountNumber: details.accountNumber.trim(),
         iban: details.iban.trim().replace(/\s+/g, "").toUpperCase(),
         ...(details.swiftCode?.trim() ? { swiftCode: details.swiftCode.trim().toUpperCase() } : {}),

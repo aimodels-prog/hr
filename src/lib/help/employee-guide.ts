@@ -2,6 +2,26 @@ import { article } from "./guide.ts";
 
 export const employeeGuide = [
   article(
+    "upload-required-documents",
+    "employee",
+    "My profile",
+    "Upload the documents HR needs",
+    "See missing documents and complete the right details for each file.",
+    "/staff/me/profile?tab=documents",
+    "CV degree education graduation institution passport resident card insurance engineering certificate upload requirements",
+    [
+      "Open My Profile → Documents. Check the missing-document list, then choose Upload Document.",
+      "Choose who the file is for, then select the document. The form shows only the details needed for that document. Education degrees ask for the qualification, institution and graduation year; a CV needs only the file.",
+      "Complete fields marked with an asterisk and choose a PDF, JPG or PNG up to 10 MB. HR-only details are completed during review.",
+      "After uploading, the document shows Awaiting verification. HR checks it and approves it or returns it with an explanation.",
+      "To correct an approved document, choose Replace and upload the corrected version. The existing approved file stays available until HR approves the replacement.",
+    ],
+    "Personal documents are restricted. If the document you need is not listed, ask HR to add or assign the requirement.",
+    [
+      "If uploading fails, check the file is a PDF, JPG or PNG under 10 MB and complete every required field.",
+    ],
+  ),
+  article(
     "time-away",
     "employee",
     "Attendance",

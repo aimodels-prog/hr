@@ -149,6 +149,8 @@ export const employees = pgTable(
     offerId: uuid("offer_id"),
     status: employeeStatus("status").notNull().default("Onboarding"),
     address: text("address"),
+    homeCountryPhone: text("home_country_phone"),
+    homeCountryAddress: text("home_country_address"),
     emergencyContacts: jsonb("emergency_contacts")
       .$type<Array<{ name: string; relationship: string; phone: string; email?: string }>>()
       .notNull()

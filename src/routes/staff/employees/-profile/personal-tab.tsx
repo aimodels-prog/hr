@@ -48,6 +48,8 @@ const personalFormSchema = z.object({
   phone: z.string().optional(),
   personalEmail: z.string().email("Invalid email").optional().or(z.literal("")),
   address: z.string().optional(),
+  homeCountryPhone: z.string().max(50).optional(),
+  homeCountryAddress: z.string().max(1000).optional(),
   dateOfBirth: z.string().optional(),
   gender: z.enum(["Male", "Female"]).optional(),
   nationality: z.string().optional(),
@@ -108,6 +110,8 @@ export function PersonalTab({
       phone: employee.phone || "",
       personalEmail: employee.personalEmail || "",
       address: employee.address || "",
+      homeCountryPhone: employee.homeCountryPhone || "",
+      homeCountryAddress: employee.homeCountryAddress || "",
       dateOfBirth: employee.dateOfBirth || "",
       gender: employee.gender,
       nationality: employee.nationality || "",
@@ -124,6 +128,8 @@ export function PersonalTab({
       phone: employee.phone || "",
       personalEmail: employee.personalEmail || "",
       address: employee.address || "",
+      homeCountryPhone: employee.homeCountryPhone || "",
+      homeCountryAddress: employee.homeCountryAddress || "",
       dateOfBirth: employee.dateOfBirth || "",
       gender: employee.gender,
       nationality: employee.nationality || "",
@@ -174,6 +180,10 @@ export function PersonalTab({
       if (values.personalEmail !== employee.personalEmail)
         changes.personalEmail = values.personalEmail;
       if (values.address !== employee.address) changes.address = values.address;
+      if (values.homeCountryPhone !== employee.homeCountryPhone)
+        changes.homeCountryPhone = values.homeCountryPhone;
+      if (values.homeCountryAddress !== employee.homeCountryAddress)
+        changes.homeCountryAddress = values.homeCountryAddress;
       if (values.dateOfBirth !== employee.dateOfBirth) changes.dateOfBirth = values.dateOfBirth;
       if (values.gender !== employee.gender) changes.gender = values.gender;
       if (values.nationality !== employee.nationality) changes.nationality = values.nationality;
@@ -449,7 +459,7 @@ export function PersonalTab({
                       name="address"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Residential Address</FormLabel>
+                          <FormLabel>Local residential address</FormLabel>
                           <FormControl>
                             <Textarea {...field} />
                           </FormControl>
@@ -458,6 +468,27 @@ export function PersonalTab({
                       )}
                     />
 
+                    {(
+                      [
+                        ["homeCountryPhone", "Home-country phone"],
+                        ["homeCountryAddress", "Home-country address"],
+                      ] as const
+                    ).map(([name, label]) => (
+                      <FormField
+                        key={name}
+                        control={form.control}
+                        name={name}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>{label}</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    ))}
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
                         <h4 className="text-sm font-medium">Emergency Contacts</h4>
@@ -713,6 +744,10 @@ export function PersonalTab({
             <div className="col-span-2">
               <div className="text-muted-foreground">Residential Address</div>
               <div className="font-medium">{employee.address || "-"}</div>
+              <div className="mt-3 text-sm text-muted-foreground">Home-country phone</div>
+              <div>{employee.homeCountryPhone || "—"}</div>
+              <div className="mt-3 text-sm text-muted-foreground">Home-country address</div>
+              <div>{employee.homeCountryAddress || "—"}</div>
             </div>
           </div>
         </CardContent>

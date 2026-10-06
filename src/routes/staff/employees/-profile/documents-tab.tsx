@@ -1,4 +1,11 @@
 import { useEffect, useState, useMemo, useRef } from "react";
+import { RequirementFields } from "@/components/documents/requirement-fields";
+import {
+  validateDocumentAnswers,
+  type DocumentRequirement,
+} from "@/lib/data/document-requirements";
+import { getDocumentRequirementsFn } from "@/lib/server-functions/document-requirements.server";
+import { getApplicationDataServices } from "@/lib/data/application-data";
 import { missingDependantInformation } from "@/lib/data/dependants";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -53,7 +60,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import { useCurrentUser } from "@/lib/auth";
 import { format } from "date-fns";
-import type { EmployeeDocument, DocumentType, DocumentVisibility } from "@/lib/data/types";
+import type { EmployeeDocument, DocumentVisibility } from "@/lib/data/types";
 import { DocumentService } from "@/lib/data/document-service";
 import { StatusBadge } from "@/components/ui/status-badge";
 
@@ -98,8 +105,6 @@ const documentSchema = z
     },
   );
 
-const MANDATORY_DOCS: DocumentType[] = ["contract", "national_id"];
-
 export function DocumentsTab({
   employeeId,
   dependants = [],
@@ -109,6 +114,13 @@ export function DocumentsTab({
 }) {
   const currentUser = useCurrentUser();
   const documentService = useMemo(() => new DocumentService(), []);
+  const [requirements, setRequirements] = useState<DocumentRequirement[]>([]);
+  const [requirementId, setRequirementId] = useState("other");
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [reviewAnswers, setReviewAnswers] = useState<Record<string, string>>({});
+  const [replacementRequirement, setReplacementRequirement] = useState<DocumentRequirement>();
+  const selectedRequirement =
+    replacementRequirement ?? requirements.find((r) => r.id === requirementId);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isReplacing, setIsReplacing] = useState<string | null>(null);
   const [dependantId, setDependantId] = useState("employee");
@@ -138,7 +150,26 @@ export function DocumentsTab({
     setLoadError("");
     void documentService
       .hydrateCompatibilityCache(currentUser.getActorContext())
-      .then(() => {
+      .then(async () => {
+        if (
+          ["HR", "Super Admin"].includes(currentUser.activeRole) ||
+          currentUser.employeeId === employeeId
+        ) {
+          const employee = getApplicationDataServices()
+            .storage.readCollection<{ id: string; databaseId?: string }>("employees")
+            .find((e) => e.id === employeeId);
+          const result = await getDocumentRequirementsFn({
+            data: {
+              actor: {
+                actorId: currentUser.id,
+                actorEmail: currentUser.workspaceEmail,
+                activeRole: currentUser.activeRole,
+              },
+              employeeId: employee?.databaseId ?? employeeId,
+            },
+          });
+          if (active) setRequirements(result.definitions);
+        }
         if (active) setRefresh((value) => value + 1);
       })
       .catch((error) => {
@@ -188,14 +219,18 @@ export function DocumentsTab({
     .map((doc) => ({ ...doc, computedStatus: computeStatus(doc) }));
 
   // Identify missing mandatory docs
-  const missingDocs = MANDATORY_DOCS.filter(
-    (type) =>
-      !visibleDocs.some(
-        (d) =>
-          d.type === type &&
-          ["Valid", "Pending Verification", "Expiring"].includes(d.computedStatus),
-      ),
-  );
+  const missingDocs = requirements
+    .filter((r) => r.required)
+    .filter(
+      (r) =>
+        !visibleDocs.some(
+          (d) =>
+            (d.requirementId === r.id ||
+              (!d.requirementId && d.type === r.type && r.id === r.type)) &&
+            ["Valid", "Pending Verification", "Expiring"].includes(d.computedStatus),
+        ),
+    )
+    .map((r) => r.name);
 
   const form = useForm<z.infer<typeof documentSchema>>({
     resolver: zodResolver(documentSchema),
@@ -207,7 +242,7 @@ export function DocumentsTab({
       issuingAuthority: "",
       issuingCountry: "",
       notes: "",
-      visibility: "Public",
+      visibility: "Restricted",
     },
   });
   const selectedDocumentType = form.watch("type");
@@ -226,6 +261,8 @@ export function DocumentsTab({
   const onSubmit = async (values: z.infer<typeof documentSchema>) => {
     try {
       if (!selectedFile) throw new Error("A file must be selected");
+      if (!isReplacing && dependantId === "employee" && !selectedRequirement)
+        throw new Error("Choose a document requirement first.");
       if (selectedFile.size > MAX_FILE_SIZE) throw new Error("File exceeds the 10 MB limit");
       if (!ALLOWED_FILE_TYPES.has(selectedFile.type)) {
         throw new Error("Choose a PDF, JPG or PNG file");
@@ -234,11 +271,17 @@ export function DocumentsTab({
       const fileBlob = new Blob([await selectedFile.arrayBuffer()], { type: selectedFile.type });
 
       const metadata = {
+        ...(selectedRequirement && dependantId === "employee"
+          ? {
+              requirementId: selectedRequirement.id,
+              answers: validateDocumentAnswers(selectedRequirement, answers, isHrOrAdmin),
+            }
+          : {}),
         type: values.type,
         ...(dependantId !== "employee"
           ? { type: "other" as const, dependantId, dependantDocumentKind }
           : {}),
-        visibility: hrCompletesVisaDetails ? ("Restricted" as const) : values.visibility,
+        visibility: "Restricted" as const,
         ...(!hrCompletesVisaDetails && values.documentNumber
           ? { documentNumber: values.documentNumber }
           : {}),
@@ -321,6 +364,7 @@ export function DocumentsTab({
           visibility: document.visibility,
         });
         setVerifyingDocument(document);
+        setReviewAnswers(document.answers ?? {});
         return;
       } else {
         setRejectingDocumentId(id);
@@ -339,6 +383,7 @@ export function DocumentsTab({
       ["passport", "visa", "national_id", "work_permit"].includes(verifyingDocument.type);
     if (
       requiresOfficialDetails &&
+      !verifyingDocument.requirementSnapshot &&
       (!verificationDetails.documentNumber.trim() ||
         !verificationDetails.issuingAuthority.trim() ||
         !verificationDetails.issueDate ||
@@ -360,6 +405,16 @@ export function DocumentsTab({
         verifyingDocument.id,
         getActorContext("HR verified the document and confirmed its official details"),
         {
+          ...(verifyingDocument.requirementSnapshot
+            ? {
+                answers: validateDocumentAnswers(
+                  verifyingDocument.requirementSnapshot,
+                  reviewAnswers,
+                  true,
+                  true,
+                ),
+              }
+            : {}),
           ...(verificationDetails.documentNumber.trim()
             ? { documentNumber: verificationDetails.documentNumber.trim() }
             : {}),
@@ -402,6 +457,23 @@ export function DocumentsTab({
 
   const openReplace = (doc: EmployeeDocument) => {
     setIsReplacing(doc.id);
+    if (doc.requirementSnapshot) {
+      setReplacementRequirement(doc.requirementSnapshot);
+      setRequirementId(doc.requirementSnapshot.id);
+      setAnswers(
+        Object.fromEntries(
+          Object.entries(doc.answers ?? {}).filter(
+            ([k]) =>
+              isHrOrAdmin ||
+              doc.requirementSnapshot!.fields.find((f) => f.key === k)?.owner !== "HR",
+          ),
+        ),
+      );
+    } else {
+      setReplacementRequirement(undefined);
+      setRequirementId("");
+      setAnswers({});
+    }
     form.reset({
       type: doc.type,
       documentNumber: doc.documentNumber || "",
@@ -459,6 +531,9 @@ export function DocumentsTab({
               setIsUploadOpen(open);
               if (!open) {
                 setIsReplacing(null);
+                setReplacementRequirement(undefined);
+                setRequirementId("other");
+                setAnswers({});
                 setSelectedFile(null);
                 form.reset();
                 setDependantId("employee");
@@ -534,8 +609,16 @@ export function DocumentsTab({
                       <FormItem>
                         <FormLabel>Document Type *</FormLabel>
                         <Select
-                          onValueChange={field.onChange}
-                          defaultValue={field.value as string}
+                          onValueChange={(id) => {
+                            const r = requirements.find((r) => r.id === id);
+                            if (r) {
+                              setRequirementId(id);
+                              setAnswers({});
+                              form.reset({ type: r.type, visibility: "Restricted" });
+                              field.onChange(r.type);
+                            }
+                          }}
+                          value={requirementId || field.value}
                           disabled={!!isReplacing || dependantId !== "employee"}
                         >
                           <FormControl>
@@ -544,32 +627,11 @@ export function DocumentsTab({
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
-                            {[
-                              "contract",
-                              "passport",
-                              "visa",
-                              "national_id",
-                              "work_permit",
-                              "driving_licence",
-                              "medical",
-                              "education_certificate",
-                              "professional_certificate",
-                              "bank_evidence",
-                              "insurance_card",
-                              "insurance_benefits",
-                              "other",
-                            ]
-                              .filter(
-                                (t) =>
-                                  !["work_permit", "insurance_benefits"].includes(t) || isHrOrAdmin,
-                              )
-                              .map((t) => (
-                                <SelectItem key={t} value={t}>
-                                  {t === "insurance_benefits"
-                                    ? "Insurance Table of Benefits"
-                                    : t
-                                        .replaceAll("_", " ")
-                                        .replace(/\b\w/g, (l) => l.toUpperCase())}
+                            {requirements
+                              .filter((r) => r.uploadBy !== "HR" || isHrOrAdmin)
+                              .map((r) => (
+                                <SelectItem key={r.id} value={r.id}>
+                                  {r.name}
                                 </SelectItem>
                               ))}
                           </SelectContent>
@@ -579,135 +641,149 @@ export function DocumentsTab({
                     )}
                   />
 
-                  {hrCompletesVisaDetails && (
+                  {selectedRequirement && dependantId === "employee" && (
+                    <RequirementFields
+                      requirement={selectedRequirement}
+                      answers={answers}
+                      onChange={setAnswers}
+                      isHr={isHrOrAdmin}
+                    />
+                  )}
+                  {!selectedRequirement && hrCompletesVisaDetails && (
                     <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
                       Upload the visa or work-permit file only. HR will complete all official
                       document details and confirm them during verification.
                     </div>
                   )}
 
-                  {!hrCompletesVisaDetails && (
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="documentNumber"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Document ID</FormLabel>
-                            <FormControl>
-                              <Input {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name="visibility"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Visibility</FormLabel>
-                            <Select
-                              onValueChange={field.onChange}
-                              value={field.value as string}
-                              disabled={isInsuranceDocument}
-                            >
+                  {(!selectedRequirement || dependantId !== "employee") &&
+                    !hrCompletesVisaDetails && (
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="documentNumber"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Document ID</FormLabel>
                               <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
+                                <Input {...field} />
                               </FormControl>
-                              <SelectContent>
-                                <SelectItem value="Public">Standard (Public)</SelectItem>
-                                <SelectItem value="Restricted">
-                                  Restricted (employee & HR)
-                                </SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        {isHrOrAdmin && (
+                          <FormField
+                            control={form.control}
+                            name="visibility"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Visibility</FormLabel>
+                                <Select
+                                  onValueChange={field.onChange}
+                                  value={field.value as string}
+                                  disabled={isInsuranceDocument}
+                                >
+                                  <FormControl>
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                  </FormControl>
+                                  <SelectContent>
+                                    <SelectItem value="Public">Standard (Public)</SelectItem>
+                                    <SelectItem value="Restricted">
+                                      Restricted (employee & HR)
+                                    </SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
                         )}
-                      />
-                    </div>
-                  )}
+                      </div>
+                    )}
 
-                  {!hrCompletesVisaDetails && (
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="issuingAuthority"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Issuing Authority</FormLabel>
-                            <FormControl>
-                              <Input {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name="issuingCountry"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Issuing Country</FormLabel>
-                            <FormControl>
-                              <Input {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                  )}
+                  {(!selectedRequirement || dependantId !== "employee") &&
+                    !hrCompletesVisaDetails && (
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="issuingAuthority"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Issuing Authority</FormLabel>
+                              <FormControl>
+                                <Input {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="issuingCountry"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Issuing Country</FormLabel>
+                              <FormControl>
+                                <Input {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    )}
 
-                  {!hrCompletesVisaDetails && (
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="issueDate"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Issue Date</FormLabel>
-                            <FormControl>
-                              <Input type="date" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name="expiryDate"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Expiry Date</FormLabel>
-                            <FormControl>
-                              <Input type="date" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                  )}
+                  {(!selectedRequirement || dependantId !== "employee") &&
+                    !hrCompletesVisaDetails && (
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="issueDate"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Issue Date</FormLabel>
+                              <FormControl>
+                                <Input type="date" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="expiryDate"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Expiry Date</FormLabel>
+                              <FormControl>
+                                <Input type="date" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    )}
 
-                  {!hrCompletesVisaDetails && (
-                    <FormField
-                      control={form.control}
-                      name="notes"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Notes</FormLabel>
-                          <FormControl>
-                            <Textarea {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  )}
+                  {(!selectedRequirement || dependantId !== "employee") &&
+                    !hrCompletesVisaDetails && (
+                      <FormField
+                        control={form.control}
+                        name="notes"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Notes</FormLabel>
+                            <FormControl>
+                              <Textarea {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
 
                   <div>
                     <Label>File Attachment (Max 10 MB) *</Label>
@@ -793,7 +869,7 @@ export function DocumentsTab({
                     <div className="font-medium capitalize">
                       {doc.dependantId
                         ? `Family ${doc.dependantDocumentKind?.replace("_", " ") ?? "document"}`
-                        : doc.type.replace("_", " ")}
+                        : (doc.requirementSnapshot?.name ?? doc.type.replace("_", " "))}
                     </div>
                     {doc.dependantId && (
                       <div className="text-xs text-muted-foreground">
@@ -806,6 +882,18 @@ export function DocumentsTab({
                   </TableCell>
                   <TableCell>
                     <div className="text-sm">{doc.documentNumber || "-"}</div>
+                    {doc.requirementSnapshot?.fields
+                      .filter(
+                        (f) =>
+                          !["documentNumber", "issueDate", "expiryDate"].includes(f.key) &&
+                          doc.answers?.[f.key],
+                      )
+                      .map((f) => (
+                        <div key={f.key} className="mt-1 text-sm">
+                          <span className="text-muted-foreground">{f.label}: </span>
+                          {doc.answers?.[f.key]}
+                        </div>
+                      ))}
                     <div className="text-xs text-muted-foreground">
                       {[doc.issuingAuthority, doc.issuingCountry].filter(Boolean).join(", ")}
                     </div>
@@ -908,7 +996,18 @@ export function DocumentsTab({
             Check the uploaded file, enter the official details, then verify the record. These
             details are completed by HR.
           </p>
-          <div className="grid gap-4 sm:grid-cols-2">
+          {verifyingDocument?.requirementSnapshot && (
+            <RequirementFields
+              requirement={verifyingDocument.requirementSnapshot}
+              answers={reviewAnswers}
+              onChange={setReviewAnswers}
+              isHr
+            />
+          )}
+          <div
+            hidden={!!verifyingDocument?.requirementSnapshot}
+            className="grid gap-4 sm:grid-cols-2"
+          >
             <div className="space-y-1.5">
               <Label htmlFor="verify-document-number">Document number *</Label>
               <Input

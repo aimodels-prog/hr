@@ -1,4 +1,5 @@
 import { dependantSchema } from "../data/dependants.ts";
+import { documentAnswersSchema } from "../data/document-requirements.ts";
 import { createServerFn } from "@tanstack/react-start";
 import * as z from "zod";
 
@@ -359,6 +360,8 @@ export const completeOnboardingTaskWithEvidenceFn = createServerFn({ method: "PO
 
 const CompleteOnboardingDocumentTask = z
   .object({
+    requirementId: z.string().max(100).optional(),
+    answers: documentAnswersSchema.optional(),
     actor: Actor,
     caseId: z.string().uuid(),
     taskId: z.string().uuid(),
@@ -395,6 +398,7 @@ const CompleteOnboardingDocumentTask = z
 export const completeOnboardingDocumentTaskFn = createServerFn({ method: "POST" })
   .validator((input) => CompleteOnboardingDocumentTask.parse(input))
   .handler(async ({ data }) => {
+    if (!data.requirementId) throw new Error("Reload the page to load HR's document requirements.");
     const verified = await verify(data.actor);
     let documentId: string | undefined;
     try {
@@ -403,6 +407,8 @@ export const completeOnboardingDocumentTaskFn = createServerFn({ method: "POST" 
         {
           employeeId: data.employeeId,
           type: data.type,
+          requirementId: data.requirementId,
+          answers: data.answers,
           fileName: data.fileName,
           mimeType: data.mimeType,
           bytes: Uint8Array.from(data.bytes),
@@ -454,6 +460,8 @@ const PersonalOnboardingDetails = z
     phone: z.string().trim().min(3).max(50),
     personalEmail: z.string().email().optional(),
     address: z.string().trim().min(3).max(1000),
+    homeCountryPhone: z.string().trim().max(50).optional(),
+    homeCountryAddress: z.string().trim().max(1000).optional(),
     emergencyContacts: z
       .array(
         z
@@ -472,6 +480,7 @@ const PersonalOnboardingDetails = z
 const BankOnboardingDetails = z
   .object({
     bankName: z.string().trim().min(2).max(150),
+    accountHolderName: z.string().trim().max(150).optional(),
     accountNumber: z.string().trim().min(3).max(100),
     iban: z.string().trim().min(8).max(100),
     swiftCode: z.string().trim().max(50).optional(),
@@ -803,6 +812,8 @@ export const getEmployeeDocumentsFn = createServerFn({ method: "POST" })
 
 const UploadEmployeeDocument = z
   .object({
+    requirementId: z.string().max(100).optional(),
+    answers: documentAnswersSchema.optional(),
     actor: Actor,
     employeeId: z.string().uuid(),
     type: DocumentType,
@@ -824,12 +835,16 @@ const UploadEmployeeDocument = z
 export const uploadEmployeeDocumentFn = createServerFn({ method: "POST" })
   .validator((input) => UploadEmployeeDocument.parse(input))
   .handler(async ({ data }) => {
+    if (!data.dependantId && !data.requirementId)
+      throw new Error("Select one of HR's configured document requirements.");
     const verified = await verify(data.actor);
     return uploadEmployeeDocumentToDatabase(
       verified.organisationId,
       {
         employeeId: data.employeeId,
         type: data.type,
+        requirementId: data.requirementId,
+        answers: data.answers,
         ...(data.dependantId ? { dependantId: data.dependantId } : {}),
         ...(data.dependantDocumentKind
           ? { dependantDocumentKind: data.dependantDocumentKind }
@@ -851,6 +866,7 @@ export const uploadEmployeeDocumentFn = createServerFn({ method: "POST" })
 
 const ReplaceEmployeeDocument = z
   .object({
+    answers: documentAnswersSchema.optional(),
     actor: Actor,
     documentId: z.string().uuid(),
     fileName: z.string().trim().min(1).max(255),
@@ -878,6 +894,7 @@ export const replaceEmployeeDocumentFn = createServerFn({ method: "POST" })
         mimeType: data.mimeType,
         bytes: Uint8Array.from(data.bytes),
         reason: data.reason,
+        answers: data.answers,
         ...(data.documentNumber ? { documentNumber: data.documentNumber } : {}),
         ...(data.issueDate ? { issueDate: data.issueDate } : {}),
         ...(data.expiryDate ? { expiryDate: data.expiryDate } : {}),
@@ -892,6 +909,7 @@ export const replaceEmployeeDocumentFn = createServerFn({ method: "POST" })
 
 const DecideEmployeeDocument = z
   .object({
+    answers: documentAnswersSchema.optional(),
     actor: Actor,
     documentId: z.string().uuid(),
     decision: z.enum(["verify", "reject"]),
@@ -916,6 +934,7 @@ export const decideEmployeeDocumentFn = createServerFn({ method: "POST" })
       data.reason,
       verified.actor,
       {
+        answers: data.answers,
         ...(data.documentNumber ? { documentNumber: data.documentNumber } : {}),
         ...(data.issueDate ? { issueDate: data.issueDate } : {}),
         ...(data.expiryDate ? { expiryDate: data.expiryDate } : {}),
