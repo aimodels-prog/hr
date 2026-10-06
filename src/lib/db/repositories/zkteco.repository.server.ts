@@ -145,7 +145,11 @@ async function findMappedEmployee(
   deviceUserId: string,
 ): Promise<string | undefined> {
   const [mapping] = await tx
-    .select({ employeeId: attendanceDeviceEmployeeMappings.employeeId })
+    .select({
+      employeeId: attendanceDeviceEmployeeMappings.employeeId,
+      archivedAt: attendanceDeviceEmployeeMappings.archivedAt,
+      employeeStatus: employees.status,
+    })
     .from(attendanceDeviceEmployeeMappings)
     .innerJoin(employees, eq(employees.id, attendanceDeviceEmployeeMappings.employeeId))
     .where(
@@ -153,12 +157,14 @@ async function findMappedEmployee(
         eq(attendanceDeviceEmployeeMappings.organisationId, organisationId),
         eq(attendanceDeviceEmployeeMappings.deviceId, deviceId),
         eq(attendanceDeviceEmployeeMappings.deviceUserId, deviceUserId),
-        sql`${attendanceDeviceEmployeeMappings.archivedAt} IS NULL`,
-        sql`${employees.status} NOT IN ('Inactive', 'Archived')`,
       ),
     )
     .limit(1);
-  if (mapping) return mapping.employeeId;
+  // A removed match is a deliberate stop, including when the user ID equals an email/employee number.
+  if (mapping)
+    return mapping.archivedAt || ["Inactive", "Archived"].includes(mapping.employeeStatus)
+      ? undefined
+      : mapping.employeeId;
 
   // An exact VIA email or employee-number match is safe to establish automatically.
   // Fuzzy name matching is deliberately forbidden for attendance identity.
@@ -199,6 +205,7 @@ async function findMappedEmployee(
         and(
           eq(attendanceDeviceEmployeeMappings.deviceId, deviceId),
           eq(attendanceDeviceEmployeeMappings.deviceUserId, deviceUserId.trim()),
+          sql`${attendanceDeviceEmployeeMappings.archivedAt} IS NULL`,
         ),
       )
       .limit(1);
@@ -916,6 +923,16 @@ export async function mapAttendanceDeviceUserInDatabase(
   if (!input.deviceUserId.trim()) throw new Error("Enter the terminal user ID.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
+    await tx
+      .select({ id: attendanceDevices.id })
+      .from(attendanceDevices)
+      .where(
+        and(
+          eq(attendanceDevices.organisationId, organisationId),
+          eq(attendanceDevices.id, input.deviceId),
+        ),
+      )
+      .for("update");
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${organisationId + input.deviceId + input.deviceUserId.trim()}, 0))`,
     );
@@ -956,7 +973,7 @@ export async function mapAttendanceDeviceUserInDatabase(
       .for("update")
       .limit(1);
     const id = existing?.id ?? randomUUID();
-    if (existing && existing.employeeId !== input.employeeId)
+    if (existing && !existing.archivedAt && existing.employeeId !== input.employeeId)
       throw new Error(
         "This identity must be reassigned using Change employee so its attendance can be reviewed first.",
       );
@@ -1017,6 +1034,29 @@ export async function mapAttendanceDeviceUserInDatabase(
   let applied = 0;
   for (const raw of pending) {
     await db.transaction(async (tx) => {
+      await tx
+        .select({ id: attendanceDevices.id })
+        .from(attendanceDevices)
+        .where(
+          and(
+            eq(attendanceDevices.organisationId, organisationId),
+            eq(attendanceDevices.id, input.deviceId),
+          ),
+        )
+        .for("update");
+      const [activeMatch] = await tx
+        .select()
+        .from(attendanceDeviceEmployeeMappings)
+        .where(
+          and(
+            eq(attendanceDeviceEmployeeMappings.deviceId, input.deviceId),
+            eq(attendanceDeviceEmployeeMappings.deviceUserId, input.deviceUserId.trim()),
+            eq(attendanceDeviceEmployeeMappings.employeeId, input.employeeId),
+            sql`${attendanceDeviceEmployeeMappings.archivedAt} IS NULL`,
+          ),
+        )
+        .limit(1);
+      if (!activeMatch) return;
       const [current] = await tx
         .select({ id: attendanceDevicePunches.id })
         .from(attendanceDevicePunches)
@@ -1057,10 +1097,17 @@ export async function mapAttendanceDeviceUserInDatabase(
 
 export async function changeAttendanceDeviceEmployee(
   organisationId: string,
-  input: { mappingId: string; employeeId: string; previewToken?: string | undefined },
+  input: {
+    mappingId: string;
+    employeeId?: string;
+    removeMode?: "keep" | "review";
+    previewToken?: string | undefined;
+  },
   actor: AuditActorContext,
 ) {
   requireAttendanceAdministrator(actor);
+  if ((!input.employeeId && !input.removeMode) || (input.employeeId && input.removeMode))
+    throw new Error("Choose either a replacement employee or Remove match.");
   return getDatabaseClient().transaction(
     async (tx) => {
       const [initial] = await tx
@@ -1086,14 +1133,17 @@ export async function changeAttendanceDeviceEmployee(
         )
         .for("update")
         .limit(1);
-      if (!device?.isActive) throw new Error("Select an active terminal.");
+      if (!device || (!input.removeMode && !device.isActive))
+        throw new Error("Select an active terminal.");
       const [mapping] = await tx
         .select()
         .from(attendanceDeviceEmployeeMappings)
         .where(eq(attendanceDeviceEmployeeMappings.id, initial.id))
         .for("update")
         .limit(1);
-      if (!mapping || mapping.employeeId === input.employeeId)
+      if (!mapping || mapping.archivedAt)
+        throw new Error("This match was already removed. Refresh the terminal list.");
+      if (!input.removeMode && mapping.employeeId === input.employeeId)
         throw new Error("Choose a different employee.");
       const [employee] = await tx
         .select()
@@ -1101,9 +1151,13 @@ export async function changeAttendanceDeviceEmployee(
         .where(
           and(
             eq(employees.organisationId, organisationId),
-            eq(employees.id, input.employeeId),
-            sql`${employees.status} NOT IN ('Inactive', 'Archived')`,
-            sql`${employees.archivedAt} IS NULL`,
+            eq(employees.id, input.employeeId ?? mapping.employeeId),
+            ...(input.removeMode
+              ? []
+              : [
+                  sql`${employees.status} NOT IN ('Inactive', 'Archived')`,
+                  sql`${employees.archivedAt} IS NULL`,
+                ]),
           ),
         )
         .limit(1);
@@ -1115,10 +1169,11 @@ export async function changeAttendanceDeviceEmployee(
           and(
             eq(attendanceDeviceEmployeeMappings.deviceId, device.id),
             eq(attendanceDeviceEmployeeMappings.employeeId, employee.id),
+            sql`${attendanceDeviceEmployeeMappings.archivedAt} IS NULL`,
           ),
         )
         .limit(1);
-      if (otherMatch)
+      if (otherMatch && !input.removeMode)
         throw new Error(
           "This employee already has a user ID on this terminal. Review that match first.",
         );
@@ -1131,6 +1186,7 @@ export async function changeAttendanceDeviceEmployee(
             eq(attendanceDevicePunches.deviceId, device.id),
             eq(attendanceDevicePunches.deviceUserId, mapping.deviceUserId),
             inArray(attendanceDevicePunches.status, ["Applied", "Unmatched Employee"]),
+            ...(input.removeMode === "keep" ? [sql`false`] : []),
           ),
         )
         .orderBy(asc(attendanceDevicePunches.occurredAt), asc(attendanceDevicePunches.id))
@@ -1139,7 +1195,7 @@ export async function changeAttendanceDeviceEmployee(
       const dates = [
         ...new Set(punches.map((p) => zonedParts(new Date(p.occurredAt), timezone).date)),
       ].sort();
-      const employeeIds = [mapping.employeeId, employee.id].sort();
+      const employeeIds = [...new Set([mapping.employeeId, employee.id])].sort();
       for (const id of employeeIds)
         for (const date of dates) {
           await tx.execute(
@@ -1295,6 +1351,7 @@ export async function changeAttendanceDeviceEmployee(
             sheets,
             visits,
             corrections,
+            removeMode: input.removeMode,
           }),
         )
         .digest("hex");
@@ -1304,7 +1361,7 @@ export async function changeAttendanceDeviceEmployee(
         punchCount: punches.length,
         blocked: [...blocked],
         fromEmployeeId: mapping.employeeId,
-        toEmployeeId: employee.id,
+        toEmployeeId: input.removeMode ? null : employee.id,
       };
       if (!input.previewToken) return { ...preview, changed: false };
       if (input.previewToken !== previewToken)
@@ -1319,7 +1376,7 @@ export async function changeAttendanceDeviceEmployee(
         .limit(1);
       if (!location) throw new Error("The terminal's office location is missing.");
       const changedRecords = new Map(records.map((r) => [`${r.employeeId}:${r.date}`, r]));
-      for (const date of dates) {
+      for (const date of input.removeMode ? [] : dates) {
         if (!changedRecords.has(`${employee.id}:${date}`)) {
           const [created] = await tx
             .insert(attendanceRecords)
@@ -1340,6 +1397,23 @@ export async function changeAttendanceDeviceEmployee(
         }
       }
       for (const p of punches.filter((p) => p.status === "Applied")) {
+        if (input.removeMode === "review") {
+          // Raw machine evidence is retained; only its derived daily projection is removed.
+          await tx
+            .update(attendanceDevicePunches)
+            .set({
+              employeeId: null,
+              attendanceRecordId: null,
+              punchEventId: null,
+              status: "Unmatched Employee",
+              failureReason: "HR removed an incorrect employee match. Awaiting a new match.",
+            })
+            .where(eq(attendanceDevicePunches.id, p.id));
+          await tx
+            .delete(attendancePunchEvents)
+            .where(eq(attendancePunchEvents.id, p.punchEventId!));
+          continue;
+        }
         const date = zonedParts(new Date(p.occurredAt), timezone).date;
         const record = changedRecords.get(`${employee.id}:${date}`)!;
         // Only derived ownership changes. Original terminal ID, time and event IDs are preserved.
@@ -1352,7 +1426,9 @@ export async function changeAttendanceDeviceEmployee(
           .set({ employeeId: employee.id, attendanceRecordId: record.id })
           .where(eq(attendanceDevicePunches.id, p.id));
       }
-      for (const p of punches.filter((p) => p.status === "Unmatched Employee")) {
+      for (const p of punches.filter(
+        (p) => !input.removeMode && p.status === "Unmatched Employee",
+      )) {
         await projectDailyAttendance(tx, {
           organisationId,
           deviceId: device.id,
@@ -1410,7 +1486,7 @@ export async function changeAttendanceDeviceEmployee(
         .update(attendanceDeviceEmployeeMappings)
         .set({
           employeeId: employee.id,
-          archivedAt: null,
+          archivedAt: input.removeMode ? new Date() : null,
           updatedAt: new Date(),
           updatedBy: actor.userId!,
           recordVersion: sql`${attendanceDeviceEmployeeMappings.recordVersion} + 1`,
@@ -1423,22 +1499,29 @@ export async function changeAttendanceDeviceEmployee(
         actorDisplayName: actor.displayName,
         activeRole: actor.activeRole,
         actorRoles: actor.roles ?? [],
-        action: "correct-device-user-match",
+        action: input.removeMode ? "remove-device-user-match" : "correct-device-user-match",
         module: "attendance",
         entityType: "attendance-device-mapping",
         entityId: mapping.id,
         beforeSummary: {
           employeeId: mapping.employeeId,
           records,
+          ...(input.removeMode === "review" ? { projectedEvents: events } : {}),
           punches: punches.map((p) => ({
             id: p.id,
             employeeId: p.employeeId,
             attendanceRecordId: p.attendanceRecordId,
           })),
         },
-        afterSummary: { employeeId: employee.id, dates, punchCount: punches.length },
-        reason:
-          "HR confirmed correction of an incorrect biometric employee match after reviewing affected dates.",
+        afterSummary: {
+          employeeId: input.removeMode ? null : employee.id,
+          dates,
+          punchCount: punches.length,
+          ...(input.removeMode ? { history: input.removeMode } : {}),
+        },
+        reason: input.removeMode
+          ? `HR removed a biometric match; existing attendance ${input.removeMode === "keep" ? "kept unchanged" : "returned for matching review"}.`
+          : "HR confirmed correction of an incorrect biometric employee match after reviewing affected dates.",
         riskLevel: "High",
       } as typeof auditEvents.$inferInsert);
       return { ...preview, changed: true };

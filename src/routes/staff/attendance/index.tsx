@@ -191,6 +191,12 @@ function AttendanceAdminContent() {
     ReturnType<AttendanceService["changeDeviceEmployeeAsync"]>
   > | null>(null);
   const [changingMatch, setChangingMatch] = useState(false);
+  const [removeMatch, setRemoveMatch] = useState<AttendanceDeviceMapping | null>(null);
+  const [removeMode, setRemoveMode] = useState<"keep" | "review">("keep");
+  const [removePreview, setRemovePreview] = useState<Awaited<
+    ReturnType<AttendanceService["removeDeviceEmployeeAsync"]>
+  > | null>(null);
+  const [removingMatch, setRemovingMatch] = useState(false);
   const [mappingEmployeeId, setMappingEmployeeId] = useState("");
   const [mappingReason, setMappingReason] = useState("");
   const [pairingDevice, setPairingDevice] = useState<AttendanceDevice | null>(null);
@@ -600,6 +606,37 @@ function AttendanceAdminContent() {
       );
     } finally {
       setChangingMatch(false);
+    }
+  };
+
+  const removeMatchedEmployee = async () => {
+    if (!removeMatch) return;
+    setRemovingMatch(true);
+    try {
+      const result = await attendanceService.removeDeviceEmployeeAsync(
+        {
+          mappingId: removeMatch.id,
+          removeMode,
+          ...(removePreview ? { previewToken: removePreview.previewToken } : {}),
+        },
+        actorContext,
+      );
+      if (result.changed) {
+        setRemoveMatch(null);
+        setRemovePreview(null);
+        await loadDeviceAdministration();
+        setRevision((value) => value + 1);
+        toast.success(
+          removeMode === "keep"
+            ? "Match removed. Existing attendance was kept."
+            : "Match removed. Punches are waiting to be matched again.",
+        );
+      } else setRemovePreview(result);
+    } catch (error) {
+      setRemovePreview(null);
+      toast.error(error instanceof Error ? error.message : "The match could not be removed.");
+    } finally {
+      setRemovingMatch(false);
     }
   };
 
@@ -1145,6 +1182,18 @@ function AttendanceAdminContent() {
                               }}
                             >
                               Change employee
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="ml-2 text-destructive"
+                              onClick={() => {
+                                setRemoveMatch(m);
+                                setRemoveMode("keep");
+                                setRemovePreview(null);
+                              }}
+                            >
+                              Remove match
                             </Button>
                           </TableCell>
                         </TableRow>
@@ -1888,6 +1937,94 @@ function AttendanceAdminContent() {
                 : changePreview
                   ? "Confirm correction"
                   : "Review affected attendance"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(removeMatch)}
+        onOpenChange={(open) => {
+          if (!open && !removingMatch) setRemoveMatch(null);
+        }}
+      >
+        <DialogContent className="max-h-[85dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Remove employee match</DialogTitle>
+            <DialogDescription>
+              Disconnect terminal ID {removeMatch?.deviceUserId} from {removeMatch?.employeeName}.
+              New punches will wait for HR to match them. Fingerprints and machine records are not
+              deleted.
+            </DialogDescription>
+          </DialogHeader>
+          <fieldset disabled={removingMatch} className="space-y-3 text-sm">
+            <legend className="mb-2 font-medium">Existing attendance</legend>
+            <label className="flex items-start gap-3 rounded-md border p-3">
+              <input
+                type="radio"
+                name="remove-history"
+                value="keep"
+                checked={removeMode === "keep"}
+                onChange={() => {
+                  setRemoveMode("keep");
+                  setRemovePreview(null);
+                }}
+              />
+              <span>Keep existing attendance (recommended)</span>
+            </label>
+            <label className="flex items-start gap-3 rounded-md border p-3">
+              <input
+                type="radio"
+                name="remove-history"
+                value="review"
+                checked={removeMode === "review"}
+                onChange={() => {
+                  setRemoveMode("review");
+                  setRemovePreview(null);
+                }}
+              />
+              <span>The match was wrong — return its punches for review</span>
+            </label>
+          </fieldset>
+          {removePreview && (
+            <div className="space-y-3 text-sm">
+              {removeMode === "keep" ? (
+                <p>Only the match will be removed. Existing attendance will stay unchanged.</p>
+              ) : (
+                <>
+                  <p>
+                    {removePreview.punchCount} punches across {removePreview.dates.length} days will
+                    return to the unmatched list. Attendance will be recalculated without these
+                    punches. Saved timesheets are not changed.
+                  </p>
+                  <div className="max-h-32 overflow-y-auto">
+                    {removePreview.dates.map((date) => (
+                      <div key={date}>{format(new Date(`${date}T12:00:00`), "dd MMM yyyy")}</div>
+                    ))}
+                  </div>
+                </>
+              )}
+              {removePreview.blocked.map((message) => (
+                <Alert key={message} variant="destructive">
+                  <AlertDescription>{message}</AlertDescription>
+                </Alert>
+              ))}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" disabled={removingMatch} onClick={() => setRemoveMatch(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant={removePreview ? "destructive" : "default"}
+              disabled={removingMatch || !!removePreview?.blocked.length}
+              onClick={() => void removeMatchedEmployee()}
+            >
+              {removingMatch
+                ? "Please wait…"
+                : removePreview
+                  ? "Confirm removal"
+                  : "Review removal"}
             </Button>
           </DialogFooter>
         </DialogContent>

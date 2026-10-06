@@ -426,6 +426,7 @@ export const hrGuide = [
       "Review terminal users needing attention and match each machine identity to the correct employee. Check the name and employee details carefully.",
       "To fix a wrong match, open Matched employees, search for the person or machine user ID and choose Change employee. Select the correct employee, review the affected dates and confirm the correction. Attendance is recalculated for both people; the original punches and fingerprints are kept.",
       "If the preview shows a protected correction, site visit or submitted timesheet, stop and review that record first. Saved draft timesheets are not changed automatically. Do not use Change employee to reuse a former employee’s machine ID for a new starter.",
+      "To disconnect a person without choosing a replacement, select Remove match. Keep existing attendance is selected by default. If the match was wrong, choose to return its punches for review, check the dates and confirm. New punches stay unmatched until HR explicitly matches the user again, even if the machine ID matches an employee number. Fingerprints are never deleted.",
     ],
     "Pairing should be kept between restarts. Matching links existing attendance identities to employee records; it does not require employees to enrol again just to fix a name match.",
     [

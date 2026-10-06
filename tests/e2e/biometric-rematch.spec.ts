@@ -45,6 +45,20 @@ test("HR can search matched employees and preview a correction on a phone", asyn
     const [match] =
       await sql`SELECT employee_id FROM attendance_device_employee_mappings WHERE id=${mappingId}`;
     expect(match.employee_id).toBe(person.id);
+    await row.getByRole("button", { name: "Remove match", exact: true }).click();
+    const removal = page.getByRole("dialog", { name: "Remove employee match" });
+    await expect(
+      removal.getByRole("radio", { name: "Keep existing attendance (recommended)" }),
+    ).toBeChecked();
+    await removal.getByRole("button", { name: "Review removal" }).click();
+    await expect(removal.getByRole("button", { name: "Confirm removal" })).toBeEnabled();
+    await expect(removal).toContainText("Existing attendance will stay unchanged");
+    await removal.getByRole("radio", { name: /The match was wrong/ }).check();
+    await expect(removal.getByRole("button", { name: "Review removal" })).toBeVisible();
+    await removal.getByRole("button", { name: "Review removal" }).click();
+    await expect(removal).toContainText("0 punches across 0 days");
+    await page.screenshot({ path: test.info().outputPath("remove-match-mobile.png") });
+    await removal.getByRole("button", { name: "Cancel", exact: true }).click();
   } finally {
     await sql`DELETE FROM attendance_device_employee_mappings WHERE id=${mappingId}`;
     await sql`DELETE FROM attendance_devices WHERE id=${deviceId}`;

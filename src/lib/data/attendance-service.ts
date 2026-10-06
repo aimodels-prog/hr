@@ -943,6 +943,19 @@ export class AttendanceService {
     return result;
   }
 
+  async removeDeviceEmployeeAsync(
+    input: { mappingId: string; removeMode: "keep" | "review"; previewToken?: string },
+    context: ActorContext,
+  ) {
+    const { removeAttendanceDeviceEmployeeFn } =
+      await import("../server-functions/attendance.server.ts");
+    const result = await removeAttendanceDeviceEmployeeFn({
+      data: { ...input, actor: this.serverActor(context) },
+    });
+    if (result.changed) await this.hydrateFromDatabase(context);
+    return result;
+  }
+
   async createDevicePairingCodeAsync(
     deviceId: string,
     context: ActorContext,

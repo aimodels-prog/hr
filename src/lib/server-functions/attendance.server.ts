@@ -270,6 +270,26 @@ export const changeAttendanceDeviceEmployeeFn = createServerFn({ method: "POST" 
     return changeAttendanceDeviceEmployee(v.organisationId, data, v.actor);
   });
 
+export const removeAttendanceDeviceEmployeeFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: Actor,
+        mappingId: z.string().uuid(),
+        removeMode: z.enum(["keep", "review"]),
+        previewToken: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    return changeAttendanceDeviceEmployee(v.organisationId, data, v.actor);
+  });
+
 const ConfigureOffice = z
   .object({
     actor: Actor,

@@ -359,7 +359,9 @@ export const attendanceDeviceEmployeeMappings = pgTable(
   },
   (table) => [
     uniqueIndex("attendance_device_user_unique").on(table.deviceId, table.deviceUserId),
-    uniqueIndex("attendance_device_employee_unique").on(table.deviceId, table.employeeId),
+    uniqueIndex("attendance_device_employee_unique")
+      .on(table.deviceId, table.employeeId)
+      .where(sql`${table.archivedAt} IS NULL`),
     index("attendance_device_mapping_org_employee_idx").on(table.organisationId, table.employeeId),
     check("attendance_device_mapping_user_not_blank", sql`btrim(${table.deviceUserId}) <> ''`),
   ],

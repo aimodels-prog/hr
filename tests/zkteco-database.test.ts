@@ -510,6 +510,139 @@ test(
         new Date(finishedOffice.clock_out_at).toISOString(),
         `${siteDate}T17:30:00.000Z`,
       );
+      // Keep history: stop exact-ID automatic rematching without touching approved/site records.
+      const [mainMatch] =
+        await sql`SELECT id FROM attendance_device_employee_mappings WHERE device_id=${deviceId} AND device_user_id='VIA-TERM-101'`;
+      const removeMain = { mappingId: mainMatch.id, removeMode: "keep" as const };
+      const unsafeRemoval = await changeAttendanceDeviceEmployee(
+        organisationId,
+        { ...removeMain, removeMode: "review" },
+        hrActor,
+      );
+      assert.ok(
+        unsafeRemoval.blocked.length,
+        "Returning history cannot overwrite protected site visits",
+      );
+      await assert.rejects(
+        changeAttendanceDeviceEmployee(
+          organisationId,
+          { ...removeMain, removeMode: "review", previewToken: unsafeRemoval.previewToken },
+          hrActor,
+        ),
+        /site visit|HR corrections/,
+      );
+      const removal = await changeAttendanceDeviceEmployee(organisationId, removeMain, hrActor);
+      assert.deepEqual(removal.blocked, []);
+      await assert.rejects(
+        changeAttendanceDeviceEmployee(organisationId, removeMain, {
+          ...hrActor,
+          activeRole: "Employee",
+        }),
+        /Only HR/,
+      );
+      await changeAttendanceDeviceEmployee(
+        organisationId,
+        { ...removeMain, previewToken: removal.previewToken },
+        hrActor,
+      );
+      const [kept] =
+        await sql`SELECT clock_in_at, clock_out_at FROM attendance_records WHERE id=${siteRecordId}`;
+      assert.deepEqual(kept, finishedOffice);
+      const afterRemoval = await ingestZktecoPunchBatch(organisationId, "front-door", {
+        punches: [
+          {
+            externalEventId: "after-removal",
+            deviceUserId: "VIA-TERM-101",
+            occurredAt: new Date().toISOString(),
+          },
+        ],
+      });
+      assert.equal(
+        afterRemoval.unmatched,
+        1,
+        "A deliberately removed exact-ID match must not return automatically",
+      );
+      await mapAttendanceDeviceUserInDatabase(
+        organisationId,
+        { deviceId, deviceUserId: "replacement-id", employeeId },
+        "",
+        hrActor,
+      );
+      const [replacement] =
+        await sql`SELECT id FROM attendance_device_employee_mappings WHERE device_id=${deviceId} AND device_user_id='replacement-id'`;
+      const replacementPreview = await changeAttendanceDeviceEmployee(
+        organisationId,
+        { mappingId: replacement.id, removeMode: "keep" },
+        hrActor,
+      );
+      await changeAttendanceDeviceEmployee(
+        organisationId,
+        {
+          mappingId: replacement.id,
+          removeMode: "keep",
+          previewToken: replacementPreview.previewToken,
+        },
+        hrActor,
+      );
+      await mapAttendanceDeviceUserInDatabase(
+        organisationId,
+        { deviceId, deviceUserId: "VIA-TERM-101", employeeId },
+        "",
+        hrActor,
+      );
+      const [reattached] =
+        await sql`SELECT employee_id,status FROM attendance_device_punches WHERE device_id=${deviceId} AND external_event_id='after-removal'`;
+      assert.equal(reattached.employee_id, employeeId);
+      assert.equal(reattached.status, "Applied");
+
+      // Incorrect history: raw punches remain, while only calculated assignment is removed.
+      const removeWrong = { mappingId: match.id, removeMode: "review" as const };
+      const wrongPreview = await changeAttendanceDeviceEmployee(
+        organisationId,
+        removeWrong,
+        hrActor,
+      );
+      assert.equal(wrongPreview.punchCount, 2);
+      const rawBefore =
+        await sql`SELECT id,device_user_id,occurred_at,external_event_id FROM attendance_device_punches WHERE device_id=${deviceId} AND device_user_id='terminal-unknown-7' ORDER BY id`;
+      await changeAttendanceDeviceEmployee(
+        organisationId,
+        { ...removeWrong, previewToken: wrongPreview.previewToken },
+        hrActor,
+      );
+      const rawAfter =
+        await sql`SELECT id,device_user_id,occurred_at,external_event_id FROM attendance_device_punches WHERE device_id=${deviceId} AND device_user_id='terminal-unknown-7' ORDER BY id`;
+      assert.deepEqual(rawAfter, rawBefore);
+      const [cleared] =
+        await sql`SELECT clock_in_at,calculated_hours FROM attendance_records WHERE employee_id=${hrEmployeeId} AND date=${date}`;
+      assert.equal(cleared.clock_in_at, null);
+      assert.equal(Number(cleared.calculated_hours), 0);
+      const pendingAgain = await listAttendanceDeviceAdministration(organisationId, hrActor);
+      assert.equal(
+        pendingAgain.unmatched.filter((x) => x.punch.deviceUserId === "terminal-unknown-7").length,
+        2,
+      );
+      assert.equal(
+        pendingAgain.mappings.some((x) => x.mapping.id === match.id),
+        false,
+      );
+      const appliedAgain = await mapAttendanceDeviceUserInDatabase(
+        organisationId,
+        { deviceId, deviceUserId: "terminal-unknown-7", employeeId: secondEmployeeId },
+        "",
+        hrActor,
+      );
+      assert.equal(
+        appliedAgain,
+        2,
+        "Returned punches can be matched to a different employee without duplicates",
+      );
+      const [eventCount] =
+        await sql`SELECT count(*)::int AS count FROM attendance_punch_events WHERE device_id=${deviceId} AND device_user_id='terminal-unknown-7'`;
+      assert.equal(eventCount.count, 2);
+      const [removedAudit] =
+        await sql`SELECT before_summary FROM audit_events WHERE entity_id=${match.id} AND action='remove-device-user-match'`;
+      assert.equal(removedAudit.before_summary.projectedEvents.length, 2);
     } finally {
       await sql.end();
     }
