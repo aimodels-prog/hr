@@ -377,7 +377,7 @@ export default function WorkforceCharts({
       }),
     enabled: typeof window !== "undefined",
     staleTime: 60_000,
-    refetchInterval: 300_000,
+    refetchInterval: 60_000,
     retry: 2,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
   });
@@ -421,8 +421,8 @@ export default function WorkforceCharts({
             onChange={(event) => setDays(Number(event.target.value) as 7 | 30)}
             className="h-9 rounded-md border bg-background px-2 text-sm"
           >
-            <option value={7}>Last 7 completed days</option>
-            <option value={30}>Last 30 completed days</option>
+            <option value={7}>Last 7 days · including today</option>
+            <option value={30}>Last 30 days · including today</option>
           </select>
           <Button
             variant="outline"
@@ -516,12 +516,12 @@ export default function WorkforceCharts({
                     {
                       label: "Recorded hours",
                       value: `${hours(data.totals.worked)} h`,
-                      note: "Completed attendance",
+                      note: "Completed days only; today is shown live in the chart",
                     },
                     {
                       label: "Expected hours",
                       value: !hasExpectedHours ? "—" : `${hours(data.totals.expected)} h`,
-                      note: "Working calendar adjusted for leave",
+                      note: "Completed days only, adjusted for leave",
                     },
                     {
                       label: "Annual leave remaining",
@@ -549,7 +549,7 @@ export default function WorkforceCharts({
             {(scope === "self" || employeeId) && (
               <Panel
                 title={!hasExpectedHours ? "Recorded hours" : "Worked hours vs expected hours"}
-                description="Recorded, completed attendance—including approved site duty—against the working-calendar expectation."
+                description="Past days show completed attendance. Today shows hours so far, including breaks, and refreshes every minute. Today is excluded from completed-day totals and shortfall checks."
                 link={detail(
                   "attendance",
                   scope === "hr" ? "/staff/attendance" : "/staff/me/attendance",
@@ -562,14 +562,28 @@ export default function WorkforceCharts({
                   aria-label="Daily recorded hours compared with expected hours"
                 >
                   <ComposedChart
-                    data={data.days}
+                    data={data.days.map((day) => ({
+                      ...day,
+                      expected: day.date === data.today.date ? null : day.expected,
+                    }))}
                     margin={{ left: -18, right: 8 }}
                     accessibilityLayer
                   >
                     <CartesianGrid vertical={false} />
-                    <XAxis dataKey="date" tickFormatter={shortDate} minTickGap={24} />
+                    <XAxis
+                      dataKey="date"
+                      tickFormatter={(date) =>
+                        date === data.today.date ? `${shortDate(date)} Today` : shortDate(date)
+                      }
+                      interval="preserveStartEnd"
+                      minTickGap={24}
+                    />
                     <YAxis />
-                    <Tooltip labelFormatter={(date) => String(date)} />
+                    <Tooltip
+                      labelFormatter={(date) =>
+                        date === data.today.date ? `${date} · Today (in progress)` : String(date)
+                      }
+                    />
                     <Legend />
                     <Bar
                       name="Recorded hours"
@@ -590,9 +604,9 @@ export default function WorkforceCharts({
                     )}
                   </ComposedChart>
                 </ChartContainer>
-                {data.totals.worked === 0 && (
+                {!data.days.some((day) => day.worked > 0) && (
                   <p className="mt-2 text-xs text-muted-foreground">
-                    No completed attendance hours recorded in this period.
+                    No attendance hours recorded in this period.
                   </p>
                 )}
               </Panel>
@@ -617,7 +631,7 @@ export default function WorkforceCharts({
               <>
                 <Panel
                   title="Attendance trend"
-                  description="Completed attendance and records needing review, including saved punches before tracking was configured. No confirmed record is counted only when attendance was required. Today is excluded. Missing data is not a finding of absence."
+                  description="Past days show completed attendance and records needing review. Today shows employees with clock-in or approved duty so far; missing punches are not flagged while the day is in progress. Missing data is not a finding of absence."
                   link={detail("attendance", "/staff/attendance")}
                 >
                   <ChartContainer
@@ -628,9 +642,20 @@ export default function WorkforceCharts({
                   >
                     <BarChart data={data.days} margin={{ left: -18, right: 8 }} accessibilityLayer>
                       <CartesianGrid vertical={false} />
-                      <XAxis dataKey="date" tickFormatter={shortDate} minTickGap={24} />
+                      <XAxis
+                        dataKey="date"
+                        tickFormatter={(date) =>
+                          date === data.today.date ? `${shortDate(date)} Today` : shortDate(date)
+                        }
+                        interval="preserveStartEnd"
+                        minTickGap={24}
+                      />
                       <YAxis allowDecimals={false} />
-                      <Tooltip />
+                      <Tooltip
+                        labelFormatter={(date) =>
+                          date === data.today.date ? `${date} · Today (in progress)` : String(date)
+                        }
+                      />
                       <Legend />
                       <Bar
                         name="Recorded"
@@ -756,7 +781,9 @@ export default function WorkforceCharts({
               Expected hours use the current policy ({hours(data.dailyHours)} h/day), working week,
               holidays, service dates and approved leave. Open punches, pending corrections and
               unconfirmed site visits do not count as completed hours. These charts are not payroll
-              deductions or overtime approval. HR totals count employee-days, not unique employees.
+              deductions or overtime approval. Today shows live hours, including breaks, and is
+              excluded from completed-day totals and absence checks. HR totals count employee-days,
+              not unique employees.
             </p>
             <div className="overflow-x-auto">
               <table className="w-full text-left">

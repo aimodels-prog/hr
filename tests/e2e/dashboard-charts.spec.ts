@@ -52,6 +52,11 @@ test("dashboard chart figures match server data for HR and employee across perio
     for (const period of [7, 30] as const) {
       await insights.getByLabel("Chart period").selectOption(String(period));
       const data = await figures(page, scope, period);
+      expect(data.endDate).toBe(data.today.date);
+      expect(data.days.at(-1)?.date).toBe(data.today.date);
+      expect(data.days.at(-1)?.missing).toBe(0);
+      expect(data.days.at(-1)?.review).toBe(0);
+      await expect(insights.locator(".recharts-xAxis").getByText(/Today/).first()).toBeVisible();
       const details = insights
         .locator("details")
         .filter({ has: page.getByText("Daily figures and calculation notes", { exact: true }) });

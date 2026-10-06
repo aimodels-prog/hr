@@ -15,7 +15,7 @@ import type { AuditActorContext } from "./master-data.repository.server.ts";
 import {
   calculateAttendanceAnalytics,
   attendanceToday,
-  completedDateRange,
+  attendanceChartDateRange,
   employedOn,
   type WorkforceAnalytics,
 } from "../../data/workforce-analytics.ts";
@@ -30,7 +30,7 @@ export async function getWorkforceAnalytics(
   at = new Date(),
   employeeId?: string,
 ): Promise<WorkforceAnalytics> {
-  if (![7, 30].includes(days)) throw new Error("Choose 7 or 30 completed days.");
+  if (![7, 30].includes(days)) throw new Error("Choose 7 or 30 days.");
   if (scope !== "self" && scope !== "hr") throw new Error("Unknown dashboard scope.");
   if (scope === "hr" && !["HR", "Super Admin"].includes(actor.activeRole ?? ""))
     throw new Error("Only HR can view organisation charts.");
@@ -94,7 +94,7 @@ export async function getWorkforceAnalytics(
   if (individualId && !people.length) throw new Error("Your employee profile was not found.");
   const timezone = (individualId ? people[0]?.timezone : null) || settings.timezone;
   const today = siteVisitLocalNow(timezone, at).date;
-  const dates = completedDateRange(today, days);
+  const dates = attendanceChartDateRange(today, days);
   const startDate = dates[0]!;
   const endDate = dates[dates.length - 1]!;
   const ids = people.map((employee) => employee.id);
@@ -258,6 +258,8 @@ export async function getWorkforceAnalytics(
     else effectiveRecords.push(row);
   }
   const daily = calculateAttendanceAnalytics({
+    today,
+    now: at,
     tracking,
     dates,
     employees: people,
@@ -323,16 +325,18 @@ export async function getWorkforceAnalytics(
     leaveQueue: leaveQueue.sort((a, b) => a.name.localeCompare(b.name)),
     visits: visits.sort((a, b) => a.name.localeCompare(b.name)),
     days: daily,
-    totals: daily.reduce(
-      (totals, day) => ({
-        worked: totals.worked + day.worked,
-        expected: totals.expected + day.expected,
-        review: totals.review + day.review,
-        missing: totals.missing + day.missing,
-        leaveDays: totals.leaveDays + day.leaveDays,
-      }),
-      { worked: 0, expected: 0, review: 0, missing: 0, leaveDays: 0 },
-    ),
+    totals: daily
+      .filter((day) => day.date !== today)
+      .reduce(
+        (totals, day) => ({
+          worked: totals.worked + day.worked,
+          expected: totals.expected + day.expected,
+          review: totals.review + day.review,
+          missing: totals.missing + day.missing,
+          leaveDays: totals.leaveDays + day.leaveDays,
+        }),
+        { worked: 0, expected: 0, review: 0, missing: 0, leaveDays: 0 },
+      ),
     departments: [...departmentCounts]
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count),

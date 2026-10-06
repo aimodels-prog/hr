@@ -4,6 +4,7 @@ import {
   calculateAttendanceAnalytics,
   attendanceToday,
   completedDateRange,
+  attendanceChartDateRange,
   type AnalyticsEmployee,
 } from "../src/lib/data/workforce-analytics.ts";
 
@@ -25,6 +26,55 @@ const base = {
   records: [],
   pendingVisits: [],
 };
+
+test("chart includes today with a fixed 7/30-day range across year boundaries", () => {
+  assert.equal(attendanceChartDateRange("2026-10-06", 30).at(-1), "2026-10-06");
+  assert.equal(attendanceChartDateRange("2026-10-06", 30).length, 30);
+  assert.deepEqual(attendanceChartDateRange("2026-01-01", 2), ["2025-12-31", "2026-01-01"]);
+});
+
+test("today includes live presence with breaks without missing-punch or shortfall findings", () => {
+  const date = "2026-10-06";
+  const record = {
+    employeeId: "a",
+    date,
+    clockInAt: `${date}T03:30:00Z`,
+    clockOutAt: null,
+    calculatedHours: 0,
+    status: "Present",
+  };
+  const input = {
+    ...base,
+    dates: [date],
+    today: date,
+    now: new Date(`${date}T12:29:00Z`),
+    records: [record],
+  };
+  const [live] = calculateAttendanceAnalytics(input);
+  assert.equal(live!.worked, 8.98);
+  assert.equal(live!.recorded, 1);
+  assert.equal(live!.review, 0);
+  assert.equal(live!.missing, 0);
+  assert.equal(live!.expected, 0);
+  const [empty] = calculateAttendanceAnalytics({ ...input, records: [] });
+  assert.equal(empty!.missing, 0);
+  const [closed] = calculateAttendanceAnalytics({
+    ...input,
+    records: [{ ...record, clockOutAt: `${date}T11:30:00Z` }],
+  });
+  assert.equal(closed!.worked, 8);
+  const [future] = calculateAttendanceAnalytics({
+    ...input,
+    records: [{ ...record, clockInAt: `${date}T13:00:00Z` }],
+  });
+  assert.equal(future!.worked, 0);
+  assert.equal(future!.recorded, 0);
+  const [pending] = calculateAttendanceAnalytics({
+    ...input,
+    pendingVisits: [{ employeeId: "a", date }],
+  });
+  assert.equal(pending!.worked, 0);
+});
 
 test("saved attendance counts without tracking while missing days have no expected hours or absence", () => {
   const date = "2026-09-14";

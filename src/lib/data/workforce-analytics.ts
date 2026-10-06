@@ -51,6 +51,11 @@ export function completedDateRange(today: string, count: number): string[] {
   });
 }
 
+/** Last N calendar days, including the current local day. */
+export function attendanceChartDateRange(today: string, count: number): string[] {
+  return [...completedDateRange(today, count - 1), today];
+}
+
 /** Today's snapshot is separate from completed-day trends; a missing punch is not absence. */
 export function attendanceToday(input: {
   tracking?: AttendanceTrackingPolicy | null;
@@ -137,6 +142,8 @@ export function employedOn(employee: AnalyticsEmployee, date: string): boolean {
 }
 
 export function calculateAttendanceAnalytics(input: {
+  today?: string;
+  now?: Date;
   tracking?: AttendanceTrackingPolicy | null;
   dates: string[];
   employees: AnalyticsEmployee[];
@@ -202,6 +209,23 @@ export function calculateAttendanceAnalytics(input: {
       const record = records.get(`${employee.id}:${date}`);
       const pendingVisit =
         record?.creditedHours === undefined && pendingVisits.has(`${employee.id}:${date}`);
+      if (date === input.today && input.now) {
+        // Today's unfinished shift is live evidence, never a missing-punch/absence finding.
+        day.expected -= expected;
+        if (record && !pendingVisit && !["Correction Pending", "Absent"].includes(record.status)) {
+          const start = record.clockInAt ? Date.parse(record.clockInAt) : NaN;
+          const end = Math.min(
+            input.now.getTime(),
+            record.clockOutAt ? Date.parse(record.clockOutAt) : input.now.getTime(),
+          );
+          const liveHours = record.creditedHours ?? (end - start) / 3_600_000;
+          if (Number.isFinite(liveHours) && liveHours >= 0 && liveHours <= 24) {
+            day.worked += liveHours;
+            day.recorded += 1;
+          }
+        }
+        continue;
+      }
       const hours = Number(record?.calculatedHours ?? 0);
       const closed =
         !!record &&
