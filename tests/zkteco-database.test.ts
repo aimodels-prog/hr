@@ -6,6 +6,7 @@ import postgres from "postgres";
 
 import {
   createAttendanceConnectorPairingCode,
+  changeAttendanceDeviceEmployee,
   ingestZktecoPunchBatch,
   listAttendanceDeviceAdministration,
   mapAttendanceDeviceUserInDatabase,
@@ -337,6 +338,128 @@ test(
         }),
         /Only HR or a Super Admin/,
       );
+
+      const match = afterMapping.mappings.find(
+        (m) => m.mapping.deviceUserId === "terminal-unknown-7",
+      )!.mapping;
+      const changeInput = { mappingId: match.id, employeeId: hrEmployeeId };
+      await assert.rejects(
+        changeAttendanceDeviceEmployee(organisationId, changeInput, {
+          ...hrActor,
+          activeRole: "Employee",
+        }),
+        /Only HR/,
+      );
+      await assert.rejects(
+        changeAttendanceDeviceEmployee(randomUUID(), changeInput, hrActor),
+        /no longer exists/,
+      );
+      await assert.rejects(
+        changeAttendanceDeviceEmployee(organisationId, { ...changeInput, employeeId }, hrActor),
+        /already has a user ID/,
+      );
+      const preview = await changeAttendanceDeviceEmployee(organisationId, changeInput, hrActor);
+      assert.equal(preview.changed, false);
+      assert.equal(preview.punchCount, 1);
+      assert.deepEqual(preview.blocked, []);
+      const [unchanged] =
+        await sql`SELECT employee_id FROM attendance_device_employee_mappings WHERE id=${match.id}`;
+      assert.equal(unchanged.employee_id, secondEmployeeId, "Preview must not change the match");
+      await ingestZktecoPunchBatch(organisationId, "front-door", {
+        punches: [
+          {
+            externalEventId: "unknown-second-punch",
+            deviceUserId: "terminal-unknown-7",
+            occurredAt: clockOut.toISOString(),
+          },
+        ],
+      });
+      await assert.rejects(
+        changeAttendanceDeviceEmployee(
+          organisationId,
+          { ...changeInput, previewToken: preview.previewToken },
+          hrActor,
+        ),
+        /changed since your preview/,
+      );
+      await sql`UPDATE attendance_records SET status='Corrected' WHERE id=${recovered.attendance_record_id}`;
+      const blockedPreview = await changeAttendanceDeviceEmployee(
+        organisationId,
+        changeInput,
+        hrActor,
+      );
+      assert.ok(blockedPreview.blocked.some((b) => b.includes("HR corrections")));
+      await assert.rejects(
+        changeAttendanceDeviceEmployee(
+          organisationId,
+          { ...changeInput, previewToken: blockedPreview.previewToken },
+          hrActor,
+        ),
+        /HR corrections/,
+      );
+      await sql`UPDATE attendance_records SET status='Present' WHERE id=${recovered.attendance_record_id}`;
+      const periodId = randomUUID();
+      const sheetId = randomUUID();
+      const date = preview.dates[0]!;
+      await sql`INSERT INTO timesheet_periods (id, organisation_id, start_date, end_date, created_by, updated_by)
+        VALUES (${periodId}, ${organisationId}, ${date}, ${date}, ${hrUserId}, ${hrUserId})`;
+      await sql`INSERT INTO timesheets (id, organisation_id, employee_id, period_id, status, expected_hours, total_hours, created_by, updated_by)
+        VALUES (${sheetId}, ${organisationId}, ${secondEmployeeId}, ${periodId}, 'Pending HR', 8, 8, ${hrUserId}, ${hrUserId})`;
+      const sheetPreview = await changeAttendanceDeviceEmployee(
+        organisationId,
+        changeInput,
+        hrActor,
+      );
+      assert.ok(sheetPreview.blocked.some((b) => b.includes("timesheet")));
+      await sql`UPDATE timesheets SET status='Draft' WHERE id=${sheetId}`;
+      const ready = await changeAttendanceDeviceEmployee(organisationId, changeInput, hrActor);
+      const decisions = await Promise.allSettled(
+        [0, 1].map(() =>
+          changeAttendanceDeviceEmployee(
+            organisationId,
+            { ...changeInput, previewToken: ready.previewToken },
+            hrActor,
+          ),
+        ),
+      );
+      assert.equal(decisions.filter((d) => d.status === "fulfilled" && d.value.changed).length, 1);
+      assert.equal(
+        decisions.filter((d) => d.status === "rejected").length,
+        1,
+        "Concurrent confirmation cannot apply twice",
+      );
+      const [oldRecord] =
+        await sql`SELECT clock_in_at, clock_out_at, calculated_hours FROM attendance_records WHERE id=${recovered.attendance_record_id}`;
+      assert.equal(oldRecord.clock_in_at, null);
+      assert.equal(oldRecord.clock_out_at, null);
+      assert.equal(Number(oldRecord.calculated_hours), 0);
+      const [newRecord] =
+        await sql`SELECT clock_in_at, clock_out_at FROM attendance_records WHERE organisation_id=${organisationId} AND employee_id=${hrEmployeeId} AND date=${date}`;
+      assert.ok(newRecord.clock_in_at);
+      assert.equal(new Date(newRecord.clock_out_at).toISOString(), clockOut.toISOString());
+      const [retained] =
+        await sql`SELECT employee_id, punch_event_id, device_user_id FROM attendance_device_punches WHERE organisation_id=${organisationId} AND external_event_id='terminal-event-unknown'`;
+      assert.equal(retained.employee_id, hrEmployeeId);
+      assert.equal(
+        retained.punch_event_id,
+        recovered.punch_event_id,
+        "Original punch IDs are retained",
+      );
+      assert.equal(retained.device_user_id, "terminal-unknown-7");
+      const [audit] =
+        await sql`SELECT before_summary, after_summary FROM audit_events WHERE organisation_id=${organisationId} AND action='correct-device-user-match'`;
+      assert.equal(audit.before_summary.employeeId, secondEmployeeId);
+      assert.equal(audit.after_summary.employeeId, hrEmployeeId);
+      await assert.rejects(
+        changeAttendanceDeviceEmployee(
+          organisationId,
+          { ...changeInput, previewToken: ready.previewToken },
+          hrActor,
+        ),
+        /different employee/,
+      );
+      const [sheet] = await sql`SELECT total_hours FROM timesheets WHERE id=${sheetId}`;
+      assert.equal(Number(sheet.total_hours), 8, "Never silently edit saved timesheet entries");
 
       const siteDay = new Date(yesterday);
       siteDay.setUTCDate(siteDay.getUTCDate() - 5);

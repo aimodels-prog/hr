@@ -424,6 +424,8 @@ export const hrGuide = [
       "Keep the office computer connected to the office network and allow the connector to start automatically when it restarts.",
       "Check the registered terminal and its latest received information in VIA HR.",
       "Review terminal users needing attention and match each machine identity to the correct employee. Check the name and employee details carefully.",
+      "To fix a wrong match, open Matched employees, search for the person or machine user ID and choose Change employee. Select the correct employee, review the affected dates and confirm the correction. Attendance is recalculated for both people; the original punches and fingerprints are kept.",
+      "If the preview shows a protected correction, site visit or submitted timesheet, stop and review that record first. Saved draft timesheets are not changed automatically. Do not use Change employee to reuse a former employee’s machine ID for a new starter.",
     ],
     "Pairing should be kept between restarts. Matching links existing attendance identities to employee records; it does not require employees to enrol again just to fix a name match.",
     [

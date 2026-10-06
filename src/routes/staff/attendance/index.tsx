@@ -184,6 +184,13 @@ function AttendanceAdminContent() {
   const [deviceActive, setDeviceActive] = useState(true);
   const [deviceReason, setDeviceReason] = useState("");
   const [mappingPunch, setMappingPunch] = useState<UnmatchedAttendancePunch | null>(null);
+  const [changeMatch, setChangeMatch] = useState<AttendanceDeviceMapping | null>(null);
+  const [changeEmployeeId, setChangeEmployeeId] = useState("");
+  const [matchSearch, setMatchSearch] = useState("");
+  const [changePreview, setChangePreview] = useState<Awaited<
+    ReturnType<AttendanceService["changeDeviceEmployeeAsync"]>
+  > | null>(null);
+  const [changingMatch, setChangingMatch] = useState(false);
   const [mappingEmployeeId, setMappingEmployeeId] = useState("");
   const [mappingReason, setMappingReason] = useState("");
   const [pairingDevice, setPairingDevice] = useState<AttendanceDevice | null>(null);
@@ -564,6 +571,35 @@ function AttendanceAdminContent() {
       toast.error(error instanceof Error ? error.message : "The employee could not be matched.");
     } finally {
       setSavingMapping(false);
+    }
+  };
+
+  const changeMatchedEmployee = async (confirm: boolean) => {
+    if (!changeMatch || !changeEmployeeId || (confirm && !changePreview)) return;
+    setChangingMatch(true);
+    try {
+      const result = await attendanceService.changeDeviceEmployeeAsync(
+        {
+          mappingId: changeMatch.id,
+          employeeId: changeEmployeeId,
+          ...(confirm && changePreview ? { previewToken: changePreview.previewToken } : {}),
+        },
+        actorContext,
+      );
+      if (result.changed) {
+        setChangeMatch(null);
+        setChangePreview(null);
+        await loadDeviceAdministration();
+        setRevision((value) => value + 1);
+        toast.success("Employee match corrected. Attendance for both employees has been updated.");
+      } else setChangePreview(result);
+    } catch (error) {
+      setChangePreview(null);
+      toast.error(
+        error instanceof Error ? error.message : "The employee match could not be changed.",
+      );
+    } finally {
+      setChangingMatch(false);
     }
   };
 
@@ -1061,6 +1097,73 @@ function AttendanceAdminContent() {
                 </TableBody>
               </Table>
             </div>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Matched employees</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Input
+                aria-label="Search matched employees"
+                placeholder="Search employee or terminal user ID"
+                value={matchSearch}
+                onChange={(e) => setMatchSearch(e.target.value)}
+              />
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Terminal user ID</TableHead>
+                      <TableHead>Employee</TableHead>
+                      <TableHead>Terminal</TableHead>
+                      <TableHead className="text-right">Action</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {deviceData.mappings
+                      .filter((m) =>
+                        `${m.employeeName} ${m.deviceUserId}`
+                          .toLowerCase()
+                          .includes(matchSearch.toLowerCase()),
+                      )
+                      .map((m) => (
+                        <TableRow key={m.id}>
+                          <TableCell>{m.deviceUserId}</TableCell>
+                          <TableCell>{m.employeeName}</TableCell>
+                          <TableCell>
+                            {deviceData.devices.find((d) => d.id === m.deviceId)?.name ??
+                              "Terminal"}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setChangeMatch(m);
+                                setChangeEmployeeId("");
+                                setChangePreview(null);
+                              }}
+                            >
+                              Change employee
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    {!deviceData.mappings.some((m) =>
+                      `${m.employeeName} ${m.deviceUserId}`
+                        .toLowerCase()
+                        .includes(matchSearch.toLowerCase()),
+                    ) && (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center text-muted-foreground">
+                          No matching employees found.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
           </Card>
         </TabsContent>
 
@@ -1710,6 +1813,81 @@ function AttendanceAdminContent() {
               onClick={() => void saveDevice()}
             >
               {savingDevice ? "Saving..." : "Save Terminal"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(changeMatch)}
+        onOpenChange={(open) => {
+          if (!open && !changingMatch) setChangeMatch(null);
+        }}
+      >
+        <DialogContent className="max-h-[85dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Change matched employee</DialogTitle>
+            <DialogDescription>
+              Terminal ID {changeMatch?.deviceUserId} is currently matched to{" "}
+              {changeMatch?.employeeName}. Use this only to correct a wrong match, not to reuse a
+              former employee’s terminal ID.
+            </DialogDescription>
+          </DialogHeader>
+          <SearchableSelect
+            aria-label="Correct employee"
+            value={changeEmployeeId}
+            disabled={changingMatch}
+            onValueChange={(value) => {
+              setChangeEmployeeId(value);
+              setChangePreview(null);
+            }}
+            placeholder="Search for the correct employee"
+            options={employees
+              .filter((e) => e.id !== changeMatch?.employeeId)
+              .map((e) => ({ value: e.id, label: `${e.preferredName} · ${e.workEmail}` }))}
+          />
+          {changePreview && (
+            <div className="space-y-3 text-sm">
+              <p>
+                <strong>{changePreview.punchCount} punches</strong> across{" "}
+                <strong>{changePreview.dates.length} days</strong> will be assigned to{" "}
+                {employees.find((e) => e.id === changeEmployeeId)?.preferredName}. Attendance for
+                both employees will be recalculated.
+              </p>
+              {changePreview.dates.length > 0 && (
+                <div
+                  className="max-h-36 overflow-y-auto rounded-md border p-3"
+                  aria-label="Affected attendance dates"
+                >
+                  {changePreview.dates.map((date) => (
+                    <div key={date}>{format(new Date(`${date}T12:00:00`), "dd MMM yyyy")}</div>
+                  ))}
+                </div>
+              )}
+              <p className="text-muted-foreground">
+                Original punch times and fingerprints stay unchanged. Existing timesheet entries are
+                not edited; review any saved drafts afterwards.
+              </p>
+              {changePreview.blocked.map((message) => (
+                <Alert key={message} variant="destructive">
+                  <AlertDescription>{message}</AlertDescription>
+                </Alert>
+              ))}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" disabled={changingMatch} onClick={() => setChangeMatch(null)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={changingMatch || !changeEmployeeId || !!changePreview?.blocked.length}
+              onClick={() => void changeMatchedEmployee(!!changePreview)}
+            >
+              {changingMatch
+                ? "Please wait…"
+                : changePreview
+                  ? "Confirm correction"
+                  : "Review affected attendance"}
             </Button>
           </DialogFooter>
         </DialogContent>

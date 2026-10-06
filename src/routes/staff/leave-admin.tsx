@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { leaveDisplayReason, newestLeaveFirst } from "@/lib/data/leave-presentation";
 import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
 import { useState, useMemo } from "react";
 import { PageHeader } from "@/components/ui/page-header";
@@ -77,10 +78,7 @@ function LeaveAdminContent() {
   const policies = leaveService.getPolicies();
 
   const allRequests = useMemo(
-    () =>
-      leaveService
-        .getAllRequests(currentUser.getActorContext())
-        .sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime()),
+    () => leaveService.getAllRequests(currentUser.getActorContext()).sort(newestLeaveFirst),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [leaveService, refreshKey],
   );
@@ -310,7 +308,11 @@ function LeaveAdminContent() {
                           </TableCell>
                           <TableCell
                             className="text-xs max-w-[250px] truncate"
-                            title={req.refusalReason || req.cancellationReason || req.reason}
+                            title={
+                              req.refusalReason ||
+                              req.cancellationReason ||
+                              leaveDisplayReason(req.reason)
+                            }
                           >
                             {req.status === "Automatically Refused" ? (
                               <span className="text-destructive font-medium">
@@ -321,7 +323,7 @@ function LeaveAdminContent() {
                                 Cancel: {req.cancellationReason}
                               </span>
                             ) : (
-                              req.reason
+                              leaveDisplayReason(req.reason) || "—"
                             )}
                           </TableCell>
                         </TableRow>

@@ -47,6 +47,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { LeaveService } from "@/lib/data/leave-service";
+import { leaveDisplayReason, newestLeaveFirst } from "@/lib/data/leave-presentation";
 import type { LeavePolicy, LeaveRequest, LeaveTransaction } from "@/lib/data/leave-types";
 import { toast } from "sonner";
 
@@ -206,9 +207,7 @@ function LeaveBalancesRoute() {
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     : [];
   const requests = employeeId
-    ? leaveService
-        .getLeaveRequestsForEmployee(employeeId, actorContext)
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    ? leaveService.getLeaveRequestsForEmployee(employeeId, actorContext).sort(newestLeaveFirst)
     : [];
 
   const balanceByPolicy = new Map(balances.map((balance) => [balance.policyId, balance]));
@@ -612,7 +611,7 @@ function LeaveBalancesRoute() {
                             ? `Cancellation: ${request.cancellationReason}`
                             : request.status.startsWith("Amendment") && request.pendingAmendment
                               ? `Date change: ${request.pendingAmendment.proposedStartDate} to ${request.pendingAmendment.proposedEndDate}. ${request.pendingAmendment.reason}`
-                              : request.reason;
+                              : leaveDisplayReason(request.reason) || "—";
                       return (
                         <TableRow key={request.id}>
                           <TableCell className="whitespace-nowrap">

@@ -25,6 +25,7 @@ import {
   createAttendanceConnectorPairingCode,
   listAttendanceDeviceAdministration,
   mapAttendanceDeviceUserInDatabase,
+  changeAttendanceDeviceEmployee,
   saveAttendanceDeviceInDatabase,
 } from "../db/repositories/zkteco.repository.server.ts";
 import { saveObjectFile } from "../db/object-storage.server.ts";
@@ -247,6 +248,26 @@ export const mapAttendanceDeviceUserFn = createServerFn({ method: "POST" })
         v.actor,
       ),
     };
+  });
+
+export const changeAttendanceDeviceEmployeeFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: Actor,
+        mappingId: z.string().uuid(),
+        employeeId: z.string().uuid(),
+        previewToken: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    return changeAttendanceDeviceEmployee(v.organisationId, data, v.actor);
   });
 
 const ConfigureOffice = z

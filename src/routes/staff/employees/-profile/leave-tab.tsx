@@ -11,6 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { LeaveService } from "@/lib/data/leave-service";
+import { leaveDisplayReason, newestLeaveFirst } from "@/lib/data/leave-presentation";
 import { CalendarDays } from "lucide-react";
 import { useCurrentUser } from "@/lib/auth";
 
@@ -39,13 +40,13 @@ export function LeaveTab({ employeeId }: { employeeId: string }) {
     () =>
       leaveService
         .getLeaveRequestsForEmployee(employeeId, currentUser.getActorContext())
-        .sort((a, b) => b.startDate.localeCompare(a.startDate)),
+        .sort(newestLeaveFirst),
     [currentUser, leaveService, employeeId],
   );
 
-  const upcoming = requests.filter(
-    (r) => r.status === "Approved" && new Date(r.startDate) >= new Date(),
-  );
+  const upcoming = requests
+    .filter((r) => r.status === "Approved" && new Date(r.startDate) >= new Date())
+    .sort((a, b) => -newestLeaveFirst(a, b));
 
   const usedStatuses = new Set([
     "Approved",
@@ -158,7 +159,8 @@ export function LeaveTab({ employeeId }: { employeeId: string }) {
             {upcoming.map((r) => (
               <div key={r.id}>
                 {r.startDate} to {r.endDate} &middot; {r.workingDaysRequested}{" "}
-                {r.workingDaysRequested === 1 ? "day" : "days"} &middot; {r.reason}
+                {r.workingDaysRequested === 1 ? "day" : "days"}
+                {leaveDisplayReason(r.reason) && <> &middot; {leaveDisplayReason(r.reason)}</>}
               </div>
             ))}
           </CardContent>
@@ -200,7 +202,7 @@ export function LeaveTab({ employeeId }: { employeeId: string }) {
                       {r.startDate} {r.startDate !== r.endDate ? `to ${r.endDate}` : ""}
                     </TableCell>
                     <TableCell className="text-sm">{r.workingDaysRequested}</TableCell>
-                    <TableCell className="text-sm">{r.reason}</TableCell>
+                    <TableCell className="text-sm">{leaveDisplayReason(r.reason) || "—"}</TableCell>
                     <TableCell>
                       <Badge
                         variant={

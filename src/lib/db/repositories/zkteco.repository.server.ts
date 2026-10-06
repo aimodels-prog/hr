@@ -22,7 +22,10 @@ import {
   attendancePolicies,
   attendancePunchEvents,
   attendanceRecords,
+  attendanceCorrections,
   siteVisitRequests,
+  timesheets,
+  timesheetPeriods,
 } from "../schema/time.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 
@@ -953,9 +956,9 @@ export async function mapAttendanceDeviceUserInDatabase(
       .for("update")
       .limit(1);
     const id = existing?.id ?? randomUUID();
-    if (existing && existing.employeeId !== input.employeeId && reason.trim().length < 5)
+    if (existing && existing.employeeId !== input.employeeId)
       throw new Error(
-        "Explain why this terminal identity is being reassigned to a different employee.",
+        "This identity must be reassigned using Change employee so its attendance can be reviewed first.",
       );
     reason = reason.trim() || "Terminal identity matched to employee after confirmation";
     if (existing) {
@@ -1050,6 +1053,398 @@ export async function mapAttendanceDeviceUserInDatabase(
     });
   }
   return applied;
+}
+
+export async function changeAttendanceDeviceEmployee(
+  organisationId: string,
+  input: { mappingId: string; employeeId: string; previewToken?: string | undefined },
+  actor: AuditActorContext,
+) {
+  requireAttendanceAdministrator(actor);
+  return getDatabaseClient().transaction(
+    async (tx) => {
+      const [initial] = await tx
+        .select()
+        .from(attendanceDeviceEmployeeMappings)
+        .where(
+          and(
+            eq(attendanceDeviceEmployeeMappings.organisationId, organisationId),
+            eq(attendanceDeviceEmployeeMappings.id, input.mappingId),
+          ),
+        )
+        .limit(1);
+      if (!initial) throw new Error("This terminal match no longer exists. Refresh and try again.");
+      // Ingestion locks the device first too: no punch can arrive halfway through a correction.
+      const [device] = await tx
+        .select()
+        .from(attendanceDevices)
+        .where(
+          and(
+            eq(attendanceDevices.organisationId, organisationId),
+            eq(attendanceDevices.id, initial.deviceId),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (!device?.isActive) throw new Error("Select an active terminal.");
+      const [mapping] = await tx
+        .select()
+        .from(attendanceDeviceEmployeeMappings)
+        .where(eq(attendanceDeviceEmployeeMappings.id, initial.id))
+        .for("update")
+        .limit(1);
+      if (!mapping || mapping.employeeId === input.employeeId)
+        throw new Error("Choose a different employee.");
+      const [employee] = await tx
+        .select()
+        .from(employees)
+        .where(
+          and(
+            eq(employees.organisationId, organisationId),
+            eq(employees.id, input.employeeId),
+            sql`${employees.status} NOT IN ('Inactive', 'Archived')`,
+            sql`${employees.archivedAt} IS NULL`,
+          ),
+        )
+        .limit(1);
+      if (!employee) throw new Error("Select an active employee in this organisation.");
+      const [otherMatch] = await tx
+        .select()
+        .from(attendanceDeviceEmployeeMappings)
+        .where(
+          and(
+            eq(attendanceDeviceEmployeeMappings.deviceId, device.id),
+            eq(attendanceDeviceEmployeeMappings.employeeId, employee.id),
+          ),
+        )
+        .limit(1);
+      if (otherMatch)
+        throw new Error(
+          "This employee already has a user ID on this terminal. Review that match first.",
+        );
+      const punches = await tx
+        .select()
+        .from(attendanceDevicePunches)
+        .where(
+          and(
+            eq(attendanceDevicePunches.organisationId, organisationId),
+            eq(attendanceDevicePunches.deviceId, device.id),
+            eq(attendanceDevicePunches.deviceUserId, mapping.deviceUserId),
+            inArray(attendanceDevicePunches.status, ["Applied", "Unmatched Employee"]),
+          ),
+        )
+        .orderBy(asc(attendanceDevicePunches.occurredAt), asc(attendanceDevicePunches.id))
+        .for("update");
+      const timezone = await organisationTimeZone(tx, organisationId);
+      const dates = [
+        ...new Set(punches.map((p) => zonedParts(new Date(p.occurredAt), timezone).date)),
+      ].sort();
+      const employeeIds = [mapping.employeeId, employee.id].sort();
+      for (const id of employeeIds)
+        for (const date of dates) {
+          await tx.execute(
+            sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${organisationId}:${id}:${date}`}, 0))`,
+          );
+        }
+      const records = dates.length
+        ? await tx
+            .select()
+            .from(attendanceRecords)
+            .where(
+              and(
+                eq(attendanceRecords.organisationId, organisationId),
+                inArray(attendanceRecords.employeeId, employeeIds),
+                inArray(attendanceRecords.date, dates),
+              ),
+            )
+            .orderBy(asc(attendanceRecords.id))
+            .for("update")
+        : [];
+      const events = records.length
+        ? await tx
+            .select()
+            .from(attendancePunchEvents)
+            .where(
+              and(
+                eq(attendancePunchEvents.organisationId, organisationId),
+                inArray(
+                  attendancePunchEvents.attendanceRecordId,
+                  records.map((r) => r.id),
+                ),
+              ),
+            )
+            .orderBy(asc(attendancePunchEvents.occurredAt), asc(attendancePunchEvents.id))
+            .for("update")
+        : [];
+      const blocked = new Set<string>();
+      for (const p of punches) {
+        if (
+          p.status === "Applied" &&
+          (p.employeeId !== mapping.employeeId ||
+            !events.some(
+              (e) =>
+                e.id === p.punchEventId &&
+                e.employeeId === mapping.employeeId &&
+                e.attendanceRecordId === p.attendanceRecordId,
+            ))
+        ) {
+          blocked.add(
+            "Some punches have an earlier correction or incomplete history. HR must review them before changing this match.",
+          );
+        }
+      }
+      for (const r of records) {
+        if (
+          r.source !== "Hardware Terminal" ||
+          !["Present", "Late", "Absent"].includes(r.status) ||
+          r.siteVisitId ||
+          r.archivedAt
+        ) {
+          blocked.add(
+            `${r.date}: HR corrections or other attendance sources need a separate review.`,
+          );
+        }
+      }
+      if (events.some((e) => e.source !== "Hardware Terminal"))
+        blocked.add("These dates include non-biometric punches. Review them with HR first.");
+      const visits = dates.length
+        ? await tx
+            .select({ id: siteVisitRequests.id })
+            .from(siteVisitRequests)
+            .where(
+              and(
+                eq(siteVisitRequests.organisationId, organisationId),
+                inArray(siteVisitRequests.employeeId, employeeIds),
+                inArray(siteVisitRequests.date, dates),
+                inArray(siteVisitRequests.status, ["Pending HR", "Approved", "Completed"]),
+              ),
+            )
+        : [];
+      if (visits.length)
+        blocked.add(
+          "A site visit overlaps these dates. HR must review it before correcting this match.",
+        );
+      const corrections = records.length
+        ? await tx
+            .select({ id: attendanceCorrections.id })
+            .from(attendanceCorrections)
+            .where(
+              and(
+                eq(attendanceCorrections.organisationId, organisationId),
+                inArray(
+                  attendanceCorrections.attendanceRecordId,
+                  records.map((r) => r.id),
+                ),
+                inArray(attendanceCorrections.status, [
+                  "Pending Manager",
+                  "Pending HR",
+                  "Approved",
+                ]),
+              ),
+            )
+        : [];
+      if (corrections.length)
+        blocked.add(
+          "An attendance correction is awaiting review or has already been approved. HR must review it separately.",
+        );
+      const sheets = dates.length
+        ? await tx
+            .select({ sheet: timesheets, period: timesheetPeriods })
+            .from(timesheets)
+            .innerJoin(timesheetPeriods, eq(timesheetPeriods.id, timesheets.periodId))
+            .where(
+              and(
+                eq(timesheets.organisationId, organisationId),
+                inArray(timesheets.employeeId, employeeIds),
+                sql`${timesheets.archivedAt} IS NULL`,
+                or(
+                  ...dates.map(
+                    (date) =>
+                      sql`${timesheetPeriods.startDate} <= ${date} AND ${timesheetPeriods.endDate} >= ${date}`,
+                  ),
+                ),
+              ),
+            )
+        : [];
+      if (
+        sheets.some(
+          (s) =>
+            !["Draft", "Returned"].includes(s.sheet.status) ||
+            s.sheet.payrollPeriodId ||
+            s.period.status === "Closed",
+        )
+      ) {
+        blocked.add(
+          "A submitted, approved or closed timesheet covers these dates. Return or reopen it through the normal review process first.",
+        );
+      }
+      const [policy] = await tx
+        .select()
+        .from(attendancePolicies)
+        .where(eq(attendancePolicies.organisationId, organisationId))
+        .limit(1);
+      const previewToken = createHash("sha256")
+        .update(
+          JSON.stringify({
+            mapping,
+            employeeId: employee.id,
+            punches,
+            records,
+            events,
+            policy,
+            sheets,
+            visits,
+            corrections,
+          }),
+        )
+        .digest("hex");
+      const preview = {
+        previewToken,
+        dates,
+        punchCount: punches.length,
+        blocked: [...blocked],
+        fromEmployeeId: mapping.employeeId,
+        toEmployeeId: employee.id,
+      };
+      if (!input.previewToken) return { ...preview, changed: false };
+      if (input.previewToken !== previewToken)
+        throw new Error(
+          "Attendance changed since your preview. Review the updated preview and confirm again.",
+        );
+      if (blocked.size) throw new Error([...blocked].join(" "));
+      const [location] = await tx
+        .select()
+        .from(locations)
+        .where(eq(locations.id, device.locationId))
+        .limit(1);
+      if (!location) throw new Error("The terminal's office location is missing.");
+      const changedRecords = new Map(records.map((r) => [`${r.employeeId}:${r.date}`, r]));
+      for (const date of dates) {
+        if (!changedRecords.has(`${employee.id}:${date}`)) {
+          const [created] = await tx
+            .insert(attendanceRecords)
+            .values({
+              organisationId,
+              employeeId: employee.id,
+              date,
+              source: "Hardware Terminal",
+              status: "Present",
+              locationId: device.locationId,
+              location: location.name,
+              workMode: "Office",
+              createdBy: actor.userId!,
+              updatedBy: actor.userId!,
+            })
+            .returning();
+          changedRecords.set(`${employee.id}:${date}`, created!);
+        }
+      }
+      for (const p of punches.filter((p) => p.status === "Applied")) {
+        const date = zonedParts(new Date(p.occurredAt), timezone).date;
+        const record = changedRecords.get(`${employee.id}:${date}`)!;
+        // Only derived ownership changes. Original terminal ID, time and event IDs are preserved.
+        await tx
+          .update(attendancePunchEvents)
+          .set({ employeeId: employee.id, attendanceRecordId: record.id })
+          .where(eq(attendancePunchEvents.id, p.punchEventId!));
+        await tx
+          .update(attendanceDevicePunches)
+          .set({ employeeId: employee.id, attendanceRecordId: record.id })
+          .where(eq(attendanceDevicePunches.id, p.id));
+      }
+      for (const p of punches.filter((p) => p.status === "Unmatched Employee")) {
+        await projectDailyAttendance(tx, {
+          organisationId,
+          deviceId: device.id,
+          deviceUserId: mapping.deviceUserId,
+          externalEventId: p.externalEventId,
+          occurredAt: p.occurredAt,
+          status: p.deviceStatus,
+          punchMethod: p.punchMethod,
+          employeeId: employee.id,
+          locationId: device.locationId,
+          locationName: location.name,
+          rawPunchId: p.id,
+        });
+      }
+      for (const record of changedRecords.values()) {
+        const remaining = await tx
+          .select()
+          .from(attendancePunchEvents)
+          .where(eq(attendancePunchEvents.attendanceRecordId, record.id))
+          .orderBy(asc(attendancePunchEvents.occurredAt));
+        const effective = deduplicatePunchTimes(
+          remaining.map((e) => new Date(e.occurredAt)),
+          (policy?.punchDeduplicationMinutes ?? 2) * 60_000,
+        );
+        const first = effective[0];
+        const last = effective.length > 1 ? effective[effective.length - 1] : undefined;
+        const flex = flexibleOfficeSchedule(
+          first
+            ? zonedParts(first, timezone).time
+            : (policy?.expectedClockIn ?? VIA_OFFICE_SCHEDULE.start),
+          last ? zonedParts(last, timezone).time : undefined,
+          Number(policy?.standardDailyHours ?? 8),
+          policy,
+        );
+        await tx
+          .update(attendanceRecords)
+          .set({
+            clockInAt: first?.toISOString() ?? null,
+            clockOutAt: last?.toISOString() ?? null,
+            clockOutLocationId: last ? (remaining[remaining.length - 1]?.locationId ?? null) : null,
+            calculatedHours: String(first ? flex.calculatedHours : 0),
+            breakMinutes: first ? flex.breakMinutes : 0,
+            expectedClockIn: flex.expectedIn,
+            expectedClockOut: flex.expectedOut,
+            isLate: false,
+            isEarlyDeparture: !!first && flex.isEarlyDeparture,
+            status: first ? "Present" : "Absent",
+            updatedAt: new Date(),
+            updatedBy: actor.userId!,
+            recordVersion: sql`${attendanceRecords.recordVersion} + 1`,
+          })
+          .where(eq(attendanceRecords.id, record.id));
+      }
+      await tx
+        .update(attendanceDeviceEmployeeMappings)
+        .set({
+          employeeId: employee.id,
+          archivedAt: null,
+          updatedAt: new Date(),
+          updatedBy: actor.userId!,
+          recordVersion: sql`${attendanceDeviceEmployeeMappings.recordVersion} + 1`,
+        })
+        .where(eq(attendanceDeviceEmployeeMappings.id, mapping.id));
+      await tx.insert(auditEvents).values({
+        organisationId,
+        actorUserId: actor.userId,
+        actorEmployeeId: actor.employeeId,
+        actorDisplayName: actor.displayName,
+        activeRole: actor.activeRole,
+        actorRoles: actor.roles ?? [],
+        action: "correct-device-user-match",
+        module: "attendance",
+        entityType: "attendance-device-mapping",
+        entityId: mapping.id,
+        beforeSummary: {
+          employeeId: mapping.employeeId,
+          records,
+          punches: punches.map((p) => ({
+            id: p.id,
+            employeeId: p.employeeId,
+            attendanceRecordId: p.attendanceRecordId,
+          })),
+        },
+        afterSummary: { employeeId: employee.id, dates, punchCount: punches.length },
+        reason:
+          "HR confirmed correction of an incorrect biometric employee match after reviewing affected dates.",
+        riskLevel: "High",
+      } as typeof auditEvents.$inferInsert);
+      return { ...preview, changed: true };
+    },
+    { isolationLevel: "serializable" },
+  );
 }
 
 export async function listAttendanceDeviceAdministration(

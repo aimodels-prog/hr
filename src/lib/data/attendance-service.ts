@@ -926,6 +926,23 @@ export class AttendanceService {
     return result.appliedPunches;
   }
 
+  async changeDeviceEmployeeAsync(
+    input: { mappingId: string; employeeId: string; previewToken?: string },
+    context: ActorContext,
+  ) {
+    const { changeAttendanceDeviceEmployeeFn } =
+      await import("../server-functions/attendance.server.ts");
+    const result = await changeAttendanceDeviceEmployeeFn({
+      data: {
+        ...input,
+        employeeId: this.databaseId("employees", input.employeeId),
+        actor: this.serverActor(context),
+      },
+    });
+    if (result.changed) await this.hydrateFromDatabase(context);
+    return result;
+  }
+
   async createDevicePairingCodeAsync(
     deviceId: string,
     context: ActorContext,
