@@ -31,14 +31,25 @@ test("workflow emails require explicit permission and confirmed Google acceptanc
       workflowEmailRaw("person@example.test", id, "new-hr@example.test"),
       "base64url",
     ).toString();
-    assert.match(mime, /From: VIA HR <new-hr@example.test>/);
+    assert.match(mime, /From: VIA HR Application <new-hr@example.test>/);
     assert.match(mime, /Message-ID: <via-notification-/);
     const morning = Buffer.from(
       workflowEmailRaw("person@example.test", id, "new-hr@example.test", "2026-09-29"),
       "base64url",
     ).toString();
-    assert.match(morning, /Subject: VIA HR - Missing clock-out for yesterday/);
-    const body = Buffer.from(morning.split("\r\n\r\n")[1]!, "base64").toString();
+    assert.match(morning, /Subject: VIA HR Application - Missing clock-out for yesterday/);
+    const body = Buffer.from(
+      morning.split("Content-Transfer-Encoding: base64\r\n\r\n")[1]!.split("\r\n--")[0]!,
+      "base64",
+    ).toString();
+    assert.match(morning, /Content-Type: multipart\/alternative/);
+    const html = Buffer.from(
+      morning.split("Content-Transfer-Encoding: base64\r\n\r\n")[2]!.split("\r\n--")[0]!,
+      "base64",
+    ).toString();
+    assert.match(html, /Correct clock-out/);
+    assert.match(html, /email-via-logo.png/);
+    assert.match(html, /max-width:600px/);
     assert.match(body, /\/staff\/me\/attendance\?correct=2026-09-29/);
     assert.match(body, /HR to confirm/);
     assert.doesNotMatch(body, /before leaving|go home/);

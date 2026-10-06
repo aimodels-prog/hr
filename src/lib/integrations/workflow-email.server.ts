@@ -1,6 +1,7 @@
 import "@tanstack/react-start/server-only";
 import * as z from "zod";
 import { googleCalendarConfig } from "./google-calendar.server.ts";
+import { staffEmailTemplate, emailBase64 } from "./staff-email-template.ts";
 
 export class WorkflowEmailError extends Error {
   constructor(
@@ -38,25 +39,76 @@ export function workflowEmailRaw(
     z.string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)
       .parse(missingClockoutDate);
-  const body = missingClockoutDate
-    ? `Your clock-in was recorded on ${missingClockoutDate}, but no clock-out was received. Please enter the time you left for HR to confirm.\r\n\r\nCorrect clock-out:\r\n${origin}/staff/me/attendance?correct=${missingClockoutDate}\r\n\r\nIf you have already corrected this record, no action is needed. Sign in to see the current status.\r\n`
-    : context
-      ? `Why you received this email: ${context.title.slice(0, 200)}\r\n\r\n${context.type === "dependants.missing_information_reminder" ? "Your family record is missing required details or documents. Open your profile to see the exact checklist for each dependant." : context.message.slice(0, 2000)}\r\n\r\nNext step: Open the update in VIA HR to check the current status and any action required.\r\n${workflowEmailDestination(origin, context.path)}\r\n\r\nThis email was sent because this update was addressed to your VIA HR account. An email is not an approval.\r\n`
-      : `You have a request update in VIA HR. Open your requests to see the event and any action required:\r\n${origin}/staff/requests\r\n`;
+  const family = context?.type === "dependants.missing_information_reminder";
+  const approval = context?.type === "approval.reminder";
+  const documentReview = approval && /verify employee document/i.test(context?.message ?? "");
+  const body = staffEmailTemplate({
+    origin,
+    heading: missingClockoutDate
+      ? "A clock-out needs your attention"
+      : family
+        ? "Complete your family record"
+        : documentReview
+          ? "Employee document awaiting review"
+          : context?.title.slice(0, 200) || "You have an update",
+    message: missingClockoutDate
+      ? `Your clock-in was recorded on ${missingClockoutDate}, but no clock-out was received. Please enter the time you left for HR to confirm.`
+      : family
+        ? "Your family record is missing required details or documents. Open your profile to see the checklist for each dependant."
+        : context?.message.slice(0, 2000) ||
+          "There is an update to your request. Open VIA HR Application to see the details.",
+    category: missingClockoutDate
+      ? "ATTENDANCE"
+      : approval
+        ? "REVIEW NEEDED"
+        : context?.type?.includes("reminder")
+          ? "REMINDER"
+          : "WORKPLACE UPDATE",
+    action: missingClockoutDate
+      ? "Correct clock-out"
+      : family
+        ? "Complete my profile"
+        : documentReview
+          ? "Review document"
+          : approval
+            ? "Review request"
+            : "View update",
+    url: missingClockoutDate
+      ? `${origin}/staff/me/attendance?correct=${missingClockoutDate}`
+      : workflowEmailDestination(origin, context?.path),
+    ...(missingClockoutDate
+      ? {
+          note: "If you have already corrected this record, no action is needed. Sign in to see the current status.",
+        }
+      : {}),
+  });
   const subject = context
-    ? `Subject: =?UTF-8?B?${Buffer.from(`VIA HR - ${context.title.replace(/[\r\n]/g, " ").slice(0, 160)}`).toString("base64")}?=`
-    : "Subject: VIA HR - request update or reminder";
+    ? `Subject: =?UTF-8?B?${Buffer.from(`VIA HR Application - ${context.title.replace(/[\r\n]/g, " ").slice(0, 160)}`).toString("base64")}?=`
+    : "Subject: VIA HR Application - request update or reminder";
+  const boundary = `via-alternative-${notificationId}`;
   return Buffer.from(
     [
-      `From: VIA HR <${accountEmail}>`,
+      `From: VIA HR Application <${accountEmail}>`,
       `To: ${recipient}`,
-      missingClockoutDate ? "Subject: VIA HR - Missing clock-out for yesterday" : subject,
+      missingClockoutDate
+        ? "Subject: VIA HR Application - Missing clock-out for yesterday"
+        : subject,
       `Message-ID: <via-notification-${notificationId}@via-int.com>`,
       "MIME-Version: 1.0",
+      `Content-Type: multipart/alternative; boundary="${boundary}"`,
+      "",
+      `--${boundary}`,
       'Content-Type: text/plain; charset="UTF-8"',
       "Content-Transfer-Encoding: base64",
       "",
-      Buffer.from(body).toString("base64"),
+      emailBase64(body.text),
+      `--${boundary}`,
+      'Content-Type: text/html; charset="UTF-8"',
+      "Content-Transfer-Encoding: base64",
+      "",
+      emailBase64(body.html),
+      `--${boundary}--`,
+      "",
     ].join("\r\n"),
   ).toString("base64url");
 }

@@ -58,14 +58,17 @@ test("workflow email explains the event, carries its action link and keeps famil
         workflowEmailRaw("employee@example.com", child.id, "hr@example.com", undefined, context),
         "base64url",
       ).toString();
-      return Buffer.from(raw.split("\r\n\r\n")[1]!, "base64").toString();
+      return Buffer.from(
+        raw.split("Content-Transfer-Encoding: base64\r\n\r\n")[1]!.split("\r\n--")[0]!,
+        "base64",
+      ).toString();
     };
     const body = make({
       title: "Leave request approved",
       message: "Your leave request has been approved. No further action is required.",
       path: "/staff/me/leave-balances",
     });
-    assert.match(body, /Why you received this email: Leave request approved/);
+    assert.match(body, /^Leave request approved/);
     assert.match(body, /No further action is required/);
     assert.match(body, /https:\/\/hr.example.com\/staff\/me\/leave-balances/);
     const family = make({

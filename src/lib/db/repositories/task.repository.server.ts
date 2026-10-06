@@ -570,7 +570,13 @@ export async function processTaskAutomationInDatabase(
               : approval
                 ? "Your approval is required"
                 : "Task due soon",
-          message: projection.task.title,
+          message: [
+            projection.task.title,
+            projection.task.subjectName ? `Employee: ${projection.task.subjectName}` : null,
+            projection.task.dueDate ? `Due: ${projection.task.dueDate}` : null,
+          ]
+            .filter(Boolean)
+            .join("\n"),
           priority: projection.task.state === "Overdue" ? "High" : projection.task.priority,
           status: "Unread",
           dueAt: projection.task.dueDate ? `${projection.task.dueDate}T23:59:59Z` : null,
