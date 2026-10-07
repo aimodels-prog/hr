@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -258,12 +259,12 @@ export function EquipmentTab({ employeeId }: { employeeId: string }) {
                   </DialogDescription>
                 </DialogHeader>
                 <Form {...assignForm}>
-                  <form
+                  <SafeForm
                     onSubmit={(event) => {
                       if (selectedAsset) {
                         event.preventDefault();
-                        void onAssignAvailable();
-                      } else void assignForm.handleSubmit(onAssign)(event);
+                        return onAssignAvailable();
+                      } else return assignForm.handleSubmit(onAssign)(event);
                     }}
                     className="space-y-4"
                   >
@@ -295,11 +296,7 @@ export function EquipmentTab({ employeeId }: { employeeId: string }) {
                       {available.isError && (
                         <p role="alert" className="text-sm">
                           Available equipment could not be loaded.{" "}
-                          <Button
-                            type="button"
-                            variant="link"
-                            onClick={() => void available.refetch()}
-                          >
+                          <Button type="button" variant="link" onClick={() => available.refetch()}>
                             Retry
                           </Button>
                         </p>
@@ -432,7 +429,7 @@ export function EquipmentTab({ employeeId }: { employeeId: string }) {
                         {saving ? "Assigning…" : "Assign"}
                       </Button>
                     </DialogFooter>
-                  </form>
+                  </SafeForm>
                 </Form>
               </DialogContent>
             </Dialog>
@@ -510,7 +507,7 @@ export function EquipmentTab({ employeeId }: { employeeId: string }) {
                                 </DialogDescription>
                               </DialogHeader>
                               <Form {...returnForm}>
-                                <form
+                                <SafeForm
                                   onSubmit={returnForm.handleSubmit(onReturn)}
                                   className="space-y-4"
                                 >
@@ -556,7 +553,7 @@ export function EquipmentTab({ employeeId }: { employeeId: string }) {
                                       {saving ? "Saving…" : "Confirm Return"}
                                     </Button>
                                   </DialogFooter>
-                                </form>
+                                </SafeForm>
                               </Form>
                             </DialogContent>
                           </Dialog>

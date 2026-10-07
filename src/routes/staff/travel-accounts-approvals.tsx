@@ -175,11 +175,7 @@ function AccountsTravelApprovalsContent() {
                         </TableCell>
                         <TableCell className="text-right whitespace-nowrap">
                           {r.evidenceFileId && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => void viewEvidence(r.id)}
-                            >
+                            <Button variant="ghost" size="sm" onClick={() => viewEvidence(r.id)}>
                               <Paperclip className="w-4 h-4" />
                             </Button>
                           )}
@@ -316,7 +312,7 @@ function AccountsTravelApprovalsContent() {
             </Button>
             <Button
               variant={actionType === "approve" ? "default" : "destructive"}
-              onClick={() => void handleFinalise()}
+              onClick={() => handleFinalise()}
               disabled={actionType === "reject" && notes.trim().length < 3}
             >
               {actionType === "approve" ? "Confirm Budget Approval" : "Confirm Rejection"}

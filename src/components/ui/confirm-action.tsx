@@ -78,7 +78,7 @@ export function ConfirmAction({
             variant="destructive"
             className="min-h-11"
             disabled={pending}
-            onClick={() => void confirm()}
+            onClick={() => confirm()}
           >
             {pending ? "Please wait…" : confirmLabel}
           </Button>

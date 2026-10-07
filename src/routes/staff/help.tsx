@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { useEffect, useRef, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
@@ -122,7 +123,7 @@ function HelpWorkspace() {
             </label>
           )}
         </div>
-        <form
+        <SafeForm
           role="search"
           aria-label="Search help"
           onSubmit={(event) => {
@@ -159,7 +160,7 @@ function HelpWorkspace() {
           <Button type="submit" className="min-h-11 rounded-xl">
             Search
           </Button>
-        </form>
+        </SafeForm>
       </header>
 
       <PageSections value={selected?.category ?? (topic || "all")} onValueChange={goTopic}>

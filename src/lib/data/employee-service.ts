@@ -1,4 +1,5 @@
 import { getApplicationDataServices } from "./application-data.ts";
+import { isCeoPosition, validateCeoSupervisor } from "./executive-reporting.ts";
 import {
   changedRecordFields,
   changeReason,
@@ -779,7 +780,8 @@ export class EmployeeService {
       throw new Error("Probation end date cannot be before start date.");
     }
 
-    if (!data.lineManagerId && allEmployees.length > 0) {
+    validateCeoSupervisor(data.position, data.lineManagerId);
+    if (!data.lineManagerId && allEmployees.length > 0 && !isCeoPosition(data.position)) {
       throw new Error("A supervisor must be assigned before an employee record can be created.");
     }
     if (data.lineManagerId) {
@@ -1064,6 +1066,12 @@ export class EmployeeService {
       }
     }
 
+    if (changes.position !== undefined || changes.lineManagerId !== undefined) {
+      validateCeoSupervisor(
+        changes.position ?? employee.position,
+        changes.lineManagerId === undefined ? employee.lineManagerId : changes.lineManagerId,
+      );
+    }
     if (changes.lineManagerId) {
       const manager = this.employeeRepo.getById(changes.lineManagerId);
       if (!manager || manager.status === "Archived") {

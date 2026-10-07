@@ -572,6 +572,29 @@ export async function uploadEmployeeDocumentToDatabase(
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtext(${organisationId + ":documents:" + input.employeeId}))`,
       );
+      // Compare contents, not filenames. This lock also covers two concurrent uploads.
+      const [sameFile] = await tx
+        .select({ id: employeeDocuments.id })
+        .from(employeeDocuments)
+        .innerJoin(fileMetadata, eq(fileMetadata.id, employeeDocuments.fileId))
+        .where(
+          and(
+            eq(employeeDocuments.organisationId, organisationId),
+            eq(employeeDocuments.employeeId, input.employeeId),
+            eq(employeeDocuments.type, input.type),
+            isNull(employeeDocuments.archivedAt),
+            sql`${employeeDocuments.status} IN ('Valid', 'Pending Verification')`,
+            sql`${employeeDocuments.dependantId} IS NOT DISTINCT FROM ${input.dependantId ?? null}::uuid`,
+            sql`${employeeDocuments.dependantDocumentKind} IS NOT DISTINCT FROM ${input.dependantDocumentKind ?? null}`,
+            sql`${employeeDocuments.requirementSnapshot}->>'id' IS NOT DISTINCT FROM ${requirement?.id ?? null}`,
+            eq(fileMetadata.checksum, stored.checksum!),
+          ),
+        )
+        .limit(1);
+      if (sameFile)
+        throw new Error(
+          "This file is already uploaded. Refresh Documents to see it; do not upload it again.",
+        );
       if (requirement && !requirement.multiple) {
         const duplicate = await tx
           .select({ id: employeeDocuments.id })

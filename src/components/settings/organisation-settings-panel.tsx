@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -113,7 +114,7 @@ export function OrganisationSettingsPanel() {
         </CardHeader>
         <CardContent>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <SafeForm onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
@@ -279,7 +280,7 @@ export function OrganisationSettingsPanel() {
               <div className="flex justify-end">
                 <Button type="submit">Save Organisation Settings</Button>
               </div>
-            </form>
+            </SafeForm>
           </Form>
         </CardContent>
       </Card>
@@ -365,7 +366,7 @@ export function NumberingSettingsPanel() {
       </CardHeader>
       <CardContent>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <SafeForm onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField
                 control={form.control}
@@ -397,7 +398,7 @@ export function NumberingSettingsPanel() {
             <div className="flex justify-end">
               <Button type="submit">Save Numbering Formats</Button>
             </div>
-          </form>
+          </SafeForm>
         </Form>
       </CardContent>
     </Card>

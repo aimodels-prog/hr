@@ -109,7 +109,7 @@ function TimeAwayPage({ initialDate }: { initialDate: string | undefined }) {
           value={date}
           onChange={(e) => setDate(e.target.value)}
         />
-        <Button variant="outline" onClick={() => void query.refetch()}>
+        <Button variant="outline" onClick={() => query.refetch()}>
           Refresh
         </Button>
       </div>

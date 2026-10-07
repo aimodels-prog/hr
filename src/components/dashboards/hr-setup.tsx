@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -111,7 +112,7 @@ export function HrSetup() {
                 variant="outline"
                 size="sm"
                 disabled={status.isFetching}
-                onClick={() => void status.refetch()}
+                onClick={() => status.refetch()}
               >
                 Try again
               </Button>
@@ -146,11 +147,11 @@ export function HrSetup() {
                         {connection.title.startsWith("Approval") ? "Enabled" : "Connected"}
                       </span>
                     ) : (
-                      <form method="post" action={connection.action}>
+                      <SafeForm method="post" action={connection.action}>
                         <Button size="sm" disabled={!data?.configured}>
                           {connection.button}
                         </Button>
-                      </form>
+                      </SafeForm>
                     )}
                   </div>
                 ))}

@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { dependantSchema } from "@/lib/data/dependants";
 import { RequirementFields } from "@/components/documents/requirement-fields";
 import { getDocumentRequirementsFn } from "@/lib/server-functions/document-requirements.server";
@@ -574,7 +575,7 @@ function EmploymentDetailsSection({
       done={done}
     >
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
+        <SafeForm onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
           <FormField
             control={form.control}
             name="staffEntryType"
@@ -694,7 +695,7 @@ function EmploymentDetailsSection({
               <Button type="submit">Save & Continue</Button>
             </div>
           )}
-        </form>
+        </SafeForm>
       </Form>
     </SectionShell>
   );
@@ -787,7 +788,7 @@ function PersonalDetailsSection({
       done={done}
     >
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <SafeForm onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <FormField
               control={form.control}
@@ -1101,7 +1102,7 @@ function PersonalDetailsSection({
           <div className="flex justify-end">
             <Button type="submit">{done ? "Update Details" : "Save & Continue"}</Button>
           </div>
-        </form>
+        </SafeForm>
       </Form>
     </SectionShell>
   );
@@ -1138,7 +1139,7 @@ function BankDetailsSection({
       done={done}
     >
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <SafeForm onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
           <FormField
             control={form.control}
             name="accountHolderName"
@@ -1222,7 +1223,7 @@ function BankDetailsSection({
           <div className="flex justify-end">
             <Button type="submit">{done ? "Update Bank Details" : "Save & Continue"}</Button>
           </div>
-        </form>
+        </SafeForm>
       </Form>
     </SectionShell>
   );

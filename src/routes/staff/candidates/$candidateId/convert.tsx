@@ -102,7 +102,7 @@ function ConversionWizardRoute() {
               disabled={saving}
             />
             <Button
-              onClick={() => void submit()}
+              onClick={() => submit()}
               disabled={
                 saving ||
                 (!linkedEmployeeId &&

@@ -196,7 +196,7 @@ function TravelManagerApprovals() {
             <Button
               variant={decision === "approve" ? "default" : "destructive"}
               disabled={saving}
-              onClick={() => void submitDecision()}
+              onClick={() => submitDecision()}
             >
               {saving
                 ? "Saving..."

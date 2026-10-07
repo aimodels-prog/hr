@@ -317,7 +317,7 @@ function TeamPerformancePage() {
                             variant="ghost"
                             size="sm"
                             className="h-auto w-full justify-start px-0"
-                            onClick={() => void viewEvidence(goal.id, item.id)}
+                            onClick={() => viewEvidence(goal.id, item.id)}
                           >
                             <FileText className="mr-2 h-4 w-4" /> View evidence from{" "}
                             {new Date(item.createdAt).toLocaleDateString()}

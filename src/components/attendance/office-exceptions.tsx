@@ -178,7 +178,7 @@ export function OfficeExceptions({ onSaved }: { onSaved: () => void | Promise<vo
               (scope === "Employees" && !employeeIds.length) ||
               (["Location", "Department"].includes(scope) && !scopeId)
             }
-            onClick={() => void save()}
+            onClick={() => save()}
           >
             {busy ? "Saving…" : "Save office exception"}
           </Button>
@@ -190,7 +190,7 @@ export function OfficeExceptions({ onSaved }: { onSaved: () => void | Promise<vo
         </CardHeader>
         <CardContent className="space-y-3">
           {query.isError ? (
-            <Button variant="outline" onClick={() => void query.refetch()}>
+            <Button variant="outline" onClick={() => query.refetch()}>
               Could not load exceptions. Retry
             </Button>
           ) : query.isPending ? (

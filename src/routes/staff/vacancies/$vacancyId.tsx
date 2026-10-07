@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, useMemo } from "react";
@@ -624,7 +625,7 @@ function VacancyDetailRoute() {
                     <DialogTitle>{transitionDialog.action} Vacancy</DialogTitle>
                   </DialogHeader>
                   <Form {...form}>
-                    <form onSubmit={form.handleSubmit(onTransition)} className="space-y-4">
+                    <SafeForm onSubmit={form.handleSubmit(onTransition)} className="space-y-4">
                       <FormField
                         control={form.control}
                         name="reason"
@@ -652,7 +653,7 @@ function VacancyDetailRoute() {
                       <DialogFooter>
                         <Button type="submit">Confirm</Button>
                       </DialogFooter>
-                    </form>
+                    </SafeForm>
                   </Form>
                 </DialogContent>
               </Dialog>
@@ -806,7 +807,7 @@ function VacancyDetailRoute() {
                   </div>
                   <Button
                     type="button"
-                    onClick={() => void saveOpportunitySettings()}
+                    onClick={() => saveOpportunitySettings()}
                     disabled={savingOpportunitySettings}
                   >
                     {savingOpportunitySettings ? "Saving..." : "Save staff access"}

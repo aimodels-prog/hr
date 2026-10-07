@@ -134,7 +134,7 @@ export function NotificationDrawer() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => void handleMarkAllAsRead()}
+                onClick={() => handleMarkAllAsRead()}
                 className="h-8 text-xs"
               >
                 Mark all as read
@@ -167,7 +167,7 @@ export function NotificationDrawer() {
                 <div
                   key={notif.id}
                   className={`p-4 border-b hover:bg-muted/50 cursor-pointer transition-colors relative group ${notif.status === "Unread" ? "bg-primary/5" : ""}`}
-                  onClick={() => void handleClick(notif)}
+                  onClick={() => handleClick(notif)}
                 >
                   {notif.status === "Unread" && (
                     <div className="absolute left-0 top-0 bottom-0 w-1 bg-primary"></div>
@@ -228,7 +228,7 @@ export function NotificationDrawer() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep notifications</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void handleDismissAll()}>Clear all</AlertDialogAction>
+            <AlertDialogAction onClick={() => handleDismissAll()}>Clear all</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

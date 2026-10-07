@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
@@ -192,7 +193,7 @@ function OffboardingDashboard() {
                   </DialogDescription>
                 </DialogHeader>
                 <Form {...form}>
-                  <form onSubmit={form.handleSubmit(onStartCase)} className="space-y-4">
+                  <SafeForm onSubmit={form.handleSubmit(onStartCase)} className="space-y-4">
                     <FormField
                       control={form.control}
                       name="employeeId"
@@ -371,7 +372,7 @@ function OffboardingDashboard() {
                     <DialogFooter>
                       <Button type="submit">Start Case</Button>
                     </DialogFooter>
-                  </form>
+                  </SafeForm>
                 </Form>
               </DialogContent>
             </Dialog>

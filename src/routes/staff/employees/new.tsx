@@ -1,3 +1,5 @@
+import { SafeForm } from "@/components/ui/safe-form";
+import { isCeoPosition } from "@/lib/data/executive-reporting";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useState, useMemo } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -35,40 +37,52 @@ export const Route = createFileRoute("/staff/employees/new")({
   component: NewEmployeeRoute,
 });
 
-const formSchema = z.object({
-  legalName: z.string().min(2, "Legal name is required"),
-  preferredName: z.string().min(2, "Preferred name is required"),
-  workEmail: z.string().email("Invalid email address"),
-  personalEmail: z.string().email("Invalid email address").optional().or(z.literal("")),
-  phone: z.string().optional(),
-  employeeNumber: z.string().min(1, "Employee number is required"),
-  department: z.string().min(1, "Department is required"),
-  position: z.string().min(1, "Position is required"),
-  grade: z.string().optional(),
-  location: z.string().min(1, "Location is required"),
-  projectId: z.string().optional(),
-  costCentreId: z.string().optional(),
-  employmentType: z.string().min(1, "Employment type is required"),
-  startDate: z.string().min(1, "Start date is required"),
-  probationEndDate: z.string().optional(),
-  lineManagerId: z.string().min(1, "Supervisor is required"),
-  status: z.enum(["Onboarding", "Active", "Probation", "Notice", "Inactive", "Archived"]),
+const formSchema = z
+  .object({
+    legalName: z.string().min(2, "Legal name is required"),
+    preferredName: z.string().min(2, "Preferred name is required"),
+    workEmail: z.string().email("Invalid email address"),
+    personalEmail: z.string().email("Invalid email address").optional().or(z.literal("")),
+    phone: z.string().optional(),
+    employeeNumber: z.string().min(1, "Employee number is required"),
+    department: z.string().min(1, "Department is required"),
+    position: z.string().min(1, "Position is required"),
+    grade: z.string().optional(),
+    location: z.string().min(1, "Location is required"),
+    projectId: z.string().optional(),
+    costCentreId: z.string().optional(),
+    employmentType: z.string().min(1, "Employment type is required"),
+    startDate: z.string().min(1, "Start date is required"),
+    probationEndDate: z.string().optional(),
+    lineManagerId: z.string(),
+    status: z.enum(["Onboarding", "Active", "Probation", "Notice", "Inactive", "Archived"]),
 
-  // Personal details
-  dateOfBirth: z.string().optional(),
-  gender: z.enum(["Male", "Female"]).optional(),
-  nationality: z.string().optional(),
-  maritalStatus: z.enum(["Single", "Married", "Divorced", "Widowed"]).optional(),
+    // Personal details
+    dateOfBirth: z.string().optional(),
+    gender: z.enum(["Male", "Female"]).optional(),
+    nationality: z.string().optional(),
+    maritalStatus: z.enum(["Single", "Married", "Divorced", "Widowed"]).optional(),
 
-  // Compensation & payroll setup
-  baseMonthly: z.string().optional(),
-  currency: z.string().optional(),
-  housingAllowance: z.string().optional(),
-  transportAllowance: z.string().optional(),
-  payFrequency: z.enum(["Monthly", "Biweekly", "Weekly"]).optional(),
-  weeklyHours: z.string().optional(),
-  socialInsuranceNumber: z.string().optional(),
-});
+    // Compensation & payroll setup
+    baseMonthly: z.string().optional(),
+    currency: z.string().optional(),
+    housingAllowance: z.string().optional(),
+    transportAllowance: z.string().optional(),
+    payFrequency: z.enum(["Monthly", "Biweekly", "Weekly"]).optional(),
+    weeklyHours: z.string().optional(),
+    socialInsuranceNumber: z.string().optional(),
+  })
+  .superRefine((values, ctx) => {
+    if (isCeoPosition(values.position) ? !!values.lineManagerId : !values.lineManagerId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["lineManagerId"],
+        message: isCeoPosition(values.position)
+          ? "The CEO has no supervisor."
+          : "Supervisor is required",
+      });
+    }
+  });
 
 type EmployeeFormInput = z.input<typeof formSchema>;
 type EmployeeFormValues = z.output<typeof formSchema>;
@@ -265,7 +279,7 @@ function NewEmployeeRoute() {
         />
 
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+          <SafeForm onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle>Identity Information</CardTitle>
@@ -489,7 +503,14 @@ function NewEmployeeRoute() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Position *</FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value as string}>
+                      <Select
+                        onValueChange={(value) => {
+                          field.onChange(value);
+                          if (isCeoPosition(value))
+                            form.setValue("lineManagerId", "", { shouldValidate: true });
+                        }}
+                        defaultValue={field.value as string}
+                      >
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue placeholder="Select Position" />
@@ -610,12 +631,21 @@ function NewEmployeeRoute() {
                   name="lineManagerId"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Supervisor *</FormLabel>
+                      <FormLabel>
+                        {isCeoPosition(form.watch("position"))
+                          ? "Supervisor — not applicable for CEO"
+                          : "Supervisor *"}
+                      </FormLabel>
                       <FormControl>
                         <SearchableSelect
                           onValueChange={field.onChange}
-                          defaultValue={field.value as string}
-                          placeholder={"Select supervisor"}
+                          value={field.value as string}
+                          placeholder={
+                            isCeoPosition(form.watch("position"))
+                              ? "No supervisor"
+                              : "Select supervisor"
+                          }
+                          disabled={isCeoPosition(form.watch("position"))}
                           options={[
                             ...activeEmployees.map((d) => ({
                               value: d.id,
@@ -817,7 +847,7 @@ function NewEmployeeRoute() {
                 <Save className="mr-2 h-4 w-4" /> Add Employee
               </Button>
             </div>
-          </form>
+          </SafeForm>
         </Form>
       </div>
     </RequirePermission>

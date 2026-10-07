@@ -3,6 +3,8 @@ import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
 
 import { cn } from "@/lib/utils";
+import { FormBusyContext } from "./safe-form";
+import { createSubmissionLock } from "@/lib/submission-lock";
 
 const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-semibold cursor-pointer transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
@@ -37,10 +39,34 @@ export interface ButtonProps
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
+  ({ className, variant, size, asChild = false, onClick, disabled, ...props }, ref) => {
     const Comp = asChild ? Slot : "button";
+    const lock = React.useRef(createSubmissionLock());
+    const [busy, setBusy] = React.useState(false);
+    const formBusy = React.useContext(FormBusyContext);
     return (
-      <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />
+      <Comp
+        className={cn(buttonVariants({ variant, size, className }))}
+        ref={ref}
+        {...props}
+        disabled={disabled || busy || formBusy}
+        aria-busy={busy || undefined}
+        onClick={(event) => {
+          if (disabled || formBusy || lock.current.pending) {
+            event.preventDefault();
+            return;
+          }
+          if (!onClick) return;
+          return lock.current.run(() => {
+            const result: unknown = onClick(event);
+            if (result && typeof (result as PromiseLike<unknown>).then === "function") {
+              setBusy(true);
+              return Promise.resolve(result).finally(() => setBusy(false));
+            }
+            return undefined;
+          });
+        }}
+      />
     );
   },
 );

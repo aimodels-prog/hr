@@ -227,11 +227,7 @@ function OvertimeApprovalsContent() {
                         </TableCell>
                         <TableCell className="text-right whitespace-nowrap">
                           {c.evidenceFileId && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => void viewEvidence(c.id)}
-                            >
+                            <Button variant="ghost" size="sm" onClick={() => viewEvidence(c.id)}>
                               <Paperclip className="w-4 h-4" />
                             </Button>
                           )}
@@ -313,11 +309,7 @@ function OvertimeApprovalsContent() {
                           </TableCell>
                           <TableCell className="text-right whitespace-nowrap">
                             {c.evidenceFileId && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => void viewEvidence(c.id)}
-                              >
+                              <Button variant="ghost" size="sm" onClick={() => viewEvidence(c.id)}>
                                 <Paperclip className="w-4 h-4" />
                               </Button>
                             )}
@@ -425,7 +417,7 @@ function OvertimeApprovalsContent() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => void viewEvidence(hrSelectedClaim.id)}
+                    onClick={() => viewEvidence(hrSelectedClaim.id)}
                   >
                     <Paperclip className="w-4 h-4 mr-1" /> View evidence
                   </Button>

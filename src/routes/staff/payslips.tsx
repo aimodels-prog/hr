@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { encodeUploadFile } from "@/lib/upload-payload";
 import { useRef, useState } from "react";
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -182,7 +183,7 @@ function Payslips() {
       {query.isError && (
         <div role="alert">
           Payslips could not be loaded. {query.error.message}{" "}
-          <Button variant="link" onClick={() => void query.refetch()}>
+          <Button variant="link" onClick={() => query.refetch()}>
             Retry
           </Button>
         </div>
@@ -221,10 +222,7 @@ function Payslips() {
             accept="application/pdf,.pdf"
             onChange={(event) => setFile(event.target.files?.[0] ?? null)}
           />
-          <Button
-            disabled={saving || !file || !employeeId || !payMonth}
-            onClick={() => void upload()}
-          >
+          <Button disabled={saving || !file || !employeeId || !payMonth} onClick={() => upload()}>
             {saving ? "Uploading…" : "Upload & share"}
           </Button>
         </section>
@@ -253,7 +251,7 @@ function Payslips() {
                 <Button
                   variant="outline"
                   disabled={!!downloading}
-                  onClick={() => void download(slip.id)}
+                  onClick={() => download(slip.id)}
                 >
                   {downloading === slip.id ? "Downloading…" : "Download PDF"}
                 </Button>
@@ -297,11 +295,11 @@ function Payslips() {
                   history.
                 </DialogDescription>
               </DialogHeader>
-              <form
+              <SafeForm
                 className="space-y-4"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  void replace();
+                  return replace();
                 }}
               >
                 <div className="space-y-2">
@@ -348,7 +346,7 @@ function Payslips() {
                     {saving ? "Replacing…" : "Replace & notify employee"}
                   </Button>
                 </DialogFooter>
-              </form>
+              </SafeForm>
             </DialogContent>
           </Dialog>
           <Dialog
@@ -369,7 +367,7 @@ function Payslips() {
               {history.isError && (
                 <div role="alert">
                   History could not be loaded.{" "}
-                  <Button variant="link" onClick={() => void history.refetch()}>
+                  <Button variant="link" onClick={() => history.refetch()}>
                     Retry
                   </Button>
                 </div>
@@ -388,7 +386,7 @@ function Payslips() {
                     <Button
                       variant="outline"
                       disabled={!!downloading}
-                      onClick={() => void download(version.id)}
+                      onClick={() => download(version.id)}
                     >
                       {downloading === version.id
                         ? "Downloading…"

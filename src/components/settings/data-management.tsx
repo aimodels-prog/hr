@@ -116,7 +116,7 @@ export function DataManagement() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void refreshWorker()}
+              onClick={() => refreshWorker()}
               disabled={workerLoading}
             >
               <RefreshCcw className={`h-4 w-4 ${workerLoading ? "animate-spin" : ""}`} /> Refresh

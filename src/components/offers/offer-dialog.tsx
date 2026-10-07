@@ -320,7 +320,7 @@ export function OfferDialog({
               <Button
                 variant="outline"
                 disabled={isSaving || revisionReason.trim().length < 5}
-                onClick={() => void handleStatusChange("Draft", revisionReason)}
+                onClick={() => handleStatusChange("Draft", revisionReason)}
               >
                 Revise terms — requires new approval
               </Button>
@@ -499,7 +499,7 @@ export function OfferDialog({
               <Button
                 variant="outline"
                 disabled={isSaving || !approverUserId}
-                onClick={() => void handleSaveDraft(true)}
+                onClick={() => handleSaveDraft(true)}
               >
                 Request Approval
               </Button>
@@ -508,14 +508,14 @@ export function OfferDialog({
           </div>
           <div className="flex gap-2">
             {(!offer || offer.status === "Draft") && (
-              <Button disabled={isSaving} onClick={() => void handleSaveDraft()}>
+              <Button disabled={isSaving} onClick={() => handleSaveDraft()}>
                 {offer ? "Save Draft" : "Create Draft"}
               </Button>
             )}
             {offer?.status === "Approved" && (
               <Button
                 disabled={isSaving}
-                onClick={() => void handleStatusChange("Ready to Send")}
+                onClick={() => handleStatusChange("Ready to Send")}
                 className="gap-2"
               >
                 <CheckCircle className="h-4 w-4" /> Mark Ready to Send
@@ -564,7 +564,7 @@ export function OfferDialog({
                     !deliveryTime ||
                     !deliveryEvidence
                   }
-                  onClick={() => void handleStatusChange("Sent")}
+                  onClick={() => handleStatusChange("Sent")}
                   className="gap-2"
                 >
                   <Send className="h-4 w-4" /> Record as manually sent
@@ -576,7 +576,7 @@ export function OfferDialog({
                 <Button
                   variant="outline"
                   disabled={isSaving}
-                  onClick={() => void handleStatusChange("Expired")}
+                  onClick={() => handleStatusChange("Expired")}
                 >
                   Mark Expired
                 </Button>
@@ -595,7 +595,7 @@ export function OfferDialog({
                         (!hireIdentity.existingEmployeeId && !hireIdentity.workspaceEmail?.trim())))
                   }
                   className="bg-emerald-600 hover:bg-emerald-700 gap-2"
-                  onClick={() => void handleStatusChange("Accepted")}
+                  onClick={() => handleStatusChange("Accepted")}
                 >
                   <CheckCircle className="h-4 w-4" />{" "}
                   {linkedEmployeeId || hireIdentity.existingEmployeeId
@@ -608,7 +608,7 @@ export function OfferDialog({
               <Button
                 variant="outline"
                 disabled={isSaving || isGenerating}
-                onClick={() => void handleGenerateDocument()}
+                onClick={() => handleGenerateDocument()}
                 className="gap-2"
               >
                 <FileText className="h-4 w-4" /> Download Document
@@ -637,7 +637,7 @@ export function OfferDialog({
                 <Button
                   variant="destructive"
                   disabled={!withdrawReason.trim() || isSaving}
-                  onClick={() => void handleStatusChange("Withdrawn", withdrawReason)}
+                  onClick={() => handleStatusChange("Withdrawn", withdrawReason)}
                 >
                   Confirm Withdraw
                 </Button>
@@ -657,7 +657,7 @@ export function OfferDialog({
                 <Button
                   variant="destructive"
                   disabled={!declineReason || isSaving}
-                  onClick={() => void handleStatusChange("Declined", declineReason)}
+                  onClick={() => handleStatusChange("Declined", declineReason)}
                 >
                   Confirm Decline
                 </Button>

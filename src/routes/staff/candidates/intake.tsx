@@ -554,7 +554,7 @@ function CandidateIntakePage() {
             {!isRecommended && (
               <Button
                 className="w-full"
-                onClick={() => void upload()}
+                onClick={() => upload()}
                 disabled={!file || isUploading || Boolean(intake)}
               >
                 <Upload className="mr-2 h-4 w-4" />{" "}
@@ -670,7 +670,7 @@ function CandidateIntakePage() {
                   Next, VIA will prepare the candidate details from the CV for HR to review.
                 </p>
                 <Button
-                  onClick={() => void upload()}
+                  onClick={() => upload()}
                   disabled={
                     !file ||
                     isUploading ||
@@ -840,7 +840,7 @@ function CandidateIntakePage() {
                   ) : (
                     <Button
                       className="w-full"
-                      onClick={() => void saveRecommendedCandidate()}
+                      onClick={() => saveRecommendedCandidate()}
                       disabled={
                         isSaving ||
                         !firstName ||

@@ -119,7 +119,7 @@ export function LiveAttendanceCard() {
         <button
           type="button"
           className="mt-2 text-xs text-primary underline"
-          onClick={() => void query.refetch()}
+          onClick={() => query.refetch()}
         >
           {data ? "Sync delayed — retry" : "Try again"}
         </button>

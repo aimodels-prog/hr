@@ -154,7 +154,7 @@ function OpportunitiesPage() {
           <CardContent className="flex flex-col items-start gap-3 p-6">
             <p className="font-medium">Opportunities are temporarily unavailable</p>
             <p className="text-sm text-muted-foreground">{error}</p>
-            <Button variant="outline" onClick={() => void load()}>
+            <Button variant="outline" onClick={() => load()}>
               Try again
             </Button>
           </CardContent>
@@ -518,7 +518,7 @@ function ApplicationDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={() => void submit()} disabled={saving}>
+          <Button onClick={() => submit()} disabled={saving}>
             {saving ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -731,7 +731,7 @@ function ReferralDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={() => void submit()} disabled={saving}>
+          <Button onClick={() => submit()} disabled={saving}>
             {saving ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

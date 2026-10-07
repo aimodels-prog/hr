@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { useEffect, useState } from "react";
 import { useCurrentUser } from "@/lib/auth";
 import {
@@ -214,22 +215,19 @@ export function TravelBookings({
                     />
                     {user.activeRole === "Accounts" ? (
                       <div className="flex gap-2">
-                        <Button
-                          disabled={busy}
-                          onClick={() => void change(row.id, "approve", b.id)}
-                        >
+                        <Button disabled={busy} onClick={() => change(row.id, "approve", b.id)}>
                           Approve cost
                         </Button>
                         <Button
                           variant="outline"
                           disabled={busy}
-                          onClick={() => void change(row.id, "reject", b.id)}
+                          onClick={() => change(row.id, "reject", b.id)}
                         >
                           Decline
                         </Button>
                       </div>
                     ) : (
-                      <Button disabled={busy} onClick={() => void change(row.id, "confirm", b.id)}>
+                      <Button disabled={busy} onClick={() => change(row.id, "confirm", b.id)}>
                         Confirm booking
                       </Button>
                     )}
@@ -243,11 +241,11 @@ export function TravelBookings({
           <p className="text-sm text-muted-foreground">No arrangements requested.</p>
         )}
         {canRequest && (
-          <form
+          <SafeForm
             className="space-y-3 border-t pt-4"
             onSubmit={(e) => {
               e.preventDefault();
-              void change(trip.databaseId ?? trip.id, "request");
+              return change(trip.databaseId ?? trip.id, "request");
             }}
           >
             <h3 className="font-medium">Request an arrangement</h3>
@@ -296,7 +294,7 @@ export function TravelBookings({
             <Button disabled={busy} type="submit">
               Send to Finance
             </Button>
-          </form>
+          </SafeForm>
         )}
       </CardContent>
     </Card>

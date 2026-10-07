@@ -732,7 +732,7 @@ function StaffTrainingRoute() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => void viewCertificate(record.id)}
+                          onClick={() => viewCertificate(record.id)}
                         >
                           <FileText className="mr-2 h-4 w-4" />
                           View

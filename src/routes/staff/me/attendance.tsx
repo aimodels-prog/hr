@@ -564,7 +564,7 @@ function MyAttendanceRoute() {
                     <Button
                       variant="outline"
                       disabled={locating}
-                      onClick={() => void performClockAction("in", true)}
+                      onClick={() => performClockAction("in", true)}
                     >
                       Back at office
                     </Button>
@@ -578,17 +578,13 @@ function MyAttendanceRoute() {
                   <Button
                     size="lg"
                     disabled={locating || locations.length === 0}
-                    onClick={() => void performClockAction("in")}
+                    onClick={() => performClockAction("in")}
                   >
                     <LocateFixed className="mr-2 h-5 w-5" />
                     {locating ? "Verifying…" : "Clock In"}
                   </Button>
                 ) : (
-                  <Button
-                    size="lg"
-                    disabled={locating}
-                    onClick={() => void performClockAction("out")}
-                  >
+                  <Button size="lg" disabled={locating} onClick={() => performClockAction("out")}>
                     <CheckCircle2 className="mr-2 h-5 w-5" />
                     {locating ? "Verifying…" : "Clock Out"}
                   </Button>
@@ -951,7 +947,7 @@ function MyAttendanceRoute() {
                   !proposedOut ||
                   (!clockOutOnly && explanation.trim().length < 5)
                 }
-                onClick={() => void submitCorrection()}
+                onClick={() => submitCorrection()}
               >
                 {submittingCorrection ? "Submitting…" : "Submit for Approval"}
               </Button>
@@ -1041,7 +1037,7 @@ function MyAttendanceRoute() {
                   savingProgress ||
                   (progressAction === "extend" && extensionReason.trim().length < 5)
                 }
-                onClick={() => void saveProgress()}
+                onClick={() => saveProgress()}
               >
                 {savingProgress
                   ? "Saving…"

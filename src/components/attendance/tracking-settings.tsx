@@ -87,7 +87,7 @@ export function AttendanceTrackingSettings({ employeeId }: { employeeId?: string
       {query.isPending ? (
         <p className="text-sm">Loading settings…</p>
       ) : query.isError ? (
-        <Button variant="outline" onClick={() => void query.refetch()}>
+        <Button variant="outline" onClick={() => query.refetch()}>
           Retry settings
         </Button>
       ) : (
@@ -154,7 +154,7 @@ export function AttendanceTrackingSettings({ employeeId }: { employeeId?: string
                   onChange={(event) => setDate(event.target.value)}
                 />
               </label>
-              <Button disabled={busy || (!employeeId && !office)} onClick={() => void save()}>
+              <Button disabled={busy || (!employeeId && !office)} onClick={() => save()}>
                 {busy ? "Saving…" : "Save attendance settings"}
               </Button>
             </div>

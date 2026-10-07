@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -313,7 +314,7 @@ function RecommendCandidate() {
         description="Record a candidate someone has recommended, along with who recommended them."
       />
       <Form {...form}>
-        <form onSubmit={form.handleSubmit((values) => submit(values))} className="space-y-6">
+        <SafeForm onSubmit={form.handleSubmit((values) => submit(values))} className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle className="text-base">CV & Vacancy</CardTitle>
@@ -646,7 +647,7 @@ function RecommendCandidate() {
               <UserPlus className="h-4 w-4" /> Continue
             </Button>
           </div>
-        </form>
+        </SafeForm>
       </Form>
     </div>
   );

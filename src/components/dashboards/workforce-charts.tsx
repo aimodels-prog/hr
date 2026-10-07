@@ -429,7 +429,7 @@ export default function WorkforceCharts({
             size="icon"
             aria-label={`Refresh ${label}`}
             disabled={query.isFetching}
-            onClick={() => void query.refetch()}
+            onClick={() => query.refetch()}
           >
             <RefreshCw className={`h-4 w-4 ${query.isFetching ? "animate-spin" : ""}`} />
           </Button>
@@ -448,11 +448,7 @@ export default function WorkforceCharts({
             If your session has expired, you will be asked to sign in again.
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              disabled={query.isFetching}
-              onClick={() => void query.refetch()}
-            >
+            <Button variant="outline" disabled={query.isFetching} onClick={() => query.refetch()}>
               {query.isFetching ? "Retrying…" : "Try again"}
             </Button>
             <Button variant="outline" onClick={() => window.location.reload()}>
@@ -473,11 +469,7 @@ export default function WorkforceCharts({
               : ""}
             .
           </p>
-          <Button
-            variant="outline"
-            disabled={query.isFetching}
-            onClick={() => void query.refetch()}
-          >
+          <Button variant="outline" disabled={query.isFetching} onClick={() => query.refetch()}>
             {query.isFetching ? "Retrying…" : "Retry refresh"}
           </Button>
         </div>

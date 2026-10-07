@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useEffect, useState, useMemo } from "react";
 import { DashboardCharts } from "@/components/dashboards/dashboard-charts";
@@ -1371,7 +1372,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                               </DialogDescription>
                             </DialogHeader>
                             <Form {...form}>
-                              <form
+                              <SafeForm
                                 onSubmit={form.handleSubmit(onEditSubmit)}
                                 className="space-y-4 pt-4"
                               >
@@ -1461,7 +1462,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                             (quickAddCollection === "projects" &&
                                               !quickProjectStartDate)
                                           }
-                                          onClick={() => void createEmploymentOption()}
+                                          onClick={() => createEmploymentOption()}
                                         >
                                           {quickAddBusy ? "Adding..." : "Add and select"}
                                         </Button>
@@ -1831,7 +1832,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                     Save Changes
                                   </Button>
                                 </DialogFooter>
-                              </form>
+                              </SafeForm>
                             </Form>
                           </DialogContent>
                         </Dialog>
@@ -1955,7 +1956,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                               </DialogDescription>
                             </DialogHeader>
                             <Form {...salaryForm}>
-                              <form
+                              <SafeForm
                                 onSubmit={salaryForm.handleSubmit(onSalarySubmit)}
                                 className="space-y-4 pt-4"
                               >
@@ -2080,7 +2081,7 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                                   </Button>
                                   <Button type="submit">Save Changes</Button>
                                 </DialogFooter>
-                              </form>
+                              </SafeForm>
                             </Form>
                           </DialogContent>
                         </Dialog>

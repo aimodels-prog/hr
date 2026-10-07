@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -60,7 +61,7 @@ export function GoogleCalendarConnection() {
               ? `Connect ${status.accountEmail} once for the HR team.`
               : "Google Calendar setup is awaiting administrator configuration. You can still prepare interview records."}
         </p>
-        <form
+        <SafeForm
           className="space-y-2"
           onSubmit={async (event) => {
             event.preventDefault();
@@ -115,7 +116,7 @@ export function GoogleCalendarConnection() {
           >
             {saving ? "Saving…" : "Save account and reconnect"}
           </Button>
-        </form>
+        </SafeForm>
         {error && (
           <p role="alert" className="text-destructive">
             {error}
@@ -125,11 +126,11 @@ export function GoogleCalendarConnection() {
           Save your interview changes before connecting. VIA Portal remains your app login.
           Connecting does not send invitations.
         </p>
-        <form method="post" action="/api/integrations/google-calendar">
+        <SafeForm method="post" action="/api/integrations/google-calendar">
           <Button disabled={!status?.configured}>
             {status?.connected ? "Reconnect Google Calendar" : "Connect Google Calendar & Meet"}
           </Button>
-        </form>
+        </SafeForm>
         <div className="space-y-3 border-t pt-4">
           <h3 className="font-semibold">Approval emails & reminders</h3>
           <p className="text-sm">
@@ -143,17 +144,17 @@ export function GoogleCalendarConnection() {
             This starts emails for new workflow notifications; it does not email the old
             notification backlog. Private details stay inside VIA HR.
           </p>
-          <form method="post" action="/api/integrations/google-calendar?email=enable">
+          <SafeForm method="post" action="/api/integrations/google-calendar?email=enable">
             <Button disabled={!status?.configured} variant="outline">
               {status?.emailEnabled
                 ? "Reconnect email sender"
                 : "Enable approval emails & reminders"}
             </Button>
-          </form>
+          </SafeForm>
           {status?.emailEnabled && (
-            <form method="post" action="/api/integrations/google-calendar?email=disable">
+            <SafeForm method="post" action="/api/integrations/google-calendar?email=disable">
               <Button variant="outline">Pause approval emails</Button>
-            </form>
+            </SafeForm>
           )}
           {!!status?.emailDeliveryCounts?.length && (
             <ul className="text-sm">

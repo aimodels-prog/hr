@@ -146,14 +146,14 @@ export function AssignedOfferReviews() {
           <div className="flex gap-2">
             <Button
               disabled={busy || (comments[row.id]?.trim().length ?? 0) < 5}
-              onClick={() => void decide(row, "approve")}
+              onClick={() => decide(row, "approve")}
             >
               Approve offer
             </Button>
             <Button
               variant="outline"
               disabled={busy || (comments[row.id]?.trim().length ?? 0) < 5}
-              onClick={() => void decide(row, "return")}
+              onClick={() => decide(row, "return")}
             >
               Return to HR
             </Button>

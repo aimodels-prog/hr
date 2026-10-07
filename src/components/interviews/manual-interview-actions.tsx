@@ -229,7 +229,7 @@ export function ManualInterviewActions({
             </Button>
             <Button
               disabled={saving || outcomeReason.trim().length < 5}
-              onClick={() => void saveOutcome()}
+              onClick={() => saveOutcome()}
             >
               Save outcome
             </Button>
@@ -349,7 +349,7 @@ export function ManualInterviewActions({
                 !grade.trim() ||
                 hireReason.trim().length < 5
               }
-              onClick={() => void prepareHire()}
+              onClick={() => prepareHire()}
             >
               <CheckCircle2 className="mr-1.5 h-4 w-4" /> Confirm and continue
             </Button>

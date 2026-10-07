@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { useEffect, useState, useMemo, useRef } from "react";
 import { RequirementFields } from "@/components/documents/requirement-fields";
 import {
@@ -558,7 +559,7 @@ export function DocumentsTab({
                 )}
               </DialogHeader>
               <Form {...form}>
-                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                <SafeForm onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
                   {!isReplacing && (
                     <div className="space-y-2">
                       <Label htmlFor="document-person">Who is this document for?</Label>
@@ -814,7 +815,7 @@ export function DocumentsTab({
                     </Button>
                     <Button type="submit">Upload</Button>
                   </DialogFooter>
-                </form>
+                </SafeForm>
               </Form>
             </DialogContent>
           </Dialog>
@@ -1108,7 +1109,7 @@ export function DocumentsTab({
             <Button variant="outline" onClick={() => setVerifyingDocument(null)}>
               Cancel
             </Button>
-            <Button onClick={() => void confirmVerification()}>Save and verify</Button>
+            <Button onClick={() => confirmVerification()}>Save and verify</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

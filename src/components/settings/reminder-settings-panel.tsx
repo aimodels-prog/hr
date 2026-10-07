@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { useEffect, useState } from "react";
 import { useCurrentUser } from "@/lib/auth";
 import { type ReminderRules, ReminderRulesSchema } from "@/lib/data/reminder-rules";
@@ -77,7 +78,7 @@ export function ReminderSettingsPanel() {
     </label>
   );
   return (
-    <form
+    <SafeForm
       className="space-y-5 max-w-3xl"
       onSubmit={async (e) => {
         e.preventDefault();
@@ -210,6 +211,6 @@ export function ReminderSettingsPanel() {
         </p>
       )}
       <Button disabled={saving}>{saving ? "Saving…" : "Save reminder settings"}</Button>
-    </form>
+    </SafeForm>
   );
 }

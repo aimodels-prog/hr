@@ -245,7 +245,7 @@ function OvertimeLedgerContent() {
         breadcrumbs={[{ label: "Finance" }, { label: "Overtime Ledger" }]}
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => void refresh()} disabled={isRefreshing}>
+            <Button variant="outline" onClick={() => refresh()} disabled={isRefreshing}>
               <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
               Refresh
             </Button>
@@ -438,7 +438,7 @@ function OvertimeLedgerContent() {
                               variant="ghost"
                               size="icon"
                               aria-label={`Open evidence for ${row.employeeName}`}
-                              onClick={() => void openEvidence(row.claimId)}
+                              onClick={() => openEvidence(row.claimId)}
                               disabled={openingEvidenceId === row.claimId}
                             >
                               {openingEvidenceId === row.claimId ? (
@@ -561,7 +561,7 @@ function OvertimeLedgerContent() {
               {selectedRow.hasEvidence && (
                 <Button
                   variant="outline"
-                  onClick={() => void openEvidence(selectedRow.claimId)}
+                  onClick={() => openEvidence(selectedRow.claimId)}
                   disabled={openingEvidenceId === selectedRow.claimId}
                 >
                   {openingEvidenceId === selectedRow.claimId ? (

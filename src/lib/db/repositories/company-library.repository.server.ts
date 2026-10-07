@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, desc, inArray, sql, isNull } from "drizzle-orm";
 import { getDatabaseClient } from "../client.ts";
 import { companyLibrary as docs } from "../schema/company-library.ts";
+import { fileMetadata } from "../schema/documents.ts";
 import { users, userRoles, roles, employees } from "../schema/employee.ts";
 import { notifications, auditEvents } from "../schema/system.ts";
 import { decryptSensitiveJson, encryptSensitiveJson } from "../encryption.server.ts";
@@ -158,6 +159,32 @@ export async function libraryUpload(
   });
   try {
     await getDatabaseClient().transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext(${org + ":library-upload:" + file.checksum}))`,
+      );
+      const [duplicate] = await tx
+        .select({ id: docs.id })
+        .from(docs)
+        .innerJoin(fileMetadata, eq(fileMetadata.id, docs.fileId))
+        .where(
+          and(
+            eq(docs.organisationId, org),
+            eq(docs.kind, input.kind),
+            eq(docs.title, input.title),
+            eq(docs.category, input.category),
+            eq(docs.audience, input.kind === "Company" ? "HR only" : input.audience),
+            sql`${docs.employeeIds} @> ${"{" + (input.audience === "Selected employees" ? employeeIds.join(",") : "") + "}"}::uuid[] AND ${docs.employeeIds} <@ ${"{" + (input.audience === "Selected employees" ? employeeIds.join(",") : "") + "}"}::uuid[]`,
+            sql`${docs.issueDate} IS NOT DISTINCT FROM ${input.issueDate ?? null}::date`,
+            sql`${docs.expiryDate} IS NOT DISTINCT FROM ${input.expiryDate ?? null}::date`,
+            isNull(docs.archivedAt),
+            sql`${docs.status} IN ('Draft', 'Published')`,
+            input.familyId ? eq(docs.familyId, input.familyId) : undefined,
+            eq(fileMetadata.checksum, file.checksum!),
+          ),
+        )
+        .limit(1);
+      if (duplicate)
+        throw new Error("This document is already uploaded. Refresh the document list to see it.");
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${org + familyId}))`);
       const previous = await tx
         .select()

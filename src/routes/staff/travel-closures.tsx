@@ -325,7 +325,7 @@ function TravelClosuresContent() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => void viewReceipt(selectedReq.id, line.id)}
+                            onClick={() => viewReceipt(selectedReq.id, line.id)}
                           >
                             <Paperclip className="w-3.5 h-3.5" />
                           </Button>
@@ -339,7 +339,7 @@ function TravelClosuresContent() {
               </table>
             </div>
             {selectedReq?.evidenceFileId && (
-              <Button variant="outline" size="sm" onClick={() => void viewEvidence(selectedReq.id)}>
+              <Button variant="outline" size="sm" onClick={() => viewEvidence(selectedReq.id)}>
                 <Paperclip className="w-3.5 h-3.5 mr-1" /> View trip evidence
               </Button>
             )}
@@ -361,7 +361,7 @@ function TravelClosuresContent() {
             </Button>
             <Button
               variant={actionType === "approve" ? "default" : "destructive"}
-              onClick={() => void handleFinalise()}
+              onClick={() => handleFinalise()}
               disabled={actionType === "reject" && notes.trim().length < 3}
             >
               {actionType === "approve" ? "Confirm Closure" : "Confirm Rejection"}

@@ -456,18 +456,14 @@ function OnboardingCaseRoute() {
                               <Button
                                 size="sm"
                                 disabled={busyTaskId === task.id}
-                                onClick={() => void handleComplete(task)}
+                                onClick={() => handleComplete(task)}
                               >
                                 {busyTaskId === task.id ? "Saving..." : "Mark complete"}
                               </Button>
                             </div>
                           </div>
                         ) : task.evidenceFileId ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void viewEvidence(task)}
-                          >
+                          <Button variant="outline" size="sm" onClick={() => viewEvidence(task)}>
                             <Eye className="h-4 w-4" /> View evidence
                           </Button>
                         ) : null}

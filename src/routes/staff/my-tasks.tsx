@@ -112,7 +112,7 @@ function MyTasksRoute() {
             : `Approvals and actions assigned to you while working as ${currentUser.activeRole === "Line Manager" ? "Supervisor" : currentUser.activeRole}.`
         }
         actions={
-          <Button variant="outline" onClick={() => void loadTasks()} disabled={isLoading}>
+          <Button variant="outline" onClick={() => loadTasks()} disabled={isLoading}>
             <RefreshCcw className={isLoading ? "animate-spin" : ""} /> Refresh
           </Button>
         }
@@ -198,7 +198,7 @@ function MyTasksRoute() {
               <h2 className="font-semibold">Tasks could not be loaded</h2>
               <p className="mt-1 text-sm text-muted-foreground">{error}</p>
             </div>
-            <Button onClick={() => void loadTasks()}>Try again</Button>
+            <Button onClick={() => loadTasks()}>Try again</Button>
           </CardContent>
         </Card>
       ) : filteredTasks.length === 0 ? (

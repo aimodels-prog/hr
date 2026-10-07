@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, useMemo } from "react";
@@ -881,7 +882,7 @@ function CandidateProfile({
                         <DialogTitle>Edit HR Candidate Record</DialogTitle>
                       </DialogHeader>
                       <Form {...recruitmentForm}>
-                        <form
+                        <SafeForm
                           onSubmit={recruitmentForm.handleSubmit(onSubmitRecruitmentDetails)}
                           className="space-y-4"
                         >
@@ -1189,7 +1190,7 @@ function CandidateProfile({
                           <Button type="submit" className="w-full">
                             Save candidate record
                           </Button>
-                        </form>
+                        </SafeForm>
                       </Form>
                     </DialogContent>
                   </Dialog>
@@ -1377,7 +1378,7 @@ function CandidateProfile({
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => void downloadCandidateCv(record.id)}
+                            onClick={() => downloadCandidateCv(record.id)}
                           >
                             <ArrowLeft className="mr-2 h-4 w-4 rotate-[270deg]" /> Download
                           </Button>
@@ -1406,7 +1407,7 @@ function CandidateProfile({
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => void downloadCv(app.cvFileId)}
+                            onClick={() => downloadCv(app.cvFileId)}
                           >
                             <ArrowLeft className="mr-2 h-4 w-4 rotate-[270deg]" /> Download
                           </Button>
@@ -1436,7 +1437,7 @@ function CandidateProfile({
                       <DialogTitle>Log Contact Event</DialogTitle>
                     </DialogHeader>
                     <Form {...form}>
-                      <form onSubmit={form.handleSubmit(onSubmitContact)} className="space-y-4">
+                      <SafeForm onSubmit={form.handleSubmit(onSubmitContact)} className="space-y-4">
                         <div className="grid grid-cols-2 gap-4">
                           <FormField
                             control={form.control}
@@ -1572,7 +1573,7 @@ function CandidateProfile({
                         <div className="flex justify-end pt-4">
                           <Button type="submit">Save Contact</Button>
                         </div>
-                      </form>
+                      </SafeForm>
                     </Form>
                   </DialogContent>
                 </Dialog>
@@ -1998,7 +1999,7 @@ function CandidateProfile({
                       <DialogTitle>Add Recommendation Source</DialogTitle>
                     </DialogHeader>
                     <Form {...recForm}>
-                      <form
+                      <SafeForm
                         onSubmit={recForm.handleSubmit(onSubmitRecommendation)}
                         className="space-y-4"
                       >
@@ -2184,7 +2185,7 @@ function CandidateProfile({
                         <div className="flex justify-end pt-4">
                           <Button type="submit">Add Recommendation</Button>
                         </div>
-                      </form>
+                      </SafeForm>
                     </Form>
                   </DialogContent>
                 </Dialog>

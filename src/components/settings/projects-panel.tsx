@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -337,7 +338,7 @@ export function ProjectsPanel() {
       <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
         <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)}>
+            <SafeForm onSubmit={form.handleSubmit(onSubmit)}>
               <DialogHeader>
                 <DialogTitle>{editingProject ? "Edit Project" : "New Project"}</DialogTitle>
                 <DialogDescription>
@@ -506,7 +507,7 @@ export function ProjectsPanel() {
                 </Button>
                 <Button type="submit">Save Changes</Button>
               </DialogFooter>
-            </form>
+            </SafeForm>
           </Form>
         </DialogContent>
       </Dialog>

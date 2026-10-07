@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, MapPin, Building2, Upload, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -337,7 +338,7 @@ function JobDetail() {
             <h2 className="mb-6 mt-2 text-2xl font-medium">Apply for this position</h2>
 
             <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <SafeForm onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <FormField
                     control={form.control}
@@ -586,7 +587,7 @@ function JobDetail() {
                   {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                   Submit Application
                 </Button>
-              </form>
+              </SafeForm>
             </Form>
           </aside>
         </div>

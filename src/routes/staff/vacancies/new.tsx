@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
@@ -386,7 +387,7 @@ function NewVacancy() {
       />
 
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmitForm)} className="space-y-8 mt-6">
+        <SafeForm onSubmit={form.handleSubmit(onSubmitForm)} className="space-y-8 mt-6">
           <Card>
             <CardHeader>
               <CardTitle>1. Business Request</CardTitle>
@@ -906,7 +907,7 @@ function NewVacancy() {
               </Button>
             </div>
           </div>
-        </form>
+        </SafeForm>
       </Form>
 
       {/* Preview Dialog */}

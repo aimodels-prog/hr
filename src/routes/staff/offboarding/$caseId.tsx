@@ -555,7 +555,7 @@ function OffboardingCaseRoute() {
                               <Button
                                 size="sm"
                                 disabled={busyTaskId === task.id}
-                                onClick={() => void handleComplete(task)}
+                                onClick={() => handleComplete(task)}
                               >
                                 {busyTaskId === task.id ? "Saving..." : "Mark complete"}
                               </Button>

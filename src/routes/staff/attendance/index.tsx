@@ -968,7 +968,7 @@ function AttendanceAdminContent() {
               <Button
                 variant="outline"
                 disabled={deviceLoading}
-                onClick={() => void loadDeviceAdministration()}
+                onClick={() => loadDeviceAdministration()}
               >
                 <RefreshCw className={`mr-2 h-4 w-4 ${deviceLoading ? "animate-spin" : ""}`} />
                 Refresh
@@ -1049,7 +1049,7 @@ function AttendanceAdminContent() {
                               variant="outline"
                               size="sm"
                               disabled={creatingPairingCode || !device.isActive}
-                              onClick={() => void createPairingCode(device)}
+                              onClick={() => createPairingCode(device)}
                             >
                               {device.pairedAt ? "Reconnect" : "Connect"}
                             </Button>
@@ -1499,11 +1499,7 @@ function AttendanceAdminContent() {
                 />
               </div>
               <div className="flex flex-col gap-2 sm:flex-row">
-                <Button
-                  variant="outline"
-                  disabled={capturingOffice}
-                  onClick={() => void locateOffice()}
-                >
+                <Button variant="outline" disabled={capturingOffice} onClick={() => locateOffice()}>
                   <MapPin className="mr-2 h-4 w-4" />
                   {capturingOffice ? "Finding location…" : "Show My Location"}
                 </Button>
@@ -1859,7 +1855,7 @@ function AttendanceAdminContent() {
               disabled={
                 !deviceCode.trim() || !deviceName.trim() || !deviceLocationId || savingDevice
               }
-              onClick={() => void saveDevice()}
+              onClick={() => saveDevice()}
             >
               {savingDevice ? "Saving..." : "Save Terminal"}
             </Button>
@@ -1930,7 +1926,7 @@ function AttendanceAdminContent() {
             </Button>
             <Button
               disabled={changingMatch || !changeEmployeeId || !!changePreview?.blocked.length}
-              onClick={() => void changeMatchedEmployee(!!changePreview)}
+              onClick={() => changeMatchedEmployee(!!changePreview)}
             >
               {changingMatch
                 ? "Please wait…"
@@ -2018,7 +2014,7 @@ function AttendanceAdminContent() {
             <Button
               variant={removePreview ? "destructive" : "default"}
               disabled={removingMatch || !!removePreview?.blocked.length}
-              onClick={() => void removeMatchedEmployee()}
+              onClick={() => removeMatchedEmployee()}
             >
               {removingMatch
                 ? "Please wait…"
@@ -2085,7 +2081,7 @@ function AttendanceAdminContent() {
             </Button>
             <Button
               disabled={!mappingEmployeeId || savingMapping}
-              onClick={() => void saveDeviceMapping()}
+              onClick={() => saveDeviceMapping()}
             >
               {savingMapping ? "Matching..." : "Confirm Match"}
             </Button>

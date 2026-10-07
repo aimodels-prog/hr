@@ -469,7 +469,7 @@ function MyOvertimeRoute() {
                 Cancel
               </Button>
               <Button
-                onClick={() => void handleSubmit()}
+                onClick={() => handleSubmit()}
                 disabled={
                   !dateStr ||
                   !hoursStr ||

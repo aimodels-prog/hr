@@ -290,17 +290,17 @@ function PayrollWorkbenchContent() {
             </Badge>
 
             {(isEditable || (period.status === "Prepared" && !period.preparedBy)) && (
-              <Button onClick={() => void handleCollect()} variant="outline">
+              <Button onClick={() => handleCollect()} variant="outline">
                 <Play className="w-4 h-4 mr-2" /> Collect Inputs
               </Button>
             )}
             {period.status === "Prepared" && currentUser.activeRole === "Accounts" && (
-              <Button onClick={() => void handleApprove()}>
+              <Button onClick={() => handleApprove()}>
                 <CheckCircle className="w-4 h-4 mr-2" /> Approve Payroll
               </Button>
             )}
             {period.status === "Approved" && (
-              <Button onClick={() => void handleLock()}>
+              <Button onClick={() => handleLock()}>
                 <Lock className="w-4 h-4 mr-2" /> Lock Period
               </Button>
             )}
@@ -311,7 +311,7 @@ function PayrollWorkbenchContent() {
                     Reopen for Correction
                   </Button>
                 )}
-                <Button onClick={() => void handleExport()}>
+                <Button onClick={() => handleExport()}>
                   <Download className="w-4 h-4 mr-2" /> Export CSV
                 </Button>
               </>
@@ -451,7 +451,7 @@ function PayrollWorkbenchContent() {
                             <Button
                               size="sm"
                               variant="ghost"
-                              onClick={() => void handleViewEvidence(adj.id)}
+                              onClick={() => handleViewEvidence(adj.id)}
                             >
                               <FileText className="mr-1 h-4 w-4" /> View
                             </Button>
@@ -564,7 +564,7 @@ function PayrollWorkbenchContent() {
             <Button variant="outline" onClick={() => setShowAckDialog(null)}>
               Cancel
             </Button>
-            <Button onClick={() => void handleAcknowledge()} disabled={ackNotes.trim().length < 5}>
+            <Button onClick={() => handleAcknowledge()} disabled={ackNotes.trim().length < 5}>
               Confirm Acknowledgment
             </Button>
           </DialogFooter>
@@ -664,7 +664,7 @@ function PayrollWorkbenchContent() {
             <Button variant="outline" onClick={() => setShowManualDialog(false)}>
               Cancel
             </Button>
-            <Button onClick={() => void handleAddManual()} disabled={!manualEvidence}>
+            <Button onClick={() => handleAddManual()} disabled={!manualEvidence}>
               Add Adjustment
             </Button>
           </DialogFooter>
@@ -688,7 +688,7 @@ function PayrollWorkbenchContent() {
             <Button variant="outline" onClick={() => setShowReopenDialog(false)}>
               Cancel
             </Button>
-            <Button onClick={() => void handleReopen()} disabled={reopenReason.trim().length < 5}>
+            <Button onClick={() => handleReopen()} disabled={reopenReason.trim().length < 5}>
               Reopen Payroll
             </Button>
           </DialogFooter>

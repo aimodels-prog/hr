@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -62,7 +63,7 @@ export function MasterDataForm<T extends MasterRecord>({
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[425px]">
-        <form onSubmit={handleSubmit}>
+        <SafeForm onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle>
               {initialData ? "Edit" : "New"} {title}
@@ -132,7 +133,7 @@ export function MasterDataForm<T extends MasterRecord>({
             </Button>
             <Button type="submit">Save Changes</Button>
           </DialogFooter>
-        </form>
+        </SafeForm>
       </DialogContent>
     </Dialog>
   );

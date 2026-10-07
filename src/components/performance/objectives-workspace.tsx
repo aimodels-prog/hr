@@ -353,7 +353,7 @@ export function ObjectivesWorkspace() {
                                   variant="ghost"
                                   size="sm"
                                   className="h-6 shrink-0 px-2"
-                                  onClick={() => void viewEvidence(goal.id, checkIn.id)}
+                                  onClick={() => viewEvidence(goal.id, checkIn.id)}
                                 >
                                   <FileText className="mr-1 h-3.5 w-3.5" /> Evidence
                                 </Button>

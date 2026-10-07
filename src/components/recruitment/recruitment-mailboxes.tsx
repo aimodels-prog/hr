@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -100,7 +101,7 @@ export function RecruitmentMailboxes({ vacancies }: { vacancies: Vacancy[] }) {
         {error && (
           <p role="alert">
             {error}{" "}
-            <Button variant="outline" onClick={() => void reload()}>
+            <Button variant="outline" onClick={() => reload()}>
               Retry
             </Button>
           </p>
@@ -111,11 +112,11 @@ export function RecruitmentMailboxes({ vacancies }: { vacancies: Vacancy[] }) {
             separate and is not affected.
           </p>
         )}
-        <form
+        <SafeForm
           className="flex flex-wrap items-end gap-2"
           onSubmit={(event) => {
             event.preventDefault();
-            void add();
+            return add();
           }}
         >
           <div className="min-w-0 flex-1">
@@ -130,10 +131,10 @@ export function RecruitmentMailboxes({ vacancies }: { vacancies: Vacancy[] }) {
             />
           </div>
           <Button disabled={busy || !overview?.configured}>Add mailbox</Button>
-          <Button type="button" variant="outline" onClick={() => void reload()}>
+          <Button type="button" variant="outline" onClick={() => reload()}>
             Refresh
           </Button>
-        </form>
+        </SafeForm>
         {overview?.mailboxes.map((mailbox) => (
           <MailboxCard key={mailbox.id} mailbox={mailbox} vacancies={vacancies} reload={reload} />
         ))}
@@ -220,11 +221,11 @@ function MailboxCard({
           {mailbox.lastError}
         </p>
       )}
-      <form method="post" action={`${endpoint}?id=${mailbox.id}&action=connect`}>
+      <SafeForm method="post" action={`${endpoint}?id=${mailbox.id}&action=connect`}>
         <Button variant="outline" type="submit">
           {mailbox.connected ? "Reconnect Google" : "Connect Google"}
         </Button>
-      </form>
+      </SafeForm>
       {mailbox.connected && (
         <>
           <div className="grid gap-3 sm:grid-cols-3">
@@ -238,7 +239,7 @@ function MailboxCard({
                   : [{ id: mailbox.labelId, name: mailbox.labelId }]
                 ).map((l) => ({ value: l.id, label: l.name }))}
               />
-              <Button variant="link" disabled={busy} onClick={() => void loadLabels()}>
+              <Button variant="link" disabled={busy} onClick={() => loadLabels()}>
                 Load Google labels
               </Button>
             </div>
@@ -288,14 +289,14 @@ function MailboxCard({
                 since !== mailbox.sinceDate ||
                 vacancy !== (mailbox.vacancyId ?? "none")
               }
-              onClick={() => void action(mailbox.paused ? "resume" : "pause")}
+              onClick={() => action(mailbox.paused ? "resume" : "pause")}
             >
               {mailbox.paused ? "Start importing" : "Pause imports"}
             </Button>
-            <Button disabled={busy} variant="outline" onClick={() => void action("retry")}>
+            <Button disabled={busy} variant="outline" onClick={() => action("retry")}>
               Check again / retry
             </Button>
-            <Button disabled={busy} variant="ghost" onClick={() => void action("disconnect")}>
+            <Button disabled={busy} variant="ghost" onClick={() => action("disconnect")}>
               Disconnect
             </Button>
           </div>

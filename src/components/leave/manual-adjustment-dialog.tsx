@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useEffect, useMemo, useState } from "react";
 import { Scale } from "lucide-react";
@@ -147,7 +148,7 @@ export function ManualAdjustmentDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-5 pt-2">
+        <SafeForm onSubmit={handleSubmit} className="space-y-5 pt-2">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="balance-employee">Employee</Label>
@@ -251,7 +252,7 @@ export function ManualAdjustmentDialog({
               {isSubmitting ? "Saving…" : "Save Balance"}
             </Button>
           </DialogFooter>
-        </form>
+        </SafeForm>
       </DialogContent>
     </Dialog>
   );

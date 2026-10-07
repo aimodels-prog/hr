@@ -1,4 +1,5 @@
 import { SYSTEM_CONTEXT } from "./types.ts";
+import { isCeoPosition } from "./executive-reporting.ts";
 import { parse as parseCsv } from "csv-parse/browser/esm/sync";
 import readXlsxFile from "read-excel-file/browser";
 import type { EmployeeService } from "./employee-service.ts";
@@ -501,6 +502,13 @@ export class EmployeeImportService {
 
     for (const entry of resolved) {
       const managerNumber = entry.row.managerEmployeeNumber?.toLowerCase();
+      if (isCeoPosition(entry.row.position)) {
+        if (managerNumber)
+          entry.blockingErrors.push(
+            "The CEO has no supervisor. Leave the manager's employee number blank.",
+          );
+        continue;
+      }
       if (!managerNumber) {
         if (batchHasExistingOrgAlready) {
           entry.blockingErrors.push(

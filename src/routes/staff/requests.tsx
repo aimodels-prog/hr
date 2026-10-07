@@ -115,7 +115,7 @@ function RequestCentre() {
                 <Button
                   variant="outline"
                   disabled={active.isFetching}
-                  onClick={() => void active.refetch()}
+                  onClick={() => active.refetch()}
                 >
                   Refresh
                 </Button>

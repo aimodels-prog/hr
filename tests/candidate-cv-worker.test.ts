@@ -106,7 +106,8 @@ test(
           fileName: `same-cv-${randomUUID()}.pdf`,
           mimeType: "application/pdf",
           bytes: pdf,
-          source: "Direct Email",
+          // A distinct intake source can reuse extraction, not create duplicates in one source.
+          source: "HR Upload",
           receivedAt: new Date().toISOString(),
           consentStatus: "Confirmed",
           isRecommended: false,

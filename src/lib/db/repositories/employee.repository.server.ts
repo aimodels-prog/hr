@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { isCeoPosition, validateCeoSupervisor } from "../../data/executive-reporting.ts";
 import {
   changedRecordFields,
   changeReason,
@@ -1087,6 +1088,17 @@ async function applyEmploymentRecord(
 
   const departmentId = await resolveNamedMaster(departments, changes.department, "department");
   const positionId = await resolveNamedMaster(positions, changes.position, "position");
+  if (changes.position !== undefined || changes.lineManagerId !== undefined) {
+    const [currentPosition] = await tx
+      .select({ name: positions.name })
+      .from(positions)
+      .where(eq(positions.id, current.positionId))
+      .limit(1);
+    validateCeoSupervisor(
+      changes.position ?? currentPosition?.name ?? "",
+      changes.lineManagerId === undefined ? current.lineManagerId : changes.lineManagerId,
+    );
+  }
   const gradeId = await resolveNamedMaster(grades, changes.grade, "grade");
   const locationId = await resolveNamedMaster(locations, changes.location, "location");
   const employmentTypeId = await resolveNamedMaster(
@@ -1759,7 +1771,8 @@ export async function createEmployeeInDatabase(
       .from(employees)
       .where(and(eq(employees.organisationId, organisationId), ne(employees.status, "Archived")));
     const employeeCount = employeeCountRow?.count ?? 0;
-    if ((employeeCount ?? 0) > 0 && !input.lineManagerId) {
+    validateCeoSupervisor(input.position, input.lineManagerId);
+    if ((employeeCount ?? 0) > 0 && !input.lineManagerId && !isCeoPosition(input.position)) {
       throw new Error("A supervisor must be assigned before an employee record can be created.");
     }
     if (input.lineManagerId) {

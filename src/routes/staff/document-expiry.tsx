@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useState, useMemo, useEffect } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
@@ -369,7 +370,7 @@ function DocumentExpiryRoute() {
                                 </TabsList>
                                 <TabsContent value="assign" className="mt-4">
                                   <Form {...assignForm}>
-                                    <form
+                                    <SafeForm
                                       onSubmit={assignForm.handleSubmit(onAssign)}
                                       className="space-y-4"
                                     >
@@ -397,12 +398,12 @@ function DocumentExpiryRoute() {
                                         )}
                                       />
                                       <Button type="submit">Assign</Button>
-                                    </form>
+                                    </SafeForm>
                                   </Form>
                                 </TabsContent>
                                 <TabsContent value="snooze" className="mt-4">
                                   <Form {...snoozeForm}>
-                                    <form
+                                    <SafeForm
                                       onSubmit={snoozeForm.handleSubmit(onSnooze)}
                                       className="space-y-4"
                                     >
@@ -433,12 +434,12 @@ function DocumentExpiryRoute() {
                                         )}
                                       />
                                       <Button type="submit">Snooze</Button>
-                                    </form>
+                                    </SafeForm>
                                   </Form>
                                 </TabsContent>
                                 <TabsContent value="waive" className="mt-4">
                                   <Form {...waiveForm}>
-                                    <form
+                                    <SafeForm
                                       onSubmit={waiveForm.handleSubmit(onWaive)}
                                       className="space-y-4"
                                     >
@@ -462,7 +463,7 @@ function DocumentExpiryRoute() {
                                       <Button type="submit" variant="destructive">
                                         Record Waiver
                                       </Button>
-                                    </form>
+                                    </SafeForm>
                                   </Form>
                                 </TabsContent>
                               </Tabs>

@@ -234,7 +234,7 @@ export function OvertimeOnBehalfDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button disabled={!valid || saving} onClick={() => void submit()}>
+          <Button disabled={!valid || saving} onClick={() => submit()}>
             {saving ? "Saving…" : "Record Claim"}
           </Button>
         </DialogFooter>

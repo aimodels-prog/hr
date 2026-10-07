@@ -195,7 +195,7 @@ function AttendanceCorrectionsRoute() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => void downloadEvidence(correction.id)}
+                          onClick={() => downloadEvidence(correction.id)}
                         >
                           <Download className="mr-1 h-3 w-3" /> View
                         </Button>

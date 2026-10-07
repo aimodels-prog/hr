@@ -169,8 +169,7 @@ function CompanyLibrary() {
         <SectionPanel value={tab}>
           {query.isError && (
             <p role="alert">
-              Documents could not be loaded.{" "}
-              <Button onClick={() => void query.refetch()}>Retry</Button>
+              Documents could not be loaded. <Button onClick={() => query.refetch()}>Retry</Button>
             </p>
           )}
           {query.isPending && <p role="status">Loading documents…</p>}
@@ -268,7 +267,7 @@ function CompanyLibrary() {
                       )}
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <Button variant="outline" disabled={busy} onClick={() => void download(doc)}>
+                      <Button variant="outline" disabled={busy} onClick={() => download(doc)}>
                         Download PDF
                       </Button>
                       {hr && (
@@ -428,7 +427,7 @@ function CompanyLibrary() {
                   {employeeQuery.isError && (
                     <p role="alert">
                       Employees could not be loaded.{" "}
-                      <button type="button" onClick={() => void employeeQuery.refetch()}>
+                      <button type="button" onClick={() => employeeQuery.refetch()}>
                         Retry
                       </button>
                     </p>
@@ -516,7 +515,7 @@ function CompanyLibrary() {
               (audience === "Selected employees" && !employeeIds.length) ||
               (kind === "Company" && !noExpiry && !expiryDate)
             }
-            onClick={() => void upload()}
+            onClick={() => upload()}
           >
             {busy ? "Saving…" : "Save draft"}
           </Button>

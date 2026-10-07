@@ -133,7 +133,7 @@ export function SickLeaveBackdateDialog({
             </Button>
             <Button
               disabled={saving || !employeeId || !startDate || !endDate || reason.trim().length < 5}
-              onClick={() => void save()}
+              onClick={() => save()}
             >
               {saving ? "Saving…" : "Grant permission"}
             </Button>

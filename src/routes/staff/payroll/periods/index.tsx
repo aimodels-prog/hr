@@ -197,7 +197,7 @@ function PayrollPeriodsContent() {
             <Button variant="outline" onClick={() => setShowCreate(false)}>
               Cancel
             </Button>
-            <Button onClick={() => void handleCreate()}>Create Period</Button>
+            <Button onClick={() => handleCreate()}>Create Period</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

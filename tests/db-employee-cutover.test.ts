@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
 import postgres from "postgres";
+import { libraryUpload } from "../src/lib/db/repositories/company-library.repository.server.ts";
+import { uploadCandidateCvIntakeToDatabase } from "../src/lib/db/repositories/candidate-cv-intake.repository.server.ts";
 import {
   getDocumentRequirementSettings,
   saveDocumentRequirementSettings,
@@ -129,6 +131,37 @@ test(
         FROM roles WHERE code IN ('Employee', 'HR', 'Super Admin')
         ON CONFLICT DO NOTHING
       `;
+
+      await sql`INSERT INTO positions (id, organisation_id, name, code, is_active, created_by, updated_by)
+        VALUES (${randomUUID()}, ${organisationId}, 'CEO', 'CEO', true, ${managerUserId}, ${managerUserId})`;
+      const chiefInput = {
+        employeeNumber: "CEO-TEST",
+        legalName: "Test Chief",
+        preferredName: "Chief",
+        workEmail: `chief-${organisationId}@viahr.test`,
+        department: "Operations",
+        position: "CEO",
+        location: "Head Office",
+        employmentType: "Full-time",
+        startDate: "2026-01-01",
+        status: "Active" as const,
+      };
+      await assert.rejects(
+        createEmployeeInDatabase(
+          organisationId,
+          { ...chiefInput, lineManagerId: managerEmployeeId },
+          actor,
+        ),
+        /CEO has no supervisor/,
+      );
+      await assert.rejects(
+        createEmployeeInDatabase(organisationId, { ...chiefInput, position: "Manager" }, actor),
+        /supervisor must be assigned/,
+      );
+      const chief = await createEmployeeInDatabase(organisationId, chiefInput, actor);
+      const [chiefRow] =
+        await sql`SELECT line_manager_id FROM employees WHERE id=${chief.employeeId}`;
+      assert.equal(chiefRow.line_manager_id, null);
 
       const created = await createEmployeeInDatabase(
         organisationId,
@@ -257,6 +290,63 @@ test(
         selfActor,
       );
       const config = await getDocumentRequirementSettings(organisationId);
+      const duplicateInput = {
+        employeeId: created.employeeId,
+        type: "other" as const,
+        fileName: "concurrent-upload.pdf",
+        mimeType: "application/pdf",
+        bytes: new TextEncoder().encode("%PDF-1.4 concurrent identical employee file"),
+      };
+      const attempts = await Promise.allSettled(
+        Array.from({ length: 6 }, () =>
+          uploadEmployeeDocumentToDatabase(organisationId, duplicateInput, actor),
+        ),
+      );
+      assert.equal(attempts.filter((r) => r.status === "fulfilled").length, 1);
+      for (const result of attempts)
+        if (result.status === "rejected") assert.match(String(result.reason), /already uploaded/);
+      await assert.rejects(
+        uploadEmployeeDocumentToDatabase(
+          organisationId,
+          { ...duplicateInput, fileName: "renamed.pdf" },
+          actor,
+        ),
+        /already uploaded/,
+      );
+      const libraryInput = {
+        title: "Concurrent handbook",
+        category: "Policy",
+        kind: "Library" as const,
+        audience: "All staff" as const,
+        name: "policy.pdf",
+        bytes: new TextEncoder().encode("%PDF-1.4 concurrent identical library file"),
+      };
+      const libraryAttempts = await Promise.allSettled(
+        Array.from({ length: 6 }, () => libraryUpload(organisationId, libraryInput, actor)),
+      );
+      assert.equal(libraryAttempts.filter((r) => r.status === "fulfilled").length, 1);
+      for (const result of libraryAttempts)
+        if (result.status === "rejected") assert.match(String(result.reason), /already uploaded/);
+      const [counted] = await sql`SELECT count(*)::int AS count FROM company_library
+        WHERE organisation_id=${organisationId} AND title='Concurrent handbook'`;
+      assert.equal(counted.count, 1);
+      const cvInput = {
+        fileName: "concurrent-cv.pdf",
+        mimeType: "application/pdf",
+        bytes: new TextEncoder().encode("%PDF-1.4 concurrent CV"),
+        source: "HR Upload" as const,
+        receivedAt: new Date().toISOString(),
+        consentStatus: "Confirmed" as const,
+        isRecommended: false,
+      };
+      const cvAttempts = await Promise.allSettled(
+        Array.from({ length: 6 }, () =>
+          uploadCandidateCvIntakeToDatabase(organisationId, cvInput, actor),
+        ),
+      );
+      assert.equal(cvAttempts.filter((r) => r.status === "fulfilled").length, 1);
+      for (const result of cvAttempts)
+        if (result.status === "rejected") assert.match(String(result.reason), /already uploaded/);
       await assert.rejects(
         saveDocumentRequirementSettings(
           organisationId,

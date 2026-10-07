@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { useState, useMemo, useEffect } from "react";
 import {
   Dialog,
@@ -217,7 +218,7 @@ export function LeaveRequestDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-6 py-4">
+        <SafeForm onSubmit={handleSubmit} className="space-y-6 py-4">
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>
@@ -536,7 +537,7 @@ export function LeaveRequestDialog({
               {isSubmitting ? "Submitting..." : "Submit Request"}
             </Button>
           </DialogFooter>
-        </form>
+        </SafeForm>
       </DialogContent>
     </Dialog>
   );

@@ -1,3 +1,4 @@
+import { SafeForm } from "@/components/ui/safe-form";
 import { dependantSchema } from "@/lib/data/dependants";
 import { useEffect, useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -342,7 +343,7 @@ export function PersonalTab({
                   <DialogTitle>Edit Personal Details</DialogTitle>
                 </DialogHeader>
                 <Form {...form}>
-                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 pt-4">
+                  <SafeForm onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 pt-4">
                     <div className="grid gap-4 sm:grid-cols-2">
                       <FormField
                         control={form.control}
@@ -705,7 +706,7 @@ export function PersonalTab({
                         {isSelf ? "Send to HR for review" : "Save changes"}
                       </Button>
                     </div>
-                  </form>
+                  </SafeForm>
                 </Form>
               </DialogContent>
             </Dialog>

@@ -282,6 +282,29 @@ export async function uploadCandidateCvIntakeToDatabase(
   });
   try {
     await db.transaction(async (tx) => {
+      if (!input.intakeId) {
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtext(${organisationId + ":cv-upload:" + metadata.checksum}))`,
+        );
+        const [duplicate] = await tx
+          .select({ id: candidateCvRecords.id })
+          .from(candidateCvRecords)
+          .innerJoin(recruitmentDocuments, eq(recruitmentDocuments.id, candidateCvRecords.fileId))
+          .where(
+            and(
+              eq(candidateCvRecords.organisationId, organisationId),
+              sql`${candidateCvRecords.archivedAt} IS NULL`,
+              eq(candidateCvRecords.source, input.source),
+              sql`${candidateCvRecords.vacancyId} IS NOT DISTINCT FROM ${input.vacancyId ?? null}::uuid`,
+              eq(recruitmentDocuments.checksum, metadata.checksum!),
+            ),
+          )
+          .limit(1);
+        if (duplicate)
+          throw new Error(
+            "This CV is already uploaded for this position. Open the existing CV instead.",
+          );
+      }
       await tx.insert(recruitmentDocuments).values({
         id: documentId,
         organisationId,

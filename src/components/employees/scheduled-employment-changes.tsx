@@ -105,7 +105,7 @@ export function ScheduledEmploymentChanges({
     return (
       <p role="alert">
         Scheduled changes could not be loaded.{" "}
-        <Button variant="link" onClick={() => void query.refetch()}>
+        <Button variant="link" onClick={() => query.refetch()}>
           Try again
         </Button>
       </p>
@@ -168,7 +168,7 @@ export function ScheduledEmploymentChanges({
             value={reason}
             onChange={(event) => setReason(event.target.value)}
           />
-          <Button disabled={saving || reason.trim().length < 5} onClick={() => void cancel()}>
+          <Button disabled={saving || reason.trim().length < 5} onClick={() => cancel()}>
             {saving ? "Cancelling…" : "Confirm cancellation"}
           </Button>
         </DialogContent>

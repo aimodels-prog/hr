@@ -116,11 +116,7 @@ export function CvZipDownload({ candidateIds }: { candidateIds: string[] }) {
   if (!["HR", "Super Admin"].includes(user.activeRole)) return null;
   return (
     <>
-      <Button
-        variant="outline"
-        disabled={!candidateIds.length || open}
-        onClick={() => void prepare()}
-      >
+      <Button variant="outline" disabled={!candidateIds.length || open} onClick={() => prepare()}>
         <Download className="mr-2 h-4 w-4" />
         Download CVs (ZIP)
       </Button>
@@ -170,7 +166,7 @@ export function CvZipDownload({ candidateIds }: { candidateIds: string[] }) {
             <Button variant="outline" onClick={close}>
               Cancel
             </Button>
-            <Button disabled={!manifest || busy} onClick={() => void download()}>
+            <Button disabled={!manifest || busy} onClick={() => download()}>
               Download ZIP
             </Button>
           </DialogFooter>

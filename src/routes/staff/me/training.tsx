@@ -381,7 +381,7 @@ function MyTrainingPage() {
                       !form.completionDate ||
                       !file
                     }
-                    onClick={() => void saveCertificate()}
+                    onClick={() => saveCertificate()}
                   >
                     {saving ? "Saving..." : "Save certification"}
                   </Button>
@@ -420,11 +420,7 @@ function MyTrainingPage() {
                     )}
                   </div>
                   {record.certificateFileId && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void viewCertificate(record.id)}
-                    >
+                    <Button variant="outline" size="sm" onClick={() => viewCertificate(record.id)}>
                       <FileText className="mr-2 h-4 w-4" /> View certificate
                     </Button>
                   )}

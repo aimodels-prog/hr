@@ -673,7 +673,7 @@ function Interviews() {
             <Button variant="outline" onClick={() => setReschedulingInterview(null)}>
               Cancel
             </Button>
-            <Button disabled={!rescheduleStart} onClick={() => void confirmReschedule()}>
+            <Button disabled={!rescheduleStart} onClick={() => confirmReschedule()}>
               Confirm Reschedule
             </Button>
           </DialogFooter>
@@ -776,12 +776,12 @@ function Interviews() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => void submitCandidateResponse("Declined")}>
+            <Button variant="outline" onClick={() => submitCandidateResponse("Declined")}>
               Candidate Declined
             </Button>
             <Button
               disabled={chosenSlotIndex === null}
-              onClick={() => void submitCandidateResponse("Accepted")}
+              onClick={() => submitCandidateResponse("Accepted")}
             >
               Candidate Accepted Slot
             </Button>

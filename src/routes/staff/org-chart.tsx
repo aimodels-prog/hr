@@ -229,7 +229,7 @@ function OrgChartRoute() {
             <button
               type="button"
               className="text-primary underline"
-              onClick={() => void headQuery.refetch()}
+              onClick={() => headQuery.refetch()}
             >
               Retry
             </button>
@@ -335,7 +335,7 @@ function OrgChartRoute() {
                 Shown at the top. Supervisors and approvals stay unchanged.
               </p>
               <Button
-                onClick={() => void saveHead()}
+                onClick={() => saveHead()}
                 disabled={saving || !headQuery.data || selectedHead === (headId ?? "none")}
               >
                 Save company head
@@ -384,7 +384,7 @@ function OrgChartRoute() {
               </p>
               <Button
                 variant="outline"
-                onClick={() => void saveReporting()}
+                onClick={() => saveReporting()}
                 disabled={!employeeId || saving}
               >
                 Save reporting line

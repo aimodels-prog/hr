@@ -305,7 +305,7 @@ function NewTravelRequestRoute() {
             <Button variant="outline" onClick={() => navigate({ to: "/staff/travel" })}>
               Cancel
             </Button>
-            <Button onClick={() => void handleSubmit()} disabled={!isFormValid || isSubmitting}>
+            <Button onClick={() => handleSubmit()} disabled={!isFormValid || isSubmitting}>
               {isSubmitting ? "Submitting..." : "Send for Approval"}
             </Button>
           </CardFooter>

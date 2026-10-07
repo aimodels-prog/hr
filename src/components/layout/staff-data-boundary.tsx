@@ -31,7 +31,7 @@ export function StaffDataBoundary({
         <Button
           className="mt-3"
           variant="outline"
-          onClick={() => void loader.retry(modules).catch(() => undefined)}
+          onClick={() => loader.retry(modules).catch(() => undefined)}
         >
           Try again
         </Button>
