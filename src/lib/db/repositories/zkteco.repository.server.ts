@@ -1536,7 +1536,7 @@ export async function listAttendanceDeviceAdministration(
 ) {
   requireAttendanceAdministrator(actor);
   const db = getDatabaseClient();
-  const [devices, mappings, unmatched] = await Promise.all([
+  const [devices, mappings, unmatched, latestNames] = await Promise.all([
     db
       .select({ device: attendanceDevices, locationName: locations.name })
       .from(attendanceDevices)
@@ -1571,7 +1571,32 @@ export async function listAttendanceDeviceAdministration(
       )
       .orderBy(asc(attendanceDevicePunches.occurredAt))
       .limit(500),
+    // Names are presentation data, not identity. An older waiting punch must not
+    // mask a newer machine name, and the 500-row waiting list must not limit this lookup.
+    db
+      .selectDistinctOn([attendanceDevicePunches.deviceId, attendanceDevicePunches.deviceUserId], {
+        deviceId: attendanceDevicePunches.deviceId,
+        deviceUserId: attendanceDevicePunches.deviceUserId,
+        name: attendanceDevicePunches.deviceUserName,
+      })
+      .from(attendanceDevicePunches)
+      .where(
+        and(
+          eq(attendanceDevicePunches.organisationId, organisationId),
+          sql`nullif(trim(${attendanceDevicePunches.deviceUserName}), '') IS NOT NULL`,
+        ),
+      )
+      .orderBy(
+        attendanceDevicePunches.deviceId,
+        attendanceDevicePunches.deviceUserId,
+        desc(attendanceDevicePunches.occurredAt),
+        desc(attendanceDevicePunches.receivedAt),
+        desc(attendanceDevicePunches.id),
+      ),
   ]);
+  const names = new Map(
+    latestNames.map((row) => [`${row.deviceId}:${row.deviceUserId}`, row.name]),
+  );
   return {
     devices: devices.map(({ device, locationName }) => ({
       device: {
@@ -1594,6 +1619,14 @@ export async function listAttendanceDeviceAdministration(
       locationName,
     })),
     mappings,
-    unmatched,
+    // Do not update stored historical punch names or change employee assignments.
+    unmatched: unmatched.map((row) => ({
+      ...row,
+      punch: {
+        ...row.punch,
+        deviceUserName:
+          names.get(`${row.punch.deviceId}:${row.punch.deviceUserId}`) ?? row.punch.deviceUserName,
+      },
+    })),
   };
 }

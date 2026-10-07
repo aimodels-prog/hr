@@ -643,6 +643,42 @@ test(
       const [removedAudit] =
         await sql`SELECT before_summary FROM audit_events WHERE entity_id=${match.id} AND action='remove-device-user-match'`;
       assert.equal(removedAudit.before_summary.projectedEvents.length, 2);
+
+      // A current name must not be hidden by the first historical waiting punch.
+      await ingestZktecoPunchBatch(organisationId, "front-door", {
+        punches: [
+          {
+            externalEventId: "name-old",
+            deviceUserId: "4",
+            deviceUserName: "Stephen",
+            occurredAt: "2025-09-29T11:38:57Z",
+          },
+          {
+            externalEventId: "name-new",
+            deviceUserId: "4",
+            deviceUserName: "Vahid",
+            occurredAt: "2026-10-07T04:06:20Z",
+          },
+          { externalEventId: "name-blank", deviceUserId: "4", occurredAt: "2026-10-07T04:14:23Z" },
+        ],
+      });
+      const renamed = await listAttendanceDeviceAdministration(organisationId, hrActor);
+      const waitingForFour = renamed.unmatched.filter((row) => row.punch.deviceUserId === "4");
+      assert.equal(waitingForFour.length, 3);
+      assert.ok(waitingForFour.every((row) => row.punch.deviceUserName === "Vahid"));
+      assert.equal(
+        renamed.mappings.some((row) => row.mapping.deviceUserId === "4"),
+        false,
+      );
+      const originals = await sql`
+        SELECT device_user_name, employee_id FROM attendance_device_punches
+        WHERE device_id=${deviceId} AND device_user_id='4' ORDER BY occurred_at
+      `;
+      assert.deepEqual(
+        originals.map((row) => row.device_user_name),
+        ["Stephen", "Vahid", null],
+      );
+      assert.ok(originals.every((row) => row.employee_id === null));
     } finally {
       await sql.end();
     }
