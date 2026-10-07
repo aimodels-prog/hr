@@ -77,6 +77,7 @@ function HrTravelApprovalsContent() {
     (r) =>
       employeeFilter.matchesEmployee(r.employeeId) &&
       r.hrApprovalStatus === "Pending" &&
+      r.managerApprovalStatus === "Approved" &&
       r.status === "Pending HR and Accounts",
   );
   const processed = requests.filter(

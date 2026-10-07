@@ -1,3 +1,4 @@
+import { encodeUploadFile } from "../upload-payload.ts";
 import { SYSTEM_CONTEXT } from "./types.ts";
 import { LocalRepository } from "./repository.ts";
 import { getApplicationDataServices } from "./application-data.ts";
@@ -581,7 +582,7 @@ export class OvertimeService {
                 evidence: {
                   fileName: evidenceFile.name,
                   mimeType,
-                  bytes: Array.from(new Uint8Array(await evidenceFile.arrayBuffer())),
+                  bytes: await encodeUploadFile(evidenceFile),
                 },
               }
             : {}),
@@ -736,7 +737,7 @@ export class OvertimeService {
                 evidence: {
                   fileName: replacementEvidenceFile.name,
                   mimeType,
-                  bytes: Array.from(new Uint8Array(await replacementEvidenceFile.arrayBuffer())),
+                  bytes: await encodeUploadFile(replacementEvidenceFile),
                 },
               }
             : {}),

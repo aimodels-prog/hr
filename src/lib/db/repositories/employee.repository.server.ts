@@ -848,6 +848,16 @@ export async function updateUserAccessInDatabase(
       }
     }
 
+    if (desiredRoles.includes("Travel Admin"))
+      await tx
+        .insert(roles)
+        .values({
+          code: "Travel Admin",
+          description: "Arrange Finance-approved travel bookings",
+          createdBy: actor.userId!,
+          updatedBy: actor.userId!,
+        })
+        .onConflictDoNothing();
     const desiredRoleRows = await tx.select().from(roles).where(inArray(roles.code, desiredRoles));
     if (desiredRoleRows.length !== desiredRoles.length) {
       throw new Error("One or more requested responsibilities are not configured.");

@@ -1,5 +1,29 @@
 import type { BaseRecord, RecordId } from "./types.ts";
 
+export interface TravelParticipant {
+  employeeId: string;
+  name: string;
+  managerId: string;
+  status: "Pending" | "Approved" | "Rejected";
+  decidedBy?: string;
+  decidedAt?: string;
+}
+
+export interface TravelBooking {
+  id: string;
+  kind: "Car" | "Flight" | "Hotel" | "Other";
+  name: string;
+  details: string;
+  estimate: number;
+  status: "Pending Finance" | "Approved" | "Rejected" | "Confirmed";
+  requestedBy: string;
+  requestedAt: string;
+  decidedBy?: string;
+  decidedAt?: string;
+  confirmation?: string;
+  documentFileId?: string;
+}
+
 // "Pre-authorised" authorises the trip and spend ceiling after the supervisor, HR and Accounts
 // reviews. It does not mean the post-trip expenses have been settled.
 export type TravelRequestStatus =
@@ -36,6 +60,8 @@ export interface ExpenseLine {
 }
 
 export interface TravelRequest extends BaseRecord {
+  participants?: TravelParticipant[];
+  bookings?: TravelBooking[];
   /** Authoritative PostgreSQL UUID while the legacy browser cache remains during cutover. */
   databaseId?: string;
   employeeId: RecordId;

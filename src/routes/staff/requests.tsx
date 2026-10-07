@@ -216,7 +216,7 @@ function RequestCentre() {
                         <div>
                           <h3 className="font-semibold">{row.title}</h3>
                           <p className="text-xs text-muted-foreground">
-                            {row.module} · {row.employeeName} · Ref {row.id}
+                            {row.module} · {row.employeeName}
                           </p>
                         </div>
                         <span className="text-sm font-medium">{row.status}</span>

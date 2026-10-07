@@ -1,3 +1,4 @@
+import { encodeUploadFile } from "../upload-payload.ts";
 import { LocalRepository } from "./repository.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import type {
@@ -78,6 +79,11 @@ export class TravelService {
       rows.map((request) => ({
         ...request,
         employeeId: relation.get(request.employeeId) ?? request.employeeId,
+        participants: request.participants?.map((p) => ({
+          ...p,
+          employeeId: relation.get(p.employeeId) ?? p.employeeId,
+          managerId: relation.get(p.managerId) ?? p.managerId,
+        })),
         ...(request.projectId
           ? { projectId: relation.get(request.projectId) ?? request.projectId }
           : {}),
@@ -206,14 +212,21 @@ export class TravelService {
         context,
       );
     }
-    return this.repo.list().filter((r) => r.employeeId === employeeId);
+    return this.repo
+      .list()
+      .filter(
+        (r) =>
+          r.employeeId === employeeId || r.participants?.some((p) => p.employeeId === employeeId),
+      );
   }
 
   // context is mandatory - a request ID alone must never be enough to read someone else's trip.
   getRequestById(id: string, context: ActorContext): TravelRequest | null {
     const req = this.repo.getById(id);
     if (!req) return null;
-    const isSelf = context.actor.employeeId === req.employeeId;
+    const isSelf =
+      context.actor.employeeId === req.employeeId ||
+      req.participants?.some((p) => p.employeeId === context.actor.employeeId);
     if (!isSelf && !this.isReviewerRole(context)) {
       this.deny(
         "view this travel request",
@@ -343,6 +356,7 @@ export class TravelService {
         data: {
           actor: await this.serverActor(context),
           employeeId: this.databaseId("employees", data.employeeId),
+          participantIds: data.participants?.map((p) => this.databaseId("employees", p.employeeId)),
           purpose: data.purpose,
           destination: data.destination,
           startDate: data.startDate,
@@ -362,7 +376,7 @@ export class TravelService {
                 evidence: {
                   fileName: evidenceFile.name,
                   mimeType: travelUploadMime(evidenceFile),
-                  bytes: Array.from(new Uint8Array(await evidenceFile.arrayBuffer())),
+                  bytes: await encodeUploadFile(evidenceFile),
                 },
               }
             : {}),
@@ -711,7 +725,7 @@ export class TravelService {
                 receipt: {
                   fileName: receipt.name,
                   mimeType: travelUploadMime(receipt),
-                  bytes: Array.from(new Uint8Array(await receipt.arrayBuffer())),
+                  bytes: await encodeUploadFile(receipt),
                 },
               };
             }),

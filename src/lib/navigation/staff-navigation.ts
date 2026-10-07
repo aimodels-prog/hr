@@ -475,7 +475,20 @@ export function staffNavigation(role: Role, can: (permission: Permission) => boo
         icon: ClipboardCheck,
       });
   }
-  return groups.filter((group) => group.items.length);
+  return groups
+    .filter((group) => group.items.length)
+    .map((group) => ({
+      ...group,
+      items: group.items.map((item) =>
+        item.url === "/staff/travel" && ["Travel Admin", "Accounts"].includes(role)
+          ? {
+              ...item,
+              title: "Travel & bookings",
+              keywords: "booking desk car flight hotel travel",
+            }
+          : item,
+      ),
+    }));
 }
 
 export function searchNavigation(groups: NavGroup[], query: string): NavGroup[] {

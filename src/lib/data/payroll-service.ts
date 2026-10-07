@@ -1,3 +1,4 @@
+import { encodeUploadFile } from "../upload-payload.ts";
 import { SYSTEM_CONTEXT } from "./types.ts";
 import { LocalRepository, type NewRecord } from "./repository.ts";
 import type {
@@ -148,7 +149,7 @@ export class PayrollService {
         evidence: {
           fileName: evidence.name,
           mimeType: this.payrollEvidenceMime(evidence),
-          bytes: Array.from(new Uint8Array(await evidence.arrayBuffer())),
+          bytes: await encodeUploadFile(evidence),
         },
       },
     });

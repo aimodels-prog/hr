@@ -11,7 +11,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { LeaveService } from "@/lib/data/leave-service";
-import { leaveDisplayReason, newestLeaveFirst } from "@/lib/data/leave-presentation";
+import {
+  leaveDisplayReason,
+  leaveDisplayType,
+  newestLeaveFirst,
+} from "@/lib/data/leave-presentation";
 import { CalendarDays } from "lucide-react";
 import { useCurrentUser } from "@/lib/auth";
 
@@ -158,7 +162,11 @@ export function LeaveTab({ employeeId }: { employeeId: string }) {
           <CardContent className="text-sm space-y-1">
             {upcoming.map((r) => (
               <div key={r.id}>
-                {r.startDate} to {r.endDate} &middot; {r.workingDaysRequested}{" "}
+                {leaveDisplayType(
+                  r,
+                  policies.find((p) => p.id === r.policyId),
+                )}{" "}
+                &middot; {r.startDate} to {r.endDate} &middot; {r.workingDaysRequested}{" "}
                 {r.workingDaysRequested === 1 ? "day" : "days"}
                 {leaveDisplayReason(r.reason) && <> &middot; {leaveDisplayReason(r.reason)}</>}
               </div>
@@ -183,6 +191,7 @@ export function LeaveTab({ employeeId }: { employeeId: string }) {
             <TableHeader>
               <TableRow>
                 <TableHead>Dates</TableHead>
+                <TableHead>Leave type</TableHead>
                 <TableHead>Days</TableHead>
                 <TableHead>Reason</TableHead>
                 <TableHead>Status</TableHead>
@@ -191,7 +200,7 @@ export function LeaveTab({ employeeId }: { employeeId: string }) {
             <TableBody>
               {requests.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                     No leave requests on record.
                   </TableCell>
                 </TableRow>
@@ -200,6 +209,12 @@ export function LeaveTab({ employeeId }: { employeeId: string }) {
                   <TableRow key={r.id}>
                     <TableCell className="text-sm">
                       {r.startDate} {r.startDate !== r.endDate ? `to ${r.endDate}` : ""}
+                    </TableCell>
+                    <TableCell>
+                      {leaveDisplayType(
+                        r,
+                        policies.find((p) => p.id === r.policyId),
+                      )}
                     </TableCell>
                     <TableCell className="text-sm">{r.workingDaysRequested}</TableCell>
                     <TableCell className="text-sm">{leaveDisplayReason(r.reason) || "—"}</TableCell>

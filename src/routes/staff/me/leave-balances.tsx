@@ -47,7 +47,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { LeaveService } from "@/lib/data/leave-service";
-import { leaveDisplayReason, newestLeaveFirst } from "@/lib/data/leave-presentation";
+import {
+  leaveDisplayReason,
+  leaveDisplayType,
+  newestLeaveFirst,
+} from "@/lib/data/leave-presentation";
 import type { LeavePolicy, LeaveRequest, LeaveTransaction } from "@/lib/data/leave-types";
 import { toast } from "sonner";
 
@@ -619,7 +623,7 @@ function LeaveBalancesRoute() {
                             {request.startDate !== request.endDate &&
                               ` – ${formatDate(request.endDate)}`}
                           </TableCell>
-                          <TableCell>{policy?.name ?? "Leave"}</TableCell>
+                          <TableCell>{leaveDisplayType(request, policy)}</TableCell>
                           <TableCell className="text-right font-medium tabular-nums">
                             {formatDays(request.workingDaysRequested)}
                           </TableCell>

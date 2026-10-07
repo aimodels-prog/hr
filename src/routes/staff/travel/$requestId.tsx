@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/select";
 import { parseISO, isAfter } from "date-fns";
 import { AuditViewer } from "@/components/audit-viewer";
+import { TravelBookings } from "@/components/travel-bookings";
 
 const generateId = () => crypto.randomUUID();
 
@@ -113,7 +114,10 @@ function TravelDetailRoute() {
   endDate.setHours(0, 0, 0, 0);
   today.setHours(0, 0, 0, 0);
 
-  const canSubmitExpenses = request.status === "Pre-authorised" && today > endDate;
+  const canSubmitExpenses =
+    request.employeeId === currentUser.employeeId &&
+    request.status === "Pre-authorised" &&
+    today > endDate;
   const isSubmissionLocked =
     request.status === "Pending Super Admin Closure" || request.status === "Closed";
 
@@ -262,6 +266,29 @@ function TravelDetailRoute() {
             </div>
           )}
 
+        <TravelBookings
+          trip={request}
+          onChanged={() => {
+            void travelService
+              .getRequestByIdAsync(requestId, currentUser.getActorContext())
+              .then(setRequest)
+              .catch((e) => toast.error(e.message));
+          }}
+        />
+        {!!request.participants?.length && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Travelling together</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {request.participants.map((p) => (
+                <p key={p.employeeId}>
+                  {p.name} · Supervisor: {p.status}
+                </p>
+              ))}
+            </CardContent>
+          </Card>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Card>
             <CardHeader className="pb-3 border-b">
@@ -476,6 +503,15 @@ function TravelDetailRoute() {
                         </div>
                       )}
                       <div className={isForeignCurrency ? "col-span-2" : "col-span-4"}>
+                        <Input
+                          aria-label="Expense description"
+                          placeholder={
+                            line.category === "Other" ? "Expense name *" : "Description (optional)"
+                          }
+                          value={line.notes ?? ""}
+                          onChange={(e) => updateLine(line.id, "notes", e.target.value)}
+                          disabled={isSubmissionLocked}
+                        />
                         <Input
                           placeholder="Bill / receipt reference *"
                           value={line.reference || ""}

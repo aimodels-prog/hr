@@ -72,7 +72,11 @@ function AccountsTravelApprovalsContent() {
   const [actionType, setActionType] = useState<"approve" | "reject">("approve");
 
   const pendingAccounts = requests.filter(
-    (r) => r.accountsApprovalStatus === "Pending" && r.status === "Pending HR and Accounts",
+    (r) =>
+      r.accountsApprovalStatus === "Pending" &&
+      r.managerApprovalStatus === "Approved" &&
+      r.hrApprovalStatus === "Approved" &&
+      r.status === "Pending HR and Accounts",
   );
   const processed = requests.filter((r) => r.accountsApprovalStatus !== "Pending");
 

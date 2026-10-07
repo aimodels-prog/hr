@@ -1,3 +1,4 @@
+import { uploadBytesSchema, decodeUploadBytes } from "../upload-payload.ts";
 import { createServerFn } from "@tanstack/react-start";
 import * as z from "zod";
 
@@ -123,14 +124,11 @@ const Evidence = z
   .object({
     fileName: z.string().trim().min(1).max(255),
     mimeType: z.enum(["application/pdf", "image/jpeg", "image/png"]),
-    bytes: z
-      .array(z.number().int().min(0).max(255))
-      .min(1)
-      .max(10 * 1024 * 1024),
+    bytes: uploadBytesSchema(1),
   })
   .strict();
 function evidenceBytes(input: z.infer<typeof Evidence>) {
-  const bytes = Uint8Array.from(input.bytes);
+  const bytes = decodeUploadBytes(input.bytes);
   const valid =
     (input.mimeType === "application/pdf" &&
       bytes[0] === 0x25 &&

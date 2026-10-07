@@ -64,8 +64,17 @@ function TravelManagerApprovals() {
   const pending = requests.filter(
     (request) =>
       request.employeeId !== currentUser.employeeId &&
+      !request.participants?.some((p) => p.employeeId === currentUser.employeeId) &&
       request.status === "Pending HR and Accounts" &&
-      request.managerApprovalStatus === "Pending",
+      request.managerApprovalStatus === "Pending" &&
+      (request.participants?.some(
+        (p) => p.managerId === currentUser.employeeId && p.status === "Pending",
+      ) ||
+        (!request.managerApprovedBy &&
+          employees.some(
+            (e) => e.id === request.employeeId && e.lineManagerId === currentUser.employeeId,
+          )) ||
+        currentUser.activeRole === "Super Admin"),
   );
 
   const openDecision = (request: TravelRequest, next: "approve" | "reject") => {

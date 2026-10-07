@@ -1,3 +1,4 @@
+import { uploadBytesSchema, decodeUploadBytes } from "../upload-payload.ts";
 import { randomUUID } from "node:crypto";
 
 import { createServerFn } from "@tanstack/react-start";
@@ -67,14 +68,11 @@ const Certificate = z
   .object({
     fileName: z.string().trim().min(1).max(255),
     mimeType: z.enum(["application/pdf", "image/jpeg", "image/png"]),
-    bytes: z
-      .array(z.number().int().min(0).max(255))
-      .min(1)
-      .max(10 * 1024 * 1024),
+    bytes: uploadBytesSchema(1),
   })
   .strict();
 function certificateBytes(file: z.infer<typeof Certificate>) {
-  const bytes = Uint8Array.from(file.bytes);
+  const bytes = decodeUploadBytes(file.bytes);
   const valid =
     (file.mimeType === "application/pdf" &&
       bytes[0] === 0x25 &&

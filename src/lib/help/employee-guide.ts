@@ -369,9 +369,9 @@ export const employeeGuide = [
     "travel planned trip project destination visa accommodation flight cost accounts",
     [
       "Open My Travel and start a travel request.",
-      "Enter the destination, travel dates, business purpose and requested arrangements or estimated costs.",
+      "Enter the destination, travel dates and business purpose. Add colleagues if you are travelling together; each colleague's supervisor must approve their participation.",
       "Check attachments and submit. Read each outstanding review stage in the request.",
-      "If returned, amend the original request and resubmit. Do not book on the assumption that one reviewer’s approval completes the process.",
+      "After supervisor and HR approval, open Travel arrangements to request a car, flight, hotel or Other. Give Other arrangements a name. Finance approves the cost, then Travel Admin confirms the booking details here.",
     ],
     "Travel can require Manager, HR and Finance decisions. The request’s outstanding stages show what is still needed.",
     [
@@ -390,6 +390,7 @@ export const employeeGuide = [
     [
       "Open the relevant travel request after the trip.",
       "Enter the actual expenses and attach the requested receipts or supporting documents.",
+      "The trip organiser submits shared expenses once. Give every Other expense a name. After your return date, the organiser receives a reminder if expenses have not been submitted.",
       "Check currency, amounts and any advance already received before submitting.",
       "Follow the reimbursement status and answer any request for corrections.",
     ],

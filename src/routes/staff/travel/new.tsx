@@ -25,6 +25,7 @@ import { TravelService } from "@/lib/data/travel-service";
 import { getMasterDataRepository, getProjectRepository } from "@/lib/data/master-data";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { Info, Paperclip } from "lucide-react";
+import { SearchablePeopleList } from "@/components/ui/searchable-people-list";
 
 export const Route = createFileRoute("/staff/travel/new")({
   component: NewTravelRequestRoute,
@@ -43,6 +44,7 @@ function NewTravelRequestRoute() {
     .filter((c) => c.isActive);
 
   const [purpose, setPurpose] = useState("");
+  const [participantIds, setParticipantIds] = useState<string[]>([]);
   const [destination, setDestination] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -68,6 +70,12 @@ function NewTravelRequestRoute() {
         {
           employeeId: currentUser!.employeeId!,
           purpose,
+          participants: participantIds.map((employeeId) => ({
+            employeeId,
+            name: "",
+            managerId: "",
+            status: "Pending",
+          })),
           destination,
           startDate,
           endDate,
@@ -117,6 +125,27 @@ function NewTravelRequestRoute() {
             <CardTitle>Travel Details</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            <details>
+              <summary className="cursor-pointer py-2 font-medium">
+                Add colleagues travelling with you
+              </summary>
+              <SearchablePeopleList
+                label="Search colleagues"
+                options={currentUser.allEmployees
+                  .filter((e) => e.id !== currentUser.employeeId && !e.archivedAt)
+                  .map((e) => ({
+                    value: e.id,
+                    label: e.preferredName,
+                    keywords: [e.department ?? ""],
+                  }))}
+                selected={participantIds}
+                onToggle={(id, checked) =>
+                  setParticipantIds((ids) =>
+                    checked ? [...new Set([...ids, id])] : ids.filter((v) => v !== id),
+                  )
+                }
+              />
+            </details>
             <div className="space-y-2">
               <label className="text-sm font-medium">Business Purpose</label>
               <Input

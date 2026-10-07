@@ -816,7 +816,8 @@ export class TaskService {
       if (
         isActive(request) &&
         request.status === "Pending HR and Accounts" &&
-        request.hrApprovalStatus === "Pending"
+        request.hrApprovalStatus === "Pending" &&
+        request.managerApprovalStatus === "Approved"
       ) {
         addTask({
           id: `travel-hr-${request.id}`,
@@ -942,7 +943,9 @@ export class TaskService {
       if (
         isActive(request) &&
         request.status === "Pending HR and Accounts" &&
-        request.accountsApprovalStatus === "Pending"
+        request.accountsApprovalStatus === "Pending" &&
+        request.hrApprovalStatus === "Approved" &&
+        request.managerApprovalStatus === "Approved"
       ) {
         addTask({
           id: `travel-accounts-${request.id}`,

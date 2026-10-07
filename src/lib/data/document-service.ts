@@ -1,3 +1,4 @@
+import { encodeUploadFile } from "../upload-payload.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { LocalRepository } from "./repository.ts";
 import { SYSTEM_CONTEXT } from "./types.ts";
@@ -335,7 +336,7 @@ export class DocumentService {
             : {}),
           fileName: filename,
           mimeType: fileBlob.type as "application/pdf" | "image/jpeg" | "image/png",
-          bytes: Array.from(new Uint8Array(await fileBlob.arrayBuffer())),
+          bytes: await encodeUploadFile(fileBlob),
           ...(metadata.documentNumber ? { documentNumber: metadata.documentNumber } : {}),
           ...(metadata.issueDate ? { issueDate: metadata.issueDate } : {}),
           ...(metadata.expiryDate ? { expiryDate: metadata.expiryDate } : {}),
@@ -448,7 +449,7 @@ export class DocumentService {
           answers: metadata.answers,
           fileName: filename,
           mimeType: fileBlob.type as "application/pdf" | "image/jpeg" | "image/png",
-          bytes: Array.from(new Uint8Array(await fileBlob.arrayBuffer())),
+          bytes: await encodeUploadFile(fileBlob),
           reason: actorContext.reason || "Replaced employee document",
           ...(metadata.documentNumber ? { documentNumber: metadata.documentNumber } : {}),
           ...(metadata.issueDate ? { issueDate: metadata.issueDate } : {}),

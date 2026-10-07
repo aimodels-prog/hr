@@ -5,6 +5,7 @@ export const ROLE_VALUES = [
   "Accounts",
   "Super Admin",
   "IT",
+  "Travel Admin",
 ] as const;
 
 export type Role = (typeof ROLE_VALUES)[number];

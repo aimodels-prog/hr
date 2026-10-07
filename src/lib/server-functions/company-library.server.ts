@@ -1,3 +1,4 @@
+import { uploadBytesSchema, decodeUploadBytes } from "../upload-payload.ts";
 import { createServerFn } from "@tanstack/react-start";
 import * as z from "zod";
 import { ROLE_VALUES } from "../data/types.ts";
@@ -52,17 +53,14 @@ export const uploadCompanyDocumentFn = createServerFn({ method: "POST" })
         issueDate: z.string().date().optional(),
         expiryDate: z.string().date().optional(),
         name: z.string().min(1).max(255),
-        bytes: z
-          .array(z.number().int().min(0).max(255))
-          .min(5)
-          .max(10 * 1024 * 1024),
+        bytes: uploadBytesSchema(5),
       })
       .strict()
       .parse(input),
   )
   .handler(async ({ data }) => {
     const v = await verify(data.actor);
-    return libraryUpload(v.org, { ...data, bytes: Uint8Array.from(data.bytes) }, v.actor);
+    return libraryUpload(v.org, { ...data, bytes: decodeUploadBytes(data.bytes) }, v.actor);
   });
 const Doc = z.object({ actor: Actor, id: z.string().uuid() }).strict();
 export const downloadCompanyDocumentFn = createServerFn({ method: "GET" })

@@ -1,3 +1,4 @@
+import { encodeUploadFile } from "@/lib/upload-payload";
 import { useState } from "react";
 import {
   PageSections,
@@ -106,7 +107,7 @@ function CompanyLibrary() {
           ...(issueDate ? { issueDate } : {}),
           ...(!noExpiry && expiryDate ? { expiryDate } : {}),
           name: file.name,
-          bytes: Array.from(new Uint8Array(await file.arrayBuffer())),
+          bytes: await encodeUploadFile(file),
         },
       });
       setOpen(false);

@@ -1,3 +1,4 @@
+import { uploadBytesSchema, decodeUploadBytes } from "../upload-payload.ts";
 import { createServerFn } from "@tanstack/react-start";
 import * as z from "zod";
 import { resolveOrganisationIdForActor, verifyServerActorRole } from "../db/utils.server.ts";
@@ -51,10 +52,7 @@ const Claim = z
       .object({
         fileName: z.string().trim().min(1).max(255),
         mimeType: z.enum(["application/pdf", "image/jpeg", "image/png"]),
-        bytes: z
-          .array(z.number().int().min(0).max(255))
-          .min(1)
-          .max(10 * 1024 * 1024),
+        bytes: uploadBytesSchema(1),
       })
       .strict()
       .optional(),
@@ -72,7 +70,7 @@ export const createOvertimeClaimFn = createServerFn({ method: "POST" })
       await saveObjectFile({
         id: evidenceFileId,
         organisationId: v.organisationId,
-        bytes: Uint8Array.from(data.evidence.bytes),
+        bytes: decodeUploadBytes(data.evidence.bytes),
         name: data.evidence.fileName,
         mimeType: data.evidence.mimeType,
         owner: { entityType: "overtime-claim-evidence", entityId: data.employeeId },
@@ -165,7 +163,7 @@ export const correctOvertimeClaimFn = createServerFn({ method: "POST" })
       await saveObjectFile({
         id: evidenceFileId,
         organisationId: v.organisationId,
-        bytes: Uint8Array.from(data.evidence.bytes),
+        bytes: decodeUploadBytes(data.evidence.bytes),
         name: data.evidence.fileName,
         mimeType: data.evidence.mimeType,
         owner: { entityType: "overtime-claim-evidence", entityId: claim.employeeId },

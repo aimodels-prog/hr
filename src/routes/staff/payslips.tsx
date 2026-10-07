@@ -1,3 +1,4 @@
+import { encodeUploadFile } from "@/lib/upload-payload";
 import { useRef, useState } from "react";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { createFileRoute } from "@tanstack/react-router";
@@ -77,7 +78,7 @@ function Payslips() {
           file: {
             fileName: file.name,
             mimeType: "application/pdf",
-            bytes: Array.from(new Uint8Array(await file.arrayBuffer())),
+            bytes: await encodeUploadFile(file),
           },
         },
       });
@@ -114,7 +115,7 @@ function Payslips() {
           file: {
             fileName: replacementFile.name,
             mimeType: "application/pdf",
-            bytes: Array.from(new Uint8Array(await replacementFile.arrayBuffer())),
+            bytes: await encodeUploadFile(replacementFile),
           },
         },
       });

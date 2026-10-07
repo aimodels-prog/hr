@@ -1,3 +1,4 @@
+import { encodeUploadFile } from "../upload-payload.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { changeReason, trainingReasonRequired } from "./change-reason-policy.ts";
 import { DocumentService } from "./document-service.ts";
@@ -1069,7 +1070,7 @@ export class TrainingService {
             certificate: {
               fileName: file.name,
               mimeType: mimeType as "application/pdf" | "image/jpeg" | "image/png",
-              bytes: Array.from(new Uint8Array(await file.blob.arrayBuffer())),
+              bytes: await encodeUploadFile(file.blob),
             },
           },
         }),

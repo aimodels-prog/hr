@@ -2282,7 +2282,7 @@ export async function listAttendanceForActor(organisationId: string, actor: Audi
           ),
         )
     ).map((row) => row.id);
-  } else if (!["Employee", "Accounts", "IT"].includes(actor.activeRole ?? "")) {
+  } else if (!["Employee", "Accounts", "IT", "Travel Admin"].includes(actor.activeRole ?? "")) {
     throw new Error("You do not have attendance access.");
   }
   if (!employeeIds.length)

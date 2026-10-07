@@ -1,3 +1,4 @@
+import { encodeUploadFile } from "../upload-payload.ts";
 import { SYSTEM_CONTEXT } from "./types.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { LocalRepository, type NewRecord } from "./repository.ts";
@@ -1611,7 +1612,7 @@ export class LeaveService {
                 attachment: {
                   fileName: attachment.name,
                   mimeType: attachment.type as "application/pdf" | "image/jpeg" | "image/png",
-                  bytes: Array.from(new Uint8Array(await attachment.arrayBuffer())),
+                  bytes: await encodeUploadFile(attachment),
                 },
               }
             : {}),

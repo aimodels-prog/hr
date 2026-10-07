@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import type { TravelParticipant, TravelBooking } from "../../data/travel-types.ts";
 import {
   boolean,
   check,
@@ -47,6 +48,8 @@ export const travelRequests = pgTable(
       .notNull()
       .references(() => employees.id, { onDelete: "restrict" }),
     purpose: text("purpose").notNull(),
+    participants: jsonb("participants").$type<TravelParticipant[]>().notNull().default([]),
+    bookings: jsonb("bookings").$type<TravelBooking[]>().notNull().default([]),
     destination: text("destination").notNull(),
     startDate: date("start_date", { mode: "string" }).notNull(),
     endDate: date("end_date", { mode: "string" }).notNull(),

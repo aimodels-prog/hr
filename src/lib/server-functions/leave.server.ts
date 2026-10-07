@@ -1,3 +1,4 @@
+import { uploadBytesSchema, decodeUploadBytes } from "../upload-payload.ts";
 import { createServerFn } from "@tanstack/react-start";
 import * as z from "zod";
 
@@ -281,10 +282,7 @@ const CreateLeave = z
       .object({
         fileName: z.string().trim().min(1).max(255),
         mimeType: z.enum(["application/pdf", "image/jpeg", "image/png"]),
-        bytes: z
-          .array(z.number().int().min(0).max(255))
-          .min(1)
-          .max(10 * 1024 * 1024),
+        bytes: uploadBytesSchema(1),
       })
       .strict()
       .optional(),
@@ -302,7 +300,7 @@ export const createLeaveRequestFn = createServerFn({ method: "POST" })
       await saveObjectFile({
         id: uploadedFileId,
         organisationId: verified.organisationId,
-        bytes: Uint8Array.from(data.attachment.bytes),
+        bytes: decodeUploadBytes(data.attachment.bytes),
         name: data.attachment.fileName,
         mimeType: data.attachment.mimeType,
         owner: { entityType: "leave-request-evidence", entityId: data.employeeId },

@@ -60,6 +60,7 @@ export const systemRoleCode = pgEnum("system_role_code", [
   "Accounts",
   "Super Admin",
   "IT",
+  "Travel Admin",
 ]);
 
 export const employees = pgTable(

@@ -83,6 +83,25 @@ export const ALL_PERMISSIONS = [
 export type Permission = (typeof ALL_PERMISSIONS)[number];
 
 export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
+  "Travel Admin": [
+    "recruitment:score_interviews_assigned",
+    "employee:view_self",
+    "employee:edit_self",
+    "employee:view_directory",
+    "leave:view_self",
+    "leave:request_self",
+    "timesheet:view_self",
+    "timesheet:submit_self",
+    "attendance:view_self",
+    "attendance:clock_self",
+    "attendance:request_correction_self",
+    "attendance:site_visit_request_self",
+    "travel:request_self",
+    "document:view_self",
+    "onboarding:view_self",
+    "performance:view_self",
+    "training:view_self",
+  ],
   Employee: [
     "employee:view_self",
     "employee:edit_self",

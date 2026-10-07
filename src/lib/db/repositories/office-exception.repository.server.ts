@@ -184,7 +184,25 @@ export async function officeCredits(
       AND d.day::date>=e.start_date AND (e.termination_date IS NULL OR d.day::date<=e.termination_date)
       AND extract(dow FROM d.day)::int=ANY(s.working_days)
       AND NOT EXISTS (SELECT 1 FROM public_holidays h WHERE h.organisation_id=x.organisation_id AND h.is_active AND h.archived_at IS NULL AND h.holiday_date=d.day::date AND (h.location_id IS NULL OR h.location_id=e.location_id))`);
-  return rows
+  const trips =
+    await db.execute(sql`SELECT t.id,t.organisation_id,t.created_by,t.created_at,e.id AS employee_id,d.day::date::text AS date,
+    'Official duty — ' || t.destination AS label,
+    round(least(24,coalesce(p.standard_daily_hours,s.standard_daily_hours)+coalesce(p.default_break_minutes,0)/60.0) * greatest(0,1-coalesce((SELECT sum(CASE WHEN l.is_half_day THEN 0.5 ELSE 1 END) FROM leave_requests l WHERE l.organisation_id=t.organisation_id AND l.employee_id=e.id AND l.archived_at IS NULL AND l.status IN ('Approved','Taken','Cancellation Pending') AND d.day::date BETWEEN l.start_date AND l.end_date),0)),2) AS hours
+    FROM travel_requests t JOIN app_settings s ON s.organisation_id=t.organisation_id
+    LEFT JOIN attendance_policies p ON p.organisation_id=t.organisation_id
+    JOIN employees e ON e.organisation_id=t.organisation_id AND (e.id=t.employee_id OR EXISTS(SELECT 1 FROM jsonb_array_elements(t.participants) participant WHERE participant->>'employeeId'=e.id::text AND participant->>'status'='Approved'))
+    CROSS JOIN LATERAL generate_series(greatest(t.start_date,${start}::date),least(t.end_date,${end}::date),interval '1 day') d(day)
+    WHERE t.organisation_id=${org}::uuid AND t.archived_at IS NULL AND t.status IN ('Pre-authorised','Pending Super Admin Closure','Closed')
+    AND e.id IN (${sql.join(
+      ids.map((id) => sql`${id}::uuid`),
+      sql`, `,
+    )})
+    AND d.day::date>=e.start_date AND (e.termination_date IS NULL OR d.day::date<=e.termination_date)
+    AND extract(dow FROM d.day)::int=ANY(s.working_days)
+    AND NOT EXISTS(SELECT 1 FROM public_holidays h WHERE h.organisation_id=t.organisation_id AND h.is_active AND h.archived_at IS NULL AND h.holiday_date=d.day::date AND (h.location_id IS NULL OR h.location_id=e.location_id))`);
+  // One credit per employee/date; never add trip hours on top of an office exception.
+  const occupied = new Set(rows.map((r) => `${r["employee_id"]}:${r["date"]}`));
+  return [...rows, ...trips.filter((r) => !occupied.has(`${r["employee_id"]}:${r["date"]}`))]
     .map((r) => ({
       id: String(r["id"]),
       organisationId: String(r["organisation_id"]),

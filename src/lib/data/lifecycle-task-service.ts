@@ -1,3 +1,4 @@
+import { encodeUploadFile } from "../upload-payload.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { OffboardingService } from "./offboarding-service.ts";
 import type { OffboardingCase } from "./offboarding-types.ts";
@@ -165,7 +166,7 @@ export class LifecycleTaskService {
           answers: metadata.answers,
           fileName: file.name,
           mimeType: file.type as "application/pdf" | "image/jpeg" | "image/png",
-          bytes: Array.from(new Uint8Array(await file.arrayBuffer())),
+          bytes: await encodeUploadFile(file),
           ...(metadata.documentNumber ? { documentNumber: metadata.documentNumber } : {}),
           ...(metadata.issueDate ? { issueDate: metadata.issueDate } : {}),
           ...(metadata.expiryDate ? { expiryDate: metadata.expiryDate } : {}),
@@ -253,7 +254,7 @@ export class LifecycleTaskService {
         ...(actorEmail ? { actorEmail } : {}),
         activeRole: context.actor.activeRole ?? context.actor.roles[0] ?? "Employee",
       } as const;
-      const bytes = Array.from(new Uint8Array(await evidence.arrayBuffer()));
+      const bytes = await encodeUploadFile(evidence);
       const functions = await import("../server-functions/core-hr-lifecycle.server.ts");
       if (workflow === "onboarding") {
         await functions.completeOnboardingTaskWithEvidenceFn({

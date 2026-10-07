@@ -1,3 +1,4 @@
+import { encodeUploadFile } from "../upload-payload.ts";
 import { isValid, parseISO } from "date-fns";
 
 import { getRolePermissions } from "../auth/permissions.ts";
@@ -198,7 +199,7 @@ export class GoalService {
       | {
           fileName: string;
           mimeType: "application/pdf" | "image/jpeg" | "image/png";
-          bytes: number[];
+          bytes: string | number[];
         }
       | undefined;
     if (evidence) {
@@ -215,7 +216,7 @@ export class GoalService {
       upload = {
         fileName: evidence.name,
         mimeType,
-        bytes: Array.from(new Uint8Array(await evidence.arrayBuffer())),
+        bytes: await encodeUploadFile(evidence),
       };
     }
     await recordGoalProgressFn({

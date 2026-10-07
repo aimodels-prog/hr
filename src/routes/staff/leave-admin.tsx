@@ -1,5 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { leaveDisplayReason, newestLeaveFirst } from "@/lib/data/leave-presentation";
+import {
+  leaveDisplayReason,
+  leaveDisplayType,
+  newestLeaveFirst,
+} from "@/lib/data/leave-presentation";
 import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
 import { useState, useMemo } from "react";
 import { PageHeader } from "@/components/ui/page-header";
@@ -282,8 +286,10 @@ function LeaveAdminContent() {
                           </TableCell>
                           <TableCell className="font-medium">{req.workingDaysRequested}</TableCell>
                           <TableCell>
-                            {req.policySnapshot?.name ||
-                              policies.find((p) => p.id === req.policyId)?.name}
+                            {leaveDisplayType(
+                              req,
+                              policies.find((p) => p.id === req.policyId),
+                            )}
                           </TableCell>
                           <TableCell>
                             <Badge

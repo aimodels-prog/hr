@@ -40,6 +40,7 @@ const badgeClass: Record<Role, string> = {
   HR: "bg-blue-500/15 text-blue-700",
   Accounts: "bg-emerald-500/15 text-emerald-700",
   IT: "bg-cyan-500/15 text-cyan-700",
+  "Travel Admin": "bg-blue-500/15 text-blue-700",
   "Super Admin": "bg-purple-500/15 text-purple-700",
 };
 
@@ -50,6 +51,7 @@ const extraAccess: Array<{ role: Role; description: string }> = [
   },
   { role: "HR", description: "Manage recruitment, employee records, leave and people operations." },
   { role: "Accounts", description: "Prepare payroll and review approved travel costs." },
+  { role: "Travel Admin", description: "Arrange cars, flights and hotels after Finance approval." },
   {
     role: "IT",
     description:
@@ -163,13 +165,21 @@ export function UserManagementPanel() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All access</SelectItem>
-              {(["Employee", "Line Manager", "HR", "Accounts", "IT", "Super Admin"] as Role[]).map(
-                (role) => (
-                  <SelectItem key={role} value={role}>
-                    {role}
-                  </SelectItem>
-                ),
-              )}
+              {(
+                [
+                  "Employee",
+                  "Line Manager",
+                  "HR",
+                  "Accounts",
+                  "IT",
+                  "Travel Admin",
+                  "Super Admin",
+                ] as Role[]
+              ).map((role) => (
+                <SelectItem key={role} value={role}>
+                  {role}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           <Select

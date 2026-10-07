@@ -1,3 +1,4 @@
+import { uploadBytesSchema, decodeUploadBytes } from "../upload-payload.ts";
 import { dependantSchema } from "../data/dependants.ts";
 import { documentAnswersSchema } from "../data/document-requirements.ts";
 import { createServerFn } from "@tanstack/react-start";
@@ -319,10 +320,7 @@ const CompleteOnboardingWithEvidence = z
     taskId: z.string().uuid(),
     fileName: z.string().trim().min(1).max(255),
     mimeType: z.enum(["application/pdf", "image/jpeg", "image/png"]),
-    bytes: z
-      .array(z.number().int().min(0).max(255))
-      .min(1)
-      .max(10 * 1024 * 1024),
+    bytes: uploadBytesSchema(1),
   })
   .strict();
 
@@ -334,7 +332,7 @@ export const completeOnboardingTaskWithEvidenceFn = createServerFn({ method: "PO
     await saveObjectFile({
       id: fileId,
       organisationId: verified.organisationId,
-      bytes: Uint8Array.from(data.bytes),
+      bytes: decodeUploadBytes(data.bytes),
       name: data.fileName,
       mimeType: data.mimeType,
       owner: { entityType: "onboarding-case", entityId: data.caseId },
@@ -383,10 +381,7 @@ const CompleteOnboardingDocumentTask = z
     ]),
     fileName: z.string().trim().min(1).max(255),
     mimeType: z.enum(["application/pdf", "image/jpeg", "image/png"]),
-    bytes: z
-      .array(z.number().int().min(0).max(255))
-      .min(1)
-      .max(10 * 1024 * 1024),
+    bytes: uploadBytesSchema(1),
     documentNumber: z.string().trim().max(200).optional(),
     issueDate: IsoDate.optional(),
     expiryDate: IsoDate.optional(),
@@ -411,7 +406,7 @@ export const completeOnboardingDocumentTaskFn = createServerFn({ method: "POST" 
           answers: data.answers,
           fileName: data.fileName,
           mimeType: data.mimeType,
-          bytes: Uint8Array.from(data.bytes),
+          bytes: decodeUploadBytes(data.bytes),
           ...(data.documentNumber ? { documentNumber: data.documentNumber } : {}),
           ...(data.issueDate ? { issueDate: data.issueDate } : {}),
           ...(data.expiryDate ? { expiryDate: data.expiryDate } : {}),
@@ -654,10 +649,7 @@ const CompleteOffboardingWithEvidence = z
     taskId: z.string().uuid(),
     fileName: z.string().trim().min(1).max(255),
     mimeType: z.enum(["application/pdf", "image/jpeg", "image/png"]),
-    bytes: z
-      .array(z.number().int().min(0).max(255))
-      .min(1)
-      .max(10 * 1024 * 1024),
+    bytes: uploadBytesSchema(1),
   })
   .strict();
 
@@ -669,7 +661,7 @@ export const completeOffboardingTaskWithEvidenceFn = createServerFn({ method: "P
     await saveObjectFile({
       id: fileId,
       organisationId: verified.organisationId,
-      bytes: Uint8Array.from(data.bytes),
+      bytes: decodeUploadBytes(data.bytes),
       name: data.fileName,
       mimeType: data.mimeType,
       owner: { entityType: "offboarding-case", entityId: data.caseId },
@@ -798,10 +790,7 @@ const DocumentType = z.enum([
   "insurance_benefits",
   "other",
 ]);
-const DocumentBytes = z
-  .array(z.number().int().min(0).max(255))
-  .min(1)
-  .max(10 * 1024 * 1024);
+const DocumentBytes = uploadBytesSchema(1);
 
 export const getEmployeeDocumentsFn = createServerFn({ method: "POST" })
   .validator((input) => z.object({ actor: Actor }).strict().parse(input))
@@ -851,7 +840,7 @@ export const uploadEmployeeDocumentFn = createServerFn({ method: "POST" })
           : {}),
         fileName: data.fileName,
         mimeType: data.mimeType,
-        bytes: Uint8Array.from(data.bytes),
+        bytes: decodeUploadBytes(data.bytes),
         ...(data.documentNumber ? { documentNumber: data.documentNumber } : {}),
         ...(data.issueDate ? { issueDate: data.issueDate } : {}),
         ...(data.expiryDate ? { expiryDate: data.expiryDate } : {}),
@@ -892,7 +881,7 @@ export const replaceEmployeeDocumentFn = createServerFn({ method: "POST" })
       {
         fileName: data.fileName,
         mimeType: data.mimeType,
-        bytes: Uint8Array.from(data.bytes),
+        bytes: decodeUploadBytes(data.bytes),
         reason: data.reason,
         answers: data.answers,
         ...(data.documentNumber ? { documentNumber: data.documentNumber } : {}),

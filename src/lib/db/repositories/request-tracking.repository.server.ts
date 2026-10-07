@@ -14,7 +14,8 @@ const sources = [
   {
     table: "leave_requests",
     module: "Leave",
-    title: "'Leave · ' || r.start_date || ' to ' || r.end_date",
+    title:
+      "regexp_replace(COALESCE(NULLIF(r.policy_snapshot->>'name', ''), 'Leave'), ' [—–-] imported history$', '') || ' · ' || r.start_date || ' to ' || r.end_date",
     self: "'/staff/leave'",
     hr: "'/staff/leave-admin'",
     meta: "jsonb_build_object('chain', r.chain_approvals)",

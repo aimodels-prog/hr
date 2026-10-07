@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { TravelService } from "@/lib/data/travel-service";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { Plane, Plus } from "lucide-react";
+import { TravelBookings } from "@/components/travel-bookings";
 
 export const Route = createFileRoute("/staff/travel/")({
   component: MyTravelRoute,
@@ -38,7 +39,14 @@ function MyTravelRoute() {
     travelService
       .getRequestsAsync(currentUser.getActorContext())
       .then((rows) => {
-        if (!cancelled) setRequests(rows.filter((request) => request.employeeId === employeeId));
+        if (!cancelled)
+          setRequests(
+            rows.filter(
+              (request) =>
+                request.employeeId === employeeId ||
+                request.participants?.some((p) => p.employeeId === employeeId),
+            ),
+          );
       })
       .catch((error) =>
         toast.error(
@@ -77,6 +85,7 @@ function MyTravelRoute() {
           }
         />
 
+        <TravelBookings />
         <Card>
           <CardContent className="p-0">
             <Table>

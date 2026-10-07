@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
 import postgres from "postgres";
+import { officeCredits } from "../src/lib/db/repositories/office-exception.repository.server.ts";
 
 import {
   assignTravelReimbursementsToPayrollInDatabase,
@@ -12,6 +13,8 @@ import {
   listTravelRequestsForActor,
   processTravelWorker,
   submitTravelExpensesInDatabase,
+  changeTravelBookingInDatabase,
+  listTravelBookingQueue,
 } from "../src/lib/db/repositories/travel.repository.server.ts";
 
 const testDatabaseUrl = process.env["VIA_HR_TEST_DATABASE_URL"]?.trim();
@@ -49,7 +52,7 @@ test(
     const actor = (
       userId: string,
       employeeId: string,
-      activeRole: "Employee" | "Line Manager" | "HR" | "Accounts" | "Super Admin",
+      activeRole: "Employee" | "Line Manager" | "HR" | "Accounts" | "Super Admin" | "Travel Admin",
     ) => ({
       userId,
       employeeId,
@@ -95,9 +98,13 @@ test(
       ] as const)
         await sql`INSERT INTO user_roles (organisation_id,user_id,role_id,assigned_by) VALUES (${ids.organisation},${userId},${roleIds[code]},${ids.adminUser})`;
       await sql`UPDATE employees SET line_manager_id=${ids.managerEmployee} WHERE id=${ids.employee}`;
+      await sql`UPDATE employees SET employment_confirmation_status='Confirmed' WHERE organisation_id=${ids.organisation}`;
+      await sql`UPDATE employees SET line_manager_id=${ids.hrEmployee} WHERE id=${ids.adminEmployee}`;
+      await sql`INSERT INTO user_roles (organisation_id,user_id,role_id,assigned_by) VALUES (${ids.organisation},${ids.hrUser},${roleIds["Line Manager"]},${ids.adminUser})`;
       await sql`INSERT INTO payroll_periods (id,organisation_id,name,start_date,end_date,cutoff_date,payment_date,status,created_by,updated_by) VALUES (${ids.payrollPeriod},${ids.organisation},'September Payroll','2026-09-01','2026-09-30','2026-09-25','2026-09-30','Collecting Inputs',${ids.accountsUser},${ids.accountsUser})`;
 
       const employee = actor(ids.employeeUser!, ids.employee!, "Employee");
+      await sql`INSERT INTO app_settings (organisation_id,timezone,base_currency,working_days,standard_daily_hours,standard_weekly_hours,leave_year_start,leave_year_end,document_reminder_days,employee_number_format,candidate_reference_format,created_by,updated_by) VALUES (${ids.organisation},'Asia/Muscat','OMR',ARRAY[0,1,2,3,4,5,6],8,40,'01-01','12-31',ARRAY[30],'EMP-{0000}','CAN-{0000}',${ids.adminUser},${ids.adminUser})`;
       const manager = actor(ids.managerUser!, ids.managerEmployee!, "Line Manager");
       const hr = actor(ids.hrUser!, ids.hrEmployee!, "HR");
       const accounts = actor(ids.accountsUser!, ids.accountsEmployee!, "Accounts");
@@ -106,6 +113,7 @@ test(
         ids.organisation!,
         {
           employeeId: ids.employee!,
+          participantIds: [ids.adminEmployee!],
           purpose: "Client implementation review",
           destination: "Muscat, Oman",
           startDate: "2026-08-01",
@@ -140,29 +148,107 @@ test(
         "Business need confirmed",
         manager,
       );
-      const decisions = await Promise.allSettled([
-        decideTravelRequestInDatabase(
-          ids.organisation!,
+      await assert.rejects(
+        decideTravelRequestInDatabase(ids.organisation!, requestId, "HR", "approve", "Dates", hr),
+        /supervisors/,
+      );
+      await decideTravelRequestInDatabase(
+        ids.organisation!,
+        requestId,
+        "Manager",
+        "approve",
+        "Participation confirmed",
+        actor(ids.hrUser!, ids.hrEmployee!, "Line Manager"),
+      );
+      await decideTravelRequestInDatabase(
+        ids.organisation!,
+        requestId,
+        "HR",
+        "approve",
+        "Dates verified",
+        hr,
+      );
+      await decideTravelRequestInDatabase(
+        ids.organisation!,
+        requestId,
+        "Accounts",
+        "approve",
+        "Budget verified",
+        accounts,
+      );
+      assert.equal(
+        (
+          await listTravelRequestsForActor(
+            ids.organisation!,
+            actor(ids.adminUser!, ids.adminEmployee!, "Employee"),
+          )
+        ).length,
+        1,
+      );
+      await changeTravelBookingInDatabase(
+        ids.organisation!,
+        {
           requestId,
-          "HR",
-          "approve",
-          "Dates verified",
-          hr,
+          action: "request",
+          kind: "Car",
+          name: "Shared car",
+          details: "Office pickup for both travellers",
+          estimate: 25,
+        },
+        employee,
+      );
+      const booking = (await listTravelRequestsForActor(ids.organisation!, employee))[0]!
+        .bookings![0]!;
+      const travelAdmin = actor(ids.adminUser!, ids.adminEmployee!, "Travel Admin");
+      assert.equal((await listTravelBookingQueue(ids.organisation!, travelAdmin)).length, 0);
+      await assert.rejects(
+        changeTravelBookingInDatabase(
+          ids.organisation!,
+          { requestId, action: "confirm", bookingId: booking.id, confirmation: "CAR-01" },
+          travelAdmin,
         ),
-        decideTravelRequestInDatabase(
+        /Finance/,
+      );
+      await changeTravelBookingInDatabase(
+        ids.organisation!,
+        { requestId, action: "approve", bookingId: booking.id },
+        accounts,
+      );
+      await assert.rejects(
+        changeTravelBookingInDatabase(
           ids.organisation!,
-          requestId,
-          "Accounts",
-          "approve",
-          "Budget verified",
+          { requestId, action: "approve", bookingId: booking.id },
           accounts,
         ),
-      ]);
-      assert.equal(decisions.filter((result) => result.status === "fulfilled").length, 2);
+        /already/,
+      );
+      assert.equal((await listTravelBookingQueue(ids.organisation!, travelAdmin)).length, 1);
+      await changeTravelBookingInDatabase(
+        ids.organisation!,
+        {
+          requestId,
+          action: "confirm",
+          bookingId: booking.id,
+          confirmation: "CAR-01. Pickup at 08:00",
+        },
+        travelAdmin,
+      );
+      assert.equal(
+        (await listTravelRequestsForActor(ids.organisation!, employee))[0]!.bookings![0]!.status,
+        "Confirmed",
+      );
       assert.equal(
         (await listTravelRequestsForActor(ids.organisation!, employee))[0]?.status,
         "Pre-authorised",
       );
+      const credits = await officeCredits(
+        ids.organisation!,
+        [ids.employee!, ids.adminEmployee!],
+        "2026-08-01",
+        "2026-08-03",
+      );
+      assert.equal(credits.length, 6);
+      assert.ok(credits.every((c) => c.hours === 8 && c.label.startsWith("Official duty")));
 
       const firstLine = randomUUID();
       const firstFile = randomUUID();

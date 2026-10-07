@@ -92,6 +92,7 @@ test("H3.2 exports every foundational database table", () => {
     "Accounts",
     "Super Admin",
     "IT",
+    "Travel Admin",
   ]);
 });
 

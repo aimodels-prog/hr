@@ -27,6 +27,7 @@ function initialsFor(name: string): string {
 }
 
 const ROLE_BADGE_CLASS: Record<Role, string> = {
+  "Travel Admin": "bg-blue-100 text-blue-800",
   "Super Admin":
     "bg-purple-600/15 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800",
   HR: "bg-blue-600/15 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800",

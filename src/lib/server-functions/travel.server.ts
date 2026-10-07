@@ -1,3 +1,4 @@
+import { uploadBytesSchema, decodeUploadBytes, uploadByteLength } from "../upload-payload.ts";
 import { createServerFn } from "@tanstack/react-start";
 import * as z from "zod";
 
@@ -12,6 +13,8 @@ import {
   readTravelFileInDatabase,
   submitTravelExpensesInDatabase,
   withdrawTravelRequestInDatabase,
+  changeTravelBookingInDatabase,
+  listTravelBookingQueue,
 } from "../db/repositories/travel.repository.server.ts";
 import { resolveOrganisationIdForActor, verifyServerActorRole } from "../db/utils.server.ts";
 
@@ -36,15 +39,68 @@ const Upload = z
   .object({
     fileName: z.string().trim().min(1).max(255),
     mimeType: z.enum(["application/pdf", "image/jpeg", "image/png"]),
-    bytes: z
-      .array(z.number().int().min(0).max(255))
-      .min(1)
-      .max(10 * 1024 * 1024),
+    bytes: uploadBytesSchema(1),
   })
   .strict();
 
+export const getTravelBookingQueueFn = createServerFn({ method: "GET" })
+  .validator((input) => z.object({ actor: Actor }).strict().parse(input))
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    return listTravelBookingQueue(v.organisationId, v.actor);
+  });
+
+export const changeTravelBookingFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: Actor,
+        requestId: z.string().uuid(),
+        action: z.enum(["request", "approve", "reject", "confirm"]),
+        bookingId: z.string().uuid().optional(),
+        kind: z.enum(["Car", "Flight", "Hotel", "Other"]).optional(),
+        name: z.string().trim().max(150).optional(),
+        details: z.string().trim().max(2000).optional(),
+        estimate: z.number().nonnegative().max(10000000).optional(),
+        confirmation: z.string().trim().max(2000).optional(),
+        document: Upload.optional(),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    let documentFileId: string | undefined;
+    if (data.document) {
+      if (v.actor.activeRole !== "Travel Admin" || data.action !== "confirm")
+        throw new Error("Only Travel Admin can attach a booking confirmation.");
+      documentFileId = crypto.randomUUID();
+      await saveObjectFile({
+        id: documentFileId,
+        organisationId: v.organisationId,
+        bytes: verifiedUpload(data.document),
+        name: data.document.fileName,
+        mimeType: data.document.mimeType,
+        owner: { entityType: "travel-booking-document", entityId: data.requestId },
+        actor: v.actor,
+      });
+    }
+    try {
+      await changeTravelBookingInDatabase(v.organisationId, { ...data, documentFileId }, v.actor);
+    } catch (error) {
+      if (documentFileId)
+        await deleteObjectFile(
+          v.organisationId,
+          documentFileId,
+          v.actor,
+          "Removed unattached booking document",
+        ).catch(() => undefined);
+      throw error;
+    }
+  });
+
 function verifiedUpload(upload: z.infer<typeof Upload>) {
-  const bytes = Uint8Array.from(upload.bytes);
+  const bytes = decodeUploadBytes(upload.bytes);
   const signatureValid =
     (upload.mimeType === "application/pdf" &&
       bytes[0] === 0x25 &&
@@ -77,6 +133,7 @@ export const createTravelRequestFn = createServerFn({ method: "POST" })
       .object({
         actor: Actor,
         employeeId: z.string().uuid(),
+        participantIds: z.array(z.string().uuid()).max(50).optional(),
         purpose: z.string().trim().min(3).max(2000),
         destination: z.string().trim().min(2).max(500),
         startDate: z.string().date(),
@@ -114,6 +171,7 @@ export const createTravelRequestFn = createServerFn({ method: "POST" })
         v.organisationId,
         {
           employeeId: data.employeeId,
+          participantIds: data.participantIds,
           purpose: data.purpose,
           destination: data.destination,
           startDate: data.startDate,
@@ -205,7 +263,7 @@ export const submitTravelExpensesFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const v = await verify(data.actor);
     const totalUploadBytes = data.lines.reduce(
-      (total, line) => total + line.receipt.bytes.length,
+      (total, line) => total + uploadByteLength(line.receipt.bytes),
       0,
     );
     if (totalUploadBytes > 25 * 1024 * 1024)
@@ -286,6 +344,7 @@ export const readTravelFileFn = createServerFn({ method: "GET" })
         actor: Actor,
         requestId: z.string().uuid(),
         expenseLineId: z.string().uuid().optional(),
+        bookingId: z.string().uuid().optional(),
       })
       .strict()
       .parse(input),
@@ -297,6 +356,7 @@ export const readTravelFileFn = createServerFn({ method: "GET" })
       data.requestId,
       data.expenseLineId,
       v.actor,
+      data.bookingId,
     );
     return { metadata: result.metadata, bytes: Array.from(result.bytes) };
   });
