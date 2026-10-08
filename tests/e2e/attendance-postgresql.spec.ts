@@ -429,7 +429,7 @@ test("employee site visit persists to PostgreSQL and HR approval survives a role
   await expect(reviewRow).toContainText("Approved");
 
   await previewAs(page, "user-omar", "Employee", "/staff/me/attendance");
-  await page.getByRole("tab", { name: /^Visits/ }).click();
+  await page.getByRole("link", { name: /^Visits/ }).click();
   const employeeRow = page.getByRole("row").filter({ hasText: destination });
   await expect(employeeRow).toContainText("Approved");
   await employeeRow.getByRole("button", { name: "Cancel visit" }).click();

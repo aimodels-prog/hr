@@ -137,11 +137,11 @@ test("objectives, appraisal, acknowledgement and certification complete across r
   );
 
   await previewAs(page, "user-omar", "Employee", "/staff/me/performance");
-  await expect(page.getByRole("tab", { name: "Objectives" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Objectives", exact: true })).toBeVisible();
   await page.getByRole("combobox").click();
   await page.getByRole("option", { name: cycleName, exact: true }).click();
   await expect(page.getByText(firstObjective, { exact: true })).toBeVisible();
-  await page.getByRole("tab", { name: "Reviews" }).click();
+  await page.getByRole("link", { name: "Reviews", exact: true }).click();
   await expect(page.getByText(cycleName, { exact: true })).toBeVisible();
   await page
     .getByRole("row", { name: new RegExp(cycleName) })
@@ -226,7 +226,7 @@ test("objectives, appraisal, acknowledgement and certification complete across r
   await expect(page.getByText("Locked", { exact: true }).first()).toBeVisible();
 
   await previewAs(page, "user-omar", "Employee", "/staff/me/training");
-  await page.getByRole("tab", { name: "Certifications" }).click();
+  await page.getByRole("link", { name: "Certifications", exact: true }).click();
   await page.getByRole("button", { name: "Add certification" }).click();
   await page.getByLabel("Training title").fill(certificateTitle);
   await page.getByLabel("Provider or institution").fill("VIA Academy");

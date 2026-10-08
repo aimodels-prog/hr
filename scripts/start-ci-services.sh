@@ -21,7 +21,21 @@ diagnostics() {
 }
 trap diagnostics ERR
 
-docker build --tag "$minio_image" scripts/ci-minio
+build_with_retry() {
+  local attempt
+  for attempt in 1 2 3; do
+    if docker build "$@"; then
+      return 0
+    fi
+    if [ "$attempt" -lt 3 ]; then
+      echo "::warning::CI image build failed; retrying ($attempt/3)."
+      sleep 10
+    fi
+  done
+  return 1
+}
+
+build_with_retry --tag "$minio_image" scripts/ci-minio
 
 export MINIO_ROOT_USER="$VIA_HR_OBJECT_STORAGE_ACCESS_KEY_ID"
 export MINIO_ROOT_PASSWORD="$VIA_HR_OBJECT_STORAGE_SECRET_ACCESS_KEY"
@@ -47,7 +61,7 @@ wait_ready() {
 }
 wait_ready via-hr-ci-minio "http://127.0.0.1:$minio_port/minio/health/ready"
 
-docker build --tag via-hr-ci-cv-processor:local services/cv-processor
+build_with_retry --tag via-hr-ci-cv-processor:local services/cv-processor
 docker run --detach --name via-hr-ci-cv-processor --label via-hr.ci=true \
   --publish "127.0.0.1:$cv_port:8080" via-hr-ci-cv-processor:local
 wait_ready via-hr-ci-cv-processor "http://127.0.0.1:$cv_port/health"
