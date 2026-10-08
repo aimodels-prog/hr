@@ -218,12 +218,13 @@ test("production release smoke retains employee filters across HR modules", asyn
     await expect(filter).toBeVisible({ timeout: 30_000 });
     await filter.getByRole("searchbox").fill("rana.nair@via-int.com");
     await filter.getByRole("button", { name: /Rana/ }).click();
-    await expect(filter.getByText(/Viewing: Rana/)).toBeVisible();
+    await expect(filter.getByText("Rana", { exact: true })).toBeVisible();
     await expect(page).toHaveURL(/employeeId=/);
     await page.reload();
-    await expect(filter.getByText(/Viewing: Rana/)).toBeVisible({ timeout: 30_000 });
+    await expect(filter.getByText("Rana", { exact: true })).toBeVisible({ timeout: 30_000 });
     await filter.getByRole("button", { name: "Clear employee filter" }).click();
-    await expect(filter.getByText("Viewing: All employees")).toBeVisible();
+    await expect(filter.getByRole("button", { name: "Clear employee filter" })).toHaveCount(0);
+    await expect(page).not.toHaveURL(/employeeId=/);
   }
 });
 
@@ -327,7 +328,7 @@ test("production release smoke keeps employee dashboard concise on desktop and p
   await expect(page.getByText("Viewing: All employees", { exact: false })).toHaveCount(0);
   await page.getByRole("button", { name: "About Expected hours", exact: true }).click();
   await expect(
-    page.getByText("Working calendar adjusted for leave", { exact: true }),
+    page.getByText("Completed days only, adjusted for leave", { exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await page.screenshot({ path: test.info().outputPath("employee-desktop.png"), fullPage: true });
@@ -357,7 +358,7 @@ test("production release smoke shows six charts for Super Admin on desktop and p
   const recruitmentMenu = page.getByRole("button", { name: "Recruitment", exact: true });
   await expect(recruitmentMenu).toHaveAttribute("aria-expanded", "false");
   await recruitmentMenu.click();
-  await expect(page.getByRole("link", { name: "Vacancies", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Job Vacancies", exact: true })).toBeVisible();
   await recruitmentMenu.click();
   await page.screenshot({
     path: test.info().outputPath("super-admin-desktop.png"),
@@ -482,16 +483,16 @@ test("production release smoke request centre loads HR tracking and personal app
     "Requires isolated portal SSO configuration",
   );
   await signInAs(page, "rana.nair@via-int.com", "Rana Nair", "/staff/requests?view=organisation");
-  await expect(
-    page.getByRole("heading", { name: "Organisation Tracker", exact: true }),
-  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: "Employee Requests", exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
   await expect(page.getByText("Loading requests…")).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByText(/Requests could not be refreshed/)).toHaveCount(0);
   await page
-    .getByRole("link", { name: /^Needs My Approval/ })
+    .getByRole("link", { name: /^Waiting for me/ })
     .last()
     .click();
-  await expect(page.getByRole("heading", { name: "Needs My Approval", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Approvals", exact: true })).toBeVisible();
   await expect(page.getByText("Loading requests…")).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByText(/Requests could not be refreshed/)).toHaveCount(0);
   await signInAs(page, "omar.rahman@via-int.com", "Omar Rahman", "/staff/requests?view=my");
@@ -500,7 +501,7 @@ test("production release smoke request centre loads HR tracking and personal app
   });
   await expect(page.getByText("Loading requests…")).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByText(/Requests could not be refreshed/)).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Organisation Tracker", exact: true })).toHaveCount(
+  await expect(page.getByRole("link", { name: "All employee requests", exact: true })).toHaveCount(
     0,
   );
 });
