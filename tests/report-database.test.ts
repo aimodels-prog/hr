@@ -39,7 +39,7 @@ test(
         join roles r on r.id = ur.role_id
         where r.code in ('HR', 'Accounts', 'Super Admin')
         group by u.organisation_id
-        having count(distinct r.code) = 3
+        having count(distinct r.code) = 3 and count(distinct u.id) >= 3
         order by u.organisation_id
         limit 1
       `;

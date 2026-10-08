@@ -491,6 +491,13 @@
       "when": 1791300000004,
       "tag": "0069_monthly_timesheets",
       "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1791300000005,
+      "tag": "0070_attendance_record_guards",
+      "breakpoints": true
     }
   ]
 }
