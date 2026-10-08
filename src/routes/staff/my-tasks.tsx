@@ -273,7 +273,10 @@ function MyTasksRoute() {
                 <Button
                   className="w-full shrink-0 sm:w-auto"
                   variant={task.state === "Blocked" ? "outline" : "default"}
-                  onClick={() => navigate({ to: task.actionUrl })}
+                  onClick={() => {
+                    const [path, hash = ""] = task.actionUrl.split("#");
+                    return navigate({ to: path!, hash });
+                  }}
                 >
                   {task.actionLabel} <ArrowRight className="h-4 w-4" />
                 </Button>

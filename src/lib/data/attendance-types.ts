@@ -1,6 +1,7 @@
 import type { BaseRecord, MasterRecord, RecordId } from "./types.ts";
 
 export type AttendanceStatus =
+  | "Half-day Leave" // Display-only; real punch records keep their normal attendance status.
   | "Not tracked"
   | "Present"
   | "Absent"

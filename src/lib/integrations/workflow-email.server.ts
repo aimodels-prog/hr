@@ -16,6 +16,7 @@ export interface WorkflowEmailContext {
   message: string;
   path?: string | undefined;
   type?: string;
+  items?: { title: string; message: string; path?: string | undefined }[];
 }
 export function workflowEmailDestination(origin: string, path?: string): string {
   if (!path || !path.startsWith("/staff/") || path.includes("\\") || /[\r\n]/.test(path))
@@ -44,6 +45,15 @@ export function workflowEmailRaw(
   const documentReview = approval && /verify employee document/i.test(context?.message ?? "");
   const body = staffEmailTemplate({
     origin,
+    ...(context?.items
+      ? {
+          items: context.items.map((item) => ({
+            title: item.title,
+            message: item.message,
+            url: workflowEmailDestination(origin, item.path),
+          })),
+        }
+      : {}),
     heading: missingClockoutDate
       ? "A clock-out needs your attention"
       : family

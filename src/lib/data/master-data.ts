@@ -1,6 +1,7 @@
 import { LocalRepository, type NewRecord, type RecordChanges } from "./repository.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import type { ActorContext, Employee, MasterRecord, Project } from "./types.ts";
+import { canManageMasterCollection, canManageProjects } from "../auth/company-setup-policy.ts";
 
 export type MasterDataCollection =
   | "departments"
@@ -152,7 +153,7 @@ export class MasterDataService {
     changes: RecordChanges<MasterRecord>,
     context: ActorContext,
   ): Promise<MasterRecord> {
-    this.requireAdministrator(context, `update a ${collection} record`);
+    this.requireCreator(collection, context);
     const repository = getMasterDataRepository(collection);
     if (!usesBrowserServerFunctions()) {
       const existing = repository.getById(id);
@@ -182,7 +183,7 @@ export class MasterDataService {
     id: string,
     context: ActorContext,
   ): Promise<MasterRecord> {
-    this.requireAdministrator(context, `archive a ${collection} record`);
+    this.requireCreator(collection, context);
     const repository = getMasterDataRepository(collection);
     if (!usesBrowserServerFunctions()) {
       const existing = repository.getById(id);
@@ -212,10 +213,10 @@ export class MasterDataService {
     id: string,
     context: ActorContext,
   ): Promise<MasterRecord> {
-    this.requireAdministrator(context, `restore a ${collection} record`);
+    this.requireCreator(collection, context);
     const repository = getMasterDataRepository(collection);
     if (!usesBrowserServerFunctions()) {
-      const existing = repository.getById(id);
+      const existing = repository.getById(id, { includeArchived: true });
       if (!existing) throw new Error("The selected setting was not found.");
       this.requireUnique(collection, existing.name, existing.code, id);
       return repository.restore(id, context);
@@ -225,7 +226,7 @@ export class MasterDataService {
     const result = (await restoreMasterDataFn({
       data: {
         collection,
-        id: resolveDatabaseId(repository.getById(id), id),
+        id: resolveDatabaseId(repository.getById(id, { includeArchived: true }), id),
         actorId: context.actor.userId,
         ...(context.actor.workspaceEmail ? { actorEmail: context.actor.workspaceEmail } : {}),
       },
@@ -266,7 +267,7 @@ export class MasterDataService {
     changes: RecordChanges<Project>,
     context: ActorContext,
   ): Promise<Project> {
-    this.requireAdministrator(context, "update a project");
+    this.requireCreator("projects", context);
     const repository = getProjectRepository();
     if (!usesBrowserServerFunctions()) {
       const existing = repository.getById(id);
@@ -291,7 +292,7 @@ export class MasterDataService {
   }
 
   async archiveProject(id: string, context: ActorContext): Promise<Project> {
-    this.requireAdministrator(context, "archive a project");
+    this.requireCreator("projects", context);
     const repository = getProjectRepository();
     if (!usesBrowserServerFunctions()) {
       const existing = repository.getById(id);
@@ -326,10 +327,10 @@ export class MasterDataService {
   }
 
   async restoreProject(id: string, context: ActorContext): Promise<Project> {
-    this.requireAdministrator(context, "restore a project");
+    this.requireCreator("projects", context);
     const repository = getProjectRepository();
     if (!usesBrowserServerFunctions()) {
-      const existing = repository.getById(id);
+      const existing = repository.getById(id, { includeArchived: true });
       if (!existing) throw new Error("The selected project was not found.");
       this.requireUniqueProject(existing.name, existing.code, id);
       return repository.restore(id, context);
@@ -338,7 +339,7 @@ export class MasterDataService {
     const { restoreProjectFn } = await import("../server-functions/master-data.server.ts");
     const result = (await restoreProjectFn({
       data: {
-        id: resolveDatabaseId(repository.getById(id), id),
+        id: resolveDatabaseId(repository.getById(id, { includeArchived: true }), id),
         actorId: context.actor.userId,
         ...(context.actor.workspaceEmail ? { actorEmail: context.actor.workspaceEmail } : {}),
       },
@@ -386,42 +387,19 @@ export class MasterDataService {
     };
   }
 
-  private requireAdministrator(context: ActorContext, action: string): void {
-    if (context.actor.activeRole === "Super Admin") return;
-    const { audit } = getApplicationDataServices();
-    audit.record({
-      context,
-      action: "access-denied",
-      module: "settings",
-      entityType: "master-data",
-      entityId: action,
-      reason: `Only a Super Admin can ${action}.`,
-      riskLevel: "High",
-    });
-    throw new Error(`Only a Super Admin can ${action}.`);
-  }
-
   private requireCreator(
     collection: MasterDataCollection | "projects",
     context: ActorContext,
   ): void {
-    const hrManagedCollections: (MasterDataCollection | "projects")[] = [
-      "projects",
-      "grades",
-      "departments",
-      "positions",
-      "locations",
-      "employmentTypes",
-    ];
+    const roles = [context.actor.activeRole ?? "Employee"];
     if (
-      context.actor.activeRole === "Super Admin" ||
-      (context.actor.activeRole === "HR" && hrManagedCollections.includes(collection))
+      collection === "projects"
+        ? canManageProjects(roles)
+        : canManageMasterCollection(roles, collection)
     ) {
       return;
     }
-    const message = hrManagedCollections.includes(collection)
-      ? "Only HR or a Super Admin can add this option."
-      : "Only a Super Admin can add this setting.";
+    const message = "This option is outside your company setup responsibilities.";
     getApplicationDataServices().audit.record({
       context,
       action: "access-denied",

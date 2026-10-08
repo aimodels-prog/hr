@@ -1,7 +1,8 @@
 import { Fragment, useState, useMemo, useEffect, useCallback } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { Building2, CalendarClock, ClipboardCheck, Landmark, ShieldCheck } from "lucide-react";
-import { RequirePermission, useCurrentUser } from "@/lib/auth";
+import { AccessDenied, RequirePermission, useCurrentUser } from "@/lib/auth";
+import { canViewCompanySetupSection } from "@/lib/auth/company-setup-policy";
 import { PageHeader } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
 import { PageSections, SectionNavigation, SectionLink } from "@/components/ui/page-sections";
@@ -23,6 +24,7 @@ import {
 import { ProjectsPanel } from "@/components/settings/projects-panel";
 import { ReminderSettingsPanel } from "@/components/settings/reminder-settings-panel";
 import { DocumentRequirementsPanel } from "@/components/settings/document-requirements-panel";
+import { GoogleCalendarConnection } from "@/components/interviews/google-calendar-connection";
 
 import {
   AlertDialog,
@@ -42,6 +44,11 @@ const SETTINGS_GROUPS = [
     label: "Organisation",
     icon: Building2,
     items: [
+      {
+        key: "connections",
+        label: "Email & Calendar",
+        description: "Approval emails, reminders and interview calendar",
+      },
       {
         key: "reminders",
         label: "Reminder settings",
@@ -171,27 +178,22 @@ function SettingsRoute() {
       </div>
     );
   }
-  if (!currentUser.can("system:settings_manage")) {
+  if (!canViewCompanySetupSection(currentUser.activeRole, section)) {
     return (
-      <RequirePermission permission="leave:admin_all" resourceName="Leave Policies">
-        <div className="flex max-w-7xl flex-col gap-6 mx-auto">
-          <PageHeader
-            title="Leave Policies"
-            description="Manage leave allowances, evidence requirements and notice rules."
-            breadcrumbs={[{ label: "Time & Travel" }, { label: "Leave Policies" }]}
-          />
-          <LeavePolicyConfig />
-        </div>
-      </RequirePermission>
+      <AccessDenied resourceName="Company setup" requiredPermission="system:settings_manage" />
     );
   }
   return (
-    <RequirePermission permission="system:settings_manage" resourceName="Settings">
+    <RequirePermission
+      permission={
+        currentUser.activeRole === "HR" ? "employee:manage_all" : "system:settings_manage"
+      }
+      resourceName="Company setup"
+    >
       <div className="flex flex-col gap-6 max-w-7xl mx-auto">
         <PageHeader
           title="Company Setup"
-          description="Keep company details, departments, job titles and HR rules up to date. Choose a section to get started."
-          breadcrumbs={[{ label: "HR Settings" }, { label: "Company Setup" }]}
+          breadcrumbs={[{ label: "Settings" }, { label: "Company Setup" }]}
         />
 
         <PageSections
@@ -201,20 +203,28 @@ function SettingsRoute() {
           }}
         >
           <SectionNavigation restoreHash={false}>
-            {SETTINGS_GROUPS.map((group) => (
+            {SETTINGS_GROUPS.filter((group) =>
+              group.items.some((item) =>
+                canViewCompanySetupSection(currentUser.activeRole, item.key),
+              ),
+            ).map((group) => (
               <Fragment key={group.label}>
                 <p className="px-3 pb-1 pt-3 text-xs font-semibold text-muted-foreground">
-                  {group.label}
+                  {currentUser.activeRole === "HR" && group.label === "Finance references"
+                    ? "Projects"
+                    : group.label}
                 </p>
-                {group.items.map((item) => (
-                  <SectionLink
-                    key={item.key}
-                    value={item.key}
-                    onClick={(event) => event.preventDefault()}
-                  >
-                    {item.label}
-                  </SectionLink>
-                ))}
+                {group.items
+                  .filter((item) => canViewCompanySetupSection(currentUser.activeRole, item.key))
+                  .map((item) => (
+                    <SectionLink
+                      key={item.key}
+                      value={item.key}
+                      onClick={(event) => event.preventDefault()}
+                    >
+                      {item.label}
+                    </SectionLink>
+                  ))}
               </Fragment>
             ))}
           </SectionNavigation>
@@ -232,6 +242,8 @@ function SettingsRoute() {
 
 function SettingsSectionContent({ section }: { section: SettingsSection }) {
   switch (section) {
+    case "connections":
+      return <GoogleCalendarConnection />;
     case "documentRequirements":
       return <DocumentRequirementsPanel />;
     case "reminders":

@@ -34,6 +34,8 @@ function futureMonday(): Date {
   date.setUTCHours(0, 0, 0, 0);
   date.setUTCDate(date.getUTCDate() + 75);
   while (date.getUTCDay() !== 1) date.setUTCDate(date.getUTCDate() + 1);
+  // This scenario also extends the request by a day; keep the fixture in one entitlement year.
+  if (date.getUTCMonth() === 11 && date.getUTCDate() > 25) date.setUTCDate(date.getUTCDate() + 7);
   return date;
 }
 
@@ -61,6 +63,7 @@ test(
     const balanceId = randomUUID();
     const createdAt = new Date();
     const start = futureMonday();
+    const updatedYearEntitlement = start.getUTCFullYear() === createdAt.getUTCFullYear() ? 35 : 30;
     const end = new Date(start);
     end.setUTCDate(end.getUTCDate() + 4);
     const holiday = new Date(start);
@@ -373,7 +376,11 @@ test(
         hrActor,
       );
       const [adjusted] = await sql`SELECT balance_days FROM leave_balances WHERE id = ${balanceId}`;
-      assert.equal(Number(adjusted?.balance_days), 31);
+      assert.equal(
+        Number(adjusted?.balance_days),
+        updatedYearEntitlement - 4,
+        "Policy changes adjust the current entitlement year, not a different year's balance",
+      );
       const exported = await exportLeaveRequestsCsvInDatabase(organisationId, {}, hrActor);
       assert.equal(exported.rowCount, 1);
       assert.match(exported.content, /Annual leave requested/);
@@ -436,7 +443,7 @@ test(
       );
       await approveLeaveRequestInDatabase(organisationId, requestId, hrActor, "approve");
       const [restored] = await sql`SELECT balance_days FROM leave_balances WHERE id = ${balanceId}`;
-      assert.equal(Number(restored?.balance_days), 35);
+      assert.equal(Number(restored?.balance_days), updatedYearEntitlement);
 
       // Old or incorrectly configured statutory policies must still enforce nationality.
       const statutoryPolicyIds: string[] = [];
@@ -527,7 +534,7 @@ test(
       assert.deepEqual(afterMigration, beforeMigration);
       const [preservedBalance] =
         await sql`SELECT balance_days FROM leave_balances WHERE id = ${balanceId}`;
-      assert.equal(Number(preservedBalance.balance_days), 35);
+      assert.equal(Number(preservedBalance.balance_days), updatedYearEntitlement);
       const past = new Date();
       past.setUTCDate(past.getUTCDate() - 14);
       while (past.getUTCDay() !== 1) past.setUTCDate(past.getUTCDate() - 1);

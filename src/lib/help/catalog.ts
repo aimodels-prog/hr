@@ -28,6 +28,7 @@ export const helpArticles = [
 
 /** Extra destinations explained within a guide, checked against the sidebar in tests. */
 export const helpRouteCoverage: Record<string, string> = {
+  "/staff/timesheets": "timesheets",
   "/staff/anniversaries": "directory",
   "/staff/org-chart": "directory",
   "/staff/candidates/contacts": "hr-candidate-pool",

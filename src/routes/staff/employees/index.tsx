@@ -60,10 +60,12 @@ function EmployeesRoute() {
     () =>
       employeeService
         .getDirectoryEmployees(currentUser.getActorContext(), {
-          includeArchived: false,
+          includeArchived: canManageEmployees,
         })
-        .filter((employee) => !["Inactive", "Archived"].includes(employee.status)),
-    [employeeService, currentUser],
+        .filter(
+          (employee) => canManageEmployees || !["Inactive", "Archived"].includes(employee.status),
+        ),
+    [employeeService, currentUser, canManageEmployees],
   );
 
   const employeeById = useMemo(
@@ -81,6 +83,14 @@ function EmployeesRoute() {
   const filteredEmployees = useMemo(() => {
     const query = searchParams.q.trim().toLowerCase();
     return employees.filter((employee) => {
+      if (canManageEmployees) {
+        const status = searchParams.status || "current";
+        const former = ["Inactive", "Archived"].includes(employee.status) || !!employee.archivedAt;
+        if (status === "current" && former) return false;
+        if (status === "former" && !former) return false;
+        if (!["current", "former", "all"].includes(status) && employee.status !== status)
+          return false;
+      }
       if (searchParams.department && employee.department !== searchParams.department) return false;
       if (searchParams.location && employee.location !== searchParams.location) return false;
       if (!query) return true;
@@ -94,7 +104,7 @@ function EmployeesRoute() {
         employee.location,
       ].some((value) => value.toLowerCase().includes(query));
     });
-  }, [employees, searchParams]);
+  }, [employees, searchParams, canManageEmployees]);
 
   const pageSize = 20;
   const totalPages = Math.ceil(filteredEmployees.length / pageSize);
@@ -124,8 +134,7 @@ function EmployeesRoute() {
     <RequirePermission permission="employee:view_directory" resourceName="Employee Directory">
       <div className="mx-auto flex max-w-[1500px] flex-col gap-6 pb-10">
         <PageHeader
-          title="Employee Directory"
-          description="Find a colleague's VIA contact details, position and work location."
+          title={canManageEmployees ? "Manage Employees" : "Colleague Directory"}
           breadcrumbs={[{ label: "Core HR" }, { label: "Employee Directory" }]}
           actions={
             canManageEmployees ? (
@@ -145,6 +154,23 @@ function EmployeesRoute() {
         />
 
         <FilterBar>
+          {canManageEmployees && (
+            <Select
+              value={searchParams.status || "current"}
+              onValueChange={(status) => updateSearch({ status })}
+            >
+              <SelectTrigger className="w-full sm:w-[190px]" aria-label="Employee status">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="current">Current employees</SelectItem>
+                <SelectItem value="former">Former employees</SelectItem>
+                <SelectItem value="all">All employees</SelectItem>
+                <SelectItem value="Onboarding">New employees</SelectItem>
+                <SelectItem value="Offboarding">Leaving employees</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
           <div className="relative min-w-[260px] flex-1 sm:max-w-md">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -186,7 +212,10 @@ function EmployeesRoute() {
               ))}
             </SelectContent>
           </Select>
-          {(searchParams.q || searchParams.department || searchParams.location) && (
+          {(searchParams.q ||
+            searchParams.department ||
+            searchParams.location ||
+            searchParams.status) && (
             <Button variant="ghost" size="sm" onClick={clearFilters}>
               <FilterX className="mr-2 h-4 w-4" /> Clear filters
             </Button>
@@ -236,6 +265,9 @@ function EmployeesRoute() {
                         </p>
                         {canManageEmployees && (
                           <p className="text-xs text-muted-foreground">{employee.employeeNumber}</p>
+                        )}
+                        {canManageEmployees && (
+                          <p className="text-xs text-muted-foreground">{employee.status}</p>
                         )}
                       </TableCell>
                       <TableCell>

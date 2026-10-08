@@ -1,4 +1,5 @@
 import { SafeForm } from "@/components/ui/safe-form";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, useMemo, useRef } from "react";
 import { RequirementFields } from "@/components/documents/requirement-fields";
 import {
@@ -185,6 +186,9 @@ export function DocumentsTab({
     };
   }, [currentUser, documentService, employeeId]);
 
+  const documentLocation = useLocation();
+  const navigateToDocuments = useNavigate();
+  const linkedDocumentId = new URLSearchParams(documentLocation.hash).get("document");
   const allDocs = documentService
     .getDocuments(currentUser.getActorContext())
     .filter((document) => document.employeeId === employeeId);
@@ -212,19 +216,22 @@ export function DocumentsTab({
   };
 
   // Filter restricted docs
-  const visibleDocs = allDocs
+  const accessibleDocs = allDocs
     .filter((doc) => {
       if (doc.visibility === "Restricted" && !isHrOrAdmin && !isSelf) return false;
       return true;
     })
     .map((doc) => ({ ...doc, computedStatus: computeStatus(doc) }));
+  const visibleDocs = accessibleDocs.filter(
+    (doc) => !linkedDocumentId || doc.id === linkedDocumentId,
+  );
 
   // Identify missing mandatory docs
   const missingDocs = requirements
     .filter((r) => r.required)
     .filter(
       (r) =>
-        !visibleDocs.some(
+        !accessibleDocs.some(
           (d) =>
             (d.requirementId === r.id ||
               (!d.requirementId && d.type === r.type && r.id === r.type)) &&
@@ -494,6 +501,27 @@ export function DocumentsTab({
     <div className="space-y-6">
       {loading && <p className="text-sm text-muted-foreground">Loading employee documents...</p>}
       {loadError && <p className="text-sm text-destructive">{loadError}</p>}
+      {linkedDocumentId && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+          <p>
+            {!loading && !loadError && visibleDocs.length === 0
+              ? "This document is no longer available, or you do not have access."
+              : "Selected document — view, download or use the available action below."}
+          </p>
+          <Button
+            variant="outline"
+            onClick={() =>
+              navigateToDocuments({
+                to: documentLocation.pathname,
+                hash: "section=documents",
+                search: (previous) => previous,
+              })
+            }
+          >
+            All documents
+          </Button>
+        </div>
+      )}
       {!loading &&
         !loadError &&
         (isSelf || isHrOrAdmin) &&

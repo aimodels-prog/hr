@@ -170,7 +170,7 @@ function OnboardingDashboard() {
     <RequirePermission permission="onboarding:manage_all" resourceName="Onboarding">
       <div className="mx-auto flex max-w-[1280px] flex-col gap-6 pb-10" data-revision={revision}>
         <PageHeader
-          title="Onboarding and employee setup"
+          title="New Employees"
           description="Guide new hires through joining and help existing staff complete their employee records."
           actions={
             <Button onClick={() => setCreateOpen(true)}>

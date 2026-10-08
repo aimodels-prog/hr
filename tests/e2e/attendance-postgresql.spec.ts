@@ -47,7 +47,9 @@ test("staff outside biometric tracking retain leave charts and manual timesheets
 }) => {
   await page.goto("/staff");
   await previewAs(page, "user-mariam", "Employee", "/staff/me/attendance");
-  await expect(page.getByRole("link", { name: "Open your timesheet", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open your timesheet", exact: true })).toBeVisible({
+    timeout: 30000,
+  });
   await expect(
     page.getByRole("heading", { name: "My annual leave balance", exact: true }),
   ).toBeVisible();

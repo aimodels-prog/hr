@@ -6,6 +6,7 @@ export interface StaffEmailContent {
   url: string;
   origin: string;
   note?: string;
+  items?: { title: string; message: string; url: string }[];
 }
 
 function escapeHtml(value: string): string {
@@ -67,7 +68,25 @@ export function staffEmailTemplate(content: StaffEmailContent) {
 <p style="margin:12px 0 0;">Button not working? <a href="${url}" style="color:#095790;text-decoration:underline;">Open in VIA HR Application</a></p>
 </td></tr></table><!--[if mso]></td></tr></table><![endif]-->
 </td></tr></table></body></html>`;
-  return { text, html };
+  const items = (content.items ?? []).map((item) => {
+    const target = new URL(item.url);
+    if (target.origin !== origin.origin || target.username || target.password)
+      throw new Error("Email actions must point to the HR application.");
+    return {
+      text: `${item.title}\r\n${item.message}\r\n${target}\r\n`,
+      html: `<div style="border-top:1px solid #dce5ef;padding:16px 0;"><h2 style="font-size:16px;margin:0 0 8px;">${safe(item.title)}</h2><p style="font-size:14px;line-height:22px;">${safe(item.message).replace(/\r?\n/g, "<br>")}</p><a href="${safe(target.toString())}" style="color:#095790;">View details</a></div>`,
+    };
+  });
+  return {
+    text: text.replace(
+      `${content.action}:`,
+      `${items.map((item) => item.text).join("\r\n")}\r\n${content.action}:`,
+    ),
+    html: html.replace(
+      '<table role="presentation" cellspacing="0"',
+      `${items.map((item) => item.html).join("")}<table role="presentation" cellspacing="0"`,
+    ),
+  };
 }
 
 /** RFC 2045 base64 lines stay below the 76-character limit. */

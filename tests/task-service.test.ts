@@ -51,6 +51,30 @@ function setup() {
   return { storage, audit, notifications };
 }
 
+test("document tasks link to the exact document and documents section", () => {
+  const { storage } = setup();
+  storage.writeCollection("employee_documents", [
+    {
+      ...base("document-deep-link"),
+      employeeId: "employee-omar",
+      type: "passport",
+      fileId: "file-test",
+      status: "Pending Verification",
+      visibility: "Restricted",
+    },
+  ]);
+  const tasks = new TaskService().getMyTasks({
+    userId: "user-rana",
+    employeeId: "employee-rana",
+    activeRole: "HR",
+  });
+  const task = tasks.find((item) => item.sourceId === "document-deep-link");
+  assert.equal(
+    task?.actionUrl,
+    "/staff/employees/employee-omar#section=documents&document=document-deep-link",
+  );
+});
+
 function onboardingCase(): OnboardingCase {
   return {
     ...base("onboarding-task-test"),

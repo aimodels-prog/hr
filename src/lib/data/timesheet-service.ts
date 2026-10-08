@@ -12,10 +12,6 @@ import type {
 import {
   parseISO,
   addDays,
-  nextDay,
-  getDay,
-  isBefore,
-  isSameDay,
   format,
   eachDayOfInterval,
   differenceInCalendarDays,
@@ -29,10 +25,13 @@ import { ordinaryAttendanceHours } from "./office-schedule.ts";
 import { recordedDailyHours, recordedAttendanceHours } from "./recorded-hours.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { SettingsService, syncWorkingHoursCompatibilityCache } from "./settings-service.ts";
+import { timesheetAbsences, organisationDate } from "./approved-leave.ts";
+import { isConfiguredTimesheetPeriod, timesheetPeriodsInRange } from "./timesheet-periods.ts";
 
 const SETTINGS_COLLECTION = "timesheetSettings";
 
 const DEFAULT_SETTINGS: TimesheetSettings = {
+  periodFrequency: "Monthly",
   weeklyPeriodStartDay: 1, // Monday
   standardDailyHours: 8,
   submissionDeadlineDays: 2,
@@ -279,7 +278,8 @@ export class TimesheetService {
     if (typeof window === "undefined")
       return this.copyPreviousWeek(employeeId, currentPeriodId, context);
     const settings = this.getSettings();
-    if (!settings.allowCopyPreviousWeek) throw new Error("Copying the previous week is disabled.");
+    if (!settings.allowCopyPreviousWeek)
+      throw new Error("Copying the previous period is disabled.");
     const current = this.timesheetRepo
       .list()
       .find((item) => item.employeeId === employeeId && item.periodId === currentPeriodId);
@@ -288,22 +288,22 @@ export class TimesheetService {
     if (current.status !== "Draft")
       throw new Error("Only a draft timesheet can receive copied rows.");
     const previousEnd = format(addDays(parseISO(period.startDate), -1), "yyyy-MM-dd");
-    const previousPeriod = this.getPeriods().find((item) => item.endDate === previousEnd);
+    const previousPeriod = this.getPeriods().find(
+      (item) =>
+        item.endDate === previousEnd &&
+        isConfiguredTimesheetPeriod(item, settings.periodFrequency, settings.weeklyPeriodStartDay),
+    );
     const previous = previousPeriod
       ? this.timesheetRepo
           .list()
           .find((item) => item.employeeId === employeeId && item.periodId === previousPeriod.id)
       : undefined;
-    if (!previous?.entries.length) throw new Error("No entries were found in the previous week.");
+    if (!previous?.entries.length) throw new Error("No entries were found in the previous period.");
     const keys = new Set(
       current.entries.map(
         (entry) =>
           `${entry.projectId}|${entry.costCentreId}|${entry.activityCodeId}|${entry.locationCodeId}`,
       ),
-    );
-    const dayOffset = differenceInCalendarDays(
-      parseISO(period.startDate),
-      parseISO(previousPeriod!.startDate),
     );
     const additions = previous.entries
       .filter((entry) => !entry.isLeave && !entry.isHoliday)
@@ -313,20 +313,7 @@ export class TimesheetService {
             `${entry.projectId}|${entry.costCentreId}|${entry.activityCodeId}|${entry.locationCodeId}`,
           ),
       )
-      .map((entry) => {
-        const hours = Object.fromEntries(
-          Object.entries(entry.hours).map(([date, value]) => [
-            format(addDays(parseISO(date), dayOffset), "yyyy-MM-dd"),
-            value,
-          ]),
-        );
-        return {
-          ...entry,
-          id: crypto.randomUUID(),
-          hours,
-          total: Object.values(hours).reduce((sum, value) => sum + value, 0),
-        };
-      });
+      .map((entry) => ({ ...entry, id: crypto.randomUUID(), hours: {}, total: 0 }));
     return this.saveTimesheetDraftAsync(
       { ...current, entries: [...current.entries, ...additions] },
       context,
@@ -408,6 +395,8 @@ export class TimesheetService {
 
   saveSettings(settings: TimesheetSettings, context: ActorContext) {
     this.requireTimesheetAdmin(context, "change timesheet settings");
+    if (!["Monthly", "Weekly"].includes(settings.periodFrequency))
+      throw new Error("Select a valid timesheet frequency.");
     if (
       !Number.isInteger(settings.weeklyPeriodStartDay) ||
       settings.weeklyPeriodStartDay < 0 ||
@@ -480,48 +469,23 @@ export class TimesheetService {
   generatePeriods(startDateStr: string, endDateStr: string, context: ActorContext): number {
     this.requireTimesheetAdmin(context, "generate timesheet periods");
     const settings = this.getSettings();
-    const start = parseISO(startDateStr);
-    const end = parseISO(endDateStr);
-
-    if (isBefore(end, start)) {
-      throw new Error("End date must be after start date.");
-    }
-
-    // Find the first start day
-    let currentPeriodStart = start;
-    if (getDay(currentPeriodStart) !== settings.weeklyPeriodStartDay) {
-      // Find the previous occurrence of this day of the week to align the period
-      let offset = getDay(currentPeriodStart) - settings.weeklyPeriodStartDay;
-      if (offset < 0) offset += 7;
-      currentPeriodStart = addDays(currentPeriodStart, -offset);
-    }
-
     let periodsGenerated = 0;
     const existingPeriods = this.periodRepo.list();
-
-    while (!isBefore(end, currentPeriodStart)) {
-      const periodEnd = addDays(currentPeriodStart, 6);
-
-      const pStartStr = format(currentPeriodStart, "yyyy-MM-dd");
-      const pEndStr = format(periodEnd, "yyyy-MM-dd");
-
-      const exists = existingPeriods.some(
-        (p) => p.startDate === pStartStr && p.endDate === pEndStr,
-      );
-
-      if (!exists) {
-        this.periodRepo.create(
-          {
-            startDate: pStartStr,
-            endDate: pEndStr,
-            status: "Open",
-          },
-          context,
-        );
-        periodsGenerated++;
-      }
-
-      currentPeriodStart = addDays(periodEnd, 1);
+    for (const period of timesheetPeriodsInRange(
+      startDateStr,
+      endDateStr,
+      settings.periodFrequency,
+      settings.weeklyPeriodStartDay,
+    )) {
+      if (
+        existingPeriods.some(
+          (existing) =>
+            existing.startDate === period.startDate && existing.endDate === period.endDate,
+        )
+      )
+        continue;
+      this.periodRepo.create({ ...period, status: "Open" }, context);
+      periodsGenerated += 1;
     }
 
     return periodsGenerated;
@@ -579,6 +543,14 @@ export class TimesheetService {
     let created = 0;
 
     for (const period of this.periodRepo.list().filter((item) => item.status === "Open")) {
+      if (
+        !isConfiguredTimesheetPeriod(
+          period,
+          settings.periodFrequency,
+          settings.weeklyPeriodStartDay,
+        )
+      )
+        continue;
       const deadline = addDays(parseISO(period.endDate), settings.submissionDeadlineDays);
       const daysUntilDeadline = differenceInCalendarDays(deadline, today);
       if (daysUntilDeadline > 2 || daysUntilDeadline < -30) continue;
@@ -596,6 +568,7 @@ export class TimesheetService {
       ];
 
       for (const employee of employees) {
+        if (period.endDate < employee.startDate) continue;
         const sheet = sheets.find(
           (item) => item.employeeId === employee.id && item.periodId === period.id,
         );
@@ -672,8 +645,15 @@ export class TimesheetService {
       start: parseISO(period.startDate),
       end: parseISO(period.endDate),
     })
-      .filter((day) =>
-        this.attendanceService.isTrackingRequired(timesheet.employeeId, format(day, "yyyy-MM-dd")),
+      .filter(
+        (day) =>
+          this.attendanceService.isTrackingRequired(
+            timesheet.employeeId,
+            format(day, "yyyy-MM-dd"),
+          ) ||
+          timesheet.entries.some(
+            (entry) => (entry.isLeave || entry.isHoliday) && entry.hours[format(day, "yyyy-MM-dd")],
+          ),
       )
       .map((day) => {
         const date = format(day, "yyyy-MM-dd");
@@ -691,9 +671,12 @@ export class TimesheetService {
           else if (entry.isHoliday) holidayHours += hours;
           else workHours += hours;
         }
+        const fullAbsence = leaveHours + holidayHours >= this.getRecordedDailyHours(settings);
         const attendanceHours = ordinaryAttendanceHours(
           recordedAttendanceHours(record),
-          this.getRecordedDailyHours(settings),
+          fullAbsence
+            ? this.getRecordedDailyHours(settings)
+            : Math.max(0, this.getRecordedDailyHours(settings) - leaveHours - holidayHours),
         );
         const attendanceStatus = record?.status ?? virtualStatus ?? "No Record";
         const completeAttendance = Boolean(
@@ -702,10 +685,17 @@ export class TimesheetService {
         let status: DailyAttendanceReconciliation["status"] = "Matched";
         let requiresExplanation = false;
 
-        if (attendanceStatus === "On Leave") status = "Leave";
-        else if (attendanceStatus === "Holiday") status = "Holiday";
+        if (
+          fullAbsence &&
+          (workHours > 0 || attendanceHours > 0 || record?.clockIn || record?.clockOut)
+        ) {
+          status = "Variance";
+          requiresExplanation = true;
+        } else if (fullAbsence) status = holidayHours ? "Holiday" : "Leave";
+        else if (!this.attendanceService.isTrackingRequired(timesheet.employeeId, date))
+          status = "Matched";
         else if (attendanceStatus === "Rest Day" && workHours === 0) status = "Rest Day";
-        else if (record && !completeAttendance) {
+        else if ((record?.clockIn || record?.clockOut) && !completeAttendance) {
           status = "Incomplete Attendance";
           requiresExplanation = workHours > 0;
         } else if (!record && workHours > 0) {
@@ -765,19 +755,68 @@ export class TimesheetService {
       .find((t) => t.employeeId === employeeId && t.periodId === period.id);
     if (existing) return null;
 
-    const settings = this.getSettings();
-    const workingDays = new SettingsService().getAppSettingsSync().workingDays;
-    const interval = eachDayOfInterval({
+    return {
+      status: "Not Started",
+      totalHours: 0,
+      expectedHours: this.absences(employeeId, period).expectedWorkHours,
+    };
+  }
+
+  private absences(employeeId: string, period: TimesheetPeriod) {
+    const dates = eachDayOfInterval({
       start: parseISO(period.startDate),
       end: parseISO(period.endDate),
+    }).map((day) => format(day, "yyyy-MM-dd"));
+    const employee = new EmployeeService().getById(employeeId, SYSTEM_CONTEXT);
+    const employeeLocation = employee?.location;
+    const locationId =
+      getMasterDataRepository("locations")
+        .list()
+        .find((location) => location.id === employeeLocation || location.name === employeeLocation)
+        ?.id ?? employeeLocation;
+    const holidays = getMasterDataRepository("publicHolidays")
+      .list()
+      .filter((holiday) => {
+        const scope = (holiday as typeof holiday & { locationId?: string }).locationId;
+        return holiday.isActive && (!scope || scope === locationId);
+      });
+    return timesheetAbsences({
+      dates: dates.filter((date) => !employee?.startDate || date >= employee.startDate),
+      workingDays: new SettingsService().getAppSettingsSync().workingDays,
+      dailyHours: this.getRecordedDailyHours(),
+      holidays: new Set(
+        dates.filter((date) =>
+          holidays.some(
+            (holiday) =>
+              (holiday as typeof holiday & { date?: string }).date === date ||
+              holiday.description === date ||
+              holiday.name.includes(date),
+          ),
+        ),
+      ),
+      leave: new LeaveService()
+        .getAllRequests(SYSTEM_CONTEXT)
+        .filter((request) => request.employeeId === employeeId),
     });
-    let expectedHours = 0;
-    for (const day of interval) {
-      if (workingDays.includes(day.getDay())) {
-        expectedHours += this.getRecordedDailyHours(settings);
-      }
-    }
-    return { status: "Not Started", totalHours: 0, expectedHours };
+  }
+
+  private withApprovedAbsences(
+    sheet: TimesheetWithEntries,
+    period: TimesheetPeriod,
+  ): TimesheetWithEntries {
+    if (!["Draft", "Returned", "Pending Manager", "Pending HR"].includes(sheet.status))
+      return sheet;
+    const absence = this.absences(sheet.employeeId, period);
+    const work = sheet.entries.filter((entry) => !entry.isLeave && !entry.isHoliday);
+    return {
+      ...sheet,
+      entries: [...work, ...absence.entries],
+      expectedHours: absence.expectedWorkHours,
+      totalHours: work.reduce(
+        (sum, entry) => sum + Object.values(entry.hours).reduce((total, hours) => total + hours, 0),
+        0,
+      ),
+    };
   }
 
   getOrCreateTimesheet(
@@ -789,105 +828,46 @@ export class TimesheetService {
     const existing = this.timesheetRepo
       .list()
       .find((t) => t.employeeId === employeeId && t.periodId === periodId);
-    if (existing) return existing;
-
     const period = this.periodRepo.getById(periodId);
     if (!period) throw new Error("Period not found");
+    if (existing) return this.withApprovedAbsences(existing, period);
     if (period.status === "Closed") {
       throw new Error("Cannot create a timesheet in a closed period.");
     }
 
     const settings = this.getSettings();
-    const workingDays = new SettingsService().getAppSettingsSync().workingDays;
-    const start = parseISO(period.startDate);
-    const end = parseISO(period.endDate);
-    const interval = eachDayOfInterval({ start, end });
-
-    const leaveService = new LeaveService();
-    const approvedLeaves = leaveService
-      .getAllRequests(SYSTEM_CONTEXT)
-      .filter(
-        (r) => r.employeeId === employeeId && (r.status === "Approved" || r.status === "Taken"),
+    if (
+      !isConfiguredTimesheetPeriod(period, settings.periodFrequency, settings.weeklyPeriodStartDay)
+    )
+      throw new Error(
+        "New timesheets must use the configured period. Existing records remain in history.",
       );
-
-    const publicHolidaysRepo = getMasterDataRepository("publicHolidays");
-    const holidays = publicHolidaysRepo.list().filter((h) => h.isActive);
-
-    let expectedHours = 0;
-    const prefilledEntries: TimesheetEntry[] = [];
-
-    // Simple single-entry map for leave and holiday for this week
-    const leaveHours: Record<string, number> = {};
-    const holidayHours: Record<string, number> = {};
-
-    interval.forEach((day) => {
-      if (workingDays.includes(day.getDay())) {
-        expectedHours += this.getRecordedDailyHours(settings);
-      }
-
-      const dayStr = format(day, "yyyy-MM-dd");
-
-      const isH = holidays.some((holiday) => {
-        const structuredDate = (holiday as typeof holiday & { date?: string }).date;
+    if (
+      this.timesheetRepo.list().some((sheet) => {
+        const other = this.periodRepo.getById(sheet.periodId);
         return (
-          structuredDate === dayStr ||
-          holiday.description === dayStr ||
-          holiday.name.includes(dayStr)
+          sheet.employeeId === employeeId &&
+          !sheet.archivedAt &&
+          sheet.status !== "Corrected" &&
+          other &&
+          other.startDate <= period.endDate &&
+          other.endDate >= period.startDate
         );
-      });
-      if (isH) {
-        holidayHours[dayStr] = this.getRecordedDailyHours(settings);
-        return; // Skip checking leave if holiday
-      }
-
-      // Check Leave
-      const isL = approvedLeaves.some((l) => {
-        const lStart = parseISO(l.startDate);
-        const lEnd = parseISO(l.endDate);
-        return day >= lStart && day <= lEnd;
-      });
-
-      if (isL && workingDays.includes(day.getDay())) {
-        leaveHours[dayStr] = this.getRecordedDailyHours(settings);
-      }
-    });
-
-    if (Object.keys(holidayHours).length > 0) {
-      prefilledEntries.push({
-        id: crypto.randomUUID(),
-        projectId: "HOLIDAY",
-        costCentreId: "HOLIDAY",
-        activityCodeId: "HOLIDAY",
-        locationCodeId: "HOLIDAY",
-        hours: holidayHours,
-        total: Object.values(holidayHours).reduce((sum, h) => sum + h, 0),
-        isHoliday: true,
-        notes: "Public Holiday",
-      });
-    }
-
-    if (Object.keys(leaveHours).length > 0) {
-      prefilledEntries.push({
-        id: crypto.randomUUID(),
-        projectId: "LEAVE",
-        costCentreId: "LEAVE",
-        activityCodeId: "LEAVE",
-        locationCodeId: "LEAVE",
-        hours: leaveHours,
-        total: Object.values(leaveHours).reduce((sum, h) => sum + h, 0),
-        isLeave: true,
-        notes: "Approved Leave",
-      });
-    }
+      })
+    )
+      throw new Error(
+        "An existing timesheet already covers part of this month. Ask HR to review it before starting another, so hours are not counted twice.",
+      );
+    const absence = this.absences(employeeId, period);
 
     return this.timesheetRepo.create(
       {
         employeeId,
         periodId,
         status: "Draft",
-        expectedHours,
-        totalHours: prefilledEntries.reduce((sum, e) => sum + e.total, 0),
-        entries: prefilledEntries,
+        expectedHours: absence.expectedWorkHours,
+        totalHours: 0,
+        entries: absence.entries,
       },
       context,
     );
@@ -905,6 +885,7 @@ export class TimesheetService {
     if (existing.status !== "Draft" && existing.status !== "Returned") {
       throw new Error("Cannot modify a timesheet that is not Draft or Returned.");
     }
+    timesheet = this.withApprovedAbsences(timesheet, period);
     this.validateEntryHours(timesheet, period);
 
     // Recalculate totals just in case
@@ -913,7 +894,7 @@ export class TimesheetService {
       let eTotal = 0;
       Object.values(e.hours).forEach((v) => (eTotal += v || 0));
       e.total = eTotal;
-      overallTotal += eTotal;
+      if (!e.isLeave && !e.isHoliday) overallTotal += eTotal;
     });
     timesheet.totalHours = overallTotal;
 
@@ -921,7 +902,7 @@ export class TimesheetService {
   }
 
   submitTimesheet(timesheetId: string, context: ActorContext): TimesheetWithEntries {
-    const ts = this.timesheetRepo.getById(timesheetId);
+    let ts = this.timesheetRepo.getById(timesheetId);
     if (!ts) throw new Error("Timesheet not found");
     this.requireSelfOrAdmin(ts.employeeId, context, "submit this timesheet");
 
@@ -933,6 +914,19 @@ export class TimesheetService {
     if (ts.status !== "Draft" && ts.status !== "Returned") {
       throw new Error("Cannot submit timesheet in current state.");
     }
+    if (
+      isConfiguredTimesheetPeriod(period) &&
+      period.endDate >=
+        organisationDate(new Date(), new SettingsService().getAppSettingsSync().timezone)
+    )
+      throw new Error(
+        "You can save daily hours now and submit the monthly timesheet after the month ends.",
+      );
+    ts = this.withApprovedAbsences(ts, period);
+    if (isConfiguredTimesheetPeriod(period) && ts.totalHours < ts.expectedHours)
+      throw new Error(
+        `Log the remaining ${ts.expectedHours - ts.totalHours} expected hours before submitting.`,
+      );
 
     // Validation: > 24h per day
     this.validateEntryHours(ts, period);
@@ -1073,7 +1067,7 @@ export class TimesheetService {
     this.requireSelfOrAdmin(employeeId, context, "copy this timesheet");
     const settings = this.getSettings();
     if (!settings.allowCopyPreviousWeek) {
-      throw new Error("Copying previous week is disabled by settings.");
+      throw new Error("Copying the previous period is disabled by settings.");
     }
 
     const currentTs = this.getOrCreateTimesheet(employeeId, currentPeriodId, context);
@@ -1088,7 +1082,11 @@ export class TimesheetService {
     const allPeriods = this.getPeriods();
     // Assuming periods are continuous, the previous one ends 1 day before this starts
     const expectedPrevEnd = format(addDays(parseISO(currentPeriod.startDate), -1), "yyyy-MM-dd");
-    const prevPeriod = allPeriods.find((p) => p.endDate === expectedPrevEnd);
+    const prevPeriod = allPeriods.find(
+      (p) =>
+        p.endDate === expectedPrevEnd &&
+        isConfiguredTimesheetPeriod(p, settings.periodFrequency, settings.weeklyPeriodStartDay),
+    );
 
     if (!prevPeriod) {
       throw new Error("Previous period not found.");
@@ -1098,7 +1096,7 @@ export class TimesheetService {
       .list()
       .find((t) => t.employeeId === employeeId && t.periodId === prevPeriod.id);
     if (!prevTs || prevTs.entries.length === 0) {
-      throw new Error("No entries found in the previous week.");
+      throw new Error("No entries found in the previous period.");
     }
 
     // Keep every row and hour already entered. Copy adds missing row structures only.
@@ -1337,8 +1335,17 @@ export class TimesheetService {
   }
 
   getCurrentPeriod(): TimesheetPeriod | undefined {
-    const today = new Date().toISOString().slice(0, 10);
-    const periods = this.getPeriods();
+    const today = organisationDate(new Date(), new SettingsService().getAppSettingsSync().timezone);
+    const settings = this.getSettings();
+    const periods = this.getPeriods().filter(
+      (period) =>
+        period.status === "Open" &&
+        isConfiguredTimesheetPeriod(
+          period,
+          settings.periodFrequency,
+          settings.weeklyPeriodStartDay,
+        ),
+    );
     return (
       periods.find((period) => period.startDate <= today && period.endDate >= today) ??
       periods.find((period) => period.startDate <= today) ??
@@ -1347,7 +1354,7 @@ export class TimesheetService {
   }
 
   private findCorrectionPeriod(employeeId: string): TimesheetPeriod {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = organisationDate(new Date(), new SettingsService().getAppSettingsSync().timezone);
     const open = this.getPeriods()
       .filter((period) => period.status === "Open")
       .sort((a, b) => a.startDate.localeCompare(b.startDate));

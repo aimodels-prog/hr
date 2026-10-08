@@ -26,7 +26,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/ui/page-header";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  PageSections as Tabs,
+  SectionPanel as TabsContent,
+  SectionNavigation as TabsList,
+  SectionLink as TabsTrigger,
+} from "@/components/ui/page-sections";
 import { Textarea } from "@/components/ui/textarea";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { TrainingService } from "@/lib/data/training-service";
@@ -130,7 +135,7 @@ function MyTrainingPage() {
   return (
     <div className="mx-auto flex max-w-[1120px] flex-col gap-6 pb-10">
       <PageHeader
-        title="My Learning"
+        title="My Training"
         description="Request development, follow assigned training and keep your certifications together."
       />
       <div className="grid gap-4 sm:grid-cols-3">
@@ -155,7 +160,7 @@ function MyTrainingPage() {
         />
       </div>
       <Tabs defaultValue="plan">
-        <TabsList className="h-auto w-full justify-start overflow-x-auto rounded-xl bg-muted/60 p-1">
+        <TabsList>
           <TabsTrigger value="plan">My training plan</TabsTrigger>
           <TabsTrigger value="catalogue">Browse courses</TabsTrigger>
           <TabsTrigger value="certificates">Certifications</TabsTrigger>

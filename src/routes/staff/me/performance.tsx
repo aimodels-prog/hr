@@ -7,7 +7,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  PageSections as Tabs,
+  SectionPanel as TabsContent,
+  SectionNavigation as TabsList,
+  SectionLink as TabsTrigger,
+} from "@/components/ui/page-sections";
 import {
   Table,
   TableBody,
@@ -51,11 +56,11 @@ function MyPerformancePage() {
   return (
     <div className="mx-auto flex max-w-[1200px] flex-col gap-6 pb-10">
       <PageHeader
-        title="My Performance"
+        title="My Objectives & Appraisal"
         description="Set objectives, record progress and complete your performance reviews."
       />
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="h-auto w-full justify-start overflow-x-auto rounded-xl bg-muted/60 p-1">
+        <TabsList>
           <TabsTrigger value="objectives">Objectives</TabsTrigger>
           <TabsTrigger value="reviews">Reviews</TabsTrigger>
           <TabsTrigger value="check-ins">Check-ins</TabsTrigger>

@@ -24,3 +24,17 @@ test("recorded names take precedence over renamed policies with safe legacy fall
   assert.equal(leaveDisplayType({}, { name: "Annual Leave" }), "Annual Leave");
   assert.equal(leaveDisplayType({}), "Leave");
 });
+
+test("dashboard, history and report labels hide provenance without changing the source", () => {
+  for (const suffix of [" — imported history", " – IMPORTED HISTORY", " - imported history  "]) {
+    const name = `Annual Leave (2025 entitlement)${suffix}`;
+    const request = { policySnapshot: { name } };
+    assert.equal(leaveDisplayType(request), "Annual Leave (2025 entitlement)");
+    assert.equal(leaveDisplayType({}, { name }), "Annual Leave (2025 entitlement)");
+    assert.equal(request.policySnapshot.name, name);
+  }
+  assert.equal(
+    leaveDisplayType({ policySnapshot: { name: "Important family leave" } }),
+    "Important family leave",
+  );
+});

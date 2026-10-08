@@ -176,7 +176,7 @@ function OffboardingDashboard() {
     <RequirePermission permission="offboarding:manage_all" resourceName="Offboarding">
       <div className="flex flex-col gap-6 max-w-[1200px] mx-auto pb-10">
         <PageHeader
-          title="Offboarding"
+          title="Leaving Employees"
           description="Manage departing-employee clearance cases end to end."
           actions={
             <Dialog open={isStartOpen} onOpenChange={setIsStartOpen}>

@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { employeeDocumentLink } from "../../data/document-links.ts";
 
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 
@@ -216,7 +217,7 @@ export async function processCoreHrScheduledReminders(now = new Date()): Promise
               key: `document-expiry-${document.id}-${threshold}-${recipientUserId}`,
               entityType: "employee-document",
               entityId: document.id,
-              path: "/staff/document-expiry",
+              path: employeeDocumentLink(employee.id, document.id),
             },
           );
           if (created) {

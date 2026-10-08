@@ -18,7 +18,9 @@ A short inline page tip links to the matching guide. Dismiss one tip, turn all t
 - `src/lib/help/catalog.ts`: combined articles and additional covered destinations.
 - `src/lib/help/guide.ts`: role selection and local ranked search, including common search alternatives.
 
-Keep instructions in everyday language. Every article needs steps, an expected outcome, troubleshooting checks and a real app destination. Describe the current UI, not a planned feature. In particular, offer sending currently records manual sending; it does not send the offer email itself. Company Setup remains restricted to Super Admin even though HR can read its instructions.
+Keep instructions in everyday language. Every article needs steps, an expected outcome, troubleshooting checks and a real app destination. Describe the current UI, not a planned feature. In particular, offer sending currently records manual sending; it does not send the offer email itself. HR can maintain company information, departments, positions, projects, work locations, working hours, holidays and checklists. Finance references, numbering and recovery settings remain restricted to Super Admin.
+
+The Employee menu separates My Work, My Details and My Development. HR has an organisation workspace and uses the My employee workspace button to switch to their own employee services. My Requests tracks personal submissions; Approvals collects assigned decisions; Tasks & Reminders includes other follow-up work. Page sections belong inside the main sidebar, including on phones. Email and calendar setup lives under Settings → Company Setup → Email & Calendar. Keep these names and direct links consistent when updating help.
 
 ## Updating a workflow
 

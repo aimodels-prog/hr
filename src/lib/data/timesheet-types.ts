@@ -1,6 +1,7 @@
 import type { BaseRecord, RecordId } from "./types";
 
 export interface TimesheetSettings {
+  periodFrequency: "Monthly" | "Weekly";
   weeklyPeriodStartDay: number; // 0 = Sunday, 1 = Monday, etc.
   standardDailyHours: number;
   /** Read from attendance policy, not a second editable copy of the break. */

@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useCurrentUser } from "@/lib/auth";
 import { REQUEST_GROUPS, REQUEST_MODULES, type RequestGroup } from "@/lib/data/request-tracking";
@@ -8,7 +8,7 @@ import {
   getApprovalInboxFn,
 } from "@/lib/server-functions/request-tracking.server";
 import { Button } from "@/components/ui/button";
-import { GoogleCalendarConnection } from "@/components/interviews/google-calendar-connection";
+import { PageSections, SectionNavigation, SectionLink } from "@/components/ui/page-sections";
 
 export const Route = createFileRoute("/staff/requests")({
   component: RequestCentre,
@@ -20,14 +20,18 @@ export const Route = createFileRoute("/staff/requests")({
         ? "approvals"
         : search["view"] === "organisation"
           ? "organisation"
-          : "my",
+          : search["view"] === "my"
+            ? "my"
+            : undefined,
   }),
 });
 const date = (value: string) => new Date(value).toLocaleString();
 function RequestCentre() {
   const user = useCurrentUser();
-  const { view = "my" } = Route.useSearch();
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
   const hr = ["HR", "Super Admin"].includes(user.activeRole);
+  const view = search.view ?? (user.activeRole === "Employee" ? "my" : "approvals");
   const actor = {
     actorId: user.id,
     ...(user.workspaceEmail ? { actorEmail: user.workspaceEmail } : {}),
@@ -37,6 +41,14 @@ function RequestCentre() {
   const [module, setModule] = useState<"All" | (typeof REQUEST_MODULES)[number]>("All");
   const [group, setGroup] = useState<RequestGroup>("All");
   const [page, setPage] = useState(1);
+  const [approvalModule, setApprovalModule] = useState("All");
+  useEffect(() => {
+    setPage(1);
+    setQuery("");
+    setModule("All");
+    setGroup("All");
+    setApprovalModule("All");
+  }, [view, user.activeRole]);
   const requestQuery = useQuery({
     queryKey: ["request-tracker", actor, view, query, module, group, page],
     queryFn: () =>
@@ -63,55 +75,55 @@ function RequestCentre() {
     staleTime: 15_000,
   });
   const active = view === "approvals" ? inbox : requestQuery;
+  const visibleApprovals = (inbox.data ?? []).filter(
+    (task) =>
+      (approvalModule === "All" || task.module === approvalModule) &&
+      [task.title, task.description, task.subjectName ?? "", task.module]
+        .join(" ")
+        .toLowerCase()
+        .includes(query.trim().toLowerCase()),
+  );
   return (
     <main className="space-y-5 min-w-0">
       <header>
-        <h1 className="text-2xl font-bold">Requests & approvals</h1>
-        <p className="text-sm text-muted-foreground">
-          See what was submitted, who is responsible and what happens next. Notifications are not
-          approval decisions.
-        </p>
+        <h1 className="text-2xl font-bold">
+          {view === "approvals"
+            ? "Approvals"
+            : view === "organisation"
+              ? "Employee Requests"
+              : "My Requests"}
+        </h1>
       </header>
-      <div className="grid gap-5 lg:grid-cols-[210px_minmax(0,1fr)]">
-        <nav
-          aria-label="Request centre sections"
-          className="flex flex-col gap-2 rounded-xl border bg-card p-3 h-fit"
-        >
+      <PageSections
+        value={view}
+        onValueChange={(value) => {
+          void navigate({ search: { view: value as "my" | "approvals" | "organisation" } });
+        }}
+      >
+        <SectionNavigation restoreHash={false}>
           {(
             [
-              ["my", "My Requests"],
-              ["approvals", `Needs My Approval${inbox.data ? ` (${inbox.data.length})` : ""}`],
-              ...(hr ? [["organisation", "Organisation Tracker"]] : []),
+              ...(user.activeRole !== "Employee" || inbox.data?.length || view === "approvals"
+                ? [["approvals", `Waiting for me${inbox.data ? ` (${inbox.data.length})` : ""}`]]
+                : []),
+              ...(hr ? [["organisation", "All employee requests"]] : []),
+              ["my", "My requests"],
             ] as Array<["my" | "approvals" | "organisation", string]>
           ).map(([value, label]) => (
-            <Link
-              key={value}
-              to="/staff/requests"
-              search={{ view: value }}
-              onClick={() => setPage(1)}
-              aria-current={view === value ? "page" : undefined}
-              className={`rounded-lg px-3 py-3 text-sm ${view === value ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
-            >
+            <SectionLink key={value} value={value} onClick={(event) => event.preventDefault()}>
               {label}
-            </Link>
+            </SectionLink>
           ))}
-          <Link to="/staff/my-tasks" className="px-3 py-3 text-sm underline">
-            All tasks & reminders
-          </Link>
-        </nav>
+        </SectionNavigation>
         <div className="space-y-4 min-w-0">
           {view === "organisation" && !hr ? (
             <p role="alert">Only HR can access the organisation tracker.</p>
           ) : (
             <>
               <div className="flex flex-wrap justify-between items-center gap-3">
-                <h2 className="text-lg font-semibold">
-                  {view === "my"
-                    ? "My Requests"
-                    : view === "approvals"
-                      ? "Needs My Approval"
-                      : "Organisation Tracker"}
-                </h2>
+                <Link to="/staff/my-tasks" className="text-sm text-primary underline">
+                  Tasks & reminders
+                </Link>
                 <Button
                   variant="outline"
                   disabled={active.isFetching}
@@ -121,11 +133,35 @@ function RequestCentre() {
                 </Button>
               </div>
               {view === "approvals" ? (
-                <p className="text-sm text-muted-foreground">
-                  Decisions assigned to you while working as{" "}
-                  {user.activeRole === "Accounts" ? "Finance" : user.activeRole}. Open the record to
-                  review; existing approval and independent-review rules still apply.
-                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-sm">
+                    Search
+                    <input
+                      type="search"
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      placeholder="Employee or request"
+                      className="mt-1 w-full rounded-lg border bg-background p-3"
+                    />
+                  </label>
+                  <label className="text-sm">
+                    Request type
+                    <select
+                      value={approvalModule}
+                      onChange={(event) => setApprovalModule(event.target.value)}
+                      className="mt-1 w-full rounded-lg border bg-background p-3"
+                    >
+                      <option value="All">All types</option>
+                      {[...new Set((inbox.data ?? []).map((task) => task.module))]
+                        .sort()
+                        .map((name) => (
+                          <option key={name} value={name}>
+                            {name.replaceAll("-", " ")}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                </div>
               ) : (
                 <div className="grid gap-3 sm:grid-cols-3">
                   <label className="text-sm">
@@ -182,8 +218,8 @@ function RequestCentre() {
                 </p>
               )}
               {view === "approvals" ? (
-                inbox.data?.length ? (
-                  inbox.data.map((task) => (
+                visibleApprovals.length ? (
+                  visibleApprovals.map((task) => (
                     <article key={task.id} className="space-y-2 rounded-xl border bg-card p-4">
                       <div className="flex justify-between gap-3">
                         <h3 className="font-semibold">{task.title}</h3>
@@ -203,7 +239,13 @@ function RequestCentre() {
                   ))
                 ) : (
                   !inbox.isPending &&
-                  !inbox.isError && <p>No decisions are currently waiting for you in this role.</p>
+                  !inbox.isError && (
+                    <p>
+                      {inbox.data?.length
+                        ? "No approvals match these filters."
+                        : "No approvals waiting for you."}
+                    </p>
+                  )
                 )
               ) : (
                 <>
@@ -289,9 +331,8 @@ function RequestCentre() {
               )}
             </>
           )}
-          {view === "organisation" && hr && <GoogleCalendarConnection />}
         </div>
-      </div>
+      </PageSections>
     </main>
   );
 }

@@ -31,7 +31,18 @@ test(
     assert.match(new URL(testDatabaseUrl!).pathname.slice(1).toLowerCase(), /(test|scratch)/);
     const query = postgres(testDatabaseUrl!, { max: 2, prepare: false });
     try {
-      const [organisation] = await query<{ id: string }[]>`select id from organisations limit 1`;
+      const [organisation] = await query<{ id: string }[]>`
+        select u.organisation_id as id
+        from users u
+        join app_settings s on s.organisation_id = u.organisation_id
+        join user_roles ur on ur.user_id = u.id
+        join roles r on r.id = ur.role_id
+        where r.code in ('HR', 'Accounts', 'Super Admin')
+        group by u.organisation_id
+        having count(distinct r.code) = 3
+        order by u.organisation_id
+        limit 1
+      `;
       assert.ok(organisation);
       const people = await query<
         { userId: string; employeeId: string; displayName: string; email: string; role: string }[]

@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { employeeDocumentLink } from "../../data/document-links.ts";
 import { getEmployeeRequirements } from "./document-requirements.repository.server.ts";
 import { validateDocumentAnswers, standardDocumentKeys } from "../../data/document-requirements.ts";
 import { assertHrDocumentWrite } from "../../data/hr-owned-fields.ts";
@@ -333,7 +334,7 @@ export async function decideEmployeeDocumentInDatabase(
           link: {
             entityType: "employee-document",
             entityId: document.id,
-            path: "/staff/me/profile",
+            path: employeeDocumentLink(document.employeeId, document.id),
           },
           deduplicationKey: `document-decision:${document.id}:${decision}`,
           createdBy: actor.userId!,
@@ -713,7 +714,7 @@ export async function uploadEmployeeDocumentToDatabase(
             link: {
               entityType: "employee-document",
               entityId: documentId,
-              path: `/staff/employees/${input.employeeId}`,
+              path: employeeDocumentLink(input.employeeId, documentId),
             },
             deduplicationKey: `document-upload:${documentId}`,
             createdBy: actor.userId!,
@@ -1001,7 +1002,7 @@ export async function replaceEmployeeDocumentInDatabase(
             link: {
               entityType: "employee-document",
               entityId: replacementId,
-              path: `/staff/employees/${old.employeeId}`,
+              path: employeeDocumentLink(old.employeeId, replacementId),
             },
             deduplicationKey: `document-replacement:${replacementId}`,
             createdBy: actor.userId!,

@@ -3,10 +3,8 @@ export function leaveDisplayType(
   request: { policySnapshot?: { name?: string } | null },
   policy?: { name: string },
 ): string {
-  return (request.policySnapshot?.name?.trim() || policy?.name?.trim() || "Leave").replace(
-    /\s+[—–-]\s+imported history$/i,
-    "",
-  );
+  const name = request.policySnapshot?.name?.trim() || policy?.name?.trim() || "Leave";
+  return name.replace(/\s+[—–-]\s+imported history$/i, "").trim();
 }
 
 /** Keep spreadsheet provenance in storage, not in the employee-facing reason. */

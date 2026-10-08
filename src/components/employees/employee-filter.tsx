@@ -130,18 +130,14 @@ export function useEmployeeFilter(defaultLocation?: string) {
           {!matches.length && <li>No matching employees.</li>}
         </ul>
       )}
-      <div className="flex flex-wrap items-center gap-3 text-sm">
-        <span>
-          {employeeId
-            ? `Viewing: ${selected?.preferredName || selected?.legalName || "Unavailable employee"}`
-            : "Viewing: All employees"}
-        </span>
-        {employeeId && (
+      {employeeId && (
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <span>{selected?.preferredName || selected?.legalName || "Unavailable employee"}</span>
           <button className="min-h-11 underline" onClick={() => select()}>
             Clear employee filter
           </button>
-        )}
-      </div>
+        </div>
+      )}
     </section>
   );
   return {

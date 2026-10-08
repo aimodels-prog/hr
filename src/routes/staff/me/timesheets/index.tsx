@@ -13,6 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TimesheetService } from "@/lib/data/timesheet-service";
+import { isConfiguredTimesheetPeriod, timesheetPeriodLabel } from "@/lib/data/timesheet-periods";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 
 export const Route = createFileRoute("/staff/me/timesheets/")({
@@ -27,20 +28,30 @@ function TimesheetListRoute() {
     return <div>Employee profile required.</div>;
   }
 
-  const periods = tsService.getPeriods();
   const settings = tsService.getSettings();
   const existingTimesheets = tsService.getTimesheetsForEmployee(
     currentUser.employeeId,
     currentUser.getActorContext(),
   );
   const timesheetByPeriodId = new Map(existingTimesheets.map((ts) => [ts.periodId, ts]));
+  const periods = tsService
+    .getPeriods()
+    .filter(
+      (period) =>
+        timesheetByPeriodId.has(period.id) ||
+        isConfiguredTimesheetPeriod(
+          period,
+          settings.periodFrequency,
+          settings.weeklyPeriodStartDay,
+        ),
+    );
 
   return (
     <RequirePermission permission="timesheet:view_self" resourceName="My Timesheets">
       <div className="flex flex-col gap-6 max-w-[1000px] mx-auto pb-10">
         <PageHeader
           title="My Timesheets"
-          description="Log your weekly hours, projects, and activities."
+          description="Record daily hours. Submit once per month."
         />
 
         <Card>
@@ -71,7 +82,7 @@ function TimesheetListRoute() {
                   return (
                     <TableRow key={period.id}>
                       <TableCell className="font-medium">
-                        {period.startDate} to {period.endDate}
+                        {timesheetPeriodLabel(period)}
                         {period.status === "Closed" && (
                           <Badge variant="outline" className="ml-2">
                             Closed
@@ -96,7 +107,9 @@ function TimesheetListRoute() {
                           {ts.totalHours}
                         </span>
                         {diff > 0 && (
-                          <span className="text-xs text-muted-foreground ml-1">(+{diff} OT)</span>
+                          <span className="text-xs text-muted-foreground ml-1">
+                            (+{diff} extra)
+                          </span>
                         )}
                       </TableCell>
                       <TableCell className="text-muted-foreground">{ts.expectedHours}</TableCell>

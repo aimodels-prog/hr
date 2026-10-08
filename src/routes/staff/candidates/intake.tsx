@@ -395,7 +395,7 @@ function CandidateIntakePage() {
   return (
     <div className="mx-auto max-w-6xl space-y-6 pb-10">
       <PageHeader
-        title="Add a CV to the Candidate Pool"
+        title="CV Uploads & Mailboxes"
         description="Save a directly received CV, review the extracted details and connect the person to a vacancy or future talent pool."
       />
 

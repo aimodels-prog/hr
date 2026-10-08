@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { ChevronDown, Search, Check } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,7 @@ const ROLE_BADGE_CLASS: Record<Role, string> = {
 };
 
 export function DevRoleSwitcher() {
+  const navigate = useNavigate();
   const {
     displayName,
     activeRole,
@@ -172,7 +174,16 @@ export function DevRoleSwitcher() {
                   variant={activeRole === role ? "default" : "outline"}
                   size="sm"
                   className="h-6 text-[11px] px-2"
-                  onClick={() => setActiveRole(role)}
+                  onClick={() => {
+                    if (role === activeRole) {
+                      setOpen(false);
+                      return;
+                    }
+                    setActiveRole(role);
+                    setOpen(false);
+                    // Same identity; reset the HR employee filter and role-specific page.
+                    return navigate({ to: "/staff", search: {}, hash: "", replace: true });
+                  }}
                 >
                   {activeRole === role && <Check className="mr-1 h-3 w-3" />}
                   {role}

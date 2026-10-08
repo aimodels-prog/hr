@@ -49,6 +49,28 @@ test("staff routes load their own modules, not the entire organisation", () => {
     "overtime",
   ]);
   assert.deepEqual(staffPageModules("/staff/employees/employee-1", "equipment", "", "HR"), []);
+  assert.deepEqual(staffPageModules("/staff/employees/employee-1", "", "", "HR"), [
+    "documents",
+    "timesheets",
+    "lifecycle",
+  ]);
+  for (const [section, modules] of [
+    ["leave", ["leave"]],
+    ["timesheets", ["timesheets", "leave", "attendance"]],
+    ["attendance", ["attendance", "overtime"]],
+    ["performance", ["performance"]],
+    ["training", ["training"]],
+    ["documents", []],
+  ] as const) {
+    assert.deepEqual(
+      staffPageModules("/staff/employees/employee-1", `section=${section}`, "", "HR"),
+      modules,
+    );
+    assert.deepEqual(
+      staffPageModules("/staff/employees/employee-1", `#section=${section}`, "", "HR"),
+      modules,
+    );
+  }
   assert.ok(
     !DASHBOARD_MODULES.employee.some((module: string) =>
       ["payroll", "recruitment"].includes(module),
@@ -95,6 +117,25 @@ test("dependent recruitment mapping waits for vacancies without occupying a load
   await Promise.all([recruitment, leave]);
   assert.ok(started.indexOf("recruitment") > started.indexOf("vacancies"));
   assert.equal(started.filter((item) => item === "vacancies").length, 1);
+  loader.dispose();
+});
+
+test("attendance loads approved leave before deriving absence, including direct page entry", async () => {
+  assert.deepEqual(staffPageModules("/staff/me/attendance", "", "", "Employee"), [
+    "attendance",
+    "leave",
+  ]);
+  assert.deepEqual(staffPageModules("/staff/attendance", "", "", "HR"), ["attendance", "leave"]);
+  const started: StaffModule[] = [];
+  const loader = new StaffModuleLoader(
+    async (module) => {
+      started.push(module);
+    },
+    1000,
+    1,
+  );
+  await loader.ensure(["attendance"]);
+  assert.deepEqual(started, ["leave", "attendance"]);
   loader.dispose();
 });
 

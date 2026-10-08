@@ -477,6 +477,20 @@
       "when": 1791300000002,
       "tag": "0067_travel_arrangements",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1791300000003,
+      "tag": "0068_daily_email_digests",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1791300000004,
+      "tag": "0069_monthly_timesheets",
+      "breakpoints": true
     }
   ]
 }

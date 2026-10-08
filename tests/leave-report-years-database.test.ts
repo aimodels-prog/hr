@@ -11,6 +11,7 @@ import {
 } from "../src/lib/db/repositories/report.repository.server.ts";
 import type { AuditActorContext } from "../src/lib/db/repositories/master-data.repository.server.ts";
 import type { ReportFilters } from "../src/lib/data/report-service.ts";
+import { listTrackedRequests } from "../src/lib/db/repositories/request-tracking.repository.server.ts";
 
 const databaseUrl = process.env["VIA_HR_TEST_DATABASE_URL"]?.trim();
 if (databaseUrl) process.env["DATABASE_URL"] = databaseUrl;
@@ -327,6 +328,54 @@ test(
         assert.equal(leap.rows[0]!.periodStart, "2025-03-01");
         assert.equal(leap.rows[0]!.periodEnd, "2026-02-28");
       });
+      await t.test(
+        "records and exports show normal leave labels while preserving the original source",
+        async () => {
+          const storedName = "Annual Leave — imported history";
+          const recordedName = "Annual Leave (2025 entitlement) – IMPORTED HISTORY  ";
+          await query`update leave_policies set name=${storedName} where id=${policy}`;
+          await query`update leave_requests set policy_snapshot=${query.json({ name: recordedName })} where id=${old}`;
+
+          const balancesBefore =
+            await query`select id,balance_days from leave_balances where organisation_id=${org} order by id`;
+          const usage = await report("leave_usage", { leaveYear: "all" });
+          assert.ok(usage.rows.every((row) => !/imported history/i.test(String(row.leaveType))));
+          assert.equal(
+            usage.rows.find((row) => row.startDate === "2025-05-01")!.leaveType,
+            "Annual Leave (2025 entitlement)",
+          );
+          const balancesReport = await report("leave_balances", { leaveYear: "all" });
+          assert.ok(balancesReport.rows.every((row) => row.leaveType === "Annual Leave"));
+          for (const reportId of ["leave_usage", "leave_balances"]) {
+            const exported = await exportReportCsvInDatabase(
+              org,
+              reportId,
+              { ...defaults, leaveYear: "all" },
+              actor,
+            );
+            assert.doesNotMatch(exported.csv, /imported history/i);
+            assert.match(exported.csv, /Annual Leave/);
+          }
+          const tracked = await listTrackedRequests(org, actor, {
+            scope: "organisation",
+            page: 1,
+            module: "Leave",
+          });
+          assert.ok(tracked.rows.every((row) => !/imported history/i.test(row.title)));
+          assert.equal(
+            tracked.rows.find((row) => row.id === old)!.title,
+            "Annual Leave (2025 entitlement) · 2025-05-01 to 2025-05-01",
+          );
+          const [unchanged] =
+            await query`select p.name, r.policy_snapshot from leave_policies p join leave_requests r on r.policy_id=p.id where r.id=${old}`;
+          assert.equal(unchanged!.name, storedName);
+          assert.equal(unchanged!.policy_snapshot.name, recordedName);
+          assert.deepEqual(
+            await query`select id,balance_days from leave_balances where organisation_id=${org} order by id`,
+            balancesBefore,
+          );
+        },
+      );
     } finally {
       t.mock.timers.reset();
       await query.end({ timeout: 5 });

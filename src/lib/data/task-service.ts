@@ -1,4 +1,5 @@
 import { getApplicationDataServices } from "./application-data.ts";
+import { employeeDocumentLink } from "./document-links.ts";
 import { TimesheetService } from "./timesheet-service.ts";
 import type { AttendanceCorrection, SiteVisitRequest } from "./attendance-types.ts";
 import type { EmployeeGoal } from "./goal-service.ts";
@@ -101,7 +102,17 @@ export class TaskService {
     const addTask: AddTask = (task) => {
       const state = task.state ?? this.getState(task.dueDate, today);
       const priority = state === "Overdue" && task.priority === "Normal" ? "High" : task.priority;
-      tasks.set(task.id, { ...task, state, priority });
+      tasks.set(task.id, {
+        ...task,
+        state,
+        priority,
+        ...(task.sourceType === "employee-document" && task.subjectEmployeeId
+          ? {
+              actionUrl: employeeDocumentLink(task.subjectEmployeeId, task.sourceId),
+              actionLabel: "Open document",
+            }
+          : {}),
+      });
     };
 
     this.addEmployeeTasks(viewer, employeeName, today, addTask);

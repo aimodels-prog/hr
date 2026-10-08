@@ -7,6 +7,7 @@ export function workflowEmailRecipientPolicy() {
     WHERE ur.organisation_id=n.organisation_id AND ur.user_id=u.id AND r.code='HR')`;
   return sql`(
     CASE
+      WHEN n.type='dependants.missing_information_reminder' THEN FALSE
       WHEN n.type IN ('approval.reminder','task.reminder') THEN EXISTS (
         SELECT 1 FROM workflow_tasks t
         JOIN user_roles ur ON ur.user_id=u.id AND ur.organisation_id=n.organisation_id

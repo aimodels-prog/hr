@@ -5,6 +5,7 @@ import { StaffDataBoundary } from "@/components/layout/staff-data-boundary";
 import { DASHBOARD_MODULES } from "@/lib/data/staff-module-plan";
 import { AlertTriangle, Briefcase, CheckCircle, FileText, Plane } from "lucide-react";
 import { LeaveService } from "@/lib/data/leave-service";
+import { leaveDisplayType } from "@/lib/data/leave-presentation";
 import { TimesheetService } from "@/lib/data/timesheet-service";
 import { DocumentService } from "@/lib/data/document-service";
 import { OnboardingService } from "@/lib/data/onboarding-service";
@@ -202,9 +203,10 @@ function EmployeeDashboardDetails({ employee, userId }: { employee: Employee; us
 
   return (
     <div className="flex flex-col gap-4">
-      <DashboardPanel title="Needs attention">
+      <details className="rounded-xl border bg-card p-4">
+        <summary className="mb-3 cursor-pointer text-sm font-medium">My request reminders</summary>
         <AttentionQueue items={attentionItems} />
-      </DashboardPanel>
+      </details>
       <div className="grid gap-4 lg:grid-cols-2">
         <DashboardPanel
           title="My recent leave requests"
@@ -221,7 +223,7 @@ function EmployeeDashboardDetails({ employee, userId }: { employee: Employee; us
                   className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0"
                 >
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{request.policySnapshot.name}</p>
+                    <p className="truncate text-sm font-medium">{leaveDisplayType(request)}</p>
                     <p className="text-xs text-muted-foreground">
                       {new Date(request.startDate).toLocaleDateString()} to{" "}
                       {new Date(request.endDate).toLocaleDateString()}

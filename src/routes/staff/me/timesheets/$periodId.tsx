@@ -1,6 +1,10 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useState, useMemo, useEffect } from "react";
 import { PageHeader } from "@/components/ui/page-header";
+import { TimesheetDayNavigation } from "@/components/timesheets/day-navigation";
+import { timesheetPeriodLabel, isConfiguredTimesheetPeriod } from "@/lib/data/timesheet-periods";
+import { organisationDate } from "@/lib/data/approved-leave";
+import { SettingsService } from "@/lib/data/settings-service";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import {
   Table,
@@ -54,6 +58,7 @@ function TimesheetEntryRoute() {
   const tsService = useMemo(() => new TimesheetService(), []);
 
   const [timesheet, setTimesheet] = useState<TimesheetWithEntries | null>(null);
+  const [dayPage, setDayPage] = useState(0);
   const [isCertifyOpen, setIsCertifyOpen] = useState(false);
   const [isCopyConfirmOpen, setIsCopyConfirmOpen] = useState(false);
 
@@ -79,10 +84,15 @@ function TimesheetEntryRoute() {
   const period = tsService.getPeriods().find((p) => p.id === periodId);
   const isEditable = timesheet.status === "Draft" || timesheet.status === "Returned";
 
-  const days = eachDayOfInterval({
+  const allDays = eachDayOfInterval({
     start: parseISO(period!.startDate),
     end: parseISO(period!.endDate),
   });
+  const days = allDays.slice(dayPage * 7, dayPage * 7 + 7);
+  const monthNotEnded =
+    isConfiguredTimesheetPeriod(period!) &&
+    period!.endDate >=
+      organisationDate(new Date(), new SettingsService().getAppSettingsSync().timezone);
 
   const handleAddRow = () => {
     const newEntry: TimesheetEntry = {
@@ -99,7 +109,14 @@ function TimesheetEntryRoute() {
   };
 
   const handleRemoveRow = (id: string) => {
-    setTimesheet({ ...timesheet, entries: timesheet.entries.filter((e) => e.id !== id) });
+    const entries = timesheet.entries.filter((e) => e.id !== id);
+    setTimesheet({
+      ...timesheet,
+      entries,
+      totalHours: entries
+        .filter((e) => !e.isLeave && !e.isHoliday)
+        .reduce((sum, e) => sum + e.total, 0),
+    });
   };
 
   const updateEntry = (
@@ -132,7 +149,9 @@ function TimesheetEntryRoute() {
         }
         return e;
       });
-      const totalHours = entries.reduce((sum, e) => sum + e.total, 0);
+      const totalHours = entries
+        .filter((e) => !e.isLeave && !e.isHoliday)
+        .reduce((sum, e) => sum + e.total, 0);
       return { ...prev, entries, totalHours };
     });
   };
@@ -179,9 +198,9 @@ function TimesheetEntryRoute() {
         currentUser.getActorContext(),
       );
       setTimesheet(copied);
-      toast.success("Copied rows from previous week.");
+      toast.success("Copied rows from previous month.");
     } catch (error: unknown) {
-      toast.error(error instanceof Error ? error.message : "Previous week could not be copied.");
+      toast.error(error instanceof Error ? error.message : "Previous month could not be copied.");
     }
   };
 
@@ -199,6 +218,7 @@ function TimesheetEntryRoute() {
   days.forEach((d) => (dailyTotals[format(d, "yyyy-MM-dd")] = 0));
 
   timesheet.entries.forEach((e) => {
+    if (e.isLeave || e.isHoliday) return;
     Object.entries(e.hours).forEach(([d, h]) => {
       if (dailyTotals[d] !== undefined) {
         dailyTotals[d] += h || 0;
@@ -228,7 +248,7 @@ function TimesheetEntryRoute() {
       <div className="flex flex-col gap-4 max-w-[1400px] mx-auto pb-10">
         <PageHeader
           title="Timesheet Entry"
-          description={`Period: ${period?.startDate} to ${period?.endDate}`}
+          description={period ? timesheetPeriodLabel(period) : undefined}
           actions={
             <Badge
               variant={
@@ -249,11 +269,11 @@ function TimesheetEntryRoute() {
           <Card className="flex-1 bg-muted/30">
             <CardContent className="p-4 flex items-center justify-between">
               <div>
-                <div className="text-sm text-muted-foreground">Expected Hours</div>
+                <div className="text-sm text-muted-foreground">Expected work</div>
                 <div className="text-2xl font-bold">{timesheet.expectedHours}</div>
               </div>
               <div className="text-right">
-                <div className="text-sm text-muted-foreground">Logged Hours</div>
+                <div className="text-sm text-muted-foreground">Worked hours</div>
                 <div
                   className={`text-2xl font-bold ${timesheet.totalHours < timesheet.expectedHours && isEditable ? "text-destructive" : ""}`}
                 >
@@ -268,6 +288,17 @@ function TimesheetEntryRoute() {
                   {diff > 0 ? `+${diff}` : diff}
                 </div>
               </div>
+              {timesheet.entries.some((entry) => entry.isLeave || entry.isHoliday) && (
+                <div className="text-right">
+                  <div className="text-sm text-muted-foreground">Leave / holiday</div>
+                  <div className="text-2xl font-bold">
+                    {timesheet.entries
+                      .filter((entry) => entry.isLeave || entry.isHoliday)
+                      .reduce((sum, entry) => sum + entry.total, 0)}{" "}
+                    h
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -370,12 +401,17 @@ function TimesheetEntryRoute() {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between py-3">
+          <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between py-3">
             <CardTitle className="text-base">Time Entries</CardTitle>
             {isEditable && (
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={handleCopyPrev}>
-                  <Copy className="w-4 h-4 mr-2" /> Copy Prev Week
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCopyPrev}
+                  disabled={!tsService.getSettings().allowCopyPreviousWeek}
+                >
+                  <Copy className="w-4 h-4 mr-2" /> Copy Previous Month
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleAddRow}>
                   <Plus className="w-4 h-4 mr-2" /> Add Row
@@ -383,6 +419,7 @@ function TimesheetEntryRoute() {
               </div>
             )}
           </CardHeader>
+          <TimesheetDayNavigation days={allDays} page={dayPage} onChange={setDayPage} />
           <CardContent className="p-0 overflow-x-auto">
             {/* Desktop Grid */}
             <Table className="min-w-[1200px]">
@@ -412,7 +449,7 @@ function TimesheetEntryRoute() {
                       <TableCell className="p-2">
                         {isReadonlyBlock ? (
                           <span className="text-sm font-semibold text-muted-foreground">
-                            {entry.projectId}
+                            {entry.notes || (entry.isLeave ? "Approved leave" : "Public holiday")}
                           </span>
                         ) : (
                           <Select
@@ -599,21 +636,28 @@ function TimesheetEntryRoute() {
             </Table>
           </CardContent>
           {isEditable && (
-            <CardFooter className="flex justify-between bg-muted/20 py-4 border-t mt-4">
+            <CardFooter className="flex flex-col gap-4 sm:flex-row sm:justify-between bg-muted/20 py-4 border-t mt-4">
               <div className="text-sm text-muted-foreground max-w-[600px]">
                 {timesheet.totalHours < timesheet.expectedHours && (
                   <span className="text-destructive font-medium block mb-1">
-                    Warning: Logged hours are less than expected standard hours.
+                    Work hours are below the expected hours. Approved leave is already excluded.
                   </span>
                 )}
-                Note: Ensure all standard time entries have an associated project, cost centre,
-                activity, location, and a descriptive note before submitting.
+                Save your daily hours as you go. Submit once for the whole month after it ends.
               </div>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={handleSaveDraft}>
                   <Save className="w-4 h-4 mr-2" /> Save Draft
                 </Button>
-                <Button onClick={handleSubmit}>
+                <Button
+                  onClick={handleSubmit}
+                  disabled={monthNotEnded}
+                  title={
+                    monthNotEnded
+                      ? "Submit after the month ends. You can save daily hours now."
+                      : undefined
+                  }
+                >
                   <Send className="w-4 h-4 mr-2" /> Submit Timesheet
                 </Button>
               </div>
@@ -640,7 +684,7 @@ function TimesheetEntryRoute() {
       <AlertDialog open={isCopyConfirmOpen} onOpenChange={setIsCopyConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Add rows from the previous week?</AlertDialogTitle>
+            <AlertDialogTitle>Add rows from the previous month?</AlertDialogTitle>
             <AlertDialogDescription>
               Your current rows and entered hours will be kept. VIA will add only project rows that
               are not already on this timesheet.

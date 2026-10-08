@@ -33,7 +33,7 @@ export const basicsGuide = [
     "/staff/requests",
     "draft pending approved rejected declined returned cancelled status taken submitted notification waiting who approval",
     [
-      "Open Requests & approvals and find the original request. Read the status on the record, not just an old notification.",
+      "Open My Requests or Approvals and find the original request. Read the status on the record, not just an old notification.",
       "Draft means it is not yet submitted. Pending or Awaiting means someone still needs to act; read the named stage or reviewer.",
       "Returned means the reviewer needs a correction. Read their explanation, change the original request where allowed and submit again. Rejected or Declined means it was not approved.",
       "Approved means the required approval for that record is complete. Check whether a separate next action still exists, such as payment, travel settlement or sending an offer.",

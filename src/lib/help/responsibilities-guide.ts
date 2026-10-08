@@ -18,7 +18,7 @@ export const responsibilitiesGuide = [
       "/staff/requests",
       "manager approve leave overtime travel correction direct report supervisor return",
       [
-        "Select your Line Manager role where needed and open Requests & approvals.",
+        "Select your Line Manager role where needed and open My Requests or Approvals.",
         "Open a request assigned to you and read its dates, details, evidence and outstanding stage.",
         "Approve it when correct, return it with a clear correction request where available, or decline with the required explanation.",
         "Check the new status. Leave, timesheets and other requests can still need HR or Finance action after your review.",
@@ -43,7 +43,7 @@ export const responsibilitiesGuide = [
       "manager timesheet approval return hours manual automatic task",
       [
         "Open Timesheet Approvals and choose a submitted sheet assigned to you.",
-        "Check the week, recorded hours, leave and any explanation of a difference from attendance.",
+        "Check the month, recorded hours, leave and any explanation of a difference from attendance.",
         "Return incorrect hours or details with a clear explanation, or complete your approval.",
         "Check that the sheet moves to the next required stage.",
       ],

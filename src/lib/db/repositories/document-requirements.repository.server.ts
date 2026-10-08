@@ -3,6 +3,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { getDatabaseClient } from "../client.ts";
 import { employees } from "../schema/employee.ts";
 import { auditEvents } from "../schema/system.ts";
+import { processDependantCompletionNotices } from "./dependant-reminder.repository.server.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 import {
   defaultDocumentRequirements,
@@ -61,6 +62,7 @@ export async function saveDocumentRequirementSettings(
       sql`UPDATE document_requirement_settings SET definitions=${JSON.stringify(definitions)}::jsonb,version=version+1,updated_at=now(),updated_by=${actor.userId} WHERE organisation_id=${organisationId} AND version=${version} RETURNING version`,
     );
     if (!result.length) throw new Error("Requirements changed. Reload before saving.");
+    await processDependantCompletionNotices(organisationId, { db: tx, definitions });
     await tx.insert(auditEvents).values({
       organisationId,
       actorUserId: actor.userId,

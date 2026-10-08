@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TimesheetService } from "@/lib/data/timesheet-service";
+import { timesheetPeriodLabel } from "@/lib/data/timesheet-periods";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { isBefore, parseISO, addDays } from "date-fns";
@@ -143,7 +144,7 @@ function TimesheetMonitoringContent() {
           <SelectContent>
             {periods.map((p) => (
               <SelectItem key={p.id} value={p.id}>
-                {p.startDate} to {p.endDate} {p.status === "Closed" ? "(Closed)" : ""}
+                {timesheetPeriodLabel(p)} {p.status === "Closed" ? "(Closed)" : ""}
               </SelectItem>
             ))}
           </SelectContent>

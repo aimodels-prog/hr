@@ -25,6 +25,7 @@ import { toast } from "sonner";
 import { LocationMap } from "@/components/attendance/location-map";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { AttendanceService } from "@/lib/data/attendance-service";
+import { LeaveService } from "@/lib/data/leave-service";
 import type {
   AttendanceExceptionCase,
   AttendanceDevice,
@@ -252,7 +253,10 @@ function AttendanceAdminContent() {
       refreshing = true;
       try {
         await withRequestTimeout(
-          attendanceService.hydrateFromDatabase(actorContext),
+          Promise.all([
+            attendanceService.hydrateFromDatabase(actorContext),
+            new LeaveService().hydrateCompatibilityCache(actorContext),
+          ]),
           "Attendance refresh timed out. Please reload the page.",
         );
         if (active) {
@@ -335,8 +339,14 @@ function AttendanceAdminContent() {
         (item) => item.employeeId === employee.id && item.date === date,
       );
       // Eligibility controls inferred absence, never visibility of saved evidence.
-      if (record) return { employee, ...record };
-      if (!attendanceService.isTrackingRequired(employee.id, date))
+      const reconciled = attendanceService.reconcileDailyStatus(employee.id, date, actorContext);
+      if (record)
+        return {
+          employee,
+          ...record,
+          ...(reconciled?.status ? { status: reconciled.status } : {}),
+        };
+      if (!reconciled?.status && !attendanceService.isTrackingRequired(employee.id, date))
         return {
           employee,
           id: `untracked-${employee.id}`,
@@ -347,7 +357,6 @@ function AttendanceAdminContent() {
           calculatedHours: 0,
           source: "Not required",
         };
-      const reconciled = attendanceService.reconcileDailyStatus(employee.id, date, actorContext);
       return {
         employee,
         id: `virtual-${employee.id}-${date}`,
@@ -356,7 +365,7 @@ function AttendanceAdminContent() {
         clockIn: undefined,
         clockOut: undefined,
         calculatedHours: 0,
-        source: "Updated automatically",
+        source: reconciled?.status === "Not tracked" ? "Not required" : "Updated automatically",
       };
     })
     .filter((row) => {

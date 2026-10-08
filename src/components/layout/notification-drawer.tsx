@@ -6,6 +6,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Bell, Check, Trash2 } from "lucide-react";
 import { useCurrentUser } from "@/lib/auth";
 import { getApplicationDataServices } from "@/lib/data/application-data";
+import { employeeDocumentLink } from "@/lib/data/document-links";
+import { getEmployeeDocumentsFn } from "@/lib/server-functions/core-hr-lifecycle.server";
+import { notificationServerActor } from "@/lib/data/notification-cache";
 import type { ActorContext, Notification } from "@/lib/data/types";
 import { formatDistanceToNow } from "date-fns";
 import { useNavigate } from "@tanstack/react-router";
@@ -105,12 +108,37 @@ export function NotificationDrawer() {
         await notifService.markReadAsync(notif.id, currentUser.getActorContext());
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Notification could not be updated.");
-        return;
       }
     }
     setOpen(false);
     if (notif.link?.path) {
-      navigate({ to: notif.link.path });
+      let destination = notif.link.path;
+      if (
+        (["employee-document", "document_expiry"].includes(notif.link.entityType ?? "") ||
+          notif.type === "document_expiry") &&
+        notif.link.entityId
+      ) {
+        try {
+          const documents = await getEmployeeDocumentsFn({
+            data: { actor: await notificationServerActor(currentUser.getActorContext()) },
+          });
+          const document = documents.find(
+            (item) =>
+              item.id === notif.link!.entityId ||
+              (notif.type === "document_expiry" && notif.deduplicationKey?.includes(item.id)),
+          );
+          if (!document) {
+            toast.error("This document is unavailable or you do not have access.");
+            return;
+          }
+          destination = employeeDocumentLink(document.employeeId, document.id);
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "Document could not be opened.");
+          return;
+        }
+      }
+      const [path, hash = ""] = destination.split("#");
+      navigate({ to: path!, hash });
     }
   };
 

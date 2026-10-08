@@ -14,7 +14,6 @@ import {
   WalletCards,
   Clock3,
   Users,
-  HeartHandshake,
   type LucideIcon,
 } from "lucide-react";
 
@@ -26,6 +25,7 @@ import { HrDashboard } from "@/components/dashboards/hr-dashboard";
 import { AccountsDashboard } from "@/components/dashboards/accounts-dashboard";
 import { employeeSearch } from "@/components/employees/employee-filter";
 import { RequestTrackerSummary } from "@/components/dashboards/request-tracker-summary";
+import { DashboardActionQueue } from "@/components/dashboards/dashboard-action-queue";
 
 export const Route = createFileRoute("/staff/")({
   validateSearch: employeeSearch,
@@ -55,14 +55,14 @@ function Dashboard() {
     activeRole === "HR"
       ? [
           {
-            title: "Create vacancy",
+            title: "Add job",
             description: "Start a hiring request",
             to: "/staff/vacancies/new",
             icon: FilePlus2,
             tone: "bg-primary/10 text-primary",
           },
           {
-            title: "Create employee",
+            title: "Add employee",
             description: "Add a staff record",
             to: "/staff/employees/new",
             icon: UserPlus,
@@ -76,7 +76,7 @@ function Dashboard() {
             tone: "bg-info/10 text-info",
           },
           {
-            title: "Onboarding",
+            title: "New employees",
             description: "Track new joiner readiness",
             to: "/staff/onboarding",
             icon: UserCheck,
@@ -221,33 +221,35 @@ function Dashboard() {
                 },
               ];
 
-  const quickActions = [
-    {
-      title: "Quick visit",
-      description: "Site, ministry or client · record today's duty",
-      to: "/staff/me/attendance?action=site-visit",
-      icon: Plane,
-      tone: "bg-primary/10 text-primary",
-    },
-    ...roleQuickActions,
-    {
-      title: "Apply for a position",
-      description: "Explore open VIA opportunities",
-      to: "/staff/opportunities?action=apply",
-      icon: Briefcase,
-      tone: "bg-primary/10 text-primary",
-    },
-    {
-      title: "Recommend someone",
-      description: "Send a candidate and CV to HR",
-      to: "/staff/opportunities?action=refer",
-      icon: HeartHandshake,
-      tone: "bg-success/10 text-success",
-    },
-  ];
+  const quickAccess = (
+    <section aria-label="Quick access" className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      {roleQuickActions.map((action) => {
+        const Icon = action.icon;
+        return (
+          <Link
+            key={action.title}
+            to={action.to}
+            className="group flex min-h-12 items-center gap-3 rounded-xl border bg-card px-3 py-2.5 transition-colors hover:border-primary/30 hover:bg-muted/30"
+          >
+            <span
+              className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${action.tone}`}
+            >
+              <Icon className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1 text-sm font-medium">{action.title}</span>
+            <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+          </Link>
+        );
+      })}
+    </section>
+  );
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 pb-10">
+    <div
+      key={`${currentUserId}:${activeRole}`}
+      className="mx-auto max-w-7xl space-y-6 pb-10"
+      data-dashboard-role={activeRole}
+    >
       {/* Header Banner */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
@@ -262,7 +264,7 @@ function Dashboard() {
             </Badge>
           </div>
         </div>{" "}
-        {currentEmployee && (
+        {currentEmployee && !["HR", "Super Admin"].includes(activeRole) && (
           <div className="flex flex-wrap items-center gap-3">
             <Link
               to="/staff/me/attendance"
@@ -281,6 +283,9 @@ function Dashboard() {
         )}
       </div>
 
+      {quickAccess}
+      <RequestTrackerSummary />
+      <DashboardActionQueue />
       {(activeRole === "Employee" || activeRole === "IT") && currentEmployee && (
         <EmployeeDashboard employee={currentEmployee} userId={currentUserId} />
       )}
@@ -289,96 +294,6 @@ function Dashboard() {
       )}
       {["HR", "Super Admin"].includes(activeRole) && <HrDashboard />}
       {activeRole === "Accounts" && <AccountsDashboard />}
-      <RequestTrackerSummary />
-      {["HR", "Super Admin"].includes(activeRole) && currentEmployee && (
-        <details className="rounded-xl border border-border/70 bg-card p-4">
-          <summary className="cursor-pointer text-sm font-medium">My employee tools</summary>
-          <section aria-labelledby="my-day-heading" className="mt-4">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <h2 id="my-day-heading" className="text-sm font-bold">
-                  My day
-                </h2>
-                <p className="text-xs text-muted-foreground">
-                  Your own attendance, leave, timesheet and assigned work
-                </p>
-              </div>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-              {[
-                {
-                  title: "My attendance",
-                  to: "/staff/me/attendance",
-                  icon: Clock3,
-                },
-                {
-                  title: "My leave",
-                  to: "/staff/me/leave-balances",
-                  icon: CalendarPlus,
-                },
-                {
-                  title: "My timesheet",
-                  to: "/staff/me/timesheets",
-                  icon: ClipboardCheck,
-                },
-                {
-                  title: "My tasks",
-                  to: "/staff/my-tasks",
-                  icon: UserCheck,
-                },
-              ].map((item) => {
-                const Icon = item.icon;
-                return (
-                  <Link
-                    key={item.title}
-                    to={item.to}
-                    className="group flex min-h-12 items-center gap-3 rounded-xl border border-border/80 bg-card px-3 py-2.5 shadow-sm transition-colors hover:border-primary/30 hover:bg-muted/30"
-                  >
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                      <Icon className="h-4 w-4" />
-                    </span>
-                    <span className="text-sm font-semibold">{item.title}</span>
-                    <ArrowRight className="ml-auto h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-                  </Link>
-                );
-              })}
-            </div>
-          </section>
-        </details>
-      )}
-
-      <details className="rounded-xl border border-border/70 bg-card p-5">
-        <summary className="cursor-pointer text-sm font-medium">Quick access</summary>
-        <div className="mb-3 mt-4 flex items-center justify-between">
-          <h2 className="text-sm font-bold">Quick access</h2>
-          <span className="text-xs text-muted-foreground">Your most-used areas</span>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {quickActions.map((action) => {
-            const Icon = action.icon;
-            return (
-              <Link
-                key={action.title}
-                to={action.to}
-                className="group flex items-center gap-4 rounded-2xl border border-border/80 bg-card p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-md"
-              >
-                <span
-                  className={`flex h-10 w-10 items-center justify-center rounded-xl ${action.tone}`}
-                >
-                  <Icon className="h-5 w-5" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-semibold">{action.title}</span>
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {action.description}
-                  </span>
-                </span>
-                <ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-1 group-hover:text-primary" />
-              </Link>
-            );
-          })}
-        </div>
-      </details>
     </div>
   );
 }

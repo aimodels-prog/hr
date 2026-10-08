@@ -10,6 +10,7 @@ import { CandidateService } from "@/lib/data/candidate-service";
 import { useCurrentUser } from "@/lib/auth";
 import { Link } from "@tanstack/react-router";
 import { canSeeEmploymentDetails } from "@/lib/data/hr-owned-fields";
+import { StaffDataBoundary } from "@/components/layout/staff-data-boundary";
 
 export function OverviewTab({
   employee,
@@ -32,12 +33,6 @@ export function OverviewTab({
     : null;
 
   const today = new Date();
-  const recommendations = employee.candidateId
-    ? new CandidateService().getRecommendationsForCandidate(
-        employee.candidateId,
-        currentUser.getActorContext(),
-      )
-    : [];
   const canViewRecruitmentSource =
     currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
 
@@ -210,43 +205,57 @@ export function OverviewTab({
         </Card>
       </div>
 
-      {canViewRecruitmentSource && recommendations.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Recruitment Source</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {recommendations.map((recommendation) => (
-              <div
-                key={recommendation.id}
-                className="grid gap-2 rounded-md border p-4 text-sm sm:grid-cols-[1fr_auto] sm:items-center"
-              >
-                <div>
-                  <p className="font-medium">
-                    {recommendation.recommenderName} · {recommendation.recommenderType}
-                  </p>
-                  <p className="text-muted-foreground">
-                    {recommendation.recommenderCompany || "Independent"} ·{" "}
-                    {recommendation.recommenderEmail}
-                    {recommendation.recommenderPhone ? ` · ${recommendation.recommenderPhone}` : ""}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {recommendation.relationship || "Relationship not recorded"} · Recommended{" "}
-                    {new Date(recommendation.date).toLocaleDateString()}
-                  </p>
-                </div>
-                <Link
-                  to="/staff/recommendations/$email"
-                  params={{ email: encodeURIComponent(recommendation.recommenderEmail) }}
-                  className="text-sm font-medium text-primary hover:underline"
-                >
-                  View source history
-                </Link>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
+      {canViewRecruitmentSource && employee.candidateId && (
+        <StaffDataBoundary modules={["recruitment"]}>
+          <RecruitmentSource candidateId={employee.candidateId} />
+        </StaffDataBoundary>
       )}
     </div>
+  );
+}
+
+function RecruitmentSource({ candidateId }: { candidateId: string }) {
+  const currentUser = useCurrentUser();
+  const recommendations = new CandidateService().getRecommendationsForCandidate(
+    candidateId,
+    currentUser.getActorContext(),
+  );
+  if (!recommendations.length) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Recruitment Source</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {recommendations.map((recommendation) => (
+          <div
+            key={recommendation.id}
+            className="grid gap-2 rounded-md border p-4 text-sm sm:grid-cols-[1fr_auto] sm:items-center"
+          >
+            <div>
+              <p className="font-medium">
+                {recommendation.recommenderName} · {recommendation.recommenderType}
+              </p>
+              <p className="text-muted-foreground">
+                {recommendation.recommenderCompany || "Independent"} ·{" "}
+                {recommendation.recommenderEmail}
+                {recommendation.recommenderPhone ? ` · ${recommendation.recommenderPhone}` : ""}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {recommendation.relationship || "Relationship not recorded"} · Recommended{" "}
+                {new Date(recommendation.date).toLocaleDateString()}
+              </p>
+            </div>
+            <Link
+              to="/staff/recommendations/$email"
+              params={{ email: encodeURIComponent(recommendation.recommenderEmail) }}
+              className="text-sm font-medium text-primary hover:underline"
+            >
+              View source history
+            </Link>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }

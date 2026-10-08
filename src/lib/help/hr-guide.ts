@@ -1,6 +1,27 @@
 import { article } from "./guide.ts";
+import { canViewCompanySetupSection } from "../auth/company-setup-policy.ts";
 
 export const hrGuide = [
+  article(
+    "hr-email-calendar",
+    "hr",
+    "Company setup",
+    "Connect email and the interview calendar",
+    "Set up approval emails, reminders and interview invitations in one place.",
+    "/staff/settings?section=connections",
+    "google calendar meet interview email connect organising account notification delivery",
+    [
+      "Open Settings → Company Setup → Email & Calendar. Check the organising account shown before connecting.",
+      "Choose Connect Google Calendar and sign in with the organising account. Allow the requested access, then wait to return to VIA HR Application.",
+      "Check that the connection says Connected. Save interview details before connecting; connecting alone does not send invitations.",
+      "Review the workflow email controls and enable the messages the company needs. Use Reminder Settings to choose when reminders are sent.",
+    ],
+    "Interview invitations and enabled messages use the saved connection. Your VIA Portal sign-in remains unchanged.",
+    [
+      "If the connection fails, read the message, check the organising account and retry. Never share your password with another person.",
+    ],
+    "employee:manage_all",
+  ),
   article(
     "hr-document-requirements",
     "hr",
@@ -10,7 +31,7 @@ export const hrGuide = [
     "/staff/settings?section=documentRequirements",
     "documents requirements custom fields education degree institution graduation CV resident card engineering certificate",
     [
-      "Open HR Settings → Document Requirements. Select a document to edit it, or choose Add document.",
+      "Open Settings → Document Requirements. Select a document to edit it, or choose Add document.",
       "Give it a clear name, choose its category, and mark it required or optional. Choose whether staff or HR upload it. Allow multiple documents for qualifications such as several degrees.",
       "Under Who needs it, choose everyone or search for departments, positions, locations or selected employees.",
       "Add the details you need. For each field, choose Text, Date or Year, whether it is required, and whether the employee or HR completes it. Visa and work-permit details stay HR-only.",
@@ -119,7 +140,7 @@ export const hrGuide = [
     "/staff/settings?section=reminders",
     "notifications reminders travel training expiry leave carryover missing clock out morning offer deadlines",
     [
-      "Open HR Settings → Reminder Settings. Each card controls one kind of reminder.",
+      "Open Settings → Reminder Settings. Each card controls one kind of reminder.",
       "Turn a reminder on or off, then set its waiting hours, warning days or morning window. Separate warning days with commas; 0 means the expiry day.",
       "Set the carried-over leave target as month-day, for example 04-30 for 30 April. This only changes reminders, not leave entitlements or expiry rules.",
       "Choose Save reminder settings. The saved rules apply across the company. Leave and training approvals are unchanged.",
@@ -142,9 +163,9 @@ export const hrGuide = [
       "Use Time & Leave for attendance, visits, balances and timesheets. Use Approvals for requests waiting for a decision.",
       "Use Recruitment for vacancies, CVs, recommendations, interviews and offers.",
       "Use Performance & Training for development, and Documents for files, policies and expiry dates.",
-      "Use HR Settings for the settings your role can change. Ask Super Admin for company-wide setup you cannot open.",
+      "Use Settings ? Company Setup for departments, positions, projects, work locations, hours and checklists. Protected finance and recovery settings remain with Super Admin.",
     ],
-    "My Workspace remains your own employee area. Choosing an HR role does not remove your own employee responsibilities.",
+    "Use My employee workspace at the bottom of the menu to switch to your own attendance, requests and profile. Switch back to HR for organisation work.",
     [
       "An HR role is not the same as Finance or Super Admin. Access and approval checks still apply.",
       "Use dashboard employee, department, location and date filters where available. A filtered chart is not necessarily an organisation-wide total.",
@@ -159,7 +180,7 @@ export const hrGuide = [
     "/staff/employees",
     "new import employee joining start date supervisor email department position location employment type visa confirm",
     [
-      "Search Employee Directory first to avoid creating a second record for the same person.",
+      "Search Manage Employees first to avoid creating a second record for the same person.",
       "Open the employee record or use the add-employee action. Enter the person’s correct identity and contact details.",
       "Complete VIA start date, VIA email, supervisor, department, position, work location and employment type in the employment section.",
       "Complete the visa or work-permit information that applies and review the supporting documents.",
@@ -203,7 +224,7 @@ export const hrGuide = [
     "/staff/employees",
     "search individual graph chart timesheet leave balance documents attendance travel training equipment profile",
     [
-      "Search Employee Directory by name and open the correct person.",
+      "Search Manage Employees by name and open the correct person.",
       "Choose the relevant section: attendance, leave, timesheets, documents, travel, training, performance or joining and leaving.",
       "Check the dates or period before reading a balance or total.",
       "Use the relevant module for an action that is not available from the profile.",
@@ -302,13 +323,13 @@ export const hrGuide = [
   article(
     "hr-approvals",
     "hr",
-    "Requests & approvals",
+    "My Requests or Approvals",
     "Review requests and follow outstanding decisions",
     "Find the next responsible reviewer without approving outside your role.",
     "/staff/requests",
     "approval inbox pending returned reject approve reminders email escalation organisation",
     [
-      "Open Requests & approvals and select the organisation or approval view available to you.",
+      "Open My Requests or Approvals and select the organisation or approval view available to you.",
       "Filter for the request type or status you need. Open the original request and read its details.",
       "Check the outstanding stage, assigned reviewer, dates and attachments before deciding.",
       "Approve, return for correction or decline using the available action. Give a useful explanation when requested.",
@@ -324,7 +345,7 @@ export const hrGuide = [
   article(
     "hr-leave-review",
     "hr",
-    "Requests & approvals",
+    "My Requests or Approvals",
     "Review leave and permit late sick-leave applications",
     "Check eligibility, dates and the required review stages.",
     "/staff/leave-approvals",
@@ -374,7 +395,7 @@ export const hrGuide = [
     "/staff/leave-policies",
     "policy nationality omani only evidence notice annual sick carryover expiry year start accrual",
     [
-      "Open HR Settings → Leave Policies and choose the leave type or policy to review.",
+      "Open Settings → Leave Policies and choose the leave type or policy to review.",
       "Under Counting leave days, turn Include weekends on to count weekends, or off to count only company working days, then Save. Public holidays remain excluded. This applies to new requests and date amendments for all leave types; existing recorded totals do not change. For example, 13 September to 1 October is 19 days when weekends count and there are no public holidays.",
       "Set the applicable allowance, eligibility, notice and evidence requirements shown in the form.",
       "Review nationality conditions for leave restricted to Omanis, and check the carryover and expiry rules where available.",
@@ -440,7 +461,7 @@ export const hrGuide = [
   article(
     "hr-corrections",
     "hr",
-    "Requests & approvals",
+    "My Requests or Approvals",
     "Review attendance corrections and quick visits",
     "Check actual work times without creating automatic overtime.",
     "/staff/attendance/corrections",
@@ -485,15 +506,15 @@ export const hrGuide = [
     "hr",
     "HR settings",
     "Set timesheet periods and working-hour rules",
-    "Choose how new timesheet weeks work and manage closed periods.",
+    "Choose how new monthly timesheets work and manage closed periods.",
     "/staff/timesheet-settings",
-    "weekly start deadline daily hours lunch tolerance copy period generate close reopen lock overtime limits attendance prefill",
+    "monthly calendar deadline daily hours lunch tolerance copy period generate close reopen lock overtime limits attendance prefill",
     [
-      "Open Timesheet Settings. Review the week’s start day, submission deadline and standard daily hours.",
+      "Open Timesheet Settings. Select Monthly for the timesheet period and review the submission deadline and standard daily hours.",
       "Standard Daily Hours means working time without breaks: use 8 for an eight-hour day plus a one-hour lunch. Saving this value updates attendance, timesheets and Company Setup together. To change the break, open Attendance & Visits → Office Setup → Attendance Policy and set Break starts at and Default break minutes. Use 0 minutes for no scheduled break.",
       "Review overtime limits, advance-approval rules and the allowed difference between attendance and a timesheet. HR approval after supervisor review remains required.",
-      "Choose whether staff can copy the previous week and review the payroll-lock choice. Save Configuration.",
-      "Use Period Generation with the intended start and end dates, then check the generated weeks.",
+      "Choose whether staff can reuse projects from the previous month without copying hours and review the payroll-lock choice. Save Configuration.",
+      "Use Period Generation with the intended start and end dates, then check the generated months. The current month is created automatically.",
       "Use the period list to close completed periods or reopen one with the required reason when corrections are authorised.",
     ],
     "Configuration changes apply to new periods and timesheets. Closing a period stops employee creation, editing and submission in that period.",
@@ -506,7 +527,7 @@ export const hrGuide = [
   article(
     "hr-overtime",
     "hr",
-    "Requests & approvals",
+    "My Requests or Approvals",
     "Review overtime for Finance",
     "Check the separate overtime request, not simply the time spent in the office.",
     "/staff/overtime-approvals",
@@ -524,7 +545,7 @@ export const hrGuide = [
   article(
     "hr-travel",
     "hr",
-    "Requests & approvals",
+    "My Requests or Approvals",
     "Coordinate travel approval and settlement",
     "Keep Manager, HR and Finance decisions aligned.",
     "/staff/travel-hr-approvals",
@@ -573,7 +594,7 @@ export const hrGuide = [
     "/staff/candidates/intake",
     "cv resume upload original processing queue unreadable scanned text duplicate version import",
     [
-      "Open Incoming CVs and choose the relevant vacancy when uploading CVs for a role.",
+      "Open CV Uploads & Mailboxes and choose the relevant vacancy when uploading CVs for a role.",
       "Upload the original files in the format and size accepted by the form.",
       "Follow processing status. Open unreadable or uncertain items and inspect the original document.",
       "Review proposed work history, skills, education, certificates and languages before confirming changes to candidate details.",
@@ -726,7 +747,7 @@ export const hrGuide = [
     "/staff/performance/cycles",
     "performance cycle objective goal appraisal template team manager review launch close",
     [
-      "Open Performance Cycles and create the period with the correct dates and participants.",
+      "Open Appraisal Periods and create the period with the correct dates and participants.",
       "Choose the appropriate objectives and review template, and check manager assignments.",
       "Ensure objectives are created and agreed before the appraisal stage.",
       "Monitor employee self-assessments and manager reviews through Team Performance.",
@@ -928,12 +949,12 @@ export const hrGuide = [
     "google email connect approval reminders missing clockout morning calendar notification mail delivery",
     [
       "On the HR dashboard, open HR setup and choose Enable emails or Connect calendar. Completed connections stay folded away. Office hours, leave policies and timesheet settings are also linked here where your role allows them.",
-      "For connection details or to pause emails, choose Manage connections. You can also find Google Calendar & Meet in Requests & approvals → Organisation Tracker, or Interviews.",
-      "Once email and calendar setup is complete, choose Hide from dashboard to remove the setup panel for your account on this browser. Emails and interviews keep working. To bring it back, open Organisation Tracker or Interviews and choose Show setup on dashboard under Google Calendar & Meet.",
+      "For connection details or to pause emails, choose Manage connections. You can also find Email & Calendar in Settings → Company Setup, or Interviews.",
+      "Once email and calendar setup is complete, choose Hide from dashboard to remove the setup panel for your account on this browser. Emails and interviews keep working. To bring it back, open Settings → Company Setup → Email & Calendar or Interviews and choose Show setup on dashboard.",
       "Grant the separate email permission when enabling Approval emails & reminders; calendar permission alone is not enough.",
       "Review the connection and email status before relying on delivery.",
-      "Open HR Settings → Reminder Settings to turn reminders on or off and change travel waiting hours, training expiry warning days, leave planning dates, offer warning hours and the next-morning missing-clock-out window. Select Save reminder settings. These settings are shared by the company and remain saved after sign-out. Document expiry warning days remain in Company Setup. Changes affect future reminders, not messages already sent; changing the leave reminder target never removes leave days.",
-      "Continue monitoring Requests & approvals and My Tasks for the actual decisions and outstanding work.",
+      "Open Settings → Reminder Settings to turn reminders on or off and change travel waiting hours, training expiry warning days, leave planning dates, offer warning hours and the next-morning missing-clock-out window. Select Save reminder settings. These settings are shared by the company and remain saved after sign-out. Document expiry warning days remain in Company Setup. Changes affect future reminders, not messages already sent; changing the leave reminder target never removes leave days.",
+      "Continue monitoring My Requests or Approvals and My Tasks for the actual decisions and outstanding work.",
     ],
     "Emails depend on an active authorised connection and enabled reminder settings. A request can exist even if email delivery is unavailable.",
     [
@@ -1130,20 +1151,22 @@ export const setupGuide = setupTopics.map(([section, title, keywords, step, caut
     "hr",
     "Company setup",
     title,
-    "Company-wide setup: arrange this with an authorised Super Admin.",
+    canViewCompanySetupSection("HR", section)
+      ? "Maintain the company choices used in employee forms."
+      : "Arrange this protected setup with an authorised Super Admin.",
     `/staff/settings?section=${section}`,
     keywords,
     [
       "Agree the intended change with the responsible HR or Finance person before changing a company-wide choice.",
-      `An authorised Super Admin opens HR Settings → Company Setup → ${setupLabels[section]}.`,
+      `${canViewCompanySetupSection("HR", section) ? "HR" : "An authorised Super Admin"} opens Settings → Company Setup → ${setupLabels[section]}.`,
       step,
       "Save and reopen the relevant form to check the new choice. Review any affected employee assignments separately.",
     ],
     "The saved setup is shared by the relevant parts of the app. The HR guide explains the task, but it does not grant extra access.",
     [
       caution,
-      "If HR cannot open Company Setup, ask Super Admin to make this change. Do not use another person’s account.",
+      "Only the setup choices permitted for your role can be changed. Ask the responsible administrator for protected settings; do not use another person’s account.",
     ],
-    "system:settings_manage",
+    canViewCompanySetupSection("HR", section) ? "employee:manage_all" : "system:settings_manage",
   ),
 );

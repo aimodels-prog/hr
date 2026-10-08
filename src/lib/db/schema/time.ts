@@ -53,6 +53,10 @@ export const timesheetSettings = pgTable(
     organisationId: uuid("organisation_id")
       .notNull()
       .references(() => organisations.id, { onDelete: "restrict" }),
+    periodFrequency: text("period_frequency")
+      .$type<"Monthly" | "Weekly">()
+      .notNull()
+      .default("Monthly"),
     weeklyPeriodStartDay: integer("weekly_period_start_day").notNull(),
     standardDailyHours: numeric("standard_daily_hours", { precision: 5, scale: 2 }).notNull(),
     submissionDeadlineDays: integer("submission_deadline_days").notNull(),
@@ -84,6 +88,7 @@ export const timesheetSettings = pgTable(
   },
   (table) => [
     uniqueIndex("timesheet_settings_org_unique").on(table.organisationId),
+    check("timesheet_settings_frequency", sql`${table.periodFrequency} IN ('Monthly', 'Weekly')`),
     check("timesheet_settings_start_day_range", sql`${table.weeklyPeriodStartDay} BETWEEN 0 AND 6`),
     check(
       "timesheet_settings_daily_hours_range",

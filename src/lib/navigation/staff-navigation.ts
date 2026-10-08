@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import type { Permission } from "../auth/permissions.ts";
 import type { Role } from "../data/types.ts";
+import { HR_SETUP_SECTIONS } from "../auth/company-setup-policy.ts";
 
 export interface NavItem {
   title: string;
@@ -37,6 +38,8 @@ export interface NavItem {
   requiredPermission?: Permission;
   requiredAnyPermission?: Permission[];
   requiredRoles?: Role[];
+  /** Task shortcuts are searchable, without repeating them in the main menu. */
+  shortcuts?: Array<{ title: string; url: string; keywords?: string }> | undefined;
 }
 export interface NavGroup {
   label: string;
@@ -399,7 +402,7 @@ const navigation: NavGroup[] = [
         url: "/staff/settings",
         keywords: "department position employment type location working week company setup",
         icon: Settings,
-        requiredPermission: "system:settings_manage",
+        requiredRoles: ["HR", "Super Admin"],
       },
       {
         title: "Reminder Settings",
@@ -465,17 +468,279 @@ export function staffNavigation(role: Role, can: (permission: Permission) => boo
           : !item.requiredPermission || can(item.requiredPermission)),
     ),
   }));
-  // Non-recruiters may still be assigned to approve an offer. Keep one destination per role.
-  if (!can("recruitment:manage_candidates")) {
-    groups
-      .find((group) => group.label === "Approvals")!
-      .items.push({
-        title: "Offer approvals",
-        url: "/staff/offers",
-        icon: ClipboardCheck,
-      });
+  const available = groups.flatMap((group) => group.items);
+  const pick = (url: string, title?: string, keywords?: string): NavItem[] => {
+    const item = available.find((item) => item.url === url);
+    return item
+      ? [
+          {
+            ...item,
+            ...(title ? { title } : {}),
+            keywords: [item.keywords, keywords].filter(Boolean).join(" "),
+          },
+        ]
+      : [];
+  };
+  const personalDetails = pick(
+    "/staff/me/profile",
+    "My Profile",
+    "passport visa insurance card education certificate documents upload photo dependants family emergency contacts",
+  );
+  if (personalDetails[0])
+    personalDetails[0].shortcuts = [
+      {
+        title: "My documents",
+        url: "/staff/me/profile#section=documents",
+        keywords:
+          "upload passport visa insurance card education degree certificate missing document",
+      },
+      {
+        title: "Family & dependants",
+        url: "/staff/me/profile#section=dependants",
+        keywords: "wife husband children family dependants",
+      },
+      { title: "Emergency contacts", url: "/staff/me/profile#section=emergency_contacts" },
+      {
+        title: "Personal details",
+        url: "/staff/me/profile#section=personal",
+        keywords: "address phone profile photo",
+      },
+      {
+        title: "My equipment",
+        url: "/staff/me/profile#section=equipment",
+        keywords: "laptop assets assigned equipment",
+      },
+    ];
+  const attendance = pick(
+    "/staff/me/attendance",
+    "My Attendance",
+    "clock in out hours correction visits site ministry",
+  );
+  if (attendance[0])
+    attendance[0].shortcuts = pick(
+      "/staff/me/attendance?action=site-visit",
+      "Quick visit",
+      "site ministry visit official duty",
+    );
+  const personal: NavGroup[] = [
+    {
+      label: "My Work",
+      items: [
+        ...pick(
+          "/staff/me/leave-balances",
+          "My Leave",
+          "apply request leave annual sick balance holiday",
+        ),
+        ...pick("/staff/timesheets", "My Timesheets", "submit record hours timesheet").map(
+          (item) => ({
+            ...item,
+            url: "/staff/me/timesheets",
+            shortcuts: [{ title: "My Timesheets", url: "/staff/timesheets" }],
+          }),
+        ),
+        ...attendance,
+        ...pick("/staff/time-away", "Time Away", "absence hospital appointment"),
+        ...pick("/staff/me/overtime", "My Overtime", "apply request overtime"),
+        ...pick("/staff/travel", "My Travel", "trip request car flight hotel receipts expenses"),
+      ],
+    },
+    {
+      label: "My Details",
+      items: [
+        ...personalDetails,
+        ...pick("/staff/payslips"),
+        ...pick("/staff/me/onboarding", "My Setup", "joining onboarding checklist"),
+      ],
+    },
+    {
+      label: "My Development",
+      items: [
+        ...pick(
+          "/staff/me/performance",
+          "My Objectives & Appraisal",
+          "goals objectives performance review",
+        ),
+        ...pick("/staff/me/training", "My Training", "course learning certificate"),
+        ...(role === "Employee"
+          ? pick("/staff/interviews", "My Interviews", "assigned panel interview scorecard")
+          : []),
+      ],
+    },
+  ];
+  const hr = role === "HR" || role === "Super Admin";
+  const approvals = available.filter(
+    (item) => groupForUrl(groups, item.url) === "Approvals" && item.url !== "/staff/requests",
+  );
+  const inbox: NavItem = {
+    title: "Approvals",
+    url: "/staff/requests",
+    icon: ClipboardCheck,
+    keywords:
+      "approve approval pending waiting request decision leave timesheet attendance overtime travel training documents objective profile offers",
+    shortcuts: [
+      {
+        title: "Waiting for my approval",
+        url: "/staff/requests?view=approvals",
+        keywords: "approve timesheet HR timesheets approvals leave documents training",
+      },
+      ...(hr
+        ? [
+            {
+              title: "All employee requests",
+              url: "/staff/requests?view=organisation",
+              keywords: "organisation tracker request status progress",
+            },
+          ]
+        : []),
+      ...approvals,
+      ...(!can("recruitment:manage_candidates")
+        ? [{ title: "Assigned offer approvals", url: "/staff/offers", keywords: "offer approve" }]
+        : []),
+    ],
+  };
+  const companySetup = available.find((item) => item.url === "/staff/settings");
+  if (companySetup) {
+    const sections =
+      role === "HR"
+        ? HR_SETUP_SECTIONS
+        : [...HR_SETUP_SECTIONS, "numbering", "costCentres", "activityCodes", "currencies", "data"];
+    const labels: Record<string, string> = {
+      org: "Company information",
+      departments: "Departments",
+      positions: "Positions",
+      locations: "Work locations",
+      employmentTypes: "Employment types",
+      workingTimes: "Working hours",
+      publicHolidays: "Public holidays",
+      projects: "Projects",
+      grades: "Grades",
+      connections: "Email & Calendar",
+      interviewTemplates: "Interview scorecards",
+      onboardingTemplates: "New employee checklists",
+      offboardingTemplates: "Leaving employee checklists",
+      performanceTemplates: "Appraisal templates",
+      numbering: "Employee numbering",
+      costCentres: "Cost centres",
+      activityCodes: "Activity codes",
+      currencies: "Currencies",
+      data: "Backups & recovery",
+    };
+    companySetup.shortcuts = sections
+      .filter((section) => labels[section])
+      .map((section) => ({
+        title: labels[section]!,
+        url: `/staff/settings?section=${section}`,
+        keywords: `add edit setup configuration ${section === "connections" ? "Google Meet interview email calendar connection" : ""}`,
+      }));
   }
-  return groups
+  const business = groups
+    .filter((group) => !["Home", "My Workspace", "Approvals", "Support"].includes(group.label))
+    .map((group) => ({
+      ...group,
+      label: group.label === "HR Settings" ? "Settings" : group.label,
+      items: group.items.map((item) => ({
+        ...item,
+        title:
+          item.url === "/staff/employees" && hr
+            ? "Manage Employees"
+            : item.url === "/staff/vacancies"
+              ? "Job Vacancies"
+              : item.url === "/staff/candidates/intake"
+                ? "CV Uploads & Mailboxes"
+                : item.url === "/staff/performance/cycles"
+                  ? "Appraisal Periods"
+                  : item.url === "/staff/training"
+                    ? "Training"
+                    : item.url === "/staff/onboarding"
+                      ? "New Employees"
+                      : item.url === "/staff/offboarding"
+                        ? "Leaving Employees"
+                        : item.title,
+      })),
+    }));
+  if (hr) {
+    business
+      .find((group) => group.label === "Time & Leave")
+      ?.items.push(...pick("/staff/time-away", "Time Away", "absence hospital appointment team"));
+    const employees = business
+      .find((group) => group.label === "Employees")
+      ?.items.find((item) => item.url === "/staff/employees");
+    if (employees) employees.keywords += " equipment assets employee records former archive";
+    const jobs = business
+      .find((group) => group.label === "Recruitment")
+      ?.items.find((item) => item.url === "/staff/vacancies");
+    if (jobs)
+      jobs.shortcuts = [
+        {
+          title: "Add job",
+          url: "/staff/vacancies/new",
+          keywords: "new create vacancy publish career portal job description",
+        },
+      ];
+    if (role === "HR") {
+      const settings = business.find((group) => group.label === "Settings");
+      const administration = business.find((group) => group.label === "Administration");
+      if (settings && administration) {
+        settings.items.push(...administration.items);
+        administration.items = [];
+      }
+    }
+  }
+  const home: NavGroup = {
+    label: "Home",
+    items: [
+      ...pick("/staff"),
+      { ...pick("/staff/my-tasks")[0]!, title: hr ? "Tasks & Reminders" : "My Tasks" },
+      ...(role === "Employee"
+        ? [
+            {
+              title: "My Requests",
+              url: "/staff/requests",
+              icon: ClipboardCheck,
+              keywords: "pending requests approval waiting status progress history",
+              shortcuts: [
+                {
+                  title: "Waiting for my approval",
+                  url: "/staff/requests?view=approvals",
+                  keywords: "assigned reviews approval",
+                },
+                {
+                  title: "Assigned offer approvals",
+                  url: "/staff/offers",
+                  keywords: "assigned offer approve",
+                },
+              ],
+            },
+          ]
+        : [inbox]),
+    ],
+  };
+  const result = hr
+    ? [home, ...business]
+    : role === "Employee"
+      ? [
+          home,
+          ...personal,
+          {
+            label: "Company",
+            items: [
+              ...pick("/staff/employees", "Colleague Directory"),
+              ...pick("/staff/org-chart"),
+              ...pick(
+                "/staff/company-library",
+                "Policies & Insurance",
+                "sop handbook benefits insurance company documents",
+              ),
+              ...pick(
+                "/staff/opportunities",
+                "Job Opportunities",
+                "career vacancies apply recommend referral",
+              ),
+            ],
+          },
+        ]
+      : [home, ...personal, ...business];
+  return [...result, ...groups.filter((group) => group.label === "Support")]
     .filter((group) => group.items.length)
     .map((group) => ({
       ...group,
@@ -491,14 +756,25 @@ export function staffNavigation(role: Role, can: (permission: Permission) => boo
     }));
 }
 
+function groupForUrl(groups: NavGroup[], url: string) {
+  return groups.find((group) => group.items.some((item) => item.url === url))?.label;
+}
+
 export function searchNavigation(groups: NavGroup[], query: string): NavGroup[] {
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   return groups
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => {
-        const text = [group.label, item.title, item.keywords ?? ""].join(" ").toLowerCase();
-        return words.every((word) => text.includes(word));
+      items: group.items.flatMap((item) => {
+        if (!words.length) return [item];
+        const matches = (title: string, keywords = "") =>
+          words.every((word) =>
+            [group.label, title, keywords].join(" ").toLowerCase().includes(word),
+          );
+        const shortcuts = (item.shortcuts ?? [])
+          .filter((shortcut) => matches(shortcut.title, shortcut.keywords))
+          .map((shortcut) => ({ ...item, ...shortcut, shortcuts: undefined }));
+        return shortcuts.length ? shortcuts : matches(item.title, item.keywords) ? [item] : [];
       }),
     }))
     .filter((group) => group.items.length);
@@ -507,15 +783,27 @@ export function searchNavigation(groups: NavGroup[], query: string): NavGroup[] 
 /** Longest path wins; explicit query actions beat their parent page. */
 export function activeNavigationUrl(groups: NavGroup[], href: string): string | undefined {
   const location = new URL(href, "https://navigation.local");
+  const matches = (url: string, allowDescendant: boolean) => {
+    const target = new URL(url, location.origin);
+    return (
+      (location.pathname === target.pathname ||
+        (allowDescendant &&
+          target.pathname !== "/staff" &&
+          location.pathname.startsWith(target.pathname + "/"))) &&
+      [...target.searchParams].every(([key, value]) => location.searchParams.get(key) === value)
+    );
+  };
   return groups
     .flatMap((group) => group.items)
-    .filter((item) => {
-      const target = new URL(item.url, location.origin);
-      return (
-        (location.pathname === target.pathname ||
-          (target.pathname !== "/staff" && location.pathname.startsWith(target.pathname + "/"))) &&
-        [...target.searchParams].every(([key, value]) => location.searchParams.get(key) === value)
-      );
+    .map((item) => {
+      const destinations = [
+        ...(matches(item.url, true) ? [item.url] : []),
+        ...(item.shortcuts ?? [])
+          .filter((shortcut) => matches(shortcut.url, false))
+          .map((shortcut) => shortcut.url),
+      ];
+      return { item, specificity: Math.max(0, ...destinations.map((url) => url.length)) };
     })
-    .sort((a, b) => b.url.length - a.url.length)[0]?.url;
+    .filter((match) => match.specificity > 0)
+    .sort((a, b) => b.specificity - a.specificity)[0]?.item.url;
 }

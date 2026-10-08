@@ -73,7 +73,8 @@ export function queryLeaveBalances(org: string, years?: LeaveReportYears) {
   const nextStart = periodStart(sql`b.leave_year + 1`, years.startMonthDay);
   const transactionYear = sql`coalesce(rb.leave_year, ${yearForDate(sql`coalesce(rr.start_date, lt.date)`, years.startMonthDay)})`;
   return getDatabaseClient().execute(sql`
-    select (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department, p.name as "leaveType",
+    select (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department,
+      btrim(regexp_replace(p.name, '[[:space:]]+[—–-][[:space:]]+imported history[[:space:]]*$', '', 'i')) as "leaveType",
       b.leave_year as "leaveYear", ${start}::text as "periodStart", (${nextStart} - 1)::text as "periodEnd",
       ledger.entitlement::double precision as entitlement,
       ledger.used::double precision as used, ledger.adjustments::double precision as adjustments,
@@ -113,7 +114,8 @@ export function queryLeaveUsage(org: string, years?: LeaveReportYears) {
   if (!years) throw new Error("A leave year is required for this report.");
   const year = yearForDate(sql`r.start_date`, years.startMonthDay);
   return getDatabaseClient().execute(sql`
-    select (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department, p.name as "leaveType", ${year} as "leaveYear",
+    select (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department,
+      btrim(regexp_replace(coalesce(nullif(btrim(r.policy_snapshot->>'name'), ''), p.name), '[[:space:]]+[—–-][[:space:]]+imported history[[:space:]]*$', '', 'i')) as "leaveType", ${year} as "leaveYear",
       r.start_date::text as "startDate", r.end_date::text as "endDate",
       r.working_days_requested::double precision as days, r.status::text as status
     from leave_requests r

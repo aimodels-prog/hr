@@ -75,6 +75,10 @@ function harness() {
   configureApplicationDataServices({ storage, audit, notifications, files: {} as never });
   const attendance = new AttendanceService();
   const timesheets = new TimesheetService(attendance);
+  // Retained weekly history must still reconcile correctly after the monthly cutover.
+  storage.writeCollection("timesheetSettings", [
+    { ...timesheets.getSettings(), periodFrequency: "Weekly" },
+  ]);
   timesheets.generatePeriods("2026-08-17", "2026-08-23", hr);
   const period = timesheets.getPeriods()[0]!;
   return { attendance, audit, storage, timesheets, period };
@@ -116,6 +120,89 @@ function addProjectHours(timesheet: TimesheetWithEntries, date: string, hours: n
   });
   timesheet.totalHours += hours;
 }
+
+test("existing drafts automatically receive current leave and half-day credit; approved sheets stay frozen", () => {
+  const { attendance, timesheets, period, storage } = harness();
+  const draft = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
+  const leave = {
+    id: "approved-leave-test",
+    employeeId: "employee-omar",
+    startDate: "2026-08-17",
+    endDate: "2026-08-23",
+    isHalfDay: false,
+    status: "Approved",
+    policySnapshot: { name: "Annual Leave — imported history" },
+  };
+  storage.writeCollection("leave_requests", [leave]);
+  const filled = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
+  assert.equal(filled.id, draft.id);
+  assert.equal(filled.totalHours, 0);
+  assert.equal(filled.expectedHours, 0);
+  assert.equal(filled.entries[0]!.total, 45);
+  assert.equal(timesheets.reconcileAttendance(filled).unresolvedCount, 0);
+  assert.equal(
+    attendance.reconcileDailyStatus("employee-omar", "2026-08-17", hr)?.status,
+    "On Leave",
+  );
+  assert.equal(
+    attendance.reconcileDailyStatus("employee-omar", "2026-08-24", hr)?.status,
+    "Absent",
+    "normal attendance resumes after the last approved date",
+  );
+  storage.writeCollection("leave_requests", [
+    { ...leave, startDate: "2026-08-17", endDate: "2026-08-17", isHalfDay: true },
+  ]);
+  const partial = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
+  assert.equal(partial.expectedHours, 40.5);
+  assert.equal(partial.entries[0]!.total, 4.5);
+  assert.equal(
+    attendance.reconcileDailyStatus("employee-omar", "2026-08-17", hr)?.status,
+    "Half-day Leave",
+  );
+  storage.writeCollection("leave_requests", [{ ...leave, status: "Cancelled" }]);
+  assert.equal(
+    timesheets.getOrCreateTimesheet("employee-omar", period.id, employee).entries.length,
+    0,
+  );
+  storage.writeCollection("leave_requests", [leave]);
+  const submitted = timesheets.submitTimesheet(
+    timesheets.saveTimesheetDraft(filled, employee).id,
+    employee,
+  );
+  timesheets.approveTimesheet(submitted.id, manager);
+  const approved = timesheets.approveTimesheet(submitted.id, hr);
+  storage.writeCollection("leave_requests", [{ ...leave, status: "Cancelled" }]);
+  assert.deepEqual(
+    timesheets.getOrCreateTimesheet("employee-omar", period.id, employee).entries,
+    approved.entries,
+  );
+});
+
+test("real attendance during full leave remains evidence for HR rather than being erased", () => {
+  const { attendance, timesheets, period, storage } = harness();
+  storage.writeCollection("leave_requests", [
+    {
+      id: "leave",
+      employeeId: "employee-omar",
+      startDate: "2026-08-17",
+      endDate: "2026-08-21",
+      isHalfDay: false,
+      status: "Approved",
+      policySnapshot: { name: "Annual Leave" },
+    },
+  ]);
+  addAttendance(attendance, "2026-08-17");
+  const sheet = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
+  assert.equal(attendance.getRecordsForEmployee("employee-omar", employee)[0]!.clockIn, "09:00");
+  assert.equal(
+    timesheets.reconcileAttendance(sheet).days.find((day) => day.date === "2026-08-17")!
+      .requiresExplanation,
+    true,
+  );
+  addProjectHours(sheet, "2026-08-17", 9);
+  timesheets.saveTimesheetDraft(sheet, employee);
+  assert.throws(() => timesheets.submitTimesheet(sheet.id, employee), /full-day leave/);
+});
 
 test("staff outside biometric tracking submit project hours without punch explanations", () => {
   const { storage, timesheets, period } = harness();

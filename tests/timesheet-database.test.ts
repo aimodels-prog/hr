@@ -105,6 +105,7 @@ test(
       await updateTimesheetSettingsInDatabase(
         organisationId,
         {
+          periodFrequency: "Weekly",
           weeklyPeriodStartDay: 1,
           standardDailyHours: 8,
           submissionDeadlineDays: 2,

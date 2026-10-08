@@ -1,5 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import * as z from "zod";
+import {
+  canManageMasterCollection,
+  canManageProjects,
+  HR_MASTER_COLLECTIONS,
+} from "../auth/company-setup-policy.ts";
 
 import { getDatabaseClient } from "../db/client.ts";
 import {
@@ -24,7 +29,13 @@ import {
   resolveDefaultOrganisationId,
   resolveOrganisationIdForActor,
   verifyServerActorRole,
+  type VerifiedActor,
 } from "../db/utils.server.ts";
+
+/** Called only after verifying HR/Super Admin responsibility for the selected setting. */
+function setupActor(actor: VerifiedActor): VerifiedActor {
+  return { ...actor, activeRole: actor.roles.includes("Super Admin") ? "Super Admin" : "HR" };
+}
 
 const MasterDataCollectionEnum = z.enum([
   "departments",
@@ -141,16 +152,8 @@ export const createMasterDataFn = createServerFn({ method: "POST" })
       data.actorEmail,
     );
 
-    const hrManagedCollections = new Set([
-      "grades",
-      "departments",
-      "positions",
-      "locations",
-      "employmentTypes",
-    ]);
-    const mayCreate =
-      actor?.roles.includes("Super Admin") ||
-      (actor?.roles.includes("HR") && hrManagedCollections.has(data.collection));
+    const hrManagedCollections = new Set(HR_MASTER_COLLECTIONS);
+    const mayCreate = actor && canManageMasterCollection(actor.roles, data.collection);
 
     if (!verified || !actor || !mayCreate) {
       const db = getDatabaseClient();
@@ -180,10 +183,7 @@ export const createMasterDataFn = createServerFn({ method: "POST" })
       );
     }
 
-    const authorisedActor = {
-      ...actor,
-      activeRole: actor.roles.includes("Super Admin") ? ("Super Admin" as const) : ("HR" as const),
-    };
+    const authorisedActor = setupActor(actor);
 
     const { name, code, date } = data.input;
 
@@ -248,11 +248,11 @@ export const updateMasterDataFn = createServerFn({ method: "POST" })
     const { verified, actor, error } = await verifyServerActorRole(
       orgId,
       data.actorId,
-      "Super Admin",
+      undefined,
       data.actorEmail,
     );
 
-    if (!verified || !actor) {
+    if (!verified || !actor || !canManageMasterCollection(actor.roles, data.collection)) {
       const db = getDatabaseClient();
       await db.insert(auditEvents).values({
         organisationId: orgId,
@@ -263,10 +263,12 @@ export const updateMasterDataFn = createServerFn({ method: "POST" })
         module: "settings",
         entityType: data.collection,
         entityId: data.id,
-        reason: error ?? "Only a Super Admin can update master data.",
+        reason: error ?? "You do not have permission to update this company option.",
         riskLevel: "High",
       });
-      throw new Error(`Unauthorized: ${error ?? "Only a Super Admin can update master data."}`);
+      throw new Error(
+        `Unauthorized: ${error ?? "You do not have permission to update this company option."}`,
+      );
     }
 
     const existingList = await listCollection(orgId, data.collection, true);
@@ -308,7 +310,7 @@ export const updateMasterDataFn = createServerFn({ method: "POST" })
     );
     if (duplicate) throw new Error("A record with the same name or code already exists.");
 
-    return updateCollectionRecord(orgId, data.collection, data.id, data.changes, actor);
+    return updateCollectionRecord(orgId, data.collection, data.id, data.changes, setupActor(actor));
   });
 
 export const archiveMasterDataFn = createServerFn({ method: "POST" })
@@ -334,11 +336,11 @@ export const archiveMasterDataFn = createServerFn({ method: "POST" })
     const { verified, actor, error } = await verifyServerActorRole(
       orgId,
       data.actorId,
-      "Super Admin",
+      undefined,
       data.actorEmail,
     );
 
-    if (!verified || !actor) {
+    if (!verified || !actor || !canManageMasterCollection(actor.roles, data.collection)) {
       const db = getDatabaseClient();
       await db.insert(auditEvents).values({
         organisationId: orgId,
@@ -349,10 +351,12 @@ export const archiveMasterDataFn = createServerFn({ method: "POST" })
         module: "settings",
         entityType: data.collection,
         entityId: data.id,
-        reason: error ?? "Only a Super Admin can archive master data.",
+        reason: error ?? "You do not have permission to archive this company option.",
         riskLevel: "High",
       });
-      throw new Error(`Unauthorized: ${error ?? "Only a Super Admin can archive master data."}`);
+      throw new Error(
+        `Unauthorized: ${error ?? "You do not have permission to archive this company option."}`,
+      );
     }
 
     const existingList = await listCollection(orgId, data.collection, false);
@@ -375,7 +379,7 @@ export const archiveMasterDataFn = createServerFn({ method: "POST" })
       }
     }
 
-    return archiveCollectionRecord(orgId, data.collection, data.id, actor);
+    return archiveCollectionRecord(orgId, data.collection, data.id, setupActor(actor));
   });
 
 export const restoreMasterDataFn = createServerFn({ method: "POST" })
@@ -401,11 +405,11 @@ export const restoreMasterDataFn = createServerFn({ method: "POST" })
     const { verified, actor, error } = await verifyServerActorRole(
       orgId,
       data.actorId,
-      "Super Admin",
+      undefined,
       data.actorEmail,
     );
 
-    if (!verified || !actor) {
+    if (!verified || !actor || !canManageMasterCollection(actor.roles, data.collection)) {
       const db = getDatabaseClient();
       await db.insert(auditEvents).values({
         organisationId: orgId,
@@ -416,10 +420,12 @@ export const restoreMasterDataFn = createServerFn({ method: "POST" })
         module: "settings",
         entityType: data.collection,
         entityId: data.id,
-        reason: error ?? "Only a Super Admin can restore master data.",
+        reason: error ?? "You do not have permission to restore this company option.",
         riskLevel: "High",
       });
-      throw new Error(`Unauthorized: ${error ?? "Only a Super Admin can restore master data."}`);
+      throw new Error(
+        `Unauthorized: ${error ?? "You do not have permission to restore this company option."}`,
+      );
     }
 
     const existingList = await listCollection(orgId, data.collection, true);
@@ -438,7 +444,7 @@ export const restoreMasterDataFn = createServerFn({ method: "POST" })
     );
     if (duplicate) throw new Error("A record with the same name or code already exists.");
 
-    return restoreCollectionRecord(orgId, data.collection, data.id, actor);
+    return restoreCollectionRecord(orgId, data.collection, data.id, setupActor(actor));
   });
 
 export const listProjectsFn = createServerFn({ method: "GET" })
@@ -522,7 +528,7 @@ export const createProjectFn = createServerFn({ method: "POST" })
     );
     if (duplicate) throw new Error("A project with the same name or code already exists.");
 
-    return createProject(orgId, data.input, actor);
+    return createProject(orgId, data.input, setupActor(actor));
   });
 
 export const updateProjectFn = createServerFn({ method: "POST" })
@@ -548,11 +554,11 @@ export const updateProjectFn = createServerFn({ method: "POST" })
     const { verified, actor, error } = await verifyServerActorRole(
       orgId,
       data.actorId,
-      "Super Admin",
+      undefined,
       data.actorEmail,
     );
 
-    if (!verified || !actor) {
+    if (!verified || !actor || !canManageProjects(actor.roles)) {
       const db = getDatabaseClient();
       await db.insert(auditEvents).values({
         organisationId: orgId,
@@ -563,10 +569,10 @@ export const updateProjectFn = createServerFn({ method: "POST" })
         module: "settings",
         entityType: "project",
         entityId: data.id,
-        reason: error ?? "Only a Super Admin can update a project.",
+        reason: error ?? "Only HR or a Super Admin can update a project.",
         riskLevel: "High",
       });
-      throw new Error(`Unauthorized: ${error ?? "Only a Super Admin can update a project."}`);
+      throw new Error(`Unauthorized: ${error ?? "Only HR or a Super Admin can update a project."}`);
     }
 
     const existing = await listProjects(orgId, true);
@@ -601,7 +607,7 @@ export const updateProjectFn = createServerFn({ method: "POST" })
     );
     if (duplicate) throw new Error("A project with the same name or code already exists.");
 
-    return updateProject(orgId, data.id, data.changes, actor);
+    return updateProject(orgId, data.id, data.changes, setupActor(actor));
   });
 
 export const archiveProjectFn = createServerFn({ method: "POST" })
@@ -619,11 +625,11 @@ export const archiveProjectFn = createServerFn({ method: "POST" })
     const { verified, actor, error } = await verifyServerActorRole(
       orgId,
       data.actorId,
-      "Super Admin",
+      undefined,
       data.actorEmail,
     );
 
-    if (!verified || !actor) {
+    if (!verified || !actor || !canManageProjects(actor.roles)) {
       const db = getDatabaseClient();
       await db.insert(auditEvents).values({
         organisationId: orgId,
@@ -634,10 +640,12 @@ export const archiveProjectFn = createServerFn({ method: "POST" })
         module: "settings",
         entityType: "project",
         entityId: data.id,
-        reason: error ?? "Only a Super Admin can archive a project.",
+        reason: error ?? "Only HR or a Super Admin can archive a project.",
         riskLevel: "High",
       });
-      throw new Error(`Unauthorized: ${error ?? "Only a Super Admin can archive a project."}`);
+      throw new Error(
+        `Unauthorized: ${error ?? "Only HR or a Super Admin can archive a project."}`,
+      );
     }
 
     const existing = await listProjects(orgId, false);
@@ -651,7 +659,7 @@ export const archiveProjectFn = createServerFn({ method: "POST" })
       );
     }
 
-    return archiveProject(orgId, data.id, actor);
+    return archiveProject(orgId, data.id, setupActor(actor));
   });
 
 export const restoreProjectFn = createServerFn({ method: "POST" })
@@ -669,11 +677,11 @@ export const restoreProjectFn = createServerFn({ method: "POST" })
     const { verified, actor, error } = await verifyServerActorRole(
       orgId,
       data.actorId,
-      "Super Admin",
+      undefined,
       data.actorEmail,
     );
 
-    if (!verified || !actor) {
+    if (!verified || !actor || !canManageProjects(actor.roles)) {
       const db = getDatabaseClient();
       await db.insert(auditEvents).values({
         organisationId: orgId,
@@ -684,10 +692,12 @@ export const restoreProjectFn = createServerFn({ method: "POST" })
         module: "settings",
         entityType: "project",
         entityId: data.id,
-        reason: error ?? "Only a Super Admin can restore a project.",
+        reason: error ?? "Only HR or a Super Admin can restore a project.",
         riskLevel: "High",
       });
-      throw new Error(`Unauthorized: ${error ?? "Only a Super Admin can restore a project."}`);
+      throw new Error(
+        `Unauthorized: ${error ?? "Only HR or a Super Admin can restore a project."}`,
+      );
     }
 
     const existing = await listProjects(orgId, true);
@@ -706,5 +716,5 @@ export const restoreProjectFn = createServerFn({ method: "POST" })
     );
     if (duplicate) throw new Error("A project with the same name or code already exists.");
 
-    return restoreProject(orgId, data.id, actor);
+    return restoreProject(orgId, data.id, setupActor(actor));
   });

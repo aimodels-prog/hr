@@ -209,7 +209,7 @@ export const helpWalkthroughs: Record<string, HelpWalkthrough> = {
   },
   timesheets: {
     before: [
-      "Choose the correct week and confirm your hours, leave and breaks. Attendance suggestions still need your review.",
+      "Choose the correct month and confirm your hours, leave and breaks. Attendance suggestions still need your review.",
     ],
     flow: ["Employee submits", "Manager reviews", "HR approves", "Finance uses approved record"],
   },

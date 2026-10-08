@@ -8,6 +8,11 @@ import {
   readEmployeeDocumentInDatabase,
 } from "../src/lib/db/repositories/employee-document.repository.server.ts";
 import { closeDatabaseConnection } from "../src/lib/db/client.ts";
+import {
+  getDocumentRequirementSettings,
+  saveDocumentRequirementSettings,
+} from "../src/lib/db/repositories/document-requirements.repository.server.ts";
+import { enqueueWorkflowEmails } from "../src/lib/db/repositories/workflow-email.repository.server.ts";
 
 const url = process.env["VIA_HR_TEST_DATABASE_URL"];
 test(
@@ -87,7 +92,52 @@ test(
         await sql`SELECT message FROM notifications WHERE organisation_id=${org} AND status<>'Dismissed'`;
       assert.equal(outstanding.length, 1, "Missing own documents remain in one combined reminder");
       assert.match(outstanding[0]!.message, /Your documents/);
+      const actor = {
+        userId: user,
+        employeeId: employee,
+        displayName: "HR",
+        activeRole: "HR" as const,
+        roles: ["HR"],
+      };
+      const settings = await getDocumentRequirementSettings(org);
+      const education = {
+        ...settings.definitions.find((item) => item.type === "education_certificate")!,
+        id: "new-required-degree",
+        name: "Updated education degree",
+        required: true,
+        uploadBy: "Employee" as const,
+      };
+      let saved = await saveDocumentRequirementSettings(org, [], settings.version, actor);
+      saved = await saveDocumentRequirementSettings(org, [education], saved.version, actor);
+      const active =
+        await sql`SELECT id,message FROM notifications WHERE organisation_id=${org} AND status='Unread'`;
+      assert.equal(
+        active.length,
+        1,
+        "Saving a compulsory requirement immediately creates one checklist",
+      );
+      assert.match(active[0]!.message, /Updated education degree/);
+      saved = await saveDocumentRequirementSettings(org, [], saved.version, actor);
+      await saveDocumentRequirementSettings(org, [education], saved.version, actor);
+      const reopened =
+        await sql`SELECT id FROM notifications WHERE organisation_id=${org} AND status='Unread'`;
+      assert.equal(reopened.length, 1);
+      assert.equal(
+        reopened[0]!.id,
+        active[0]!.id,
+        "Restoring a requirement reopens the checklist without duplicates",
+      );
+      await sql`INSERT INTO google_calendar_connections(organisation_id,account_email,refresh_token_encrypted,connected_by,email_enabled_at) VALUES(${org},'hr@example.test','test',${user},now()-interval '1 day')`;
+      await enqueueWorkflowEmails();
+      const emails =
+        await sql`SELECT notification_id FROM workflow_notification_emails WHERE organisation_id=${org}`;
+      assert.equal(
+        emails.length,
+        0,
+        "Missing profile checklists are in-app only, even with email enabled",
+      );
     } finally {
+      await sql`DELETE FROM google_calendar_connections WHERE organisation_id=${org}`;
       await sql`DELETE FROM notifications WHERE organisation_id=${org}`;
       await sql`DELETE FROM employee_documents WHERE id=${doc}`;
       await sql`DELETE FROM file_metadata WHERE id=${file}`;
@@ -95,7 +145,7 @@ test(
       await sql`DELETE FROM employees WHERE id=${employee}`;
       for (const table of ["departments", "positions", "employment_types", "locations"])
         await sql.unsafe(`DELETE FROM ${table} WHERE organisation_id=$1`, [org]);
-      await sql`DELETE FROM organisations WHERE id=${org}`;
+      // Keep the test organisation referenced by its append-only settings audit history.
       await sql.end();
       await closeDatabaseConnection();
     }

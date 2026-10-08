@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { Fragment, useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { PageSections, SectionNavigation, SectionLink } from "@/components/ui/page-sections";
 import { createFileRoute } from "@tanstack/react-router";
 import { AccessDenied, useCurrentUser } from "@/lib/auth";
 import {
@@ -18,16 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Bookmark,
-  Download,
-  Printer,
-  Filter,
-  ChevronRight,
-  BarChart3,
-  Trash2,
-  Loader2,
-} from "lucide-react";
+import { Bookmark, Download, Printer, Filter, BarChart3, Trash2, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -295,34 +287,29 @@ function ReportsDashboard() {
         </p>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-[250px_1fr]">
+      <PageSections
+        value={activeReportId ?? ""}
+        onValueChange={(id) => {
+          void selectReport(id);
+        }}
+      >
         {/* Sidebar Nav */}
-        <div className="space-y-6">
+        <SectionNavigation>
           {Object.entries(categories).map(([category, reports]) => (
-            <div key={category}>
+            <Fragment key={category}>
               <h3 className="font-medium text-sm text-muted-foreground mb-2 px-2 uppercase tracking-wider">
                 {category}
               </h3>
               <div className="space-y-1">
                 {reports.map((r) => (
-                  <button
-                    key={r.id}
-                    onClick={() => selectReport(r.id)}
-                    disabled={isLoading}
-                    className={`w-full text-left px-2 py-1.5 rounded-md text-sm flex items-center justify-between group transition-colors ${
-                      activeReportId === r.id
-                        ? "bg-primary/10 text-primary font-medium"
-                        : "hover:bg-muted text-foreground"
-                    }`}
-                  >
+                  <SectionLink key={r.id} value={r.id} disabled={isLoading}>
                     {r.name}
-                    {activeReportId === r.id && <ChevronRight className="w-4 h-4" />}
-                  </button>
+                  </SectionLink>
                 ))}
               </div>
-            </div>
+            </Fragment>
           ))}
-        </div>
+        </SectionNavigation>
 
         {/* Report Content area */}
         <div>
@@ -586,11 +573,11 @@ function ReportsDashboard() {
             <div className="h-[400px] flex flex-col items-center justify-center border-2 border-dashed rounded-xl text-muted-foreground bg-muted/20">
               <BarChart3 className="w-12 h-12 mb-4 text-muted-foreground/50" />
               <p className="text-lg font-medium">Select a report</p>
-              <p className="text-sm">Choose a category from the left menu to view metrics.</p>
+              <p className="text-sm">Choose a report from the menu.</p>
             </div>
           )}
         </div>
-      </div>
+      </PageSections>
       <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
         <DialogContent>
           <DialogHeader>

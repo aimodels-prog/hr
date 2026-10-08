@@ -76,6 +76,10 @@ function harness() {
   configureApplicationDataServices({ storage, audit, notifications, files: {} as never });
   const attendance = new AttendanceService();
   const timesheets = new TimesheetService(attendance);
+  // Exercise legacy weekly records; monthly behaviour is tested separately.
+  storage.writeCollection("timesheetSettings", [
+    { ...timesheets.getSettings(), periodFrequency: "Weekly" },
+  ]);
   timesheets.generatePeriods("2026-08-17", "2026-08-30", hr);
   const [period, nextPeriod] = timesheets
     .getPeriods()

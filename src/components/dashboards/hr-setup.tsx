@@ -166,7 +166,7 @@ export function HrSetup() {
           )}
           <nav aria-label="HR setup shortcuts" className="flex flex-wrap gap-2 border-t pt-3">
             <Button variant="outline" size="sm" asChild>
-              <Link to="/staff/requests" search={{ view: "organisation" }}>
+              <Link to="/staff/settings" search={{ section: "connections" }}>
                 Manage connections
               </Link>
             </Button>
@@ -187,7 +187,7 @@ export function HrSetup() {
                 <Link to="/staff/timesheet-settings">Timesheet settings</Link>
               </Button>
             )}
-            {user.can("system:settings_manage") && (
+            {(user.activeRole === "HR" || user.can("system:settings_manage")) && (
               <Button variant="outline" size="sm" asChild>
                 <Link to="/staff/settings" search={{ section: "org" }}>
                   Company setup

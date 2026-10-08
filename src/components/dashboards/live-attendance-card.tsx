@@ -52,6 +52,29 @@ export function LiveAttendanceCard() {
           minute: "2-digit",
         }).format(new Date(record.clockInAt))
       : "—";
+  if (
+    data &&
+    data.approvedLeaveFraction >= 1 &&
+    !record?.clockInAt &&
+    !record?.clockOutAt &&
+    !record?.officeExceptionLabel
+  )
+    return (
+      <section
+        aria-label="Today's attendance"
+        className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4 sm:p-5"
+      >
+        <div>
+          <p className="font-medium text-primary">On leave</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {data.leaveType} · Through {data.leaveEndDate}
+          </p>
+        </div>
+        <a href="/staff/me/leave-balances" className="text-sm font-medium text-primary">
+          My leave
+        </a>
+      </section>
+    );
   if (data && !data.tracked && !record?.clockInAt && !record?.clockOutAt)
     return (
       <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4">
@@ -78,7 +101,11 @@ export function LiveAttendanceCard() {
         </div>
         {data && (
           <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-            {stale ? "Sync delayed" : status}
+            {stale
+              ? "Sync delayed"
+              : data.approvedLeaveFraction > 0 && data.approvedLeaveFraction < 1
+                ? `${status} · Half-day leave`
+                : status}
           </span>
         )}
       </div>

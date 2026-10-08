@@ -39,12 +39,28 @@ function harness() {
   return { audit, storage };
 }
 
-test("organisation settings require Super Admin", async () => {
+test("HR can maintain business settings but protected settings require Super Admin", async () => {
   const { audit } = harness();
   const service = new SettingsService();
   const settings = service.getAppSettingsSync();
 
-  await assert.rejects(service.saveAppSettings(settings, hr), /Only a Super Admin/);
+  const saved = await service.saveAppSettings(
+    { ...settings, organisationName: "HR configured company" },
+    hr,
+  );
+  assert.equal(saved.organisationName, "HR configured company");
+  await assert.rejects(
+    service.saveAppSettings({ ...saved, baseCurrency: "AED" }, hr),
+    /permission/,
+  );
+  await assert.rejects(
+    service.saveAppSettings({ ...saved, organisationName: "Not allowed" }, employee),
+    /permission/,
+  );
+  await assert.rejects(
+    service.saveAppSettings({ ...saved, standardDailyHours: 7 }, accounts),
+    /permission/,
+  );
   assert.ok(audit.list().some((event) => event.action === "access-denied"));
 });
 
@@ -57,27 +73,45 @@ test("master data writes are permission controlled, unique and dependency safe",
     hr,
   );
   assert.equal(legal.name, "Legal");
-  await assert.rejects(
-    service.create(
-      "publicHolidays",
-      {
-        name: "Unapproved Holiday",
-        date: "2026-11-01",
-        isActive: true,
-        orderIndex: 8,
-      },
-      hr,
-    ),
-    /Only a Super Admin/,
+  const holiday = await service.create(
+    "publicHolidays",
+    {
+      name: "Company Holiday",
+      date: "2026-11-01",
+      isActive: true,
+      orderIndex: 8,
+    },
+    hr,
+  );
+  assert.equal(holiday.name, "Company Holiday");
+  const updated = await service.update("departments", legal.id, { name: "Legal Affairs" }, hr);
+  assert.equal(updated.name, "Legal Affairs");
+  await service.archive("departments", legal.id, hr);
+  assert.ok(
+    (await service.listAsync("departments", true)).find((record) => record.id === legal.id)
+      ?.archivedAt,
+  );
+  await service.restore("departments", legal.id, hr);
+  assert.ok(
+    !(await service.listAsync("departments", true)).find((record) => record.id === legal.id)
+      ?.archivedAt,
   );
   await assert.rejects(
-    service.update("departments", legal.id, { name: "Legal Affairs" }, hr),
-    /Only a Super Admin/,
+    service.update("departments", legal.id, { name: "Denied" }, employee),
+    /outside your company setup/,
+  );
+  await assert.rejects(
+    service.create(
+      "currencies",
+      { name: "UAE Dirham", code: "AED", isActive: true, orderIndex: 1 },
+      hr,
+    ),
+    /outside your company setup/,
   );
   await assert.rejects(
     service.create(
       "departments",
-      { name: "legal", code: "OTHER", isActive: true, orderIndex: 9 },
+      { name: "legal affairs", code: "OTHER", isActive: true, orderIndex: 9 },
       superAdmin,
     ),
     /same name or code/,
@@ -85,10 +119,7 @@ test("master data writes are permission controlled, unique and dependency safe",
   const list = await service.listAsync("departments");
   const operations = list.find((item: { name: string; id: string }) => item.name === "Operations");
   assert.ok(operations);
-  await assert.rejects(
-    service.archive("departments", operations!.id, superAdmin),
-    /active employee/,
-  );
+  await assert.rejects(service.archive("departments", operations!.id, hr), /active employee/);
 });
 
 test("user access cannot be self-escalated and user archive can be restored", () => {

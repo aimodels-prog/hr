@@ -93,7 +93,7 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
   await employmentDialog.getByLabel("New work location").fill(newLocation);
   await employmentDialog.getByRole("button", { name: "Add and select" }).click();
   await expect(employmentDialog.getByLabel("Location", { exact: true })).toContainText(newLocation);
-  await expect(employmentDialog.getByLabel("Note (optional)")).toBeVisible();
+  await expect(employmentDialog.getByText("Add note (optional)", { exact: true })).toBeVisible();
   const newProject = `Browser Project ${unique}`;
   await employmentDialog.getByRole("button", { name: "Add project", exact: true }).click();
   await employmentDialog.getByLabel("New project", { exact: true }).fill(newProject);
@@ -106,6 +106,7 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
   await employmentDialog.getByLabel("New grade", { exact: true }).fill(newGrade);
   await employmentDialog.getByRole("button", { name: "Add and select" }).click();
   await expect(employmentDialog.getByLabel("Grade", { exact: true })).toContainText(newGrade);
+  // A grade change is consequential; unlike a routine location assignment it needs context.
   await employmentDialog.getByLabel(/Reason for change/i).fill("Assign the new project and grade");
   await employmentDialog.getByRole("button", { name: "Save Changes", exact: true }).click();
   await expect(page.getByText("Employment details saved", { exact: true })).toBeVisible();
@@ -152,9 +153,7 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
 
   // --- Onboarding: start a case through the real dialog ---
   await page.goto("/staff/onboarding");
-  await expect(
-    page.getByRole("heading", { name: "Onboarding and employee setup", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "New Employees", exact: true })).toBeVisible();
   // The trigger and the dialog's own submit button are both labelled "Start onboarding" - the
   // dialog's copy is hidden (but present in the DOM) until opened, so .first() reliably hits
   // the trigger.
@@ -184,7 +183,7 @@ test("Directory, Files, Onboarding and Offboarding are usable end to end in the 
   // --- Offboarding: start a case through the real dialog, exercising the template / HR owner /
   // confidentiality fields added this session ---
   await page.goto("/staff/offboarding");
-  await expect(page.getByRole("heading", { name: "Offboarding", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Leaving Employees", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Start Offboarding" }).click();
   const offboardingDialog = page.getByRole("dialog", { name: "Start Offboarding Case" });
   await expect(offboardingDialog).toBeVisible();

@@ -15,8 +15,8 @@ test("an employee applies and recommends someone from the staff dashboard", asyn
     timeout: 30_000,
   });
 
-  await page.getByRole("button", { name: "My Workspace", exact: true }).click();
-  await page.getByRole("link", { name: "Opportunities", exact: true }).click();
+  await page.getByRole("button", { name: "Company", exact: true }).click();
+  await page.getByRole("link", { name: "Job Opportunities", exact: true }).click();
   await page.getByRole("button", { name: "Apply for a position", exact: true }).click();
   const applicationDialog = page.getByRole("dialog", { name: "Apply for a position" });
   await expect(applicationDialog).toBeVisible();

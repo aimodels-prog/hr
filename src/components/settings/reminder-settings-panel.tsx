@@ -111,6 +111,27 @@ export function ReminderSettingsPanel() {
         must also be enabled in Google Calendar &amp; Meet.
       </p>
       <fieldset disabled={saving} className="grid gap-4 sm:grid-cols-2">
+        <Card className="sm:col-span-2">
+          <CardHeader>
+            <CardTitle>Daily email summaries</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              One email per employee each day. HR receives one email per topic, with all related
+              items together. New items after the summary wait until the next day. In-app alerts
+              remain immediate.
+            </p>
+            <label className="block space-y-2" htmlFor="dailyEmailTime">
+              <span>Send from (company time zone)</span>
+              <Input
+                id="dailyEmailTime"
+                type="time"
+                value={rules.dailyEmailTime}
+                onChange={(event) => change("dailyEmailTime", event.target.value)}
+              />
+            </label>
+          </CardContent>
+        </Card>
         <Card>
           <CardHeader>
             <CardTitle>Travel approvals</CardTitle>

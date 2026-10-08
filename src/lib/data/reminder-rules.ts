@@ -13,6 +13,10 @@ const monthDay = z
   }, "Use a valid month and day, for example 04-30.");
 export const ReminderRulesSchema = z
   .object({
+    dailyEmailTime: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .default("10:00"),
     travelEnabled: z.boolean(),
     travelAfterHours: z.number().int().min(1).max(720),
     trainingEnabled: z.boolean(),
@@ -34,6 +38,7 @@ export const ReminderRulesSchema = z
   );
 export type ReminderRules = z.infer<typeof ReminderRulesSchema>;
 export const DEFAULT_REMINDER_RULES: ReminderRules = {
+  dailyEmailTime: "10:00",
   travelEnabled: true,
   travelAfterHours: 48,
   trainingEnabled: true,

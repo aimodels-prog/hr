@@ -15,14 +15,17 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
+*.local.*
 
 # Local source data and one-off diagnostics
 Candidates 2025.xlsx
 test-leave.ts
+artifacts/
 
 # Local browser-test output
 test-results/
 playwright-report/
+.tmp-ci-logs/
 
 # Local deployment image archives
 via-hr-*.tar

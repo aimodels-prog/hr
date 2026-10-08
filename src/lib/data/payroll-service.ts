@@ -398,7 +398,7 @@ export class PayrollService {
     // Scan all employees
     for (const emp of employees) {
       // Missing Timesheet Check (simplified logic: check if they have a missing/draft timesheet spanning the period)
-      // Since timesheets are weekly, we'll just query the timesheet service and see if any periods overlapping this one are missing/late.
+      // Timesheets are monthly; retained older periods are still checked if they overlap payroll.
       // For demonstration:
 
       const overtime = payrollOvertime.filter(

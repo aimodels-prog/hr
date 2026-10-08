@@ -32,6 +32,7 @@ import { Badge } from "@/components/ui/badge";
 import { Lock, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { TimesheetService } from "@/lib/data/timesheet-service";
+import { timesheetPeriodLabel } from "@/lib/data/timesheet-periods";
 import { RequireAnyPermission, useCurrentUser } from "@/lib/auth";
 import {
   Dialog,
@@ -129,7 +130,7 @@ function TimesheetSettingsRoute() {
       <div className="flex flex-col gap-6 max-w-[800px] mx-auto pb-10">
         <PageHeader
           title="Timesheet Settings"
-          description="Configure weekly periods, standard hours, and generation rules."
+          description="Set monthly periods, working hours and the submission deadline."
         />
 
         <Card>
@@ -140,29 +141,48 @@ function TimesheetSettingsRoute() {
           <CardContent className="space-y-6">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Weekly Period Start Day</Label>
+                <Label>Timesheet Period</Label>
                 <Select
-                  value={settings.weeklyPeriodStartDay.toString()}
-                  onValueChange={(v) =>
-                    setSettings({ ...settings, weeklyPeriodStartDay: parseInt(v) })
+                  value={settings.periodFrequency}
+                  onValueChange={(value: "Monthly" | "Weekly") =>
+                    setSettings({ ...settings, periodFrequency: value })
                   }
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="0">Sunday</SelectItem>
-                    <SelectItem value="1">Monday</SelectItem>
-                    <SelectItem value="2">Tuesday</SelectItem>
-                    <SelectItem value="3">Wednesday</SelectItem>
-                    <SelectItem value="4">Thursday</SelectItem>
-                    <SelectItem value="5">Friday</SelectItem>
-                    <SelectItem value="6">Saturday</SelectItem>
+                    <SelectItem value="Monthly">Monthly</SelectItem>
+                    <SelectItem value="Weekly">Weekly</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
+              {settings.periodFrequency === "Weekly" && (
+                <div className="space-y-2">
+                  <Label>Weekly Period Start Day</Label>
+                  <Select
+                    value={settings.weeklyPeriodStartDay.toString()}
+                    onValueChange={(v) =>
+                      setSettings({ ...settings, weeklyPeriodStartDay: parseInt(v) })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0">Sunday</SelectItem>
+                      <SelectItem value="1">Monday</SelectItem>
+                      <SelectItem value="2">Tuesday</SelectItem>
+                      <SelectItem value="3">Wednesday</SelectItem>
+                      <SelectItem value="4">Thursday</SelectItem>
+                      <SelectItem value="5">Friday</SelectItem>
+                      <SelectItem value="6">Saturday</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <div className="space-y-2">
-                <Label>Submission Deadline (Days after end)</Label>
+                <Label>Submission Deadline (Days after period end)</Label>
                 <Input
                   type="number"
                   min={0}
@@ -296,11 +316,13 @@ function TimesheetSettingsRoute() {
 
             <div className="flex items-center space-x-2 pt-4">
               <Switch
-                id="copy-week"
+                id="copy-period"
                 checked={settings.allowCopyPreviousWeek}
                 onCheckedChange={(v) => setSettings({ ...settings, allowCopyPreviousWeek: v })}
               />
-              <Label htmlFor="copy-week">Allow employees to copy entries from previous week</Label>
+              <Label htmlFor="copy-period">
+                Allow employees to reuse projects from the previous period
+              </Label>
             </div>
             <div className="flex items-center space-x-2">
               <Switch
@@ -330,8 +352,8 @@ function TimesheetSettingsRoute() {
           <CardHeader>
             <CardTitle>Period Generation</CardTitle>
             <CardDescription>
-              Automatically generate weekly periods across a date range respecting your configured
-              start day.
+              Create periods for the selected dates. Monthly periods cover the first to the last day
+              of each month.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -346,9 +368,7 @@ function TimesheetSettingsRoute() {
               </div>
             </div>
             <p className="text-sm text-muted-foreground pt-2">
-              Note: This will align the first generated period to the previous occurrence of your
-              configured "Weekly Period Start Day" if the chosen start date doesn't land exactly on
-              it.
+              The current period is created automatically. Use this to prepare additional periods.
             </p>
           </CardContent>
           <CardFooter className="justify-end">
@@ -379,9 +399,7 @@ function TimesheetSettingsRoute() {
               <TableBody>
                 {periods.map((period) => (
                   <TableRow key={period.id}>
-                    <TableCell>
-                      {period.startDate} to {period.endDate}
-                    </TableCell>
+                    <TableCell>{timesheetPeriodLabel(period)}</TableCell>
                     <TableCell>
                       <Badge variant={period.status === "Closed" ? "outline" : "default"}>
                         {period.status}

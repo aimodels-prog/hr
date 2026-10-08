@@ -48,7 +48,7 @@ test("a direct employee page does not fetch unrelated module snapshots", async (
     await route.continue();
   });
   await page.goto("/staff/me/training");
-  await expect(page.getByRole("heading", { name: "My Learning", exact: true })).toBeVisible({
+  await expect(page.getByRole("heading", { name: "My Training", exact: true })).toBeVisible({
     timeout: 30000,
   });
   expect(calls.some((name) => name.includes("getTrainingSnapshotFn"))).toBe(true);
@@ -88,13 +88,11 @@ test("HR charts and navigation remain usable while recruitment is stalled", asyn
       timeout: 10000,
     });
     // Navigate within the app, keeping the in-flight recruitment request pending.
-    await page.getByRole("button", { name: "Approvals", exact: true }).click();
     await page
-      .getByRole("link", { name: "Requests & approvals", exact: true })
+      .getByRole("navigation", { name: "Main navigation", exact: true })
+      .getByRole("link", { name: "Approvals", exact: true })
       .click({ timeout: 10000 });
-    await expect(
-      page.getByRole("heading", { name: "Requests & approvals", exact: true }),
-    ).toBeVisible({
+    await expect(page.getByRole("heading", { name: "Approvals", exact: true })).toBeVisible({
       timeout: 10000,
     });
     await expect(page.getByText("Organisation data is unavailable", { exact: true })).toHaveCount(
@@ -152,7 +150,9 @@ test("employee dashboard charts load before a delayed training snapshot", async 
     await page.goto("/staff");
     await expect.poll(() => stalled, { timeout: 30000 }).toBe(true);
     await expect(
-      page.getByRole("heading", { name: "Worked hours vs expected hours", exact: true }),
+      page
+        .getByRole("region", { name: "My working hours", exact: true })
+        .getByTestId("primary-dashboard-charts"),
     ).toBeVisible({ timeout: 10000 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,

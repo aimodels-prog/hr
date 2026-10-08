@@ -4,6 +4,7 @@ import { useCurrentUser } from "@/lib/auth";
 import { getApprovalInboxFn } from "@/lib/server-functions/request-tracking.server";
 export function RequestTrackerSummary() {
   const user = useCurrentUser();
+  const canApprove = user.activeRole !== "Employee";
   const actor = {
     actorId: user.id,
     ...(user.workspaceEmail ? { actorEmail: user.workspaceEmail } : {}),
@@ -12,7 +13,7 @@ export function RequestTrackerSummary() {
   const inbox = useQuery({
     queryKey: ["approval-inbox", actor],
     queryFn: () => getApprovalInboxFn({ data: { actor } }),
-    enabled: typeof window !== "undefined",
+    enabled: typeof window !== "undefined" && canApprove,
     staleTime: 15_000,
     refetchInterval: 60_000,
   });
@@ -31,6 +32,7 @@ export function RequestTrackerSummary() {
       <Link
         to="/staff/requests"
         search={{ view: "approvals" }}
+        hidden={!canApprove}
         className="rounded-lg border px-4 py-3 text-sm font-medium"
       >
         Needs My Approval{" "}

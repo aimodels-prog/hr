@@ -27,6 +27,33 @@ const base = {
   pendingVisits: [],
 };
 
+test("approved full leave with a zero-punch record is not an absence or review warning; half days retain work expectations", () => {
+  const leave = {
+    employeeId: "a",
+    startDate: "2026-09-14",
+    endDate: "2026-09-14",
+    isHalfDay: false,
+  };
+  const records = [
+    {
+      employeeId: "a",
+      date: "2026-09-14",
+      clockInAt: null,
+      clockOutAt: null,
+      calculatedHours: 0,
+      status: "On Leave",
+    },
+  ];
+  const [full] = calculateAttendanceAnalytics({ ...base, leave: [leave], records });
+  assert.equal(full!.expected, 0);
+  assert.equal(full!.worked, 0);
+  assert.equal(full!.missing, 0);
+  assert.equal(full!.review, 0);
+  const [half] = calculateAttendanceAnalytics({ ...base, leave: [{ ...leave, isHalfDay: true }] });
+  assert.equal(half!.expected, 4);
+  assert.equal(half!.missing, 1);
+});
+
 test("chart includes today with a fixed 7/30-day range across year boundaries", () => {
   assert.equal(attendanceChartDateRange("2026-10-06", 30).at(-1), "2026-10-06");
   assert.equal(attendanceChartDateRange("2026-10-06", 30).length, 30);

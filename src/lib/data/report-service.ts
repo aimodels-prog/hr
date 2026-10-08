@@ -2,6 +2,7 @@ import { SYSTEM_CONTEXT } from "./types.ts";
 import { recordedAttendanceHours } from "./recorded-hours.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { LeaveService } from "./leave-service.ts";
+import { leaveDisplayType } from "./leave-presentation.ts";
 import { TimesheetService } from "./timesheet-service.ts";
 import { RecruitmentService } from "./recruitment-service.ts";
 import { PerformanceService } from "./performance-service.ts";
@@ -581,8 +582,10 @@ export class ReportService {
             return {
               employee: employeeName(request.employeeId),
               department: employee?.department ?? "Unknown",
-              leaveType:
-                policies.find((policy) => policy.id === request.policyId)?.name ?? "Unknown",
+              leaveType: leaveDisplayType(
+                request,
+                policies.find((policy) => policy.id === request.policyId),
+              ),
               startDate: request.startDate,
               endDate: request.endDate,
               days: request.workingDaysRequested,

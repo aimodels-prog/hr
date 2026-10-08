@@ -1,6 +1,8 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
 import { PageHeader } from "@/components/ui/page-header";
+import { TimesheetDayNavigation } from "@/components/timesheets/day-navigation";
+import { timesheetPeriodLabel } from "@/lib/data/timesheet-periods";
 import {
   Card,
   CardContent,
@@ -66,6 +68,7 @@ function TimesheetApprovalDetailRoute() {
       .find((t) => t.id === timesheetId),
   );
 
+  const [dayPage, setDayPage] = useState(0);
   const [returnDialogOpen, setReturnDialogOpen] = useState(false);
   const [reopenDialogOpen, setReopenDialogOpen] = useState(false);
   const [reason, setReason] = useState("");
@@ -89,10 +92,11 @@ function TimesheetApprovalDetailRoute() {
     );
   }
 
-  const days = eachDayOfInterval({
+  const allDays = eachDayOfInterval({
     start: parseISO(period!.startDate),
     end: parseISO(period!.endDate),
   });
+  const days = allDays.slice(dayPage * 7, dayPage * 7 + 7);
 
   const handleApprove = async () => {
     try {
@@ -153,6 +157,7 @@ function TimesheetApprovalDetailRoute() {
   days.forEach((d) => (dailyTotals[format(d, "yyyy-MM-dd")] = 0));
 
   timesheet.entries.forEach((e) => {
+    if (e.isLeave || e.isHoliday) return;
     Object.entries(e.hours).forEach(([d, h]) => {
       if (dailyTotals[d] !== undefined) {
         dailyTotals[d] += h || 0;
@@ -167,7 +172,7 @@ function TimesheetApprovalDetailRoute() {
     <div className="flex flex-col gap-4 max-w-[1400px] mx-auto pb-10">
       <PageHeader
         title={`${emp?.preferredName || "Unknown"}'s Timesheet`}
-        description={`Period: ${period?.startDate} to ${period?.endDate}`}
+        description={period ? timesheetPeriodLabel(period) : undefined}
         actions={
           <Badge
             variant={
@@ -210,13 +215,13 @@ function TimesheetApprovalDetailRoute() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-2">
         <Card className="bg-muted/30">
           <CardContent className="p-4">
-            <div className="text-sm text-muted-foreground">Expected Hours</div>
+            <div className="text-sm text-muted-foreground">Expected work</div>
             <div className="text-2xl font-bold">{timesheet.expectedHours}</div>
           </CardContent>
         </Card>
         <Card className="bg-muted/30">
           <CardContent className="p-4">
-            <div className="text-sm text-muted-foreground">Logged Hours</div>
+            <div className="text-sm text-muted-foreground">Worked hours</div>
             <div className="text-2xl font-bold">{timesheet.totalHours}</div>
           </CardContent>
         </Card>
@@ -294,6 +299,7 @@ function TimesheetApprovalDetailRoute() {
         <CardHeader className="py-3">
           <CardTitle className="text-base">Time Entries</CardTitle>
         </CardHeader>
+        <TimesheetDayNavigation days={allDays} page={dayPage} onChange={setDayPage} />
         <CardContent className="p-0 overflow-x-auto">
           <Table className="min-w-[1200px]">
             <TableHeader className="bg-muted/50">
@@ -317,7 +323,11 @@ function TimesheetApprovalDetailRoute() {
                 const isReadonlyBlock = entry.isLeave || entry.isHoliday;
                 return (
                   <TableRow key={entry.id} className={isReadonlyBlock ? "bg-muted/30" : ""}>
-                    <TableCell className="p-2 font-medium">{entry.projectId}</TableCell>
+                    <TableCell className="p-2 font-medium">
+                      {isReadonlyBlock
+                        ? entry.notes || (entry.isLeave ? "Approved leave" : "Public holiday")
+                        : entry.projectId}
+                    </TableCell>
                     <TableCell className="p-2 text-muted-foreground">
                       {entry.costCentreId}
                     </TableCell>

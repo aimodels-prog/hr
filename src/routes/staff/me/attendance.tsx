@@ -17,6 +17,7 @@ import { DashboardCharts } from "@/components/dashboards/dashboard-charts";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { getApplicationDataServices } from "@/lib/data/application-data";
 import { AttendanceService } from "@/lib/data/attendance-service";
+import { LeaveService } from "@/lib/data/leave-service";
 import { flexibleOfficeSchedule } from "@/lib/data/office-schedule";
 import {
   siteVisitLocalNow,
@@ -62,7 +63,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  PageSections as Tabs,
+  SectionPanel as TabsContent,
+  SectionNavigation as TabsList,
+  SectionLink as TabsTrigger,
+} from "@/components/ui/page-sections";
 import {
   Table,
   TableBody,
@@ -187,7 +193,10 @@ function MyAttendanceRoute() {
     let active = true;
     const refresh = async () => {
       try {
-        await attendanceService.hydrateFromDatabase(actorContext);
+        await Promise.all([
+          attendanceService.hydrateFromDatabase(actorContext),
+          new LeaveService().hydrateCompatibilityCache(actorContext),
+        ]);
         if (active) setRevision((value) => value + 1);
       } catch (error) {
         if (active)
@@ -239,6 +248,12 @@ function MyAttendanceRoute() {
   const openRecord = attendanceService.getOpenRecord(employeeId, actorContext);
   const todayKey = localNow.date;
   const trackingRequired = attendanceService.isTrackingRequired(employeeId, todayKey);
+  const todayLeaveStatus = attendanceService.reconcileDailyStatus(
+    employeeId,
+    todayKey,
+    actorContext,
+  )?.status;
+  const onFullLeave = todayLeaveStatus === "On Leave";
   const todayOpenRecord = openRecord?.date === todayKey ? openRecord : null;
   const missedOpenRecord = attendanceService.getMissedOpenRecord(employeeId, actorContext);
   const siteVisits = attendanceService.getSiteVisitsForEmployee(employeeId, actorContext);
@@ -263,8 +278,13 @@ function MyAttendanceRoute() {
     .map((day) => {
       const date = format(day, "yyyy-MM-dd");
       const record = records.find((item) => item.date === date);
-      if (record) return { ...record, virtual: false };
       const reconciled = attendanceService.reconcileDailyStatus(employeeId, date, actorContext);
+      if (record)
+        return {
+          ...record,
+          ...(reconciled?.status ? { status: reconciled.status } : {}),
+          virtual: false,
+        };
       return {
         id: `virtual-${date}`,
         employeeId,
@@ -509,7 +529,18 @@ function MyAttendanceRoute() {
           </Alert>
         ))}
 
-        {locations.length === 0 && (
+        {(onFullLeave || todayLeaveStatus === "Half-day Leave") && (
+          <Alert>
+            <CalendarDays className="h-4 w-4" />
+            <AlertTitle>{onFullLeave ? "On leave today" : "Half-day leave today"}</AlertTitle>
+            <AlertDescription>
+              {onFullLeave
+                ? "Leave is recorded automatically. No clock-in or work hours are needed today."
+                : "Your leave covers half the day. Record only the remaining work hours."}
+            </AlertDescription>
+          </Alert>
+        )}
+        {trackingRequired && !onFullLeave && locations.length === 0 && (
           <Alert variant="destructive">
             <MapPin className="h-4 w-4" />
             <AlertTitle>Office attendance is not configured</AlertTitle>
@@ -519,7 +550,7 @@ function MyAttendanceRoute() {
           </Alert>
         )}
 
-        {trackingRequired && (
+        {trackingRequired && !onFullLeave && (
           <Card className="overflow-hidden border-primary/20 bg-gradient-to-br from-primary/[0.08] to-background">
             <CardContent className="grid gap-6 p-6 lg:grid-cols-[1fr_auto] lg:items-center">
               <div>
@@ -538,7 +569,7 @@ function MyAttendanceRoute() {
                 </h2>
                 <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
                   {todayOpenRecord
-                    ? `The system will issue three reminders after ${policy.standardDailyHours} worked hours while this record remains open.`
+                    ? "Clock out when you finish. If a clock-out is missed, enter the actual finishing time for HR to confirm."
                     : `Clocking is allowed only inside an active VIA office zone with browser accuracy of ${policy.maximumLocationAccuracyMeters} metres or better.`}
                 </p>
                 {missedOpenRecord && (

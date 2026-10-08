@@ -40,9 +40,10 @@ export function staffPageModules(
   }
   if (path === "/staff/employees/new" || path === "/staff/employees/import") return ["lifecycle"];
   if (path === "/staff/me/profile" || /^\/staff\/employees\/(?!new$|import$)[^/]+$/.test(path)) {
-    const tab = hash.replace(/^#/, "") || "overview";
+    const plainHash = hash.replace(/^#/, "");
+    const tab = new URLSearchParams(plainHash).get("section") ?? (plainHash || "overview");
     if (tab === "leave") return ["leave"];
-    if (tab === "timesheets") return ["timesheets", "leave"];
+    if (tab === "timesheets") return ["timesheets", "leave", "attendance"];
     if (tab === "attendance") return ["attendance", "overtime"];
     if (tab === "travel") return ["travel"];
     if (tab === "performance") return ["performance"];
@@ -63,10 +64,12 @@ export function staffPageModules(
     )
       return [];
     // Unknown sections fall back to overview in EmployeeProfileView too.
-    return ["documents", "timesheets", "lifecycle", ...(hr ? ["recruitment" as const] : [])];
+    // Recruitment source is an optional, independently loaded section of the overview.
+    return ["documents", "timesheets", "lifecycle"];
   }
   if (/^\/staff\/(me\/)?leave(?:-|\/|$)/.test(path)) return ["leave"];
-  if (/^\/staff\/(me\/)?timesheet/.test(path)) return ["timesheets", "leave"];
+  if (/^\/staff\/(me\/)?attendance(?:\/|$)/.test(path)) return ["attendance", "leave"];
+  if (/^\/staff\/(me\/)?timesheet/.test(path)) return ["timesheets", "leave", "attendance"];
   if (/^\/staff\/(me\/)?overtime/.test(path)) return ["overtime", "timesheets"];
   if (/^\/staff\/travel/.test(path)) return ["travel"];
   if (/^\/staff\/(me\/)?performance/.test(path)) return ["performance"];
@@ -100,4 +103,5 @@ export const DASHBOARD_MODULES = {
 
 export const STAFF_MODULE_DEPENDENCIES: Partial<Record<StaffModule, StaffModule[]>> = {
   recruitment: ["vacancies"],
+  attendance: ["leave"],
 };

@@ -4,6 +4,7 @@ import { validateSiteVisitPlan } from "./site-visit.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { LeaveService } from "./leave-service.ts";
+import { approvedLeaveFraction } from "./approved-leave.ts";
 import { getMasterDataRepository } from "./master-data.ts";
 import { LocalRepository, type NewRecord } from "./repository.ts";
 import { SettingsService, syncWorkingHoursCompatibilityCache } from "./settings-service.ts";
@@ -1486,7 +1487,22 @@ export class AttendanceService {
   ): Partial<AttendanceRecord> | null {
     this.requireEmployeeRead(employeeId, context, "reconcile this employee's attendance status");
     const existing = this.findRecord(employeeId, targetDate);
-    if (existing) return null;
+    if (
+      existing?.clockIn ||
+      existing?.clockOut ||
+      existing?.officeExceptionLabel ||
+      existing?.status === "Correction Pending"
+    )
+      return null;
+    const leaveFraction = approvedLeaveFraction(
+      new LeaveService()
+        .getAllRequests(SYSTEM_CONTEXT)
+        .filter((request) => request.employeeId === employeeId),
+      targetDate,
+    );
+    if (leaveFraction === 1) return { status: "On Leave" };
+    if (leaveFraction > 0) return { status: "Half-day Leave" };
+    if (existing && !["On Leave", "Half-day Leave"].includes(existing.status)) return null;
     if (!this.isTrackingRequired(employeeId, targetDate)) return { status: "Not tracked" };
     const day = new Date(`${targetDate}T12:00:00`);
     if (Number.isNaN(day.getTime())) throw new Error("Invalid attendance date.");
@@ -1509,16 +1525,7 @@ export class AttendanceService {
       return { status: "Holiday" };
     }
 
-    const approvedLeave = new LeaveService()
-      .getAllRequests(SYSTEM_CONTEXT)
-      .some(
-        (request) =>
-          request.employeeId === employeeId &&
-          (request.status === "Approved" || request.status === "Taken") &&
-          targetDate >= request.startDate &&
-          targetDate <= request.endDate,
-      );
-    return { status: approvedLeave ? "On Leave" : "Absent" };
+    return { status: "Absent" };
   }
 
   ensureRecordForDate(
@@ -2299,6 +2306,25 @@ export class AttendanceService {
   private presentRecord(record: AttendanceRecord): AttendanceRecord {
     if (record.officeExceptionLabel)
       return { ...record, status: "Present", isLate: false, isEarlyDeparture: false };
+    if (
+      !record.clockIn &&
+      !record.clockOut &&
+      record.status !== "Correction Pending" &&
+      record.status !== "Corrected"
+    ) {
+      const status = this.reconcileDailyStatus(
+        record.employeeId,
+        record.date,
+        SYSTEM_CONTEXT,
+      )?.status;
+      if (status)
+        return {
+          ...record,
+          status,
+          isLate: false,
+          isEarlyDeparture: false,
+        };
+    }
     if (!this.isTrackingRequired(record.employeeId, record.date)) {
       // A real punch remains evidence even before eligibility is configured or
       // after a transfer. Do not infer lateness or missing-punch penalties here.

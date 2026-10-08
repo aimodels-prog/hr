@@ -237,7 +237,13 @@ export function calculateAttendanceAnalytics(input: {
       if (closed && !pendingVisit) day.worked += hours;
       // Actual evidence remains visible even before tracking is configured or on
       // non-working days. Only infer a missing record when work was expected.
-      if (pendingVisit || (record && !closed)) day.review += 1;
+      const leaveWithoutPunches =
+        leaveFraction >= 1 &&
+        !record?.clockInAt &&
+        !record?.clockOutAt &&
+        record?.creditedHours === undefined &&
+        record?.status !== "Correction Pending";
+      if (!leaveWithoutPunches && (pendingVisit || (record && !closed))) day.review += 1;
       else if (closed) day.recorded += 1;
       else if (expected > 0) day.missing += 1;
     }

@@ -1,4 +1,5 @@
 import { SYSTEM_CONTEXT } from "./types.ts";
+import { employeeDocumentLink } from "./document-links.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { DocumentService } from "./document-service.ts";
 import { EmployeeService } from "./employee-service.ts";
@@ -207,9 +208,9 @@ export class DocumentExpiryService {
                 status: "Unread",
                 deduplicationKey: `doc_expiry_${doc.id}_${threshold}days_emp`,
                 link: {
-                  entityType: "employee",
-                  entityId: employee.id,
-                  path: `/staff/employees/${employee.id}`,
+                  entityType: "employee-document",
+                  entityId: doc.id,
+                  path: employeeDocumentLink(employee.id, doc.id),
                 },
               },
               actorContext,
@@ -228,9 +229,9 @@ export class DocumentExpiryService {
                 status: "Unread",
                 deduplicationKey: `doc_expiry_${doc.id}_${threshold}days_hr_${hr.id}`,
                 link: {
-                  entityType: "document_expiry",
+                  entityType: "employee-document",
                   entityId: doc.id,
-                  path: `/staff/document-expiry`,
+                  path: employeeDocumentLink(employee.id, doc.id),
                 },
               },
               actorContext,
@@ -249,9 +250,9 @@ export class DocumentExpiryService {
                 status: "Unread",
                 deduplicationKey: `doc_expiry_${doc.id}_${threshold}days_mgr_${managerUser.id}`,
                 link: {
-                  entityType: "employee",
-                  entityId: employee.id,
-                  path: `/staff/employees/${employee.id}`,
+                  entityType: "employee-document",
+                  entityId: doc.id,
+                  path: employeeDocumentLink(employee.id, doc.id),
                 },
               },
               actorContext,

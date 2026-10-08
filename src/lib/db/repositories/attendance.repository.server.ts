@@ -1,6 +1,8 @@
 import "@tanstack/react-start/server-only";
 import { officeCredits, applyOfficeCredits } from "./office-exception.repository.server.ts";
 import { recordedDailyHours } from "../../data/recorded-hours.ts";
+import { EFFECTIVE_LEAVE_STATUSES } from "../../data/approved-leave.ts";
+import { leaveDisplayType } from "../../data/leave-presentation.ts";
 import {
   attendanceBreakMinutes,
   flexibleOfficeSchedule,
@@ -776,6 +778,22 @@ export async function captureAttendancePunchInDatabase(
     }
     if (input.direction === "in" && !(input.returnFromSiteVisit && existing?.clockInAt)) {
       if (existing?.clockInAt) throw new Error("You are already clocked in today.");
+      const leave = await tx
+        .select({ isHalfDay: leaveRequests.isHalfDay })
+        .from(leaveRequests)
+        .where(
+          and(
+            eq(leaveRequests.organisationId, organisationId),
+            eq(leaveRequests.employeeId, input.employeeId),
+            inArray(leaveRequests.status, [...EFFECTIVE_LEAVE_STATUSES]),
+            isNull(leaveRequests.archivedAt),
+            sql`${date} BETWEEN ${leaveRequests.startDate} AND ${leaveRequests.endDate}`,
+          ),
+        );
+      if (leave.reduce((sum, item) => sum + (item.isHalfDay ? 0.5 : 1), 0) >= 1)
+        throw new Error(
+          "You are on approved leave today. Ask HR to update the leave if you have returned early.",
+        );
       if (existing)
         await tx
           .update(attendanceRecords)
@@ -966,7 +984,7 @@ export async function requestAttendanceCorrectionInDatabase(
       const holidayScope = employee.locationId
         ? or(isNull(publicHolidays.locationId), eq(publicHolidays.locationId, employee.locationId))
         : isNull(publicHolidays.locationId);
-      const [[holiday], [approvedLeave]] = await Promise.all([
+      const [[holiday], approvedLeave] = await Promise.all([
         tx
           .select({ id: publicHolidays.id })
           .from(publicHolidays)
@@ -981,21 +999,21 @@ export async function requestAttendanceCorrectionInDatabase(
           )
           .limit(1),
         tx
-          .select({ id: leaveRequests.id })
+          .select({ isHalfDay: leaveRequests.isHalfDay })
           .from(leaveRequests)
           .where(
             and(
               eq(leaveRequests.organisationId, organisationId),
               eq(leaveRequests.employeeId, actor.employeeId!),
-              inArray(leaveRequests.status, ["Approved", "Taken"]),
+              inArray(leaveRequests.status, [...EFFECTIVE_LEAVE_STATUSES]),
+              isNull(leaveRequests.archivedAt),
               sql`${leaveRequests.startDate} <= ${input.date}`,
               sql`${leaveRequests.endDate} >= ${input.date}`,
             ),
-          )
-          .limit(1),
+          ),
       ]);
       if (holiday) throw new Error("Public holidays cannot be changed through a punch correction.");
-      if (approvedLeave)
+      if (approvedLeave.reduce((sum, leave) => sum + (leave.isHalfDay ? 0.5 : 1), 0) >= 1)
         throw new Error("Approved leave days cannot be changed through a punch correction.");
       [record] = await tx
         .insert(attendanceRecords)
@@ -2161,13 +2179,18 @@ export async function getMyLiveAttendance(organisationId: string, actor: AuditAc
     )
     .limit(1);
   const approvedLeave = await db
-    .select({ isHalfDay: leaveRequests.isHalfDay })
+    .select({
+      isHalfDay: leaveRequests.isHalfDay,
+      endDate: leaveRequests.endDate,
+      policySnapshot: leaveRequests.policySnapshot,
+    })
     .from(leaveRequests)
     .where(
       and(
         eq(leaveRequests.organisationId, organisationId),
         eq(leaveRequests.employeeId, actor.employeeId),
-        inArray(leaveRequests.status, ["Approved", "Taken"]),
+        inArray(leaveRequests.status, [...EFFECTIVE_LEAVE_STATUSES]),
+        isNull(leaveRequests.archivedAt),
         sql`${leaveRequests.startDate} <= ${date}`,
         sql`${leaveRequests.endDate} >= ${date}`,
       ),
@@ -2196,7 +2219,7 @@ export async function getMyLiveAttendance(organisationId: string, actor: AuditAc
   if (
     holiday ||
     (settings && !settings.workingDays.includes(weekday)) ||
-    (record && ["On Leave", "Holiday", "Rest Day"].includes(record.status))
+    (record && ["Holiday", "Rest Day"].includes(record.status))
   )
     targetMinutes = 0;
   const tracking = await getAttendanceTrackingPolicy(organisationId);
@@ -2228,7 +2251,19 @@ export async function getMyLiveAttendance(organisationId: string, actor: AuditAc
     timezone,
     serverNow: now.toISOString(),
     targetMinutes,
-    expectedDeparture: credit ? null : (flexible?.expectedOut ?? null),
+    approvedLeaveFraction: leaveFraction,
+    leaveType: approvedLeave.length
+      ? leaveDisplayType({
+          policySnapshot: approvedLeave[0]!.policySnapshot as { name?: string } | null,
+        })
+      : null,
+    leaveEndDate: approvedLeave.length
+      ? approvedLeave
+          .map((leave) => leave.endDate)
+          .sort()
+          .at(-1)!
+      : null,
+    expectedDeparture: credit || leaveFraction > 0 ? null : (flexible?.expectedOut ?? null),
     departureDayOffset: flexible?.departureDayOffset ?? 0,
     record: liveRecord
       ? {

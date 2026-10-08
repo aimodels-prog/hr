@@ -87,9 +87,13 @@ function profileFieldLabel(field: string): string {
 export function PersonalTab({
   employee,
   onChanged,
+  editRequested = false,
+  onEditOpened,
 }: {
   employee: Employee;
   onChanged?: () => void;
+  editRequested?: boolean;
+  onEditOpened?: () => void;
 }) {
   const currentUser = useCurrentUser();
   const employeeService = useMemo(() => new EmployeeService(), []);
@@ -103,6 +107,12 @@ export function PersonalTab({
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const pendingRequests = changeRequests.filter((request) => request.status === "Pending");
   const hasPending = pendingRequests.length > 0;
+  useEffect(() => {
+    if (!editRequested) return;
+    if (!hasPending) setIsEditOpen(true);
+    else toast.info("Review the pending changes before editing this profile.");
+    onEditOpened?.();
+  }, [editRequested, hasPending, onEditOpened]);
 
   const form = useForm<z.infer<typeof personalFormSchema>>({
     resolver: zodResolver(personalFormSchema),
@@ -336,6 +346,7 @@ export function PersonalTab({
                   title={hasPending ? "Cannot edit while changes are pending" : "Edit Details"}
                 >
                   <Edit2 className="h-4 w-4" />
+                  Edit details
                 </Button>
               </DialogTrigger>
               <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">

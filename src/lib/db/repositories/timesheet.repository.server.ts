@@ -14,10 +14,20 @@ import {
   publicHolidays,
 } from "../schema/master-data.ts";
 import { employees, roles, userRoles, users } from "../schema/employee.ts";
-import { appSettings } from "../schema/organisation.ts";
+import { appSettings, organisations } from "../schema/organisation.ts";
 import { isAttendanceTracked, readAttendanceTracking } from "../../data/attendance-tracking.ts";
 import { ordinaryAttendanceHours } from "../../data/office-schedule.ts";
 import { recordedDailyHours, recordedAttendanceHours } from "../../data/recorded-hours.ts";
+import {
+  isConfiguredTimesheetPeriod,
+  timesheetPeriodsInRange,
+  timesheetPeriodDates,
+} from "../../data/timesheet-periods.ts";
+import {
+  EFFECTIVE_LEAVE_STATUSES,
+  organisationDate,
+  timesheetAbsences,
+} from "../../data/approved-leave.ts";
 import { officeCredits, applyOfficeCredits } from "./office-exception.repository.server.ts";
 import { leaveRequests } from "../schema/leave.ts";
 import { auditEvents, notifications } from "../schema/system.ts";
@@ -32,6 +42,7 @@ import {
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 
 const DEFAULT_SETTINGS = {
+  periodFrequency: "Monthly" as const,
   weeklyPeriodStartDay: 1,
   standardDailyHours: 8,
   submissionDeadlineDays: 2,
@@ -269,11 +280,6 @@ export async function submitTimesheetInDatabase(
     if (employee.employmentConfirmationStatus !== "Confirmed")
       throw new Error("HR must confirm your employment details before you can submit a timesheet.");
     await requireEmployeeSupervisor(tx, organisationId, sheet.employeeId);
-    const entryRows = await tx
-      .select()
-      .from(timesheetEntries)
-      .where(eq(timesheetEntries.timesheetId, timesheetId));
-    if (!entryRows.length) throw new Error("Add at least one time entry before submitting.");
     const [settings] = await tx
       .select()
       .from(timesheetSettings)
@@ -285,6 +291,18 @@ export async function submitTimesheetInDatabase(
       .where(eq(timesheetPeriods.id, sheet.periodId))
       .limit(1);
     if (!submissionPeriod) throw new Error("Timesheet period not found.");
+    const [calendarSettings] = await tx
+      .select({ timezone: appSettings.timezone })
+      .from(appSettings)
+      .where(eq(appSettings.organisationId, organisationId))
+      .limit(1);
+    if (
+      isConfiguredTimesheetPeriod(submissionPeriod) &&
+      submissionPeriod.endDate >= organisationDate(new Date(), calendarSettings?.timezone ?? "UTC")
+    )
+      throw new Error(
+        "You can save daily hours now and submit the monthly timesheet after the month ends.",
+      );
     const expected = await expectedHoursForPeriod(
       tx,
       organisationId,
@@ -300,96 +318,12 @@ export async function submitTimesheetInDatabase(
       .update(timesheets)
       .set({ expectedHours: String(expected) })
       .where(eq(timesheets.id, sheet.id));
-    const tolerance = Number(
-      settings?.attendanceVarianceToleranceHours ??
-        DEFAULT_SETTINGS.attendanceVarianceToleranceHours,
-    );
-    const attendance = await tx
-      .select()
-      .from(attendanceRecords)
-      .where(
-        and(
-          eq(attendanceRecords.organisationId, organisationId),
-          eq(attendanceRecords.employeeId, sheet.employeeId),
-          sql`${attendanceRecords.date} BETWEEN ${(await tx.select().from(timesheetPeriods).where(eq(timesheetPeriods.id, sheet.periodId)).limit(1))[0]!.startDate} AND ${(await tx.select().from(timesheetPeriods).where(eq(timesheetPeriods.id, sheet.periodId)).limit(1))[0]!.endDate}`,
-        ),
-      );
-    const workByDate = new Map<string, number>();
-    for (const entry of entryRows)
-      workByDate.set(entry.workDate, (workByDate.get(entry.workDate) ?? 0) + Number(entry.hours));
-    const recordedDay = await recordedDayForOrganisation(
-      tx,
-      organisationId,
-      Number(settings?.standardDailyHours ?? 8),
-    );
-    const attendanceByDate = new Map(
-      applyOfficeCredits(
-        attendance,
-        await officeCredits(
-          organisationId,
-          [sheet.employeeId],
-          submissionPeriod.startDate,
-          submissionPeriod.endDate,
-          tx,
-        ),
-      ).map((item) => [item.date, item]),
-    );
-    const dates = new Set([...workByDate.keys(), ...attendanceByDate.keys()]);
-    const explanations = (sheet.attendanceDiscrepancyExplanations ?? {}) as Record<string, string>;
-    const [trackingSettings] = await tx
-      .select({ additional: appSettings.additionalSettings })
-      .from(appSettings)
-      .where(eq(appSettings.organisationId, organisationId))
-      .limit(1);
-    const tracking = readAttendanceTracking(trackingSettings?.additional);
-    const days = [...dates]
-      .filter((date) => isAttendanceTracked(tracking, sheet.employeeId, date))
-      .sort()
-      .map((date) => {
-        const record = attendanceByDate.get(date);
-        const attendanceHours = ordinaryAttendanceHours(
-          recordedAttendanceHours(record),
-          recordedDay,
-        );
-        const timesheetWorkHours = workByDate.get(date) ?? 0;
-        const varianceHours = Number((timesheetWorkHours - attendanceHours).toFixed(2));
-        const requiresExplanation =
-          !record?.clockInAt || !record?.clockOutAt || Math.abs(varianceHours) > tolerance;
-        const explanation = explanations[date]?.trim();
-        return {
-          date,
-          attendanceHours,
-          timesheetWorkHours,
-          leaveHours: 0,
-          holidayHours: 0,
-          varianceHours,
-          attendanceStatus: record?.status ?? "No Record",
-          status: !record
-            ? "Missing Attendance"
-            : Math.abs(varianceHours) > tolerance
-              ? "Variance"
-              : "Matched",
-          requiresExplanation,
-          ...(explanation ? { explanation } : {}),
-          resolved: !requiresExplanation || Boolean(explanation && explanation.length >= 10),
-        };
-      });
-    const unresolved = days.filter((item) => !item.resolved);
+    const snapshot = await buildTimesheetReconciliation(tx, organisationId, sheet);
+    const unresolved = snapshot.days.filter((item) => !item.resolved);
     if (unresolved.length)
       throw new Error(
         `Explain the attendance differences for ${unresolved.map((item) => item.date).join(", ")} before submitting.`,
       );
-    const snapshot = {
-      generatedAt: new Date().toISOString(),
-      toleranceHours: tolerance,
-      attendanceHours: Number(days.reduce((sum, item) => sum + item.attendanceHours, 0).toFixed(2)),
-      timesheetWorkHours: Number(
-        days.reduce((sum, item) => sum + item.timesheetWorkHours, 0).toFixed(2),
-      ),
-      varianceHours: Number(days.reduce((sum, item) => sum + item.varianceHours, 0).toFixed(2)),
-      unresolvedCount: 0,
-      days,
-    };
     await tx
       .update(timesheets)
       .set({
@@ -501,16 +435,56 @@ export async function decideTimesheetInDatabase(
           : settings?.payrollLockBehaviour === "Automatic on Approval"
             ? "Payroll Locked"
             : "Approved";
+    const [approvalPeriod] = await tx
+      .select()
+      .from(timesheetPeriods)
+      .where(eq(timesheetPeriods.id, sheet.periodId))
+      .limit(1);
+    if (!approvalPeriod) throw new Error("Timesheet period not found.");
+    const absence = await absencesForPeriod(
+      tx,
+      organisationId,
+      sheet.employeeId,
+      approvalPeriod,
+      Number(settings?.standardDailyHours ?? 8),
+    );
+    if (decision === "approve" && Number(sheet.totalHours) < absence.expectedWorkHours)
+      throw new Error("The required work hours have changed. Return the timesheet for correction.");
+    const finalApproval = next === "Approved" || next === "Payroll Locked";
+    const workEntries = Array.isArray(sheet.draftPayload)
+      ? sheet.draftPayload.filter(
+          (entry: { isLeave?: boolean; isHoliday?: boolean }) => !entry.isLeave && !entry.isHoliday,
+        )
+      : (await tx.select().from(timesheetEntries).where(eq(timesheetEntries.timesheetId, sheet.id)))
+          .filter((entry) => !entry.isLeave && !entry.isHoliday)
+          .map((entry) => ({
+            id: entry.id,
+            projectId: entry.projectId,
+            costCentreId: entry.costCentreId,
+            activityCodeId: entry.activityCodeId,
+            locationId: entry.locationId,
+            hours: { [entry.workDate]: Number(entry.hours) },
+            notes: entry.notes,
+          }));
     await tx
       .update(timesheets)
       .set({
         status: next,
         managerNotes: notes?.trim(),
         attendanceReconciliationSnapshot: reconciliation,
+        expectedHours: String(absence.expectedWorkHours),
+        ...(finalApproval
+          ? {
+              draftPayload: [
+                ...workEntries,
+                ...absence.entries.map((entry) => ({ ...entry, locationId: entry.locationCodeId })),
+              ],
+            }
+          : {}),
         ...(manager
           ? { supervisorReviewedAt: new Date().toISOString(), supervisorReviewedBy: actor.userId }
           : {}),
-        ...(next === "Approved" || next === "Payroll Locked"
+        ...(finalApproval
           ? { approvedAt: new Date().toISOString(), approvedBy: actor.userId }
           : {}),
         updatedAt: new Date(),
@@ -632,6 +606,27 @@ export async function listTimesheetSnapshotForActor(
     .from(timesheetSettings)
     .where(eq(timesheetSettings.organisationId, organisationId))
     .limit(1);
+  const [calendarSettings] = await db
+    .select({ timezone: appSettings.timezone })
+    .from(appSettings)
+    .where(eq(appSettings.organisationId, organisationId))
+    .limit(1);
+  const currentPeriod = timesheetPeriodDates(
+    organisationDate(new Date(), calendarSettings?.timezone ?? "UTC"),
+    settingsRow?.periodFrequency ?? "Monthly",
+    settingsRow?.weeklyPeriodStartDay ?? 1,
+  );
+  if (!settingsRow || settingsRow.periodFrequency === "Monthly")
+    await db
+      .insert(timesheetPeriods)
+      .values({
+        organisationId,
+        ...currentPeriod,
+        status: "Open",
+        createdBy: actor.userId,
+        updatedBy: actor.userId,
+      } as typeof timesheetPeriods.$inferInsert)
+      .onConflictDoNothing();
   const periodRows = await db
     .select()
     .from(timesheetPeriods)
@@ -676,9 +671,72 @@ export async function listTimesheetSnapshotForActor(
     list.push(entry);
     entriesBySheet.set(entry.timesheetId, list);
   }
+  const [organisationSettings, people, leaveRows, holidayRows] = await Promise.all([
+    db.select().from(appSettings).where(eq(appSettings.organisationId, organisationId)).limit(1),
+    db
+      .select({
+        id: employees.id,
+        locationId: employees.locationId,
+        startDate: employees.startDate,
+      })
+      .from(employees)
+      .where(
+        and(
+          eq(employees.organisationId, organisationId),
+          ...(employeeIds ? [inArray(employees.id, employeeIds)] : []),
+        ),
+      ),
+    db
+      .select()
+      .from(leaveRequests)
+      .where(
+        and(
+          eq(leaveRequests.organisationId, organisationId),
+          inArray(leaveRequests.status, [...EFFECTIVE_LEAVE_STATUSES]),
+          sql`${leaveRequests.archivedAt} IS NULL`,
+          ...(employeeIds ? [inArray(leaveRequests.employeeId, employeeIds)] : []),
+        ),
+      ),
+    db
+      .select({ date: publicHolidays.holidayDate, locationId: publicHolidays.locationId })
+      .from(publicHolidays)
+      .where(
+        and(
+          eq(publicHolidays.organisationId, organisationId),
+          eq(publicHolidays.isActive, true),
+          sql`${publicHolidays.archivedAt} IS NULL`,
+        ),
+      ),
+  ]);
+  const calendarForSheet = (item: typeof timesheets.$inferSelect) => {
+    const period = periodRows.find((period) => period.id === item.periodId);
+    const person = people.find((person) => person.id === item.employeeId);
+    if (!period || !["Draft", "Returned", "Pending Manager", "Pending HR"].includes(item.status))
+      return null;
+    return timesheetAbsences({
+      dates: dateRange(period.startDate, period.endDate).filter(
+        (date) => !person?.startDate || date >= person.startDate,
+      ),
+      dailyHours: recordedDailyHours(
+        Number(settingsRow?.standardDailyHours ?? organisationSettings[0]?.standardDailyHours ?? 8),
+        breakPolicy?.minutes ?? 60,
+      ),
+      workingDays: organisationSettings[0]?.workingDays ?? [1, 2, 3, 4, 5],
+      holidays: new Set(
+        holidayRows
+          .filter((holiday) => !holiday.locationId || holiday.locationId === person?.locationId)
+          .map((holiday) => holiday.date),
+      ),
+      leave: leaveRows
+        .filter((leave) => leave.employeeId === item.employeeId)
+        .map((leave) => ({ ...leave, policySnapshot: leave.policySnapshot as { name?: string } })),
+    });
+  };
+  const calendars = new Map(sheetRows.map((sheet) => [sheet.id, calendarForSheet(sheet)]));
   return {
     settings: settingsRow
       ? {
+          periodFrequency: settingsRow.periodFrequency,
           weeklyPeriodStartDay: settingsRow.weeklyPeriodStartDay,
           standardDailyHours: Number(settingsRow.standardDailyHours),
           recordedBreakMinutes: breakPolicy?.minutes ?? 60,
@@ -706,7 +764,7 @@ export async function listTimesheetSnapshotForActor(
       employeeId: item.employeeId,
       periodId: item.periodId,
       status: item.status,
-      expectedHours: Number(item.expectedHours),
+      expectedHours: calendars.get(item.id)?.expectedWorkHours ?? Number(item.expectedHours),
       totalHours: Number(item.totalHours),
       ...(item.submittedAt ? { submittedAt: item.submittedAt } : {}),
       ...(item.approvedAt ? { approvedAt: item.approvedAt } : {}),
@@ -722,39 +780,44 @@ export async function listTimesheetSnapshotForActor(
         : {}),
       ...(item.payrollPeriodId ? { payrollPeriodId: item.payrollPeriodId } : {}),
       ...(item.originalTimesheetId ? { originalTimesheetId: item.originalTimesheetId } : {}),
-      entries: (Array.isArray(item.draftPayload)
-        ? (
-            item.draftPayload as Array<{
-              id: string;
-              projectId?: string;
-              costCentreId?: string;
-              activityCodeId?: string;
-              locationId?: string;
-              hours: Record<string, number>;
-              notes?: string;
-            }>
-          ).map((entry) => ({
-            ...entry,
-            projectId: entry.projectId ?? "",
-            costCentreId: entry.costCentreId ?? "",
-            activityCodeId: entry.activityCodeId ?? "",
-            locationCodeId: entry.locationId ?? "",
-            total: Object.values(entry.hours).reduce((sum, hours) => sum + Number(hours), 0),
-          }))
-        : (entriesBySheet.get(item.id) ?? []).map((entry) => ({
-            id: entry.id,
-            databaseId: entry.id,
-            projectId: entry.projectId,
-            costCentreId: entry.costCentreId,
-            activityCodeId: entry.activityCodeId,
-            locationCodeId: entry.locationId,
-            hours: { [entry.workDate]: Number(entry.hours) },
-            total: Number(entry.hours),
-            ...(entry.notes ? { notes: entry.notes } : {}),
-            isLeave: entry.isLeave,
-            isHoliday: entry.isHoliday,
-          }))
-      ).map((entry) => entry),
+      entries: [
+        ...(Array.isArray(item.draftPayload)
+          ? (
+              item.draftPayload as Array<{
+                id: string;
+                projectId?: string;
+                costCentreId?: string;
+                activityCodeId?: string;
+                locationId?: string;
+                hours: Record<string, number>;
+                notes?: string;
+                isLeave?: boolean;
+                isHoliday?: boolean;
+              }>
+            ).map((entry) => ({
+              ...entry,
+              projectId: entry.projectId ?? "",
+              costCentreId: entry.costCentreId ?? "",
+              activityCodeId: entry.activityCodeId ?? "",
+              locationCodeId: entry.locationId ?? "",
+              total: Object.values(entry.hours).reduce((sum, hours) => sum + Number(hours), 0),
+            }))
+          : (entriesBySheet.get(item.id) ?? []).map((entry) => ({
+              id: entry.id,
+              databaseId: entry.id,
+              projectId: entry.projectId,
+              costCentreId: entry.costCentreId,
+              activityCodeId: entry.activityCodeId,
+              locationCodeId: entry.locationId,
+              hours: { [entry.workDate]: Number(entry.hours) },
+              total: Number(entry.hours),
+              ...(entry.notes ? { notes: entry.notes } : {}),
+              isLeave: entry.isLeave,
+              isHoliday: entry.isHoliday,
+            }))
+        ).filter((entry) => !calendars.get(item.id) || (!entry.isLeave && !entry.isHoliday)),
+        ...(calendars.get(item.id)?.entries ?? []),
+      ],
     })),
   };
 }
@@ -762,6 +825,7 @@ export async function listTimesheetSnapshotForActor(
 export async function updateTimesheetSettingsInDatabase(
   organisationId: string,
   settings: {
+    periodFrequency?: "Monthly" | "Weekly";
     weeklyPeriodStartDay: number;
     standardDailyHours: number;
     submissionDeadlineDays: number;
@@ -779,6 +843,9 @@ export async function updateTimesheetSettingsInDatabase(
 ): Promise<void> {
   if (!["HR", "Super Admin"].includes(role(actor)))
     throw new Error("Only HR or Super Admin can change timesheet settings.");
+  const periodFrequency = settings.periodFrequency ?? "Monthly";
+  if (!["Monthly", "Weekly"].includes(periodFrequency))
+    throw new Error("Select a valid timesheet frequency.");
   if (
     !Number.isInteger(settings.weeklyPeriodStartDay) ||
     settings.weeklyPeriodStartDay < 0 ||
@@ -825,6 +892,7 @@ export async function updateTimesheetSettingsInDatabase(
         .update(timesheetSettings)
         .set({
           ...settings,
+          periodFrequency,
           requireHrOvertimeVerification: true,
           standardDailyHours: String(settings.standardDailyHours),
           overtimeThresholdWeekly: String(settings.overtimeThresholdWeekly),
@@ -843,6 +911,7 @@ export async function updateTimesheetSettingsInDatabase(
         id: randomUUID(),
         organisationId,
         ...settings,
+        periodFrequency,
         requireHrOvertimeVerification: true,
         standardDailyHours: String(settings.standardDailyHours),
         overtimeThresholdWeekly: String(settings.overtimeThresholdWeekly),
@@ -896,24 +965,19 @@ export async function generateTimesheetPeriodsInDatabase(
       .from(timesheetSettings)
       .where(eq(timesheetSettings.organisationId, organisationId))
       .limit(1);
-    const weekStart = settings?.weeklyPeriodStartDay ?? DEFAULT_SETTINGS.weeklyPeriodStartDay;
-    const start = new Date(`${startDate}T12:00:00Z`);
-    const offset = (start.getUTCDay() - weekStart + 7) % 7;
-    start.setUTCDate(start.getUTCDate() - offset);
-    const end = new Date(`${endDate}T12:00:00Z`);
     let count = 0;
-    while (start <= end) {
-      const periodStart = start.toISOString().slice(0, 10);
-      const periodEndDate = new Date(start);
-      periodEndDate.setUTCDate(periodEndDate.getUTCDate() + 6);
-      const periodEnd = periodEndDate.toISOString().slice(0, 10);
+    for (const period of timesheetPeriodsInRange(
+      startDate,
+      endDate,
+      settings?.periodFrequency ?? "Monthly",
+      settings?.weeklyPeriodStartDay ?? 1,
+    )) {
       const inserted = await tx
         .insert(timesheetPeriods)
         .values({
           id: randomUUID(),
           organisationId,
-          startDate: periodStart,
-          endDate: periodEnd,
+          ...period,
           status: "Open",
           createdBy: actor.userId,
           updatedBy: actor.userId,
@@ -921,7 +985,6 @@ export async function generateTimesheetPeriodsInDatabase(
         .onConflictDoNothing()
         .returning({ id: timesheetPeriods.id });
       count += inserted.length;
-      start.setUTCDate(start.getUTCDate() + 7);
     }
     await tx.insert(auditEvents).values({
       organisationId,
@@ -953,7 +1016,7 @@ async function recordedDayForOrganisation(tx: any, organisationId: string, worki
   return recordedDailyHours(workingHours, policy?.minutes ?? 60);
 }
 
-async function expectedHoursForPeriod(
+async function absencesForPeriod(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tx: any,
   organisationId: string,
@@ -968,7 +1031,7 @@ async function expectedHoursForPeriod(
     .where(eq(appSettings.organisationId, organisationId))
     .limit(1);
   const [employee] = await tx
-    .select({ locationId: employees.locationId })
+    .select({ locationId: employees.locationId, startDate: employees.startDate })
     .from(employees)
     .where(and(eq(employees.organisationId, organisationId), eq(employees.id, employeeId)))
     .limit(1);
@@ -980,6 +1043,7 @@ async function expectedHoursForPeriod(
       and(
         eq(publicHolidays.organisationId, organisationId),
         eq(publicHolidays.isActive, true),
+        sql`${publicHolidays.archivedAt} IS NULL`,
         sql`${publicHolidays.holidayDate} BETWEEN ${period.startDate} AND ${period.endDate}`,
         or(
           sql`${publicHolidays.locationId} IS NULL`,
@@ -992,29 +1056,39 @@ async function expectedHoursForPeriod(
       startDate: leaveRequests.startDate,
       endDate: leaveRequests.endDate,
       isHalfDay: leaveRequests.isHalfDay,
+      policySnapshot: leaveRequests.policySnapshot,
     })
     .from(leaveRequests)
     .where(
       and(
         eq(leaveRequests.organisationId, organisationId),
         eq(leaveRequests.employeeId, employeeId),
-        sql`${leaveRequests.status} IN ('Approved','Taken')`,
+        inArray(leaveRequests.status, [...EFFECTIVE_LEAVE_STATUSES]),
+        sql`${leaveRequests.archivedAt} IS NULL`,
         sql`${leaveRequests.startDate} <= ${period.endDate} AND ${leaveRequests.endDate} >= ${period.startDate}`,
       ),
     );
-  const holidaySet = new Set(holidays.map((item: { date: string }) => item.date));
+  const holidaySet = new Set<string>(holidays.map((item: { date: string }) => item.date));
   const workingDays = orgSettings?.workingDays ?? [1, 2, 3, 4, 5];
-  let hours = 0;
-  for (const date of dateRange(period.startDate, period.endDate)) {
-    const day = new Date(`${date}T12:00:00Z`).getUTCDay();
-    if (!workingDays.includes(day) || holidaySet.has(date)) continue;
-    const absence = leave.find(
-      (item: { startDate: string; endDate: string; isHalfDay: boolean }) =>
-        item.startDate <= date && item.endDate >= date,
-    );
-    hours += absence ? (absence.isHalfDay ? dailyHours / 2 : 0) : dailyHours;
-  }
-  return hours;
+  return timesheetAbsences({
+    dates: dateRange(period.startDate, period.endDate).filter((date) => date >= employee.startDate),
+    workingDays,
+    dailyHours,
+    holidays: holidaySet,
+    leave,
+  });
+}
+
+async function expectedHoursForPeriod(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  organisationId: string,
+  employeeId: string,
+  period: { startDate: string; endDate: string },
+  dailyHours: number,
+) {
+  return (await absencesForPeriod(tx, organisationId, employeeId, period, dailyHours))
+    .expectedWorkHours;
 }
 
 async function buildTimesheetReconciliation(
@@ -1055,7 +1129,8 @@ async function buildTimesheetReconciliation(
     )) as Array<typeof attendanceRecords.$inferSelect>;
   const workByDate = new Map<string, number>();
   for (const entry of entries)
-    workByDate.set(entry.workDate, (workByDate.get(entry.workDate) ?? 0) + Number(entry.hours));
+    if (!entry.isLeave && !entry.isHoliday)
+      workByDate.set(entry.workDate, (workByDate.get(entry.workDate) ?? 0) + Number(entry.hours));
   const recordedDay = await recordedDayForOrganisation(
     tx,
     organisationId,
@@ -1074,34 +1149,86 @@ async function buildTimesheetReconciliation(
     .where(eq(appSettings.organisationId, organisationId))
     .limit(1);
   const tracking = readAttendanceTracking(trackingSettings?.additional);
-  const days = [...new Set([...workByDate.keys(), ...recordByDate.keys()])]
-    .filter((date) => isAttendanceTracked(tracking, sheet.employeeId, date))
+  const absence = await absencesForPeriod(
+    tx,
+    organisationId,
+    sheet.employeeId,
+    period,
+    Number(settings?.standardDailyHours ?? 8),
+  );
+  const leaveByDate = new Map<string, number>();
+  const holidayByDate = new Map<string, number>();
+  for (const entry of absence.entries)
+    for (const [date, hours] of Object.entries(entry.hours)) {
+      const target = entry.isLeave ? leaveByDate : holidayByDate;
+      target.set(date, (target.get(date) ?? 0) + hours);
+    }
+  const days = [
+    ...new Set([
+      ...workByDate.keys(),
+      ...recordByDate.keys(),
+      ...leaveByDate.keys(),
+      ...holidayByDate.keys(),
+    ]),
+  ]
+    .filter(
+      (date) =>
+        isAttendanceTracked(tracking, sheet.employeeId, date) ||
+        leaveByDate.has(date) ||
+        holidayByDate.has(date),
+    )
     .sort()
     .map((date) => {
       const record = recordByDate.get(date);
-      const attendanceHours = ordinaryAttendanceHours(recordedAttendanceHours(record), recordedDay);
+      const leaveHours = leaveByDate.get(date) ?? 0;
+      const holidayHours = holidayByDate.get(date) ?? 0;
+      const nonWorking = leaveHours + holidayHours >= recordedDay;
+      const attendanceHours = ordinaryAttendanceHours(
+        recordedAttendanceHours(record),
+        nonWorking ? recordedDay : recordedDay - leaveHours,
+      );
       const timesheetWorkHours = workByDate.get(date) ?? 0;
       const varianceHours = Number((timesheetWorkHours - attendanceHours).toFixed(2));
       const incomplete = Boolean(
-        record && !record.officeExceptionLabel && (!record.clockInAt || !record.clockOutAt),
+        record &&
+        !record.officeExceptionLabel &&
+        (record.clockInAt || record.clockOutAt) &&
+        (!record.clockInAt || !record.clockOutAt),
       );
-      const requiresExplanation = !record || incomplete || Math.abs(varianceHours) > toleranceHours;
+      const tracked = isAttendanceTracked(tracking, sheet.employeeId, date);
+      const requiresExplanation =
+        (tracked &&
+          !nonWorking &&
+          (!record || incomplete || Math.abs(varianceHours) > toleranceHours)) ||
+        (nonWorking && (timesheetWorkHours > 0 || attendanceHours > 0 || incomplete));
       const explanation = explanations[date]?.trim();
-      const status = !record
-        ? "Missing Attendance"
-        : incomplete
-          ? "Incomplete Attendance"
-          : Math.abs(varianceHours) > toleranceHours
-            ? "Variance"
-            : "Matched";
+      const status =
+        nonWorking && !requiresExplanation
+          ? holidayHours
+            ? "Holiday"
+            : "Leave"
+          : !tracked && !requiresExplanation
+            ? "Matched"
+            : !record
+              ? "Missing Attendance"
+              : incomplete
+                ? "Incomplete Attendance"
+                : Math.abs(varianceHours) > toleranceHours
+                  ? "Variance"
+                  : "Matched";
       return {
         date,
         attendanceHours,
         timesheetWorkHours,
-        leaveHours: 0,
-        holidayHours: 0,
+        leaveHours,
+        holidayHours,
         varianceHours,
-        attendanceStatus: record?.status ?? "No Record",
+        attendanceStatus:
+          nonWorking && !record?.clockInAt && !record?.clockOutAt
+            ? holidayHours
+              ? "Holiday"
+              : "On Leave"
+            : (record?.status ?? "No Record"),
         status,
         requiresExplanation,
         ...(explanation ? { explanation } : {}),
@@ -1121,6 +1248,30 @@ async function buildTimesheetReconciliation(
   };
 }
 
+// Serialised per employee during creation: a legacy weekly sheet cannot be counted
+// a second time in a new monthly sheet. Reviewed records are never rewritten.
+async function overlappingTimesheets(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  organisationId: string,
+  employeeId: string,
+  period: { startDate: string; endDate: string },
+) {
+  return tx
+    .select({ id: timesheets.id })
+    .from(timesheets)
+    .innerJoin(timesheetPeriods, eq(timesheetPeriods.id, timesheets.periodId))
+    .where(
+      and(
+        eq(timesheets.organisationId, organisationId),
+        eq(timesheets.employeeId, employeeId),
+        sql`${timesheets.archivedAt} IS NULL`,
+        sql`${timesheets.status} <> 'Corrected'`,
+        sql`${timesheetPeriods.startDate} <= ${period.endDate} AND ${timesheetPeriods.endDate} >= ${period.startDate}`,
+      ),
+    );
+}
+
 export async function getOrCreateTimesheetInDatabase(
   organisationId: string,
   employeeId: string,
@@ -1131,6 +1282,9 @@ export async function getOrCreateTimesheetInDatabase(
     throw new Error("You can only start your own timesheet.");
   const db = getDatabaseClient();
   return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`timesheet-employee:${organisationId}:${employeeId}`}, 0))`,
+    );
     const [existing] = await tx
       .select({ id: timesheets.id })
       .from(timesheets)
@@ -1139,6 +1293,7 @@ export async function getOrCreateTimesheetInDatabase(
           eq(timesheets.organisationId, organisationId),
           eq(timesheets.employeeId, employeeId),
           eq(timesheets.periodId, periodId),
+          sql`${timesheets.archivedAt} IS NULL`,
         ),
       )
       .limit(1);
@@ -1156,6 +1311,20 @@ export async function getOrCreateTimesheetInDatabase(
       .from(timesheetSettings)
       .where(eq(timesheetSettings.organisationId, organisationId))
       .limit(1);
+    if (
+      !isConfiguredTimesheetPeriod(
+        period,
+        settings?.periodFrequency ?? "Monthly",
+        settings?.weeklyPeriodStartDay ?? 1,
+      )
+    )
+      throw new Error(
+        "New timesheets must use the configured period. Existing records remain available in history.",
+      );
+    if ((await overlappingTimesheets(tx, organisationId, employeeId, period)).length)
+      throw new Error(
+        "An existing timesheet already covers part of this month. Ask HR to review it before starting another, so the hours are not counted twice.",
+      );
     const expectedHours = await expectedHoursForPeriod(
       tx,
       organisationId,
@@ -1276,6 +1445,25 @@ export async function saveTimesheetDraftInDatabase(
     }
     for (const [date, hours] of dailyTotals)
       if (hours > 24) throw new Error(`Total hours on ${date} exceed 24.`);
+    const [workingSettings] = await tx
+      .select()
+      .from(timesheetSettings)
+      .where(eq(timesheetSettings.organisationId, organisationId))
+      .limit(1);
+    const absence = await absencesForPeriod(
+      tx,
+      organisationId,
+      sheet.employeeId,
+      period,
+      Number(workingSettings?.standardDailyHours ?? DEFAULT_SETTINGS.standardDailyHours),
+    );
+    for (const [date, hours] of dailyTotals) {
+      const covered = absence.entries.reduce((sum, entry) => sum + (entry.hours[date] ?? 0), 0);
+      if (hours > 0 && covered >= absence.dailyHours)
+        throw new Error(
+          `Cannot log work hours on ${date}: it is approved leave or a public holiday.`,
+        );
+    }
     await tx.delete(timesheetEntries).where(eq(timesheetEntries.timesheetId, timesheetId));
     if (normalized.length)
       await tx.insert(timesheetEntries).values(
@@ -1295,18 +1483,7 @@ export async function saveTimesheetDraftInDatabase(
         })) as Array<typeof timesheetEntries.$inferInsert>,
       );
     const total = normalized.reduce((sum, item) => sum + item.hours, 0);
-    const [workingSettings] = await tx
-      .select()
-      .from(timesheetSettings)
-      .where(eq(timesheetSettings.organisationId, organisationId))
-      .limit(1);
-    const expectedHours = await expectedHoursForPeriod(
-      tx,
-      organisationId,
-      sheet.employeeId,
-      period,
-      Number(workingSettings?.standardDailyHours ?? DEFAULT_SETTINGS.standardDailyHours),
-    );
+    const expectedHours = absence.expectedWorkHours;
     await tx
       .update(timesheets)
       .set({
@@ -1647,17 +1824,79 @@ export async function processTimesheetWorker(at = new Date()) {
   const db = getDatabaseClient();
   const organisationsWithSettings = await db
     .select({ organisationId: timesheetSettings.organisationId })
-    .from(timesheetSettings);
+    .from(timesheetSettings)
+    .innerJoin(organisations, eq(organisations.id, timesheetSettings.organisationId))
+    .where(eq(organisations.isActive, true));
   let reminders = 0;
   let reconciled = 0;
+  let leaveSubmitted = 0;
   for (const organisation of organisationsWithSettings) {
     await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`leave-timesheets:${organisation.organisationId}`}, 0))`,
+      );
       const [settings] = await tx
         .select()
         .from(timesheetSettings)
         .where(eq(timesheetSettings.organisationId, organisation.organisationId))
         .limit(1);
       if (!settings) return;
+      const [calendarSettings] = await tx
+        .select()
+        .from(appSettings)
+        .where(eq(appSettings.organisationId, organisation.organisationId))
+        .limit(1);
+      const todayKey = organisationDate(at, calendarSettings?.timezone ?? "UTC");
+      const earliest = new Date(`${todayKey}T12:00:00Z`);
+      if (settings.periodFrequency === "Monthly") {
+        earliest.setUTCDate(1);
+        earliest.setUTCMonth(earliest.getUTCMonth() - 1);
+      } else earliest.setUTCDate(earliest.getUTCDate() - 30);
+      const earliestKey = earliest.toISOString().slice(0, 10);
+      const leaveRanges = await tx
+        .select({
+          employeeId: leaveRequests.employeeId,
+          startDate: leaveRequests.startDate,
+          endDate: leaveRequests.endDate,
+        })
+        .from(leaveRequests)
+        .where(
+          and(
+            eq(leaveRequests.organisationId, organisation.organisationId),
+            inArray(leaveRequests.status, [...EFFECTIVE_LEAVE_STATUSES]),
+            sql`${leaveRequests.archivedAt} IS NULL`,
+            sql`${leaveRequests.startDate} <= ${todayKey} AND ${leaveRequests.endDate} >= ${earliestKey}`,
+          ),
+        );
+      // Calendar months are prepared without requiring staff on leave to open the app.
+      const requiredPeriods = new Map<string, { startDate: string; endDate: string }>();
+      const currentPeriod = timesheetPeriodDates(
+        todayKey,
+        settings.periodFrequency,
+        settings.weeklyPeriodStartDay,
+      );
+      requiredPeriods.set(currentPeriod.startDate, currentPeriod);
+      for (const leave of leaveRanges) {
+        for (const period of timesheetPeriodsInRange(
+          leave.startDate < earliestKey ? earliestKey : leave.startDate,
+          leave.endDate > todayKey ? todayKey : leave.endDate,
+          settings.periodFrequency,
+          settings.weeklyPeriodStartDay,
+        ))
+          requiredPeriods.set(period.startDate, period);
+      }
+      for (const period of requiredPeriods.values()) {
+        await tx
+          .insert(timesheetPeriods)
+          .values({
+            organisationId: organisation.organisationId,
+            ...period,
+            status: "Open",
+            createdBy: settings.createdBy,
+            updatedBy: settings.updatedBy,
+          })
+          .onConflictDoNothing();
+      }
       const openPeriods = await tx
         .select()
         .from(timesheetPeriods)
@@ -1672,12 +1911,15 @@ export async function processTimesheetWorker(at = new Date()) {
           id: employees.id,
           preferredName: employees.preferredName,
           lineManagerId: employees.lineManagerId,
+          employmentConfirmationStatus: employees.employmentConfirmationStatus,
+          startDate: employees.startDate,
         })
         .from(employees)
         .where(
           and(
             eq(employees.organisationId, organisation.organisationId),
             inArray(employees.status, ["Active", "Probation", "Notice"]),
+            sql`${employees.archivedAt} IS NULL`,
           ),
         );
       const orgUsers = await tx
@@ -1687,14 +1929,41 @@ export async function processTimesheetWorker(at = new Date()) {
           and(eq(users.organisationId, organisation.organisationId), eq(users.status, "Active")),
         );
       const userByEmployee = new Map(orgUsers.map((item) => [item.employeeId, item.id]));
-      const today = new Date(`${at.toISOString().slice(0, 10)}T12:00:00Z`);
+      const hrRecipients = await tx
+        .select({ id: users.id })
+        .from(users)
+        .innerJoin(userRoles, eq(userRoles.userId, users.id))
+        .innerJoin(roles, eq(roles.id, userRoles.roleId))
+        .where(
+          and(
+            eq(users.organisationId, organisation.organisationId),
+            eq(userRoles.organisationId, organisation.organisationId),
+            eq(users.status, "Active"),
+            eq(roles.code, "HR"),
+            sql`${users.archivedAt} IS NULL`,
+          ),
+        );
+      const today = new Date(`${todayKey}T12:00:00Z`);
       for (const period of openPeriods) {
+        // Previous weekly records remain history, not new monthly submission obligations.
+        if (
+          !isConfiguredTimesheetPeriod(
+            period,
+            settings.periodFrequency,
+            settings.weeklyPeriodStartDay,
+          )
+        )
+          continue;
         const deadline = new Date(`${period.endDate}T12:00:00Z`);
         deadline.setUTCDate(deadline.getUTCDate() + settings.submissionDeadlineDays);
         const daysUntil = Math.round((deadline.getTime() - today.getTime()) / 86_400_000);
-        if (daysUntil > 2 || daysUntil < -30) continue;
+        if (
+          daysUntil < -30 ||
+          (daysUntil > 2 && (!requiredPeriods.has(period.startDate) || period.startDate > todayKey))
+        )
+          continue;
         const periodSheets = await tx
-          .select({ employeeId: timesheets.employeeId, status: timesheets.status })
+          .select()
           .from(timesheets)
           .where(
             and(
@@ -1703,7 +1972,7 @@ export async function processTimesheetWorker(at = new Date()) {
               sql`${timesheets.archivedAt} IS NULL`,
             ),
           );
-        const sheetByEmployee = new Map(periodSheets.map((item) => [item.employeeId, item.status]));
+        const sheetByEmployee = new Map(periodSheets.map((item) => [item.employeeId, item]));
         const stages = [
           ...(daysUntil <= 2
             ? [{ key: "soon", title: "Timesheet due soon", priority: "Normal" as const }]
@@ -1716,8 +1985,199 @@ export async function processTimesheetWorker(at = new Date()) {
             : []),
         ];
         for (const employee of activeEmployees) {
-          const status = sheetByEmployee.get(employee.id);
+          if (period.endDate < employee.startDate) continue;
+          let sheet = sheetByEmployee.get(employee.id);
+          if (!sheet) {
+            const overlaps = await overlappingTimesheets(
+              tx,
+              organisation.organisationId,
+              employee.id,
+              period,
+            );
+            if (overlaps.length) {
+              // Do not ask staff to start a month that would duplicate their old records.
+              for (const recipient of hrRecipients)
+                await notify(
+                  tx,
+                  organisation.organisationId,
+                  recipient.id,
+                  {
+                    title: "Timesheet periods need review",
+                    message: `${employee.preferredName}: an existing timesheet covers part of ${period.startDate} to ${period.endDate}. Review it before starting a monthly sheet so hours are not counted twice.`,
+                    key: `timesheet-overlap-${period.id}-${employee.id}`,
+                    entityId: overlaps[0].id,
+                    path: `/staff/timesheet-approvals/${overlaps[0].id}`,
+                  },
+                  settings.updatedBy,
+                );
+              continue;
+            }
+          }
+          let fullyCovered = false;
+          // Returned/approved/locked sheets are never automatically submitted or rewritten.
+          if (
+            (!sheet || sheet.status === "Draft") &&
+            period.endDate >= employee.startDate &&
+            leaveRanges.some(
+              (leave) =>
+                leave.employeeId === employee.id &&
+                leave.startDate <= period.endDate &&
+                leave.endDate >= period.startDate,
+            )
+          ) {
+            const absence = await absencesForPeriod(
+              tx,
+              organisation.organisationId,
+              employee.id,
+              period,
+              Number(settings.standardDailyHours),
+            );
+            fullyCovered =
+              absence.expectedWorkHours === 0 && absence.entries.some((entry) => entry.isLeave);
+            if (!sheet) {
+              await tx.execute(
+                sql`SELECT pg_advisory_xact_lock(hashtextextended(${`timesheet-employee:${organisation.organisationId}:${employee.id}`}, 0))`,
+              );
+              const overlaps = await overlappingTimesheets(
+                tx,
+                organisation.organisationId,
+                employee.id,
+                period,
+              );
+              if (overlaps.length) continue; // Never duplicate existing approved/unfinished periods.
+              [sheet] = await tx
+                .insert(timesheets)
+                .values({
+                  organisationId: organisation.organisationId,
+                  employeeId: employee.id,
+                  periodId: period.id,
+                  status: "Draft",
+                  totalHours: "0",
+                  expectedHours: String(absence.expectedWorkHours),
+                  draftPayload: [],
+                  createdBy: settings.createdBy,
+                  updatedBy: settings.updatedBy,
+                })
+                .onConflictDoNothing()
+                .returning();
+            }
+            if (
+              sheet &&
+              period.endDate < todayKey &&
+              absence.expectedWorkHours === 0 &&
+              absence.entries.some((entry) => entry.isLeave) &&
+              Number(sheet.totalHours) === 0 &&
+              employee.employmentConfirmationStatus === "Confirmed"
+            ) {
+              let manager: Awaited<ReturnType<typeof requireEmployeeSupervisor>> | undefined;
+              try {
+                manager = await requireEmployeeSupervisor(
+                  tx,
+                  organisation.organisationId,
+                  employee.id,
+                );
+              } catch {
+                /* HR must assign an authorised supervisor; no automatic permission grants. */
+              }
+              if (manager) {
+                // Serialize with an employee saving/submitting or a reviewer deciding the sheet.
+                const [current] = await tx
+                  .select()
+                  .from(timesheets)
+                  .where(eq(timesheets.id, sheet.id))
+                  .for("update")
+                  .limit(1);
+                if (current?.status === "Draft" && Number(current.totalHours) === 0) {
+                  const snapshot = await buildTimesheetReconciliation(
+                    tx,
+                    organisation.organisationId,
+                    current,
+                  );
+                  const evidence = await tx
+                    .select({ id: timesheetEntries.id })
+                    .from(timesheetEntries)
+                    .where(
+                      and(
+                        eq(timesheetEntries.timesheetId, current.id),
+                        sql`${timesheetEntries.hours} > 0`,
+                      ),
+                    )
+                    .limit(1);
+                  if (
+                    snapshot.unresolvedCount === 0 &&
+                    !evidence.length &&
+                    snapshot.timesheetWorkHours === 0 &&
+                    snapshot.attendanceHours === 0
+                  ) {
+                    [sheet] = await tx
+                      .update(timesheets)
+                      .set({
+                        status: "Pending Manager",
+                        expectedHours: "0",
+                        draftPayload: absence.entries.map((entry) => ({
+                          ...entry,
+                          locationId: entry.locationCodeId,
+                        })),
+                        submittedAt: at.toISOString(),
+                        attendanceReconciliationSnapshot: snapshot,
+                        updatedAt: at,
+                        recordVersion: sql`${timesheets.recordVersion} + 1`,
+                      })
+                      .where(eq(timesheets.id, current.id))
+                      .returning();
+                    await notify(
+                      tx,
+                      organisation.organisationId,
+                      manager.userId,
+                      {
+                        title: "Leave-only timesheet awaiting review",
+                        message: `${employee.preferredName}: approved leave covers the timesheet for ${period.startDate} to ${period.endDate}. Review it before HR approval.`,
+                        key: `timesheet-leave-only-${current.id}`,
+                        entityId: current.id,
+                        path: `/staff/timesheet-approvals/${current.id}`,
+                      },
+                      settings.updatedBy,
+                    );
+                    await tx.insert(auditEvents).values({
+                      organisationId: organisation.organisationId,
+                      actorDisplayName: "VIA background worker",
+                      activeRole: "Super Admin",
+                      actorRoles: ["Super Admin"],
+                      action: "leave_timesheet_submitted",
+                      module: "timesheets",
+                      entityType: "timesheet",
+                      entityId: current.id,
+                      afterSummary: { status: "Pending Manager", workHours: 0 },
+                      reason:
+                        "Approved leave covers the completed period; manager and HR approval remain required",
+                      riskLevel: "Low",
+                    });
+                    leaveSubmitted += 1;
+                  }
+                }
+              }
+            }
+          }
+          const status = sheet?.status;
           if (status && !["Draft", "Returned"].includes(status)) continue;
+          if (fullyCovered && sheet?.status === "Draft") {
+            if (period.endDate < todayKey)
+              for (const recipient of hrRecipients)
+                await notify(
+                  tx,
+                  organisation.organisationId,
+                  recipient.id,
+                  {
+                    title: "Leave-only timesheet needs HR attention",
+                    message: `${employee.preferredName}: leave covers ${period.startDate} to ${period.endDate}. Check the employment details, supervisor or attendance before it can proceed.`,
+                    key: `timesheet-leave-setup-${sheet.id}`,
+                    entityId: sheet.id,
+                    path: `/staff/timesheet-approvals/${sheet.id}`,
+                  },
+                  settings.updatedBy,
+                );
+            continue; // No request to enter work hours while the whole period is approved leave.
+          }
           const recipientUserId = userByEmployee.get(employee.id);
           for (const stage of stages) {
             const inserted = recipientUserId
@@ -1783,7 +2243,8 @@ export async function processTimesheetWorker(at = new Date()) {
             inArray(timesheets.status, ["Draft", "Returned", "Pending Manager", "Pending HR"]),
             sql`${timesheets.archivedAt} IS NULL`,
           ),
-        );
+        )
+        .for("update");
       for (const sheet of mutableSheets) {
         const snapshot = await buildTimesheetReconciliation(tx, organisation.organisationId, sheet);
         const previous = sheet.attendanceReconciliationSnapshot as Record<string, unknown> | null;
@@ -1819,5 +2280,5 @@ export async function processTimesheetWorker(at = new Date()) {
       }
     });
   }
-  return { reminders, reconciled };
+  return { reminders, reconciled, leaveSubmitted };
 }

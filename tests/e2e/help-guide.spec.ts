@@ -97,7 +97,7 @@ test("help guide: HR cannot search or open Finance instructions", async ({ page 
   ).toBeVisible({ timeout: 30_000 });
 });
 
-test("help guide: HR gets employee help and protected setup instructions on mobile", async ({
+test("help guide: HR gets employee help and can open permitted setup from mobile help", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -107,10 +107,13 @@ test("help guide: HR gets employee help and protected setup instructions on mobi
   await page.getByRole("button", { name: "Search", exact: true }).click();
   await page.getByRole("link", { name: /Add departments/ }).click();
   await expect(page.getByRole("heading", { name: "Add departments", exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Open in VIA HR" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Open in VIA HR" })).toHaveAttribute(
+    "href",
+    "/staff/settings?section=departments",
+  );
   await expect(
     page.getByText("The responsible role must open this page.", { exact: false }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );

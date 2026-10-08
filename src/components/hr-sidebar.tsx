@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { Link, useRouterState } from "@tanstack/react-router";
-import { BookOpen, ChevronDown, ExternalLink, Search, X } from "lucide-react";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { BookOpen, ChevronDown, ExternalLink, Search, UserRound, X } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
 import {
   Sidebar,
@@ -27,7 +27,22 @@ import {
 export function HrSidebar() {
   const { state, isMobile, openMobile, setOpen, setOpenMobile } = useSidebar();
   const href = useRouterState({ select: (r) => r.location.href });
-  const { displayName, activeRole, can: checkCan, currentEmployee } = useCurrentUser();
+  const {
+    displayName,
+    activeRole,
+    assignedRoles,
+    setActiveRole,
+    can: checkCan,
+    currentEmployee,
+  } = useCurrentUser();
+  const navigate = useNavigate();
+  const switchRole =
+    activeRole !== "Employee"
+      ? assignedRoles.includes("Employee")
+        ? "Employee"
+        : undefined
+      : (assignedRoles.find((role) => role === "HR") ??
+        assignedRoles.find((role) => role !== "Employee"));
   const sections = useSidebarSections();
   const id = useId();
   const activeLink = useRef<HTMLAnchorElement>(null);
@@ -40,7 +55,7 @@ export function HrSidebar() {
   )?.label;
   const visibleGroups = searchNavigation(groups, query);
   useEffect(() => {
-    if (activeGroup) setExpanded((previous) => ({ ...previous, [activeGroup]: true }));
+    if (activeGroup) setExpanded({ [activeGroup]: true });
   }, [activeGroup, activeUrl]);
   useEffect(() => {
     if (query) return;
@@ -124,14 +139,13 @@ export function HrSidebar() {
                   {!standalone && (
                     <button
                       type="button"
+                      data-nav-level="group"
                       aria-expanded={open}
                       aria-controls={sectionId}
-                      onClick={() =>
-                        setExpanded((previous) => ({ ...previous, [group.label]: !open }))
-                      }
+                      onClick={() => setExpanded({ [group.label]: !open })}
                       className={cn(
-                        "flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-2.5 text-left text-sm font-semibold transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-data-[collapsible=icon]:hidden",
-                        group.label === activeGroup ? "text-primary" : "text-sidebar-foreground",
+                        "flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-2.5 text-left text-[13px] font-bold tracking-wide text-sidebar-heading transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-data-[collapsible=icon]:hidden",
+                        group.label === activeGroup ? "bg-primary/10" : "bg-primary/5",
                       )}
                     >
                       <span>{group.label}</span>
@@ -147,7 +161,7 @@ export function HrSidebar() {
                     hidden={!open}
                     className={cn(
                       !standalone &&
-                        "ml-3 mt-1 w-auto rounded-r-lg border-l border-sidebar-border bg-sidebar-accent/25 py-1 pl-2 group-data-[collapsible=icon]:m-0 group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0",
+                        "ml-3 mt-1 w-auto rounded-r-lg border-l border-primary/20 py-1 pl-2 group-data-[collapsible=icon]:m-0 group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0",
                     )}
                   >
                     <SidebarMenu>
@@ -155,9 +169,10 @@ export function HrSidebar() {
                         <SidebarMenuItem key={item.url}>
                           <SidebarMenuButton
                             asChild
+                            data-nav-level="page"
                             isActive={activeUrl === item.url}
                             tooltip={item.title}
-                            className="relative min-h-11 h-auto rounded-lg px-2.5 py-2 text-[13px] font-normal text-sidebar-foreground/80 hover:bg-primary/5 hover:text-primary active:bg-primary/10 active:text-primary data-[active=true]:bg-primary/10 data-[active=true]:font-semibold data-[active=true]:text-primary data-[active=true]:before:absolute data-[active=true]:before:inset-y-2.5 data-[active=true]:before:left-0 data-[active=true]:before:w-0.5 data-[active=true]:before:rounded-full data-[active=true]:before:bg-primary data-[active=true]:before:content-[''] [&>span:last-child]:whitespace-normal"
+                            className="relative min-h-11 h-auto rounded-lg px-2.5 py-2 text-[13px] font-normal text-sidebar-foreground hover:bg-primary/5 hover:text-primary active:bg-primary/10 active:text-primary data-[active=true]:bg-primary/10 data-[active=true]:font-semibold data-[active=true]:text-primary data-[active=true]:before:absolute data-[active=true]:before:inset-y-2.5 data-[active=true]:before:left-0 data-[active=true]:before:w-0.5 data-[active=true]:before:rounded-full data-[active=true]:before:bg-primary data-[active=true]:before:content-[''] [&>span:last-child]:whitespace-normal"
                           >
                             <Link
                               ref={activeUrl === item.url ? activeLink : undefined}
@@ -173,7 +188,7 @@ export function HrSidebar() {
                             <div
                               ref={sections?.setTarget}
                               data-sidebar-page-sections
-                              className="ml-3 border-l border-sidebar-border/70 pl-1 group-data-[collapsible=icon]:hidden [&:empty]:hidden"
+                              className="ml-3 border-l border-sidebar-detail/25 pl-1 group-data-[collapsible=icon]:hidden [&:empty]:hidden"
                             />
                           )}
                         </SidebarMenuItem>
@@ -209,6 +224,24 @@ export function HrSidebar() {
         )}
       </SidebarContent>
       <SidebarFooter className="border-t border-sidebar-border/70 px-3 py-3 text-xs">
+        {switchRole && (
+          <SidebarMenuButton
+            tooltip={
+              switchRole === "Employee" ? "My employee workspace" : `${switchRole} workspace`
+            }
+            className="min-h-11 rounded-lg"
+            onClick={() => {
+              setActiveRole(switchRole);
+              closeMenu();
+              void navigate({ to: "/staff", search: {}, hash: "", replace: true });
+            }}
+          >
+            <UserRound />
+            <span>
+              {switchRole === "Employee" ? "My employee workspace" : `${switchRole} workspace`}
+            </span>
+          </SidebarMenuButton>
+        )}
         {visibleGroups.some((group) => group.label === "Support") && (
           <SidebarMenu>
             <SidebarMenuItem>

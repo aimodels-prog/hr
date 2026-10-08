@@ -183,7 +183,15 @@ function ProfileAccessDenied({
   );
 }
 
-export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
+export function EmployeeProfileView({ employeeId: requestedEmployeeId }: { employeeId: string }) {
+  // Notifications use database IDs; older hydrated profiles may still have a local alias.
+  const employeeId =
+    getApplicationDataServices()
+      .storage.readCollection<{ id: string; databaseId?: string }>("employees")
+      .find(
+        (employee) =>
+          employee.id === requestedEmployeeId || employee.databaseId === requestedEmployeeId,
+      )?.id ?? requestedEmployeeId;
   const navigate = useNavigate();
   const currentUser = useCurrentUser();
   const [isEditOpen, setIsEditOpen] = useState(false);
@@ -221,6 +229,11 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
     });
   };
   const [profileVersion, setProfileVersion] = useState(0);
+  const [personalEditRequested, setPersonalEditRequested] = useState(false);
+  const editPersonalDetails = () => {
+    setPersonalEditRequested(true);
+    setActiveTab("personal");
+  };
   const [employmentReviewNote, setEmploymentReviewNote] = useState("");
   const [employmentDecisionPending, setEmploymentDecisionPending] = useState(false);
   const [statusAction, setStatusAction] = useState<
@@ -246,6 +259,21 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
   // different mode: it is your personal page, not an HR management console, so status-change
   // controls (suspend/archive/restore) never apply here even for an HR user or Super Admin.
   const isSelf = currentUser?.employeeId === employeeId;
+  const personalView = isSelf && currentUser.activeRole === "Employee";
+  useEffect(() => {
+    if (!personalView) return;
+    const destinations: Record<string, string> = {
+      leave: "/staff/me/leave-balances",
+      timesheets: "/staff/me/timesheets",
+      attendance: "/staff/me/attendance",
+      travel: "/staff/travel",
+      performance: "/staff/me/performance",
+      training: "/staff/me/training",
+      onboarding: "/staff/me/onboarding",
+    };
+    const destination = destinations[requestedSection];
+    if (destination) void navigate({ to: destination, hash: "", search: {}, replace: true });
+  }, [personalView, requestedSection, navigate]);
 
   const employeeService = useMemo(() => new EmployeeService(), []);
   const offboardingService = useMemo(() => new OffboardingService(), []);
@@ -856,6 +884,11 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
                 </Link>
               </Button>
             )}
+            {canEditEmployment && employee.status !== "Archived" && (
+              <Button onClick={editPersonalDetails} variant="secondary">
+                Edit profile
+              </Button>
+            )}
             {!isSelf && canEditEmployment && employee.status === "Notice" && (
               <Button
                 variant="outline"
@@ -1126,36 +1159,42 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
           </>
           <div className="my-3 border-t" />
           <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
-            Work & development
+            {personalView ? "My records" : "Work & development"}
           </p>
           <>
             <TabsTrigger value="documents">
               <FileText /> Documents
             </TabsTrigger>
-            <TabsTrigger value="leave">
-              <CalendarDays /> Leave
-            </TabsTrigger>
-            <TabsTrigger value="timesheets">
-              <ClipboardCheck /> Timesheets
-            </TabsTrigger>
-            <TabsTrigger value="attendance">
-              <Clock3 /> Attendance & overtime
-            </TabsTrigger>
-            <TabsTrigger value="travel">
-              <Plane /> Travel
-            </TabsTrigger>
-            <TabsTrigger value="performance">
-              <TrendingUp /> Performance
-            </TabsTrigger>
-            <TabsTrigger value="training">
-              <GraduationCap /> Training
-            </TabsTrigger>
+            {!personalView && (
+              <>
+                <TabsTrigger value="leave">
+                  <CalendarDays /> Leave
+                </TabsTrigger>
+                <TabsTrigger value="timesheets">
+                  <ClipboardCheck /> Timesheets
+                </TabsTrigger>
+                <TabsTrigger value="attendance">
+                  <Clock3 /> Attendance & overtime
+                </TabsTrigger>
+                <TabsTrigger value="travel">
+                  <Plane /> Travel
+                </TabsTrigger>
+                <TabsTrigger value="performance">
+                  <TrendingUp /> Performance
+                </TabsTrigger>
+                <TabsTrigger value="training">
+                  <GraduationCap /> Training
+                </TabsTrigger>
+              </>
+            )}
             <TabsTrigger value="equipment">
               <Laptop /> Equipment
             </TabsTrigger>
-            <TabsTrigger value="onboarding">
-              <ClipboardCheck /> Employee lifecycle
-            </TabsTrigger>
+            {!personalView && (
+              <TabsTrigger value="onboarding">
+                <ClipboardCheck /> Employee lifecycle
+              </TabsTrigger>
+            )}
           </>
           <div className="my-3 border-t" />
           <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
@@ -1206,6 +1245,8 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
             ) : (
               <PersonalTab
                 employee={employee}
+                editRequested={personalEditRequested}
+                onEditOpened={() => setPersonalEditRequested(false)}
                 onChanged={() => setProfileVersion((value) => value + 1)}
               />
             )}
@@ -2147,6 +2188,11 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
             <Card>
               <CardHeader>
                 <CardTitle>Emergency Contacts</CardTitle>
+                {canEditEmployment && employee.status !== "Archived" && (
+                  <Button variant="outline" size="sm" onClick={editPersonalDetails}>
+                    Edit contacts
+                  </Button>
+                )}
               </CardHeader>
               <CardContent>
                 {!canViewPersonalDetails ? (
@@ -2178,6 +2224,11 @@ export function EmployeeProfileView({ employeeId }: { employeeId: string }) {
             <Card>
               <CardHeader>
                 <CardTitle>Dependants</CardTitle>
+                {canEditEmployment && employee.status !== "Archived" && (
+                  <Button variant="outline" size="sm" onClick={editPersonalDetails}>
+                    Edit dependants
+                  </Button>
+                )}
               </CardHeader>
               <CardContent>
                 {!canViewPersonalDetails ? (

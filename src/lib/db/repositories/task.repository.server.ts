@@ -1,4 +1,5 @@
 import "@tanstack/react-start/server-only";
+import { employeeDocumentLink } from "../../data/document-links.ts";
 
 import { randomUUID } from "node:crypto";
 
@@ -412,7 +413,10 @@ export async function listTasksForActorInDatabase(
       priority: state === "Overdue" && row.priority === "Normal" ? "High" : row.priority,
       state,
       actionLabel: row.action_label,
-      actionUrl: row.action_url,
+      actionUrl:
+        row.source_type === "employee-document" && row.subject_employee_id
+          ? employeeDocumentLink(row.subject_employee_id, row.source_id)
+          : row.action_url,
       sourceType: row.source_type,
       sourceId: row.source_id,
       sourceVersion: row.source_version ?? 1,

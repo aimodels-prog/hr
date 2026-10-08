@@ -382,7 +382,7 @@ function NewVacancy() {
   return (
     <div className="flex flex-col max-w-5xl mx-auto pb-32">
       <PageHeader
-        title="New Vacancy"
+        title="Add Job"
         description="Define core facts, generate a draft description with AI, and publish."
       />
 

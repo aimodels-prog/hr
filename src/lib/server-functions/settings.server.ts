@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import * as z from "zod";
+import { canChangeCompanySettings } from "../auth/company-setup-policy.ts";
 
 import { getDatabaseClient } from "../db/client.ts";
 import { getAppSettings, saveAppSettings } from "../db/repositories/settings.repository.server.ts";
@@ -107,15 +108,7 @@ export const saveAppSettingsFn = createServerFn({ method: "POST" })
           JSON.stringify(previous[key as keyof AppSettings]),
     );
 
-    const isSuperAdmin = actor.roles.includes("Super Admin");
-    const isHr = actor.roles.includes("HR");
-
-    const hrReminderOnly =
-      isHr &&
-      changedKeys.length > 0 &&
-      changedKeys.every((key) => ["documentReminderDays", "leaveIncludesWeekends"].includes(key));
-
-    if (!isSuperAdmin && !hrReminderOnly) {
+    if (!canChangeCompanySettings(actor.roles, changedKeys)) {
       const db = getDatabaseClient();
       await db.insert(auditEvents).values({
         organisationId: orgId,
@@ -126,10 +119,10 @@ export const saveAppSettingsFn = createServerFn({ method: "POST" })
         module: "settings",
         entityType: "app_settings",
         entityId: previous.id,
-        reason: "Only a Super Admin can change organisation-wide settings.",
+        reason: "This setting is outside your company setup responsibilities.",
         riskLevel: "High",
       });
-      throw new Error("Only a Super Admin can change organisation-wide settings.");
+      throw new Error("This setting is outside your company setup responsibilities.");
     }
 
     const { settings } = data;
@@ -185,5 +178,8 @@ export const saveAppSettingsFn = createServerFn({ method: "POST" })
       schemaVersion: settings.schemaVersion ?? previous.schemaVersion ?? 1,
     };
 
-    return saveAppSettings(orgId, completeSettings, actor);
+    return saveAppSettings(orgId, completeSettings, {
+      ...actor,
+      activeRole: actor.roles.includes("Super Admin") ? "Super Admin" : "HR",
+    });
   });

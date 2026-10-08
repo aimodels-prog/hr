@@ -304,7 +304,7 @@ function StaffTrainingRoute() {
         </p>
       )}
       <PageHeader
-        title={isHr ? "Learning & Development" : "Team Training"}
+        title={isHr ? "Training" : "Team Training"}
         description={
           isHr
             ? "Manage courses, approvals, sessions, completion and employee certifications."

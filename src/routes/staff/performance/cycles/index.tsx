@@ -50,7 +50,7 @@ function PerformanceCyclesPage() {
   return (
     <div className="flex flex-col gap-6 max-w-[1200px] mx-auto pb-10">
       <PageHeader
-        title="Performance Cycles"
+        title="Appraisal Periods"
         description="Manage review cycles and monitor organization-wide completion."
         actions={
           <Button

@@ -81,10 +81,9 @@ function sectionItems(
       )
     )
       return [];
-    if (child.type === React.Fragment) return sectionItems(child.props.children);
     return child.props.value
       ? [{ value: child.props.value, label: child.props.children, disabled: child.props.disabled }]
-      : [];
+      : sectionItems(child.props.children);
   });
 }
 
@@ -103,6 +102,8 @@ export function SectionNavigation({
   // in this user's permitted navigation; hidden sections never become selectable.
   const selectRef = React.useRef(select);
   selectRef.current = select;
+  const valueRef = React.useRef(value);
+  valueRef.current = value;
   const available = items
     .filter((item) => !item.disabled)
     .map((item) => item.value)
@@ -111,17 +112,24 @@ export function SectionNavigation({
     if (!restoreHash) return;
     const restore = () => {
       const requested = new URLSearchParams(window.location.hash.slice(1)).get("section");
-      if (requested && available.split("|").includes(requested)) selectRef.current(requested);
-      else if (!requested && available.split("|").includes(initial.current))
-        selectRef.current(initial.current);
+      if (requested && available.split("|").includes(requested)) {
+        if (requested !== valueRef.current) selectRef.current(requested);
+      } else if (!requested && initial.current && available.split("|").includes(initial.current))
+        if (initial.current !== valueRef.current) selectRef.current(initial.current);
     };
     restore();
     window.addEventListener("hashchange", restore);
     return () => window.removeEventListener("hashchange", restore);
   }, [available, restoreHash]);
   React.useEffect(() => {
-    if (!current && items[0]) select(items[0].value);
-  }, [current, items, select]);
+    const first = items.find((item) => !item.disabled);
+    const requested = restoreHash
+      ? new URLSearchParams(window.location.hash.slice(1)).get("section")
+      : null;
+    // The hash-restoration effect owns a valid bookmark. Do not replace it with the first item.
+    if (requested && items.some((item) => item.value === requested && !item.disabled)) return;
+    if (!current && first) select(first.value);
+  }, [current, items, select, restoreHash]);
   if (sidebar) {
     return sidebar.target
       ? createPortal(
@@ -180,6 +188,7 @@ export function SectionLink({
   return (
     <a
       {...props}
+      data-nav-level="section"
       href={disabled ? undefined : `#section=${encodeURIComponent(value)}`}
       aria-current={active ? "page" : undefined}
       aria-disabled={disabled || undefined}
@@ -196,14 +205,26 @@ export function SectionLink({
         if (window.matchMedia("(max-width: 1023px)").matches)
           event.currentTarget.closest("details")?.querySelector("summary")?.focus();
         props.onClick?.(event);
+        if (!event.defaultPrevented) {
+          // Async pages can disable their links during this click. Keep the destination
+          // independent of that DOM update so refresh and back/forward still work.
+          event.preventDefault();
+          window.location.hash = `section=${encodeURIComponent(value)}`;
+        }
       }}
       className={cn(
         className,
         "flex min-h-11 w-full items-center justify-start gap-2 whitespace-normal rounded-lg border-l-2 px-3 py-2.5 text-left text-sm leading-5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        active
-          ? "border-primary bg-primary/10 font-semibold text-primary"
-          : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
-        sidebar && "rounded-md px-2 text-xs leading-5 hover:bg-primary/5 hover:text-primary",
+        sidebar
+          ? cn(
+              "rounded-md px-2 text-xs leading-5 text-sidebar-detail hover:bg-sidebar-detail-accent",
+              active
+                ? "border-sidebar-detail bg-sidebar-detail-accent font-semibold"
+                : "border-transparent",
+            )
+          : active
+            ? "border-primary bg-primary/10 font-semibold text-primary"
+            : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
         disabled && "pointer-events-none opacity-50",
       )}
     >

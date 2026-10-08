@@ -38,7 +38,7 @@ const numberingSchema = z.object({
 });
 
 export function OrganisationSettingsPanel() {
-  const { getActorContext } = useCurrentUser();
+  const { getActorContext, activeRole } = useCurrentUser();
   const [settingsService] = useState(() => new SettingsService());
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [workingDays, setWorkingDays] = useState<number[]>([]);
@@ -149,7 +149,12 @@ export function OrganisationSettingsPanel() {
                     <FormItem>
                       <FormLabel>Base Currency</FormLabel>
                       <FormControl>
-                        <Input {...field} placeholder="OMR" />
+                        <Input
+                          {...field}
+                          placeholder="OMR"
+                          readOnly={activeRole !== "Super Admin"}
+                          aria-readonly={activeRole !== "Super Admin"}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>

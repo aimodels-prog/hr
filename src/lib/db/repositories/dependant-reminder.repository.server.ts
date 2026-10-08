@@ -70,8 +70,14 @@ export async function dependantCompletionStillMissing(
   );
 }
 
-export async function processDependantCompletionNotices() {
-  const db = getDatabaseClient();
+export async function processDependantCompletionNotices(
+  organisationId?: string,
+  options?: {
+    db: Pick<ReturnType<typeof getDatabaseClient>, "select" | "update" | "insert">;
+    definitions: DocumentRequirement[];
+  },
+) {
+  const db = options?.db ?? getDatabaseClient();
   const rows = await db
     .select({ employee: employees, userId: users.id })
     .from(employees)
@@ -82,6 +88,7 @@ export async function processDependantCompletionNotices() {
     .where(
       and(
         eq(users.status, "Active"),
+        organisationId ? eq(employees.organisationId, organisationId) : undefined,
         isNull(users.archivedAt),
         isNull(employees.archivedAt),
         sql`${employees.status} IN ('Active','Onboarding','Probation')`,
@@ -99,7 +106,7 @@ export async function processDependantCompletionNotices() {
           isNull(employeeDocuments.archivedAt),
         ),
       );
-    const settings = await getDocumentRequirementSettings(employee.organisationId);
+    const settings = options ?? (await getDocumentRequirementSettings(employee.organisationId));
     const missing = (employee.dependants ?? [])
       .map((d) => ({ name: d.name, missing: missingDependantInformation(d, documents) }))
       .filter((d) => d.missing.length);
@@ -123,6 +130,24 @@ export async function processDependantCompletionNotices() {
         ),
       );
     if (!missing.length) continue;
+    // If a requirement is removed and later restored, reopen the existing checklist.
+    // An unchanged checklist remains read, rather than alerting on every worker pass.
+    await db
+      .update(notifications)
+      .set({
+        status: "Unread",
+        dismissedAt: null,
+        readAt: null,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(notifications.organisationId, employee.organisationId),
+          eq(notifications.recipientUserId, userId),
+          eq(notifications.deduplicationKey, key),
+          eq(notifications.status, "Dismissed"),
+        ),
+      );
     const result = await db
       .insert(notifications)
       .values({

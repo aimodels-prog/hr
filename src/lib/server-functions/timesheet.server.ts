@@ -108,6 +108,7 @@ const Settings = z
     actor: Actor,
     settings: z
       .object({
+        periodFrequency: z.enum(["Monthly", "Weekly"]).default("Monthly"),
         weeklyPeriodStartDay: z.number().int().min(0).max(6),
         standardDailyHours: z.number().positive().max(24),
         submissionDeadlineDays: z.number().int().min(0).max(30),

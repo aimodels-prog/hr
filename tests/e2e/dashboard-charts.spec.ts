@@ -36,6 +36,29 @@ async function figures(
 }
 const shown = (value: number) => value.toLocaleString("en-US", { maximumFractionDigits: 1 });
 
+test("HR switches to her own employee dashboard and back without carrying an employee filter", async ({
+  page,
+}) => {
+  await page.goto("/staff");
+  await expect(page.getByText("VIA HR System").first()).toBeVisible();
+  await preview(page, "HR");
+  await page.goto("/staff?employeeId=employee-omar");
+  const switchRole = async (role: "HR" | "Employee") => {
+    await page.getByRole("button").filter({ hasText: "Rana" }).first().click();
+    await page.getByRole("button", { name: role, exact: true }).click();
+    await expect(page.locator(`[data-dashboard-role="${role}"]`)).toBeVisible();
+    expect(new URL(page.url()).searchParams.has("employeeId")).toBe(false);
+  };
+  await switchRole("Employee");
+  await expect(page.getByRole("heading", { name: "Welcome back, Rana" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "My working hours", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "HR insights", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Needs My Approval/ })).not.toBeVisible();
+  await switchRole("HR");
+  await expect(page.getByRole("region", { name: "HR insights", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "People overview" })).toBeVisible();
+});
+
 test("dashboard chart figures match server data for HR and employee across periods and mobile", async ({
   page,
 }) => {

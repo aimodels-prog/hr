@@ -20,6 +20,9 @@ import { DocumentService } from "@/lib/data/document-service";
 import { OnboardingService } from "@/lib/data/onboarding-service";
 import { TimesheetService } from "@/lib/data/timesheet-service";
 import { LeaveService } from "@/lib/data/leave-service";
+import { isEffectiveLeave, organisationDate } from "@/lib/data/approved-leave";
+import { SettingsService } from "@/lib/data/settings-service";
+import { leaveDisplayType } from "@/lib/data/leave-presentation";
 import { TravelService } from "@/lib/data/travel-service";
 import { InterviewService } from "@/lib/data/interview-service";
 import { ScorecardService } from "@/lib/data/scorecard-service";
@@ -167,11 +170,12 @@ export function HrDashboard() {
 function OrganisationHrDashboard({ toolbar }: { toolbar: ReactNode }) {
   return (
     <div className="flex flex-col gap-4">
-      <HrSetup />
-      <DashboardCharts scope="hr" toolbar={toolbar} />
+      {toolbar}
+      <DashboardCharts scope="hr" />
       <StaffDataBoundary modules={DASHBOARD_MODULES.hr}>
         <OrganisationHrDashboardDetails />
       </StaffDataBoundary>
+      <HrSetup />
     </div>
   );
 }
@@ -322,14 +326,19 @@ function OrganisationHrDashboardDetails() {
     .getAllRequests(currentUser.getActorContext())
     .filter((r) => r.status === "Pending HR and Accounts" && r.hrApprovalStatus === "Pending");
 
-  const weekEnd = new Date(today);
-  weekEnd.setDate(weekEnd.getDate() + 6);
+  const leaveToday = organisationDate(
+    new Date(),
+    new SettingsService().getAppSettingsSync().timezone,
+  );
+  const weekEnd = new Date(`${leaveToday}T12:00:00Z`);
+  weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+  const leaveWeekEnd = weekEnd.toISOString().slice(0, 10);
   const onLeaveThisWeek = allLeaveRequests
-    .filter((r) => r.status === "Approved" || r.status === "Taken")
-    .filter((r) => new Date(r.startDate) <= weekEnd && new Date(r.endDate) >= today)
-    .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+    .filter(isEffectiveLeave)
+    .filter((r) => r.startDate <= leaveWeekEnd && r.endDate >= leaveToday)
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
   const onLeaveToday = onLeaveThisWeek.filter(
-    (request) => new Date(request.startDate) <= today && new Date(request.endDate) >= today,
+    (request) => request.startDate <= leaveToday && request.endDate >= leaveToday,
   );
   const peopleOnLeaveToday = new Set(onLeaveToday.map((request) => request.employeeId)).size;
 
@@ -409,7 +418,7 @@ function OrganisationHrDashboardDetails() {
       severity: pendingLeave.length > 5 ? "warning" : "info",
       icon: CalendarClock,
       title: `${pendingLeave.length} leave request${pendingLeave.length === 1 ? "" : "s"} awaiting approval`,
-      meta: "Awaiting a line manager or Super Admin decision",
+      meta: `${pendingLeave.filter((request) => request.status === "Pending HR").length} waiting for HR; others waiting for their manager or a legacy review`,
       actionLabel: "Monitor",
       actionTo: "/staff/leave-admin",
     });
@@ -441,15 +450,13 @@ function OrganisationHrDashboardDetails() {
 
   return (
     <div className="flex flex-col gap-4">
-      <section
+      <details
         aria-labelledby="hr-attention-heading"
         className="rounded-xl border border-border/70 bg-card p-5"
       >
-        <div className="mb-3">
-          <h2 id="hr-attention-heading" className="text-sm font-bold">
-            Needs my attention
-          </h2>
-        </div>
+        <summary id="hr-attention-heading" className="mb-3 cursor-pointer text-sm font-semibold">
+          Organisation follow-up
+        </summary>
         <AttentionQueue items={attentionItems.slice(0, 5)} />
         {attentionItems.length > 5 ? (
           <p className="mt-2 text-xs text-muted-foreground">
@@ -457,7 +464,7 @@ function OrganisationHrDashboardDetails() {
             reviewed from My Tasks.
           </p>
         ) : null}
-      </section>
+      </details>
 
       <details className="rounded-xl border border-border/70 bg-card p-4">
         <summary className="cursor-pointer text-sm font-medium">
@@ -481,7 +488,7 @@ function OrganisationHrDashboardDetails() {
                     <div className="min-w-0">
                       <p className="truncate font-medium">{nameFor(r.employeeId)}</p>
                       <p className="truncate text-xs text-muted-foreground">
-                        {r.policySnapshot.name}
+                        {leaveDisplayType(r)}
                       </p>
                     </div>
                     <p className="shrink-0 text-xs text-muted-foreground">

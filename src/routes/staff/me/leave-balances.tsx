@@ -538,7 +538,7 @@ function LeaveBalancesRoute() {
               <p className="text-sm text-muted-foreground">Next approved leave</p>
               <p className="text-base font-semibold">
                 {nextApprovedRequest
-                  ? `${formatDate(nextApprovedRequest.startDate)} · ${policyById.get(nextApprovedRequest.policyId)?.name ?? "Leave"}`
+                  ? `${formatDate(nextApprovedRequest.startDate)} · ${leaveDisplayType(nextApprovedRequest, policyById.get(nextApprovedRequest.policyId))}`
                   : "Nothing scheduled"}
               </p>
             </div>

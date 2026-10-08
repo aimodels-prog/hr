@@ -73,11 +73,11 @@ function VacanciesIndexRoute() {
     <RequirePermission permission="recruitment:view_vacancies" resourceName="Vacancies">
       <div className="flex flex-col gap-6 max-w-[1400px] mx-auto pb-10">
         <PageHeader
-          title="Vacancies"
+          title="Job Vacancies"
           description="Manage all job postings, approvals, and recruitment lifecycles."
           actions={
             <Button onClick={() => navigate({ to: "/staff/vacancies/new" })}>
-              <FilePlus2 className="mr-2 h-4 w-4" /> New Vacancy
+              <FilePlus2 className="mr-2 h-4 w-4" /> Add Job
             </Button>
           }
         />

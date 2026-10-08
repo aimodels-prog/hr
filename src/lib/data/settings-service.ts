@@ -1,5 +1,6 @@
 import { getApplicationDataServices } from "./application-data.ts";
 import type { ActorContext, AppSettings } from "./types.ts";
+import { canChangeCompanySettings } from "../auth/company-setup-policy.ts";
 
 const SETTINGS_COLLECTION = "appSettings";
 
@@ -98,14 +99,7 @@ export class SettingsService {
           JSON.stringify(previous[key as keyof AppSettings]),
     );
 
-    const isSuperAdmin = context.actor.activeRole === "Super Admin";
-    const isHr = context.actor.activeRole === "HR";
-    const hrReminderOnly =
-      isHr &&
-      changedKeys.length > 0 &&
-      changedKeys.every((key) => ["documentReminderDays", "leaveIncludesWeekends"].includes(key));
-
-    if (!isSuperAdmin && !hrReminderOnly) {
+    if (!canChangeCompanySettings([context.actor.activeRole ?? "Employee"], changedKeys)) {
       try {
         const { audit } = getApplicationDataServices();
         audit.record({
@@ -114,13 +108,13 @@ export class SettingsService {
           module: "settings",
           entityType: "app_settings",
           entityId: settings.id || "settings-primary",
-          reason: "Only a Super Admin can change organisation-wide settings.",
+          reason: "You do not have permission to change these company settings.",
           riskLevel: "High",
         });
       } catch {
         // Ignore if services not configured
       }
-      throw new Error("Only a Super Admin can change organisation-wide settings.");
+      throw new Error("You do not have permission to change these company settings.");
     }
 
     if (!usesBrowserServerFunctions()) {
