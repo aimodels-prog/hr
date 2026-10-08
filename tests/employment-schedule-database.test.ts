@@ -105,17 +105,29 @@ test(
         (await query`SELECT location_id FROM employees WHERE id=${employeeId}`)[0]!.location_id,
         siteLocation,
       );
-      await assert.rejects(
-        updateEmploymentRecordInDatabase(
-          org,
-          employeeId,
-          { position: "Lead" },
-          "2026-09-30",
-          "",
-          hr,
-          beforeMidnight,
-        ),
-        /reason/,
+      await updateEmploymentRecordInDatabase(
+        org,
+        employeeId,
+        { position: "Lead" },
+        "2026-09-30",
+        "",
+        hr,
+        beforeMidnight,
+      );
+      assert.equal(
+        (
+          await query`SELECT p.name FROM employees e JOIN positions p ON p.id=e.position_id WHERE e.id=${employeeId}`
+        )[0]!.name,
+        "Lead",
+      );
+      await updateEmploymentRecordInDatabase(
+        org,
+        employeeId,
+        { position: "Coordinator" },
+        "2026-09-30",
+        "",
+        hr,
+        beforeMidnight,
       );
       await assert.rejects(
         updateEmploymentRecordInDatabase(
@@ -130,13 +142,10 @@ test(
         /reason/,
       );
       await updatePersonalRecordInDatabase(org, employeeId, { phone: "12345678" }, "", hr);
-      await assert.rejects(
-        updatePersonalRecordInDatabase(org, employeeId, { nationality: "Omani" }, "", hr),
-        /reason/,
-      );
+      await updatePersonalRecordInDatabase(org, employeeId, { nationality: "Omani" }, "", hr);
       const [routineAudit] =
         await query`SELECT reason FROM audit_events WHERE entity_id=${employeeId} AND action='update-personal-record' LIMIT 1`;
-      assert.equal(routineAudit!.reason, "Contact details updated by HR");
+      assert.equal(routineAudit!.reason, "Personal details updated by HR");
       const snapshot = async () => ({
         employee: await query`SELECT * FROM employees WHERE id=${employeeId}`,
         compensation:

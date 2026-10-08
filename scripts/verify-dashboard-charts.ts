@@ -83,24 +83,36 @@ try {
     expiryCounts,
   );
 
-  // Independent SQL reconciliation of completed records and hours, including
-  // staff without tracking and completed punches on non-working days.
-  const completed =
-    await sql`SELECT r.date::text AS date, count(*)::int AS count, sum(r.calculated_hours)::float8 AS hours
+  // Independent SQL reconciliation of recorded presence, including today's
+  // unfinished shifts and breaks. A live shift is not an absence finding.
+  const completed = await sql`SELECT r.date::text AS date, count(*)::int AS count,
+      sum(CASE WHEN r.date=${today}::date THEN
+        extract(epoch FROM (least(coalesce(r.clock_out_at,${at.toISOString()}::timestamptz),${at.toISOString()}::timestamptz)-r.clock_in_at))/3600.0
+        ELSE round(extract(epoch FROM (r.clock_out_at-r.clock_in_at))/3600.0,2) END)::float8 AS hours
     FROM attendance_records r JOIN employees e ON e.id=r.employee_id AND e.organisation_id=r.organisation_id
     WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND e.archived_at IS NULL
       AND r.date BETWEEN ${chart.startDate} AND ${chart.endDate}
       AND e.start_date <= r.date AND (e.termination_date IS NULL OR e.termination_date >= r.date)
       AND (e.status IN ('Active','Probation','Notice','Onboarding') OR e.termination_date IS NOT NULL)
-      AND r.clock_in_at IS NOT NULL AND r.clock_out_at IS NOT NULL AND r.status NOT IN ('Correction Pending','Absent')
+      AND r.clock_in_at IS NOT NULL AND (r.clock_out_at IS NOT NULL OR r.date=${today}::date)
+      AND r.status NOT IN ('Correction Pending','Absent')
+      AND extract(epoch FROM (CASE WHEN r.date=${today}::date
+        THEN least(coalesce(r.clock_out_at,${at.toISOString()}::timestamptz),${at.toISOString()}::timestamptz)
+        ELSE r.clock_out_at END-r.clock_in_at)) BETWEEN 0 AND 86400
       AND NOT EXISTS (SELECT 1 FROM site_visit_requests s WHERE s.organisation_id=r.organisation_id AND s.employee_id=r.employee_id
         AND s.date=r.date AND s.archived_at IS NULL AND s.status='Pending HR') GROUP BY r.date`;
   for (const day of chart.days) {
     const saved = completed.find((row) => row.date === day.date);
     assert.equal(day.recorded, saved?.count ?? 0, `Recorded count on ${day.date}`);
     assert.ok(Math.abs(day.worked - Number(saved?.hours ?? 0)) < 0.011, `Hours on ${day.date}`);
-    assert.ok(day.date < today);
+    assert.ok(day.date <= today);
+    if (day.date === today) {
+      assert.equal(day.expected, 0, "Today's target is not included in completed-day totals");
+      assert.equal(day.missing, 0, "An unfinished shift is not an absence");
+    }
   }
+  assert.equal(chart.endDate, today);
+  assert.equal(chart.days.at(-1)?.date, today, "The chart includes today");
   for (const person of people) {
     for (const period of [7, 30] as const) {
       const self = await getWorkforceAnalytics(
