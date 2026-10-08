@@ -17,13 +17,19 @@ test("Both database quality gates provision pinned MinIO and the required CV pro
     new URL("../scripts/ci-minio/Dockerfile", import.meta.url),
     "utf8",
   );
-  assert.match(script, /docker build --tag "\$minio_image" scripts\/ci-minio/);
+  assert.match(script, /build_with_retry --tag "\$minio_image" scripts\/ci-minio/);
+  assert.match(script, /for attempt in 1 2 3/);
+  assert.match(script, /if docker build "\$@"; then/);
+  assert.match(script, /build_with_retry\(\)[\s\S]*?return 1\s+\}/);
   assert.match(minioBuild, /7ced9663e6a791fef9dc6be798ff24cda9c730ac/);
   assert.match(workflow, /defaults:\s+run:\s+shell: bash/);
   assert.match(workflow, /grep --quiet '\^# fail 0\$' live-tests\.tap/);
   assert.doesNotMatch(workflow, /\sminio\/minio:/);
   assert.match(script, /trap diagnostics ERR/);
-  assert.match(script, /docker build --tag via-hr-ci-cv-processor:local services\/cv-processor/);
+  assert.match(
+    script,
+    /build_with_retry --tag via-hr-ci-cv-processor:local services\/cv-processor/,
+  );
   assert.match(script, /wait_ready via-hr-ci-cv-processor/);
   assert.match(workflow, /grep --quiet '\^# skipped 0\$' live-tests\.tap/);
   assert.equal((workflow.match(/ci-services\.log/g) ?? []).length, 4);

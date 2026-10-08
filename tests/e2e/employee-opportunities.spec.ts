@@ -40,7 +40,7 @@ test("an employee applies and recommends someone from the staff dashboard", asyn
   });
   await applicationDialog.getByRole("button", { name: "Submit application" }).click();
   await expect(applicationDialog).toBeHidden({ timeout: 20_000 });
-  await page.getByRole("link", { name: /My Applications/ }).click();
+  await page.getByRole("tab", { name: /My Applications/ }).click();
   await expect(page.getByText(/^INT-\d{2}-/)).toBeVisible();
 
   await page.getByRole("button", { name: "Recommend someone" }).first().click();
@@ -66,6 +66,6 @@ test("an employee applies and recommends someone from the staff dashboard", asyn
     .click();
   await referralDialog.getByRole("button", { name: "Send recommendation" }).click();
   await expect(referralDialog).toBeHidden({ timeout: 20_000 });
-  await page.getByRole("link", { name: /My Referrals/ }).click();
+  await page.getByRole("tab", { name: /My Referrals/ }).click();
   await expect(page.getByText("Browser Referral", { exact: true })).toBeVisible();
 });

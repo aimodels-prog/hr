@@ -389,7 +389,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
 
   // Final records persist and are visible to their employee after role changes and reloads.
   await previewAs(page, "user-omar", "Employee", "/staff/me/leave-balances");
-  await page.getByRole("link", { name: /Request history/i }).click();
+  await page.getByRole("tab", { name: /Request history/i }).click();
   await expect(page.getByText(labels.leave)).toBeVisible();
   await expect(page.getByText("Approved", { exact: true }).first()).toBeVisible();
 
