@@ -562,9 +562,7 @@ test("HR registers a door terminal and recovers a signed unmatched punch", async
   await expect(mappingDialog).toContainText(deviceUserName);
   await mappingDialog.getByLabel("Employee").click();
   await page.getByRole("option").first().click();
-  await mappingDialog
-    .getByLabel("Reason")
-    .fill("HR verified the terminal identity against the employee register.");
+  await expect(mappingDialog.getByLabel("Reason", { exact: true })).toHaveCount(0);
   await mappingDialog.getByRole("button", { name: "Confirm Match" }).click();
   await expect(mappingDialog).toBeHidden();
   await expect(page.getByText("Every received terminal user is matched.")).toBeVisible();
