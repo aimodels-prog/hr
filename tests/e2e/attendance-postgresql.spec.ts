@@ -442,12 +442,12 @@ test("employee site visit persists to PostgreSQL and HR approval survives a role
   await expect(employeeRow).toContainText("Cancelled");
 });
 
-test("HR can open their own site visit from the dashboard on mobile", async ({
+test("HR can open their own site visit from their employee dashboard on mobile", async ({
   page,
 }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/staff");
-  await previewAs(page, "user-rana", "HR", "/staff");
+  await previewAs(page, "user-rana", "Employee", "/staff");
   await page.getByRole("link", { name: "Quick visit", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Quick visit" });
   await dialog.getByRole("button", { name: "Ministry visit", exact: true }).click();

@@ -28,20 +28,28 @@ test("reports are role scoped and loaded from PostgreSQL", async ({ page }) => {
 
   await previewAs(page, "user-rana", "HR");
   await expect(page.getByRole("heading", { name: "Reports Centre" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Headcount & Diversity" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Payroll Inputs Summary" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Headcount & Diversity" }).click();
+  await expect(
+    page.getByRole("link", { name: "Headcount & Diversity", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Payroll Inputs Summary", exact: true })).toHaveCount(
+    0,
+  );
+  await page.getByRole("link", { name: "Headcount & Diversity", exact: true }).click();
   await expect(page.getByText("Report unavailable")).toHaveCount(0);
   await expect(page.getByText("Matching Records")).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Base Salary" })).toHaveCount(0);
 
   await previewAs(page, "user-mariam", "Accounts");
-  await expect(page.getByRole("button", { name: "Travel Variance" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Payroll Inputs Summary" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Headcount & Diversity" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Travel Variance", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Payroll Inputs Summary", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Headcount & Diversity", exact: true })).toHaveCount(
+    0,
+  );
 
   await previewAs(page, "user-super-admin", "Super Admin");
-  await page.getByRole("button", { name: "Payroll Inputs Summary" }).click();
+  await page.getByRole("link", { name: "Payroll Inputs Summary", exact: true }).click();
   await expect(page.getByText("Report unavailable")).toHaveCount(0);
   await expect(page.getByRole("columnheader", { name: "Payroll Period" })).toBeVisible();
 });

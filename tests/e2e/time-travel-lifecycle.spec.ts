@@ -119,10 +119,10 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
 
       const timesheetService = new TimesheetService(attendanceService);
       await timesheetService.hydrateCompatibilityCache(hr);
-      await timesheetService.generatePeriodsAsync("2026-06-01", "2026-06-07", hr);
+      await timesheetService.generatePeriodsAsync("2026-06-01", "2026-06-30", hr);
       const period = timesheetService
         .getPeriods()
-        .find((item) => item.startDate === "2026-06-01" && item.endDate === "2026-06-07");
+        .find((item) => item.startDate === "2026-06-01" && item.endDate === "2026-06-30");
       if (!period) throw new Error("The browser test timesheet period was not generated.");
       const timesheet = await timesheetService.getOrCreateTimesheetAsync(
         "employee-omar",

@@ -33,7 +33,10 @@ test("HR dashboard setup: connections, retry, shortcuts and mobile", async ({ pa
     "href",
     /#section=setup$/,
   );
-  await expect(setup.getByRole("link", { name: "Company setup" })).toHaveCount(0);
+  await expect(setup.getByRole("link", { name: "Company setup" })).toHaveAttribute(
+    "href",
+    "/staff/settings?section=org",
+  );
   await page.setViewportSize({ width: 390, height: 844 });
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
@@ -56,7 +59,7 @@ test("HR dashboard setup: connections, retry, shortcuts and mobile", async ({ pa
   await page.reload();
   await expect(page.getByRole("heading", { name: "People overview", exact: true })).toBeVisible();
   await expect(setup).toHaveCount(0);
-  await page.goto("/staff/requests?view=organisation");
+  await page.goto("/staff/settings?section=connections");
   await page.getByRole("button", { name: "Show setup on dashboard" }).click();
   await expect(page.getByRole("button", { name: "Show setup on dashboard" })).toHaveCount(0);
   await page.goto("/staff");
