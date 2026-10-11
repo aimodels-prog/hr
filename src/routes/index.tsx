@@ -13,6 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -53,7 +54,8 @@ const expertise = [
 function CareerPortal() {
   const vacancyService = useMemo(() => new VacancyService(), []);
   const [openVacancies, setOpenVacancies] = useState<Vacancy[]>([]);
-  const [vacanciesReady, setVacanciesReady] = useState(false);
+  const [vacanciesState, setVacanciesState] = useState<"loading" | "ready" | "error">("loading");
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [query, setQuery] = useState("");
   const [department, setDepartment] = useState("all");
   const [location, setLocation] = useState("all");
@@ -62,7 +64,7 @@ function CareerPortal() {
   useEffect(() => {
     let cancelled = false;
     vacancyService
-      .hydrateCompatibilityCache()
+      .hydrateCompatibilityCache(undefined, () => !cancelled)
       .then(() => {
         if (cancelled) return;
         setOpenVacancies(
@@ -71,17 +73,20 @@ function CareerPortal() {
             .list()
             .filter((vacancy) => vacancy.status === "Open"),
         );
+        setVacanciesState("ready");
       })
       .catch(() => {
-        if (!cancelled) setOpenVacancies([]);
-      })
-      .finally(() => {
-        if (!cancelled) setVacanciesReady(true);
+        if (!cancelled) setVacanciesState("error");
       });
     return () => {
       cancelled = true;
     };
-  }, [vacancyService]);
+  }, [vacancyService, loadAttempt]);
+
+  const retryVacancies = () => {
+    setVacanciesState("loading");
+    setLoadAttempt((attempt) => attempt + 1);
+  };
 
   const departments = useMemo(
     () => Array.from(new Set(openVacancies.map((vacancy) => vacancy.department))),
@@ -232,13 +237,13 @@ function CareerPortal() {
                 <h2 className="mt-4 text-4xl font-normal tracking-[-0.035em] sm:text-6xl">
                   Open positions
                 </h2>
-                <p className="mt-4 text-slate-600" aria-live="polite">
-                  {vacanciesReady
+                <p className="mt-4 min-h-6 text-slate-600" aria-live="polite">
+                  {vacanciesState === "ready"
                     ? `${openVacancies.length} ${openVacancies.length === 1 ? "position" : "positions"} currently available`
-                    : "Loading current positions"}
+                    : null}
                 </p>
               </div>
-              {openVacancies.length > 0 && (
+              {vacanciesState === "ready" && openVacancies.length > 0 && (
                 <div className="relative">
                   <label htmlFor="career-search" className="sr-only">
                     Search open positions
@@ -255,7 +260,7 @@ function CareerPortal() {
               )}
             </div>
 
-            {openVacancies.length > 0 && (
+            {vacanciesState === "ready" && openVacancies.length > 0 && (
               <div className="mt-12 grid gap-3 border-y border-slate-300 py-5 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto]">
                 <Select value={department} onValueChange={setDepartment}>
                   <SelectTrigger aria-label="Filter by discipline" className="h-11 bg-white">
@@ -308,8 +313,36 @@ function CareerPortal() {
               </div>
             )}
 
-            <div className="mt-6 border-t border-slate-300">
-              {filtered.length > 0 ? (
+            <div
+              className="mt-6 border-t border-slate-300"
+              aria-busy={vacanciesState === "loading"}
+            >
+              {vacanciesState === "loading" ? (
+                <div
+                  role="status"
+                  aria-label="Loading open positions"
+                  className="border-b border-slate-300"
+                >
+                  <div
+                    aria-hidden="true"
+                    className="grid min-h-36 gap-5 py-7 sm:px-5 lg:grid-cols-[1fr_1fr_auto] lg:items-center"
+                  >
+                    <div className="space-y-3">
+                      <Skeleton className="h-5 w-24 motion-reduce:animate-none" />
+                      <Skeleton className="h-7 w-3/4 motion-reduce:animate-none" />
+                    </div>
+                    <Skeleton className="h-5 w-48 max-w-full motion-reduce:animate-none" />
+                    <Skeleton className="h-4 w-28 motion-reduce:animate-none" />
+                  </div>
+                </div>
+              ) : vacanciesState === "error" ? (
+                <div role="alert" className="border-b border-slate-300 py-16">
+                  <h3 className="text-2xl font-medium">Positions could not be loaded.</h3>
+                  <Button variant="outline" onClick={retryVacancies} className="mt-6 rounded-none">
+                    Try again
+                  </Button>
+                </div>
+              ) : filtered.length > 0 ? (
                 filtered.map((job) => (
                   <article
                     key={job.id}
