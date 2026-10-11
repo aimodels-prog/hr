@@ -46,6 +46,8 @@ export const vacancies = pgTable(
       .notNull()
       .references(() => organisations.id, { onDelete: "restrict" }),
     title: text("title").notNull(),
+    /** Assigned once by PostgreSQL; title edits must not break shared links. */
+    publicSlug: text("public_slug").notNull().default(""),
     departmentId: uuid("department_id")
       .notNull()
       .references(() => departments.id, { onDelete: "restrict" }),
@@ -91,9 +93,14 @@ export const vacancies = pgTable(
     acceptsEmployeeReferrals: boolean("accepts_employee_referrals").notNull().default(true),
   },
   (table) => [
+    uniqueIndex("vacancies_org_public_slug_unique").on(table.organisationId, table.publicSlug),
     index("vacancies_org_status_idx").on(table.organisationId, table.status),
     index("vacancies_org_hiring_manager_idx").on(table.organisationId, table.hiringManagerId),
     check("vacancies_title_not_blank", sql`btrim(${table.title}) <> ''`),
+    check(
+      "vacancies_public_slug_valid",
+      sql`${table.publicSlug} ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND ${table.publicSlug} <> 'applied'`,
+    ),
     check("vacancies_applicant_count_non_negative", sql`${table.applicantCount} >= 0`),
     check("vacancies_headcount_positive", sql`${table.headcount} > 0`),
     check(

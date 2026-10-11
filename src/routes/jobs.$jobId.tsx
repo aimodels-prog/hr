@@ -30,11 +30,12 @@ import { VacancyService } from "@/lib/data/vacancy-service";
 import { initializeApplicationData } from "@/lib/data/application-data";
 import type { Vacancy } from "@/lib/data/types";
 import { getSupportedCvMimeType } from "@/lib/data/cv-file-validation";
+import { findPublicVacancy } from "@/lib/data/public-vacancy-link";
 
 export const Route = createFileRoute("/jobs/$jobId")({
   head: ({ params }) => {
     const vacancyService = new VacancyService();
-    const job = vacancyService.getVacancyRepository().getById(params.jobId);
+    const job = findPublicVacancy(vacancyService.getVacancyRepository().list(), params.jobId);
     const title = job ? `${job.title} | Careers at VIA International` : "Role | VIA International";
     const description = job?.summary ?? "Open role at VIA International.";
     return {
@@ -88,8 +89,17 @@ function JobDetail() {
       .hydrateCompatibilityCache()
       .then(() => {
         if (cancelled) return;
-        const vacancy = service.getVacancyRepository().getById(jobId);
-        setJob(vacancy?.status === "Open" ? vacancy : null);
+        const vacancy = findPublicVacancy(service.getVacancyRepository().list(), jobId);
+        setJob(vacancy ?? null);
+        if (vacancy?.publicSlug && jobId !== vacancy.publicSlug) {
+          void navigate({
+            to: "/jobs/$jobId",
+            params: { jobId: vacancy.publicSlug },
+            search: true,
+            hash: true,
+            replace: true,
+          });
+        }
       })
       .catch(() => {
         if (!cancelled) setJob(null);
@@ -97,7 +107,7 @@ function JobDetail() {
     return () => {
       cancelled = true;
     };
-  }, [jobId]);
+  }, [jobId, navigate]);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),

@@ -512,6 +512,13 @@
       "when": 1791717381255,
       "tag": "0072_retire_profile_approvals",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1791723424754,
+      "tag": "0073_vacancy_public_slugs",
+      "breakpoints": true
     }
   ]
 }

@@ -112,6 +112,7 @@ export async function listVacanciesForOrganisation(
     return {
       id: row.id,
       databaseId: row.id,
+      publicSlug: row.publicSlug,
       createdAt: iso(row.createdAt)!,
       createdBy: row.createdBy,
       updatedAt: iso(row.updatedAt)!,
@@ -156,6 +157,7 @@ export type VacancyDraftInput = Omit<
   Vacancy,
   | "id"
   | "databaseId"
+  | "publicSlug"
   | "createdAt"
   | "createdBy"
   | "updatedAt"

@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import type { Vacancy } from "@/lib/data/types";
 import { VacancyService } from "@/lib/data/vacancy-service";
+import { getPublicVacancyReference } from "@/lib/data/public-vacancy-link";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -316,7 +317,7 @@ function CareerPortal() {
                   >
                     <Link
                       to="/jobs/$jobId"
-                      params={{ jobId: job.id }}
+                      params={{ jobId: getPublicVacancyReference(job) }}
                       className="grid gap-5 py-7 transition-colors hover:bg-white focus-visible:bg-white sm:px-5 lg:grid-cols-[1fr_1fr_auto] lg:items-center"
                     >
                       <div>

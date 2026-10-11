@@ -259,6 +259,8 @@ export type VacancyStatus =
 export interface Vacancy extends BaseRecord {
   /** PostgreSQL UUID used while recruitment records still retain legacy browser IDs. */
   databaseId?: string;
+  /** Stable, readable reference for public careers links. */
+  publicSlug?: string;
   title: string;
   department: string;
   location: string;
