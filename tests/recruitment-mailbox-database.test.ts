@@ -84,7 +84,9 @@ test(
       VALUES(${employee},${org},'MAIL-1','HR','HR',${user + "@example.com"},${dept},${position},${location},${employment},'Active','2026-01-01',${user},${user})`;
       await sql`INSERT INTO users(id,organisation_id,employee_id,display_name,workspace_email,status,created_by,updated_by) VALUES(${user},${org},${employee},'HR',${user + "@example.com"},'Active',${user},${user})`;
       await sql`INSERT INTO user_roles(organisation_id,user_id,role_id,assigned_by) SELECT ${org},${user},id,${user} FROM roles WHERE code='HR'`;
-      await sql`INSERT INTO recruitment_mailboxes(id,organisation_id,email,refresh_token_encrypted,connected_by,label_id,since_date,paused) VALUES(${mailbox},${org},'hr@example.com',${encryptSensitiveJson("test-refresh")},${user},'Label_CVs','2026-01-01',true)`;
+      // PostgreSQL timestamps have finer precision than JavaScript's clock. Keep fixture work
+      // unambiguously due so a sub-millisecond boundary cannot skip the worker being tested.
+      await sql`INSERT INTO recruitment_mailboxes(id,organisation_id,email,refresh_token_encrypted,connected_by,label_id,since_date,paused,next_sync_at) VALUES(${mailbox},${org},'hr@example.com',${encryptSensitiveJson("test-refresh")},${user},'Label_CVs','2026-01-01',true,now()-interval '1 second')`;
       assert.equal(await processRecruitmentMailbox(), false);
       await sql`UPDATE recruitment_mailboxes SET paused=false WHERE id=${mailbox}`;
       assert.equal(await processRecruitmentMailbox(), true);
@@ -92,8 +94,8 @@ test(
       const [entry] =
         await sql`SELECT status FROM recruitment_mailbox_messages WHERE mailbox_id=${mailbox}`;
       assert.equal(entry!.status, "No CV attachment");
-      await sql`UPDATE recruitment_mailboxes SET next_sync_at=now() WHERE id=${mailbox}`;
-      await processRecruitmentMailbox();
+      await sql`UPDATE recruitment_mailboxes SET next_sync_at=now()-interval '1 second' WHERE id=${mailbox}`;
+      assert.equal(await processRecruitmentMailbox(), true);
       assert.equal(messageReads, 1, "the saved message is not downloaded again");
       includeCv = true;
       let imports = 0;
@@ -111,14 +113,14 @@ test(
         assert.equal(input.isRecommended, false);
         return { cvRecordId: input.intakeId!, jobId: randomUUID() };
       };
-      await sql`UPDATE recruitment_mailboxes SET next_sync_at=now() WHERE id=${mailbox}`;
-      await processRecruitmentMailbox(importer);
-      await sql`UPDATE recruitment_mailboxes SET next_sync_at=now() WHERE id=${mailbox}`;
-      await processRecruitmentMailbox(importer);
+      await sql`UPDATE recruitment_mailboxes SET next_sync_at=now()-interval '1 second' WHERE id=${mailbox}`;
+      assert.equal(await processRecruitmentMailbox(importer), true);
+      await sql`UPDATE recruitment_mailboxes SET next_sync_at=now()-interval '1 second' WHERE id=${mailbox}`;
+      assert.equal(await processRecruitmentMailbox(importer), true);
       assert.equal(imports, 1, "original CV delivered once to the intake pipeline");
       await sql`DELETE FROM user_roles WHERE user_id=${user}`;
-      await sql`UPDATE recruitment_mailboxes SET next_sync_at=now() WHERE id=${mailbox}`;
-      await processRecruitmentMailbox();
+      await sql`UPDATE recruitment_mailboxes SET next_sync_at=now()-interval '1 second' WHERE id=${mailbox}`;
+      assert.equal(await processRecruitmentMailbox(), true);
       const [paused] =
         await sql`SELECT paused,last_error FROM recruitment_mailboxes WHERE id=${mailbox}`;
       assert.equal(paused!.paused, true);
