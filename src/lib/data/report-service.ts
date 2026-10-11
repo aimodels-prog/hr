@@ -128,9 +128,13 @@ export class ReportService {
     return deleteReportViewFn({ data: { actor: this.getServerActor(), viewId } });
   }
 
-  async exportReportFromDatabase(reportId: string, filters: ReportFilters) {
+  async exportReportFromDatabase(
+    reportId: string,
+    filters: ReportFilters,
+    format: "csv" | "xlsx" = "csv",
+  ) {
     return exportReportCsvFn({
-      data: { actor: this.getServerActor(), reportId, filters },
+      data: { actor: this.getServerActor(), reportId, filters, format },
     });
   }
 

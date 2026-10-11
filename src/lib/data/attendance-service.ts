@@ -1,5 +1,6 @@
 import { SYSTEM_CONTEXT } from "./types.ts";
 import { recordedAttendanceHours } from "./recorded-hours.ts";
+import type { SpreadsheetTable } from "./excel-export.ts";
 import { validateSiteVisitPlan } from "./site-visit.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { EmployeeService } from "./employee-service.ts";
@@ -994,6 +995,15 @@ export class AttendanceService {
     context: ActorContext,
     employeeIds?: string[],
   ): Promise<string> {
+    const table = await this.exportTableAsync(date, context, employeeIds);
+    return [table.headers, ...table.rows].map((row) => row.map(escapeCsv).join(",")).join("\n");
+  }
+
+  async exportTableAsync(
+    date: string,
+    context: ActorContext,
+    employeeIds?: string[],
+  ): Promise<SpreadsheetTable> {
     const { exportAttendanceRecordsFn } = await import("../server-functions/attendance.server.ts");
     const records = await exportAttendanceRecordsFn({
       data: {
@@ -1024,26 +1034,22 @@ export class AttendanceService {
       "Source",
       "Work Mode",
     ];
-    return [
-      headers.join(","),
-      ...records.map((record) =>
-        [
-          record.employeeNumber,
-          record.employeeName,
-          record.date,
-          record.officeExceptionLabel ?? record.status,
-          record.clockInAt,
-          record.clockOutAt,
-          record.breakMinutes,
-          recordedAttendanceHours(record),
-          record.location,
-          record.source,
-          record.workMode,
-        ]
-          .map(escapeCsv)
-          .join(","),
-      ),
-    ].join("\n");
+    return {
+      headers,
+      rows: records.map((record) => [
+        record.employeeNumber,
+        record.employeeName,
+        record.date,
+        record.officeExceptionLabel ?? record.status,
+        record.clockInAt,
+        record.clockOutAt,
+        record.breakMinutes,
+        recordedAttendanceHours(record),
+        record.location,
+        record.source,
+        record.workMode,
+      ]),
+    };
   }
 
   getAllRecords(context: ActorContext): AttendanceRecord[] {

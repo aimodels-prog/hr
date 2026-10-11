@@ -44,6 +44,7 @@ const formSchema = z
     workEmail: z.string().email("Invalid email address"),
     personalEmail: z.string().email("Invalid email address").optional().or(z.literal("")),
     phone: z.string().optional(),
+    whatsappNumber: z.string().trim().max(50).optional(),
     employeeNumber: z.string().min(1, "Employee number is required"),
     department: z.string().min(1, "Department is required"),
     position: z.string().min(1, "Position is required"),
@@ -123,6 +124,7 @@ function NewEmployeeRoute() {
       workEmail: "",
       personalEmail: "",
       phone: "",
+      whatsappNumber: "",
       employeeNumber: "",
       department: "",
       position: "",
@@ -345,6 +347,19 @@ function NewEmployeeRoute() {
                       <FormLabel>Phone Number</FormLabel>
                       <FormControl>
                         <Input placeholder="+1 234 567 8900" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="whatsappNumber"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>WhatsApp number</FormLabel>
+                      <FormControl>
+                        <Input type="tel" placeholder="Include country code" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>

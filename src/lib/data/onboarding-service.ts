@@ -214,6 +214,7 @@ export class OnboardingService {
             nationality: string;
             maritalStatus: "Single" | "Married" | "Divorced" | "Widowed";
             phone: string;
+            whatsappNumber?: string;
             personalEmail?: string;
             address: string;
             emergencyContacts: Array<{ name: string; relationship: string; phone: string }>;

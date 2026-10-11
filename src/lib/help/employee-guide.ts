@@ -73,7 +73,7 @@ export const employeeGuide = [
     ],
     "In-app notifications appear under the bell. Eligible updates are also emailed to your work email when HR has enabled company email sending.",
     [
-      "Check that each uploaded document shows the correct dependant's name. If a new dependant is missing from the list, ask HR whether your personal-details change is still awaiting approval.",
+      "Save new dependants in Personal Details first. They appear immediately in the document upload list. Check that each file shows the correct dependant's name.",
     ],
     "document:view_self",
   ),
@@ -126,11 +126,13 @@ export const employeeGuide = [
     "Update your profile and personal details",
     "Keep your contact and emergency information accurate.",
     "/staff/me/profile",
-    "phone address emergency dependants joining date visa work permit position department supervisor location",
+    "phone whatsapp number address emergency dependants joining date visa work permit position department supervisor location",
     [
       "Open My Details → My Profile and choose the relevant section.",
       "Update the personal fields you are allowed to change, such as your contact address and emergency contacts.",
+      "Phone Number and WhatsApp number are separate fields. Include the country code for WhatsApp; it may be the same as your phone number or a different number. You can leave WhatsApp blank. Contact details save immediately without HR approval.",
       "Review your entries carefully and save. Reopen the section to check the saved information.",
+      "To correct your legal name, birth date, nationality or passport/ID details, upload a passport or ID in Documents and ask HR to confirm the correction while verifying it. Replacements also need verification; the previous approved document remains current until HR approves the new one.",
       "Ask HR to correct your joining date, supervisor, VIA email, department, position, location, employment type or visa/work-permit information.",
     ],
     "Confirmed employment information appears on your profile for you to read. HR-controlled information is not an employee-editable form.",

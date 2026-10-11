@@ -12,6 +12,8 @@ import { organisationDate } from "@/lib/data/approved-leave";
 import { SettingsService } from "@/lib/data/settings-service";
 import { AttendanceTrackingSettings } from "@/components/attendance/tracking-settings";
 import { OfficeExceptions } from "@/components/attendance/office-exceptions";
+import { ExportMenu } from "@/components/ui/export-menu";
+import { downloadExcel, downloadCsvExport } from "@/lib/data/excel-export";
 import { VIA_OFFICE_SCHEDULE } from "@/lib/data/office-schedule";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
@@ -19,7 +21,6 @@ import {
   CheckCircle2,
   Copy,
   DoorOpen,
-  Download,
   FileUp,
   LocateFixed,
   MapPin,
@@ -113,15 +114,6 @@ function getBrowserLocation(): Promise<GeoReading> {
       { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
     );
   });
-}
-
-function downloadText(filename: string, content: string, mimeType: string) {
-  const url = URL.createObjectURL(new Blob([content], { type: mimeType }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
 }
 
 function AttendanceAdminRoute() {
@@ -828,28 +820,32 @@ function AttendanceAdminContent() {
                 </SelectContent>
               </Select>
             </div>
-            <Button
-              variant="outline"
-              onClick={async () => {
+            <ExportMenu
+              label="Export Date"
+              onExport={async (exportFormat) => {
                 try {
-                  downloadText(
-                    `via-attendance-${date}.csv`,
-                    await attendanceService.exportCsvAsync(
-                      date,
-                      actorContext,
-                      currentRows.map((row) => row.employee.id),
-                    ),
-                    "text/csv",
-                  );
+                  const employeeIds = currentRows.map((row) => row.employee.id);
+                  const fileName = `via-attendance-${date}`;
+                  if (exportFormat === "xlsx") {
+                    await downloadExcel(
+                      await attendanceService.exportTableAsync(date, actorContext, employeeIds),
+                      fileName,
+                      "Attendance",
+                    );
+                  } else {
+                    await downloadCsvExport(
+                      await attendanceService.exportCsvAsync(date, actorContext, employeeIds),
+                      `${fileName}.csv`,
+                      "csv",
+                    );
+                  }
                 } catch (error) {
                   toast.error(
                     error instanceof Error ? error.message : "Could not export attendance.",
                   );
                 }
               }}
-            >
-              <Download className="mr-2 h-4 w-4" /> Export Date
-            </Button>
+            />
           </div>
           <Card className="overflow-hidden">
             <div className="overflow-x-auto">

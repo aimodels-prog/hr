@@ -554,6 +554,7 @@ export async function exportReportCsvInDatabase(
   reportId: string,
   filters: ReportFilters,
   actor: AuditActorContext,
+  format: "csv" | "xlsx" = "csv",
 ) {
   const report = await generateReportInDatabase(organisationId, reportId, filters, actor);
   const csv = [
@@ -577,7 +578,7 @@ export async function exportReportCsvInDatabase(
       entityId: actor.userId!,
       afterSummary: {
         reportId,
-        format: "CSV",
+        format: format === "xlsx" ? "Excel" : "CSV",
         rowCount: report.rows.length,
         filters,
         ...(report.leaveYears ? { leaveYear: report.leaveYears.selectedYear } : {}),
@@ -589,6 +590,15 @@ export async function exportReportCsvInDatabase(
     fileName: `via-${reportId}${report.leaveYears ? `-${report.leaveYears.selectedYear}` : ""}-${new Date().toISOString().slice(0, 10)}.csv`,
     csv,
     rowCount: report.rows.length,
+    ...(format === "xlsx"
+      ? {
+          table: {
+            headers: report.columns.map((column) => column.label),
+            rows: report.rows.map((row) => report.columns.map((column) => row[column.key])),
+            sheetName: report.name,
+          },
+        }
+      : {}),
   };
 }
 

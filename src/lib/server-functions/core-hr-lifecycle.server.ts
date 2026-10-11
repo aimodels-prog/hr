@@ -1,5 +1,6 @@
 import { uploadBytesSchema, decodeUploadBytes } from "../upload-payload.ts";
 import { dependantSchema } from "../data/dependants.ts";
+import { verifiedProfileIdentitySchema } from "../data/profile-edit-policy.ts";
 import { documentAnswersSchema } from "../data/document-requirements.ts";
 import { createServerFn } from "@tanstack/react-start";
 import * as z from "zod";
@@ -453,6 +454,7 @@ const PersonalOnboardingDetails = z
     nationality: z.string().trim().min(1).max(100),
     maritalStatus: z.enum(["Single", "Married", "Divorced", "Widowed"]),
     phone: z.string().trim().min(3).max(50),
+    whatsappNumber: z.string().trim().max(50).optional(),
     personalEmail: z.string().email().optional(),
     address: z.string().trim().min(3).max(1000),
     homeCountryPhone: z.string().trim().max(50).optional(),
@@ -898,6 +900,7 @@ export const replaceEmployeeDocumentFn = createServerFn({ method: "POST" })
 
 const DecideEmployeeDocument = z
   .object({
+    profileIdentity: verifiedProfileIdentitySchema.optional(),
     answers: documentAnswersSchema.optional(),
     actor: Actor,
     documentId: z.string().uuid(),
@@ -923,6 +926,7 @@ export const decideEmployeeDocumentFn = createServerFn({ method: "POST" })
       data.reason,
       verified.actor,
       {
+        ...(data.profileIdentity ? { profileIdentity: data.profileIdentity } : {}),
         answers: data.answers,
         ...(data.documentNumber ? { documentNumber: data.documentNumber } : {}),
         ...(data.issueDate ? { issueDate: data.issueDate } : {}),

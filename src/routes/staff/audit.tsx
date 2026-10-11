@@ -4,9 +4,9 @@ import { PageHeader } from "@/components/ui/page-header";
 import { AuditViewer } from "@/components/audit-viewer";
 import { useCurrentUser, RequireRole } from "@/lib/auth";
 import { exportAuditCsvFn } from "@/lib/server-functions/audit.server";
-import { Button } from "@/components/ui/button";
-import { Download } from "lucide-react";
 import { toast } from "sonner";
+import { ExportMenu } from "@/components/ui/export-menu";
+import { downloadCsvExport, type ExportFormat } from "@/lib/data/excel-export";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,6 +26,7 @@ function GlobalAuditRoute() {
   const currentUser = useCurrentUser();
   const [isExporting, setIsExporting] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("xlsx");
 
   if (!currentUser) return null;
 
@@ -43,15 +44,7 @@ function GlobalAuditRoute() {
         },
       });
 
-      const blob = new Blob([exported.csv], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.setAttribute("href", url);
-      link.setAttribute("download", exported.fileName);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      await downloadCsvExport(exported.csv, exported.fileName, exportFormat);
 
       toast.success(`${exported.rowCount} audit records downloaded`);
       setExportDialogOpen(false);
@@ -72,15 +65,13 @@ function GlobalAuditRoute() {
             title="Audit History"
             description="Review who changed, approved or accessed information across VIA HR System."
           />
-          <Button
-            variant="outline"
-            onClick={() => setExportDialogOpen(true)}
+          <ExportMenu
+            onExport={async (format) => {
+              setExportFormat(format);
+              setExportDialogOpen(true);
+            }}
             disabled={isExporting}
-            className="self-start sm:self-auto"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Export CSV
-          </Button>
+          />
         </div>
 
         <div className="flex-1 min-h-[600px]">
@@ -99,7 +90,11 @@ function GlobalAuditRoute() {
             <AlertDialogFooter>
               <AlertDialogCancel disabled={isExporting}>Cancel</AlertDialogCancel>
               <AlertDialogAction onClick={handleExport} disabled={isExporting}>
-                {isExporting ? "Preparing file…" : "Download CSV"}
+                {isExporting
+                  ? "Preparing file…"
+                  : exportFormat === "xlsx"
+                    ? "Download Excel"
+                    : "Download CSV"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

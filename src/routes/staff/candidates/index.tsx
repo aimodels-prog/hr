@@ -1,10 +1,11 @@
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { CvZipDownload } from "@/components/candidates/cv-zip-download";
+import { ExportMenu } from "@/components/ui/export-menu";
+import { downloadCsvExport, type ExportFormat } from "@/lib/data/excel-export";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
 import {
   Search,
-  Download,
   Filter,
   User,
   AlertTriangle,
@@ -305,7 +306,7 @@ function CandidatesIndex() {
     );
   });
 
-  const exportCsv = async () => {
+  const exportCsv = async (format: ExportFormat) => {
     let csvContent: string;
     try {
       csvContent = await candidateService.exportCandidatesAsync(
@@ -317,14 +318,11 @@ function CandidatesIndex() {
       return;
     }
 
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.setAttribute("download", `candidates_export_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    await downloadCsvExport(
+      csvContent,
+      `candidates_export_${new Date().toISOString().slice(0, 10)}.csv`,
+      format,
+    );
   };
 
   return (
@@ -350,9 +348,7 @@ function CandidatesIndex() {
               <LayoutGrid className="h-4 w-4" />
             </ToggleGroupItem>
           </ToggleGroup>
-          <Button variant="outline" onClick={exportCsv}>
-            <Download className="mr-2 h-4 w-4" /> Export CSV
-          </Button>
+          <ExportMenu onExport={exportCsv} />
           <CvZipDownload candidateIds={filteredCandidates.map((candidate) => candidate.id)} />
           <Button variant="outline" asChild>
             <Link to="/staff/candidates/intake">

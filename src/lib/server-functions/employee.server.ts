@@ -171,8 +171,9 @@ const EmployeeInput = z
     legalName: z.string().trim().min(1).max(200),
     preferredName: z.string().trim().min(1).max(120),
     workEmail: z.string().trim().email(),
-    personalEmail: z.string().trim().email().optional(),
+    personalEmail: z.string().trim().email().or(z.literal("")).optional(),
     phone: z.string().trim().max(40).optional(),
+    whatsappNumber: z.string().trim().max(50).optional(),
     department: z.string().trim().min(1),
     position: z.string().trim().min(1),
     grade: z.string().trim().optional(),
@@ -448,6 +449,7 @@ export const cancelScheduledEmploymentChangeFn = createServerFn({ method: "POST"
 const PersonalChangesInput = EmployeeInput.pick({
   preferredName: true,
   phone: true,
+  whatsappNumber: true,
   personalEmail: true,
   address: true,
   homeCountryPhone: true,

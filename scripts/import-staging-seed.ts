@@ -567,6 +567,7 @@ async function execute(mode: ImportMode): Promise<{
       workEmail: normalized(item.workEmail),
       personalEmail: item.personalEmail ? normalized(item.personalEmail) : null,
       phone: item.phone ?? null,
+      whatsappNumber: item.whatsappNumber ?? null,
       departmentId: masterId("departments", item.department),
       positionId: masterId("positions", item.position),
       gradeId: item.grade ? masterId("grades", item.grade) : null,

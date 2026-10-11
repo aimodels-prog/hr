@@ -55,6 +55,7 @@ import {
   RefreshCcw,
   FileWarning,
   AlertCircle,
+  Edit2,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
@@ -64,6 +65,8 @@ import { useCurrentUser } from "@/lib/auth";
 import { format } from "date-fns";
 import type { EmployeeDocument, DocumentVisibility } from "@/lib/data/types";
 import { DocumentService } from "@/lib/data/document-service";
+import { EmployeeService } from "@/lib/data/employee-service";
+import { verifiedProfileIdentitySchema } from "@/lib/data/profile-edit-policy";
 import { StatusBadge } from "@/components/ui/status-badge";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -110,9 +113,11 @@ const documentSchema = z
 export function DocumentsTab({
   employeeId,
   dependants = [],
+  onChanged,
 }: {
   employeeId: string;
   dependants?: import("@/lib/data/dependants").Dependant[];
+  onChanged?: () => void;
 }) {
   const currentUser = useCurrentUser();
   const documentService = useMemo(() => new DocumentService(), []);
@@ -136,6 +141,15 @@ export function DocumentsTab({
   const [rejectingDocumentId, setRejectingDocumentId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
   const [verifyingDocument, setVerifyingDocument] = useState<EmployeeDocument | null>(null);
+  const [updateIdentity, setUpdateIdentity] = useState(false);
+  const [identityCorrectionOnly, setIdentityCorrectionOnly] = useState(false);
+  const verificationInFlight = useRef(false);
+  const [verificationBusy, setVerificationBusy] = useState(false);
+  const [profileIdentity, setProfileIdentity] = useState({
+    legalName: "",
+    dateOfBirth: "",
+    nationality: "",
+  });
   const [verificationDetails, setVerificationDetails] = useState({
     documentNumber: "",
     issuingAuthority: "",
@@ -357,11 +371,19 @@ export function DocumentsTab({
     }
   };
 
-  const handleVerify = async (id: string, approve: boolean) => {
+  const handleVerify = async (id: string, approve: boolean, identityOnly = false) => {
     try {
       if (approve) {
         const document = allDocs.find((item) => item.id === id);
         if (!document) throw new Error("The document could not be loaded.");
+        const profile = new EmployeeService().getById(employeeId, currentUser.getActorContext());
+        setIdentityCorrectionOnly(identityOnly);
+        setUpdateIdentity(identityOnly);
+        setProfileIdentity({
+          legalName: profile?.legalName ?? "",
+          dateOfBirth: profile?.dateOfBirth ?? "",
+          nationality: profile?.nationality ?? "",
+        });
         setVerificationDetails({
           documentNumber: document.documentNumber || "",
           issuingAuthority: document.issuingAuthority || "",
@@ -384,8 +406,30 @@ export function DocumentsTab({
     }
   };
 
-  const confirmVerification = async () => {
+  const performVerification = async () => {
     if (!verifyingDocument) return;
+    if (identityCorrectionOnly) {
+      try {
+        await documentService.verifyDocumentAsync(
+          verifyingDocument.id,
+          getActorContext("Identity corrected using approved document"),
+          {
+            profileIdentity: verifiedProfileIdentitySchema.parse({
+              legalName: profileIdentity.legalName,
+              ...(profileIdentity.dateOfBirth ? { dateOfBirth: profileIdentity.dateOfBirth } : {}),
+              ...(profileIdentity.nationality ? { nationality: profileIdentity.nationality } : {}),
+            }),
+          },
+        );
+        toast.success("Identity details updated");
+        setVerifyingDocument(null);
+        setRefresh((value) => value + 1);
+        onChanged?.();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Identity could not be updated");
+      }
+      return;
+    }
     const requiresOfficialDetails =
       !!verifyingDocument.dependantId ||
       ["passport", "visa", "national_id", "work_permit"].includes(verifyingDocument.type);
@@ -413,6 +457,19 @@ export function DocumentsTab({
         verifyingDocument.id,
         getActorContext("HR verified the document and confirmed its official details"),
         {
+          ...(updateIdentity
+            ? {
+                profileIdentity: verifiedProfileIdentitySchema.parse({
+                  legalName: profileIdentity.legalName,
+                  ...(profileIdentity.dateOfBirth
+                    ? { dateOfBirth: profileIdentity.dateOfBirth }
+                    : {}),
+                  ...(profileIdentity.nationality
+                    ? { nationality: profileIdentity.nationality }
+                    : {}),
+                }),
+              }
+            : {}),
           ...(verifyingDocument.requirementSnapshot
             ? {
                 answers: validateDocumentAnswers(
@@ -441,8 +498,21 @@ export function DocumentsTab({
       toast.success("Document details saved and verified");
       setVerifyingDocument(null);
       setRefresh((value) => value + 1);
+      onChanged?.();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Verification action failed");
+    }
+  };
+
+  const confirmVerification = async () => {
+    if (verificationInFlight.current) return;
+    verificationInFlight.current = true;
+    setVerificationBusy(true);
+    try {
+      await performVerification();
+    } finally {
+      verificationInFlight.current = false;
+      setVerificationBusy(false);
     }
   };
 
@@ -981,6 +1051,20 @@ export function DocumentsTab({
                     >
                       <Download className="h-4 w-4" />
                     </Button>
+                    {isHrOrAdmin &&
+                      !isSelf &&
+                      doc.status === "Valid" &&
+                      !doc.dependantId &&
+                      ["passport", "national_id"].includes(doc.type) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Correct profile identity"
+                          onClick={() => handleVerify(doc.id, true, true)}
+                        >
+                          <Edit2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     {isHrOrAdmin && doc.computedStatus === "Pending Verification" && (
                       <>
                         <Button
@@ -1014,130 +1098,189 @@ export function DocumentsTab({
       <Dialog
         open={Boolean(verifyingDocument)}
         onOpenChange={(open) => {
-          if (!open) setVerifyingDocument(null);
+          if (!open && !verificationInFlight.current) setVerifyingDocument(null);
         }}
       >
-        <DialogContent className="sm:max-w-xl">
+        <DialogContent className="sm:max-w-xl max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Complete and verify document</DialogTitle>
+            <DialogTitle>
+              {identityCorrectionOnly ? "Correct profile identity" : "Complete and verify document"}
+            </DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Check the uploaded file, enter the official details, then verify the record. These
-            details are completed by HR.
-          </p>
-          {verifyingDocument?.requirementSnapshot && (
-            <RequirementFields
-              requirement={verifyingDocument.requirementSnapshot}
-              answers={reviewAnswers}
-              onChange={setReviewAnswers}
-              isHr
-            />
-          )}
-          <div
-            hidden={!!verifyingDocument?.requirementSnapshot}
-            className="grid gap-4 sm:grid-cols-2"
-          >
-            <div className="space-y-1.5">
-              <Label htmlFor="verify-document-number">Document number *</Label>
-              <Input
-                id="verify-document-number"
-                value={verificationDetails.documentNumber}
-                onChange={(event) =>
-                  setVerificationDetails((current) => ({
-                    ...current,
-                    documentNumber: event.target.value,
-                  }))
-                }
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="verify-authority">Issuing authority *</Label>
-              <Input
-                id="verify-authority"
-                value={verificationDetails.issuingAuthority}
-                onChange={(event) =>
-                  setVerificationDetails((current) => ({
-                    ...current,
-                    issuingAuthority: event.target.value,
-                  }))
-                }
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="verify-country">Issuing country</Label>
-              <Input
-                id="verify-country"
-                value={verificationDetails.issuingCountry}
-                onChange={(event) =>
-                  setVerificationDetails((current) => ({
-                    ...current,
-                    issuingCountry: event.target.value,
-                  }))
-                }
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Access</Label>
-              <Select
-                value={verificationDetails.visibility}
-                onValueChange={(value: DocumentVisibility) =>
-                  setVerificationDetails((current) => ({ ...current, visibility: value }))
-                }
+          {!identityCorrectionOnly && (
+            <>
+              <p className="text-sm text-muted-foreground">
+                Check the uploaded file, enter the official details, then verify the record. These
+                details are completed by HR.
+              </p>
+              {verifyingDocument?.requirementSnapshot && (
+                <RequirementFields
+                  requirement={verifyingDocument.requirementSnapshot}
+                  answers={reviewAnswers}
+                  onChange={setReviewAnswers}
+                  isHr
+                />
+              )}
+              <div
+                hidden={!!verifyingDocument?.requirementSnapshot}
+                className="grid gap-4 sm:grid-cols-2"
               >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Restricted">Restricted to employee and HR</SelectItem>
-                  <SelectItem value="Public">Standard employee document</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="verify-document-number">Document number *</Label>
+                  <Input
+                    id="verify-document-number"
+                    value={verificationDetails.documentNumber}
+                    onChange={(event) =>
+                      setVerificationDetails((current) => ({
+                        ...current,
+                        documentNumber: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="verify-authority">Issuing authority *</Label>
+                  <Input
+                    id="verify-authority"
+                    value={verificationDetails.issuingAuthority}
+                    onChange={(event) =>
+                      setVerificationDetails((current) => ({
+                        ...current,
+                        issuingAuthority: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="verify-country">Issuing country</Label>
+                  <Input
+                    id="verify-country"
+                    value={verificationDetails.issuingCountry}
+                    onChange={(event) =>
+                      setVerificationDetails((current) => ({
+                        ...current,
+                        issuingCountry: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Access</Label>
+                  <Select
+                    value={verificationDetails.visibility}
+                    onValueChange={(value: DocumentVisibility) =>
+                      setVerificationDetails((current) => ({ ...current, visibility: value }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Restricted">Restricted to employee and HR</SelectItem>
+                      <SelectItem value="Public">Standard employee document</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="verify-issue-date">Issue date *</Label>
+                  <Input
+                    id="verify-issue-date"
+                    type="date"
+                    value={verificationDetails.issueDate}
+                    onChange={(event) =>
+                      setVerificationDetails((current) => ({
+                        ...current,
+                        issueDate: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="verify-expiry-date">Expiry date *</Label>
+                  <Input
+                    id="verify-expiry-date"
+                    type="date"
+                    min={verificationDetails.issueDate || undefined}
+                    value={verificationDetails.expiryDate}
+                    onChange={(event) =>
+                      setVerificationDetails((current) => ({
+                        ...current,
+                        expiryDate: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+            </>
+          )}
+          {verifyingDocument &&
+            !verifyingDocument.dependantId &&
+            ["passport", "national_id"].includes(verifyingDocument.type) && (
+              <div className="space-y-3 rounded-lg border p-4">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  {!identityCorrectionOnly && (
+                    <input
+                      type="checkbox"
+                      checked={updateIdentity}
+                      onChange={(event) => setUpdateIdentity(event.target.checked)}
+                    />
+                  )}
+                  Update profile identity from this document
+                </label>
+                {updateIdentity && (
+                  <>
+                    <p className="text-sm text-muted-foreground">
+                      Enter only details confirmed by the uploaded passport or ID.
+                    </p>
+                    {(
+                      [
+                        ["legalName", "Legal name"],
+                        ["dateOfBirth", "Date of birth"],
+                        ["nationality", "Nationality"],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <div key={key} className="space-y-1.5">
+                        <Label htmlFor={`verify-identity-${key}`}>{label}</Label>
+                        <Input
+                          id={`verify-identity-${key}`}
+                          type={key === "dateOfBirth" ? "date" : "text"}
+                          value={profileIdentity[key]}
+                          onChange={(event) =>
+                            setProfileIdentity((current) => ({
+                              ...current,
+                              [key]: event.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+          {!identityCorrectionOnly && (
             <div className="space-y-1.5">
-              <Label htmlFor="verify-issue-date">Issue date *</Label>
-              <Input
-                id="verify-issue-date"
-                type="date"
-                value={verificationDetails.issueDate}
+              <Label htmlFor="verify-notes">HR notes</Label>
+              <Textarea
+                id="verify-notes"
+                value={verificationDetails.notes}
                 onChange={(event) =>
-                  setVerificationDetails((current) => ({
-                    ...current,
-                    issueDate: event.target.value,
-                  }))
+                  setVerificationDetails((current) => ({ ...current, notes: event.target.value }))
                 }
               />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="verify-expiry-date">Expiry date *</Label>
-              <Input
-                id="verify-expiry-date"
-                type="date"
-                min={verificationDetails.issueDate || undefined}
-                value={verificationDetails.expiryDate}
-                onChange={(event) =>
-                  setVerificationDetails((current) => ({
-                    ...current,
-                    expiryDate: event.target.value,
-                  }))
-                }
-              />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="verify-notes">HR notes</Label>
-            <Textarea
-              id="verify-notes"
-              value={verificationDetails.notes}
-              onChange={(event) =>
-                setVerificationDetails((current) => ({ ...current, notes: event.target.value }))
-              }
-            />
-          </div>
+          )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setVerifyingDocument(null)}>
+            <Button
+              variant="outline"
+              disabled={verificationBusy}
+              onClick={() => setVerifyingDocument(null)}
+            >
               Cancel
             </Button>
-            <Button onClick={() => confirmVerification()}>Save and verify</Button>
+            <Button disabled={verificationBusy} onClick={() => confirmVerification()}>
+              {identityCorrectionOnly ? "Save identity correction" : "Save and verify"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

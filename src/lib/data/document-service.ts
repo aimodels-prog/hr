@@ -551,6 +551,7 @@ export class DocumentService {
     documentId: string,
     actorContext: ActorContext,
     details?: {
+      profileIdentity?: import("./profile-edit-policy.ts").VerifiedProfileIdentity;
       answers?: Record<string, string>;
       documentNumber?: string;
       issueDate?: string;
@@ -572,6 +573,8 @@ export class DocumentService {
       },
     });
     await this.hydrateCompatibilityCache(actorContext);
+    const { EmployeeService } = await import("./employee-service.ts");
+    await new EmployeeService().hydrateCompatibilityCache(actorContext);
   }
 
   rejectDocument(documentId: string, reason: string, actorContext: ActorContext) {

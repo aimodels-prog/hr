@@ -28,6 +28,7 @@ export type EmployeeStandardField =
   | "workEmail"
   | "personalEmail"
   | "phone"
+  | "whatsappNumber"
   | "department"
   | "position"
   | "grade"
@@ -58,6 +59,7 @@ export const STANDARD_FIELDS: { id: EmployeeStandardField; label: string; requir
   { id: "status", label: "Initial Status (Onboarding / Active / Probation)" },
   { id: "personalEmail", label: "Personal Email" },
   { id: "phone", label: "Phone" },
+  { id: "whatsappNumber", label: "WhatsApp number" },
   { id: "grade", label: "Grade" },
   { id: "probationEndDate", label: "Probation End Date" },
   { id: "nationality", label: "Nationality" },
@@ -81,6 +83,7 @@ export interface NormalizedEmployeeRow {
   workEmail: string;
   personalEmail?: string | undefined;
   phone?: string | undefined;
+  whatsappNumber?: string | undefined;
   department: string;
   position: string;
   grade?: string | undefined;
@@ -251,6 +254,7 @@ export class EmployeeImportService {
     tryMatch("personalEmail", ["personalemail"]);
     tryMatch("legalName", ["legalname", "fullname", "name"]);
     tryMatch("preferredName", ["preferredname", "displayname", "knownas", "nickname"]);
+    tryMatch("whatsappNumber", ["whatsappnumber", "whatsappphone", "whatsapp"]);
     tryMatch("phone", ["phonenumber", "mobilenumber", "phone", "mobile", "contact"]);
     tryMatch("department", ["department", "dept"]);
     tryMatch("position", ["position", "jobtitle", "title", "role"]);
@@ -347,6 +351,7 @@ export class EmployeeImportService {
           workEmail,
           personalEmail: getVal("personalEmail") || undefined,
           phone: getVal("phone") || undefined,
+          whatsappNumber: getVal("whatsappNumber") || undefined,
           department,
           position,
           grade: getVal("grade") || undefined,
@@ -588,6 +593,7 @@ export class EmployeeImportService {
             workEmail: entry.row.workEmail,
             personalEmail: entry.row.personalEmail,
             phone: entry.row.phone,
+            whatsappNumber: entry.row.whatsappNumber,
             department: entry.row.department,
             position: entry.row.position,
             grade: entry.row.grade,

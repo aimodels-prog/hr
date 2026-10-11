@@ -142,7 +142,10 @@ test(
         /reason/,
       );
       await updatePersonalRecordInDatabase(org, employeeId, { phone: "12345678" }, "", hr);
-      await updatePersonalRecordInDatabase(org, employeeId, { nationality: "Omani" }, "", hr);
+      await assert.rejects(
+        updatePersonalRecordInDatabase(org, employeeId, { nationality: "Omani" }, "", hr),
+        /identity details must be verified/i,
+      );
       const [routineAudit] =
         await query`SELECT reason FROM audit_events WHERE entity_id=${employeeId} AND action='update-personal-record' LIMIT 1`;
       assert.equal(routineAudit!.reason, "Personal details updated by HR");

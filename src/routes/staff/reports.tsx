@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Bookmark, Download, Printer, Filter, BarChart3, Trash2, Loader2 } from "lucide-react";
+import { Bookmark, Printer, Filter, BarChart3, Trash2, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -39,6 +39,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { ExportMenu } from "@/components/ui/export-menu";
+import { downloadExcel, downloadCsvExport, type ExportFormat } from "@/lib/data/excel-export";
 
 export const Route = createFileRoute("/staff/reports")({
   component: ReportsRoute,
@@ -199,17 +201,22 @@ function ReportsDashboard() {
     toast.success("Saved view removed");
   };
 
-  const handleExport = async () => {
+  const handleExport = async (format: ExportFormat) => {
     if (!reportData || !activeReportId || !appliedFilters) return;
     try {
       setIsExporting(true);
-      const exported = await reportService.exportReportFromDatabase(activeReportId, appliedFilters);
-      const url = URL.createObjectURL(new Blob([exported.csv], { type: "text/csv;charset=utf-8" }));
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = exported.fileName;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      const exported = await reportService.exportReportFromDatabase(
+        activeReportId,
+        appliedFilters,
+        format,
+      );
+      if (format === "xlsx") {
+        if (!exported.table)
+          throw new Error("The Excel export is unavailable. Refresh and try again.");
+        await downloadExcel(exported.table, exported.fileName, exported.table.sheetName);
+      } else {
+        await downloadCsvExport(exported.csv, exported.fileName, "csv");
+      }
       toast.success(`${exported.rowCount} records exported`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "The report could not be exported.");
@@ -339,19 +346,7 @@ function ReportsDashboard() {
                     <Button variant="outline" size="sm" onClick={() => window.print()}>
                       <Printer className="w-4 h-4 mr-2" /> Print
                     </Button>
-                    <Button
-                      variant="default"
-                      size="sm"
-                      onClick={handleExport}
-                      disabled={isExporting || isLoading}
-                    >
-                      {isExporting ? (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      ) : (
-                        <Download className="mr-2 h-4 w-4" />
-                      )}
-                      Export CSV
-                    </Button>
+                    <ExportMenu onExport={handleExport} disabled={isExporting || isLoading} />
                   </div>
                 </div>
 

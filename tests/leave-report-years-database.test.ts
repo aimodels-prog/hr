@@ -298,6 +298,22 @@ test(
             actor,
           );
           assert.equal(all.rowCount, 3);
+          const excel = await exportReportCsvInDatabase(
+            org,
+            "leave_balances",
+            filters,
+            actor,
+            "xlsx",
+          );
+          assert.equal(excel.rowCount, 1);
+          assert.ok(excel.table);
+          assert.equal(excel.table.headers[0], "Employee");
+          const yearIndex = excel.table.headers.indexOf("Leave Year");
+          assert.equal(excel.table.rows[0]![yearIndex], 2025);
+          const [excelEvent] = await query`select after_summary from audit_events
+            where organisation_id=${org} and module='reports' and action='export'
+            and after_summary->>'format'='Excel' limit 1`;
+          assert.equal(excelEvent!.after_summary.filters.leaveYear, 2025);
         },
       );
       await t.test(
@@ -306,6 +322,16 @@ test(
           for (const year of [1999, 2201, 2026.5, NaN])
             await assert.rejects(report("leave_balances", { leaveYear: year }), /valid leave year/);
           for (const role of ["Employee", "Accounts"] as const) {
+            await assert.rejects(
+              exportReportCsvInDatabase(
+                org,
+                "leave_balances",
+                defaults,
+                { ...actor, activeRole: role, roles: [role] },
+                "xlsx",
+              ),
+              /permission/i,
+            );
             await assert.rejects(
               generateReportInDatabase(
                 org,

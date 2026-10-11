@@ -75,6 +75,7 @@ const personalSchema = z.object({
   nationality: z.string().min(1, "Nationality is required"),
   maritalStatus: z.enum(["Single", "Married", "Divorced", "Widowed"]),
   phone: z.string().min(1, "A contact phone number is required"),
+  whatsappNumber: z.string().trim().max(50).optional(),
   personalEmail: z.string().email("Invalid email").optional().or(z.literal("")),
   address: z.string().min(1, "Residential address is required"),
   homeCountryPhone: z.string().max(50).optional(),
@@ -381,6 +382,7 @@ export function SelfServiceOnboardingForm({
                     nationality: changes.nationality,
                     maritalStatus: changes.maritalStatus,
                     phone: changes.phone,
+                    whatsappNumber: changes.whatsappNumber || "",
                     ...(changes.personalEmail ? { personalEmail: changes.personalEmail } : {}),
                     address: changes.address,
                     ...(changes.homeCountryPhone
@@ -758,6 +760,7 @@ function PersonalDetailsSection({
       nationality: employee.nationality || "",
       maritalStatus: employee.maritalStatus || "Single",
       phone: employee.phone || "",
+      whatsappNumber: employee.whatsappNumber || "",
       personalEmail: employee.personalEmail || "",
       address: employee.address || "",
       homeCountryPhone: employee.homeCountryPhone || "",
@@ -867,7 +870,20 @@ function PersonalDetailsSection({
                 <FormItem>
                   <FormLabel>Personal Phone *</FormLabel>
                   <FormControl>
-                    <Input {...field} />
+                    <Input type="tel" autoComplete="tel" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="whatsappNumber"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>WhatsApp number</FormLabel>
+                  <FormControl>
+                    <Input type="tel" placeholder="Include country code" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

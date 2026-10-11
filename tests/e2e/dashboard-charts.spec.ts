@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { WorkforceAnalytics } from "../../src/lib/data/workforce-analytics";
 import postgres from "postgres";
+import readExcelFile from "read-excel-file/node";
 
 async function preview(page: Page, role: "HR" | "Employee") {
   await page.evaluate(
@@ -98,6 +99,16 @@ test("HR opens daily clock-ins from the dashboard and can review another date", 
     await expect(omar.getByRole("cell").nth(2)).toHaveText("08:30");
     await expect(omar.getByRole("cell").nth(3)).toHaveText("—");
     await expect(rows).not.toContainText("Not tracked");
+    await page.getByRole("button", { name: "Export Date", exact: true }).click();
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByRole("menuitem", { name: "Excel (.xlsx)", exact: true }).click();
+    const file = await downloadPromise;
+    expect(file.suggestedFilename()).toBe(`via-attendance-${futureDate}.xlsx`);
+    const workbook = await readExcelFile((await file.path())!);
+    const exported = workbook[0]!.data;
+    expect(exported).toHaveLength(2);
+    expect(exported[0]).toContain("Worked Hours");
+    expect(exported[1]![1]).toBe("Omar");
     await page.getByRole("combobox", { name: "Attendance status", exact: true }).click();
     await page.getByRole("option", { name: "All", exact: true }).click();
     await expect.poll(() => rows.getByRole("row").count()).toBeGreaterThan(1);

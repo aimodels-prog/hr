@@ -76,6 +76,7 @@ export const employees = pgTable(
     workEmail: text("work_email").notNull(),
     personalEmail: text("personal_email"),
     phone: text("phone"),
+    whatsappNumber: text("whatsapp_number"),
     departmentId: uuid("department_id")
       .notNull()
       .references(() => departments.id, { onDelete: "restrict", onUpdate: "cascade" }),

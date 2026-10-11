@@ -106,15 +106,15 @@ async function recordProfileSetupCompletion(
         organisationId,
         recipientUserId: recipient.userId,
         type: "employee_profile_ready",
-        title: "Employee profile ready for review",
-        message: `${employee.preferredName}'s first-time profile and required employee documents are ready for review.`,
+        title: "Employee setup completed",
+        message: `${employee.preferredName} completed their personal details. Check any documents awaiting verification. Personal contact details do not need approval.`,
         priority: "High",
         status: "Unread",
         deduplicationKey: `employee-profile-ready-${employee.id}`,
         link: {
           entityType: "employee",
           entityId: employee.id,
-          path: `/staff/employees/${employee.id}`,
+          path: `/staff/employees/${employee.id}#documents`,
         },
         createdBy: actor.userId,
         updatedBy: actor.userId,
@@ -1409,6 +1409,7 @@ export async function saveOnboardingSelfServiceInDatabase(
           nationality: string;
           maritalStatus: "Single" | "Married" | "Divorced" | "Widowed";
           phone: string;
+          whatsappNumber?: string;
           personalEmail?: string;
           address: string;
           homeCountryPhone?: string;
@@ -1702,6 +1703,28 @@ export async function saveOnboardingSelfServiceInDatabase(
       }
     } else if (input.kind === "personal_details") {
       const details = input.details;
+      const [verifiedIdentityDocument] = await tx
+        .select({ id: employeeDocuments.id })
+        .from(employeeDocuments)
+        .where(
+          and(
+            eq(employeeDocuments.organisationId, organisationId),
+            eq(employeeDocuments.employeeId, row.employee.id),
+            inArray(employeeDocuments.type, ["passport", "national_id"]),
+            eq(employeeDocuments.status, "Valid"),
+            isNull(employeeDocuments.dependantId),
+            isNull(employeeDocuments.archivedAt),
+          ),
+        )
+        .limit(1);
+      if (
+        verifiedIdentityDocument &&
+        ((row.employee.dateOfBirth && row.employee.dateOfBirth !== details.dateOfBirth) ||
+          (row.employee.nationality && row.employee.nationality !== details.nationality.trim()))
+      )
+        throw new Error(
+          "Identity details have already been verified. HR must confirm corrections with your passport or ID.",
+        );
       if (
         !details.dateOfBirth ||
         !details.nationality.trim() ||
@@ -1723,6 +1746,9 @@ export async function saveOnboardingSelfServiceInDatabase(
           nationality: details.nationality.trim(),
           maritalStatus: details.maritalStatus,
           phone: details.phone.trim(),
+          ...(details.whatsappNumber !== undefined
+            ? { whatsappNumber: details.whatsappNumber.trim() || null }
+            : {}),
           personalEmail: details.personalEmail?.trim().toLowerCase() || null,
           address: details.address.trim(),
           homeCountryPhone: details.homeCountryPhone?.trim() || null,

@@ -90,7 +90,12 @@ export const generateReportFn = createServerFn({ method: "POST" })
 export const exportReportCsvFn = createServerFn({ method: "POST" })
   .validator((input) =>
     z
-      .object({ actor: Actor, reportId: z.string().min(1), filters: Filters })
+      .object({
+        actor: Actor,
+        reportId: z.string().min(1),
+        filters: Filters,
+        format: z.enum(["csv", "xlsx"]).optional(),
+      })
       .strict()
       .parse(input),
   )
@@ -101,6 +106,7 @@ export const exportReportCsvFn = createServerFn({ method: "POST" })
       data.reportId,
       data.filters,
       verified.actor,
+      data.format,
     );
   });
 

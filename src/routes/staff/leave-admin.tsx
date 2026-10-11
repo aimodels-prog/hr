@@ -36,9 +36,11 @@ import { EmployeeService } from "@/lib/data/employee-service";
 import { getMasterDataRepository } from "@/lib/data/master-data";
 import type { MasterRecord } from "@/lib/data/types";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
-import { Download, Calendar as CalendarIcon, List, RotateCw } from "lucide-react";
+import { Calendar as CalendarIcon, List, RotateCw } from "lucide-react";
 import { startOfMonth, endOfMonth, eachDayOfInterval, format, parseISO, isSameDay } from "date-fns";
 import { toast } from "sonner";
+import { ExportMenu } from "@/components/ui/export-menu";
+import { downloadCsvExport, type ExportFormat } from "@/lib/data/excel-export";
 import { LeaveBalanceRegister } from "@/components/leave/leave-balance-register";
 import { SickLeaveBackdateDialog } from "@/components/leave/sick-leave-backdate-dialog";
 import { WalletCards } from "lucide-react";
@@ -141,7 +143,7 @@ function LeaveAdminContent() {
     }
   };
 
-  const handleExportData = async () => {
+  const handleExportData = async (format: ExportFormat) => {
     try {
       const selectedEmployee = employees.find((person) => person.id === employeeFilter.employeeId);
       if (employeeFilter.employeeId && !selectedEmployee)
@@ -158,15 +160,7 @@ function LeaveAdminContent() {
         },
         currentUser.getActorContext(),
       );
-      const blob = new Blob([result.content], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", result.fileName);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      await downloadCsvExport(result.content, result.fileName, format, ["Working Days"]);
       toast.success(`${result.rowCount} leave record(s) exported.`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Leave records could not be exported.");
@@ -192,9 +186,7 @@ function LeaveAdminContent() {
               >
                 <RotateCw className="mr-2 h-4 w-4" /> Run Annual Rollover
               </Button>
-              <Button variant="outline" onClick={handleExportData}>
-                <Download className="mr-2 h-4 w-4" /> Export Data
-              </Button>
+              <ExportMenu label="Export Data" onExport={handleExportData} />
             </div>
           }
         />

@@ -41,6 +41,7 @@ export function personalReasonRequired(fields: string[]): boolean {
       ![
         "preferredName",
         "phone",
+        "whatsappNumber",
         "personalEmail",
         "address",
         "emergencyContacts",

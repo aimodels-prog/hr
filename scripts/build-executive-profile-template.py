@@ -131,6 +131,7 @@ sheet("People", "01 / PEOPLE", "Start here. One row per person. Green headings a
     ("Legal name", "Full name exactly as shown on passport or ID.", 30),
     ("Preferred name", "Name the person wants colleagues to use.", 23),
     ("Phone", "Include country code. Store as text, for example +968 followed by the number.", 23),
+    ("WhatsApp number", "Optional. Include country code; this can differ from the phone number.", 23),
     ("Personal email", "Optional personal email; do not substitute for work email.", 30),
     ("Already in app?", "Yes if there is already a profile, even if incomplete. Unknown: Not confirmed.", 22),
     ("Prepared by", "Name of HR or executive assistant who collected these details.", 26),

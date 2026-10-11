@@ -640,7 +640,7 @@ export const hrGuide = [
     "talent database pool fit role search skills experience contact tracker import candidate status notes",
     [
       "Open Candidate Pool and search using the role-relevant skills and experience available in the filters.",
-      "To download original CVs together, filter the Candidate Pool to the people you need, choose Download CVs (ZIP), review the file count and choose Download ZIP. All saved CV versions are included in separate folders, with their original contents unchanged. EXPORT-SUMMARY.txt lists candidates without a CV. Keep the page open until the download starts. For more than 250 MB, use smaller filtered groups. Export CSV downloads candidate details, not CV documents.",
+      "To download original CVs together, filter the Candidate Pool to the people you need, choose Download CVs (ZIP), review the file count and choose Download ZIP. All saved CV versions are included in separate folders, with their original contents unchanged. EXPORT-SUMMARY.txt lists candidates without a CV. Keep the page open until the download starts. For more than 250 MB, use smaller filtered groups. Export → Excel (.xlsx) or CSV (.csv) downloads candidate details, not CV documents.",
       "Open a potential match and review the current CV, previous applications and contact history.",
       "Use the supported vacancy or assessment action to consider the person for the new role.",
       "Use Contact Tracker to record outreach and follow-up so colleagues do not contact the person repeatedly.",
@@ -795,6 +795,8 @@ export const hrGuide = [
       "Open Employee Documents or the employee’s Documents section.",
       "Choose the correct employee and document type, then upload the file accepted by that form.",
       "Enter and review the relevant dates and information. Complete HR-owned visa and work-permit details yourself.",
+      "Contact details save immediately; there is no separate profile approval. To correct a legal name, birth date or nationality, verify the employee's passport or ID and choose Update profile identity from this document. The correction is saved together with verification. Passport and ID numbers are updated from the verified document, never from an unreviewed upload.",
+      "If the passport or ID is already approved, use Correct profile identity beside that document. Check the existing file and correct the profile without asking the employee to upload it again. The approved file and document details remain unchanged.",
       "Use Document Expiry to find records needing renewal and follow up with the responsible person.",
       "When replacing a document, use the supported replacement or new-version action so previous records are not confused with the current one.",
     ],
@@ -913,6 +915,7 @@ export const hrGuide = [
     "A report reflects its selected period and filters. Different leave years should not be combined as if they were one allowance.",
     [
       "For one person, start from the employee record or use the employee filter.",
+      "Choose Export → Excel (.xlsx) for an Excel workbook, or CSV (.csv) if another system needs that format. Attendance exports the selected date and visible employee selection. Reports can export attendance, monthly timesheets, leave and other records with the applied filters.",
       "Exporting information does not give the recipient permission to redistribute it.",
     ],
     "employee:view_all",

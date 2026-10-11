@@ -3,6 +3,10 @@ import { employeeDocumentLink } from "../../data/document-links.ts";
 import { getEmployeeRequirements } from "./document-requirements.repository.server.ts";
 import { validateDocumentAnswers, standardDocumentKeys } from "../../data/document-requirements.ts";
 import { assertHrDocumentWrite } from "../../data/hr-owned-fields.ts";
+import {
+  validateVerifiedProfileIdentity,
+  type VerifiedProfileIdentity,
+} from "../../data/profile-edit-policy.ts";
 
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
@@ -12,7 +16,13 @@ import { decryptSensitiveJson, encryptSensitiveJson } from "../encryption.server
 import { getDatabaseClient } from "../client.ts";
 import { readObjectFile, saveObjectFile } from "../object-storage.server.ts";
 import { documentVersions, employeeDocuments, fileMetadata } from "../schema/documents.ts";
-import { employees, roles, userRoles, users } from "../schema/employee.ts";
+import {
+  employees,
+  employeeSensitiveIdentifiers,
+  roles,
+  userRoles,
+  users,
+} from "../schema/employee.ts";
 import { auditEvents, notifications } from "../schema/system.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 
@@ -132,6 +142,7 @@ export async function decideEmployeeDocumentInDatabase(
   reason: string | undefined,
   actor: AuditActorContext,
   verifiedDetails?: {
+    profileIdentity?: VerifiedProfileIdentity;
     answers?: Record<string, string> | undefined;
     documentNumber?: string;
     issueDate?: string;
@@ -175,13 +186,34 @@ export async function decideEmployeeDocumentInDatabase(
       )
       .for("update")
       .limit(1);
-    if (!document || document.status !== "Pending Verification") {
+    const isIdentityCorrection =
+      document?.status === "Valid" && !!verifiedDetails?.profileIdentity && decision === "verify";
+    if (
+      !document ||
+      document.archivedAt ||
+      (document.status !== "Pending Verification" && !isIdentityCorrection)
+    ) {
       throw new Error("This document is not awaiting review.");
+    }
+    if (
+      isIdentityCorrection &&
+      Object.entries(verifiedDetails ?? {}).some(
+        ([key, value]) => key !== "profileIdentity" && value !== undefined,
+      )
+    ) {
+      throw new Error(
+        "An approved document cannot be edited. Confirm only the profile identity, or upload a replacement document.",
+      );
     }
     if (document.employeeId === actor.employeeId) {
       throw new Error("You cannot review your own employee document.");
     }
-    if (decision === "verify" && document.replacesDocumentId) {
+    const profileIdentity = validateVerifiedProfileIdentity(
+      verifiedDetails?.profileIdentity,
+      document,
+      decision,
+    );
+    if (!isIdentityCorrection && decision === "verify" && document.replacesDocumentId) {
       const [previous] = await tx
         .select()
         .from(employeeDocuments)
@@ -214,7 +246,7 @@ export async function decideEmployeeDocumentInDatabase(
         .where(eq(employeeDocuments.id, previous.id));
     }
     const configuredAnswers =
-      document.requirementSnapshot && decision === "verify"
+      !isIdentityCorrection && document.requirementSnapshot && decision === "verify"
         ? validateDocumentAnswers(
             document.requirementSnapshot,
             verifiedDetails?.answers ??
@@ -237,6 +269,7 @@ export async function decideEmployeeDocumentInDatabase(
     const expiryDate = verifiedDetails?.expiryDate;
     if (
       decision === "verify" &&
+      !isIdentityCorrection &&
       !document.requirementSnapshot &&
       (identityDocumentTypes.has(document.type) || !!document.dependantId) &&
       (!(documentNumber || document.documentNumberEncrypted) ||
@@ -253,39 +286,109 @@ export async function decideEmployeeDocumentInDatabase(
     if (finalIssueDate && finalExpiryDate && finalExpiryDate < finalIssueDate) {
       throw new Error("Expiry date cannot be before issue date.");
     }
-    await tx
-      .update(employeeDocuments)
-      .set({
-        status: decision === "verify" ? "Valid" : "Rejected",
-        ...(configuredAnswers ? { answersEncrypted: encryptSensitiveJson(configuredAnswers) } : {}),
-        rejectionReason: decision === "reject" ? reason!.trim() : null,
-        ...(decision === "verify" && documentNumber
-          ? { documentNumberEncrypted: encryptSensitiveJson(documentNumber) }
-          : {}),
-        ...(decision === "verify" && issueDate ? { issueDate } : {}),
-        ...(decision === "verify" && expiryDate ? { expiryDate } : {}),
-        ...(decision === "verify" && issuingAuthority ? { issuingAuthority } : {}),
-        ...(decision === "verify" && verifiedDetails?.issuingCountry?.trim()
-          ? { issuingCountry: verifiedDetails.issuingCountry.trim() }
-          : {}),
-        ...(decision === "verify" && verifiedDetails?.notes?.trim()
-          ? { notes: verifiedDetails.notes.trim() }
-          : {}),
-        ...(decision === "verify" && verifiedDetails?.visibility
-          ? {
-              visibility:
-                document.requirementSnapshot ||
-                document.dependantId ||
-                document.type.startsWith("insurance_")
-                  ? ("Restricted" as const)
-                  : verifiedDetails.visibility,
-            }
-          : {}),
-        updatedAt: new Date(),
-        updatedBy: actor.userId,
-        recordVersion: sql`${employeeDocuments.recordVersion} + 1`,
-      })
-      .where(eq(employeeDocuments.id, documentId));
+    // The document and any identity correction become effective together, never on upload.
+    if (
+      decision === "verify" &&
+      !document.dependantId &&
+      ["passport", "national_id"].includes(document.type)
+    ) {
+      const [employee] = await tx
+        .select()
+        .from(employees)
+        .where(
+          and(eq(employees.organisationId, organisationId), eq(employees.id, document.employeeId)),
+        )
+        .for("update")
+        .limit(1);
+      if (!employee) throw new Error("Employee not found.");
+      if (
+        isIdentityCorrection &&
+        !Object.entries(profileIdentity ?? {}).some(
+          ([field, value]) => employee[field as keyof VerifiedProfileIdentity] !== value,
+        )
+      ) {
+        throw new Error("No identity details were changed.");
+      }
+      if (profileIdentity) {
+        await tx
+          .update(employees)
+          .set({
+            ...profileIdentity,
+            updatedAt: new Date(),
+            updatedBy: actor.userId,
+            recordVersion: sql`${employees.recordVersion} + 1`,
+          })
+          .where(
+            and(
+              eq(employees.organisationId, organisationId),
+              eq(employees.id, document.employeeId),
+            ),
+          );
+      }
+      const encryptedNumber = documentNumber
+        ? encryptSensitiveJson(documentNumber)
+        : document.documentNumberEncrypted;
+      if (encryptedNumber && !isIdentityCorrection) {
+        const identifier =
+          document.type === "passport"
+            ? { passportNumberEncrypted: encryptedNumber }
+            : { nationalIdEncrypted: encryptedNumber };
+        await tx
+          .insert(employeeSensitiveIdentifiers)
+          .values({
+            organisationId,
+            employeeId: document.employeeId,
+            ...identifier,
+            createdBy: actor.userId!,
+            updatedBy: actor.userId!,
+          })
+          .onConflictDoUpdate({
+            target: employeeSensitiveIdentifiers.employeeId,
+            set: {
+              ...identifier,
+              updatedAt: new Date(),
+              updatedBy: actor.userId!,
+              recordVersion: sql`${employeeSensitiveIdentifiers.recordVersion} + 1`,
+            },
+          });
+      }
+    }
+    if (!isIdentityCorrection)
+      await tx
+        .update(employeeDocuments)
+        .set({
+          status: decision === "verify" ? "Valid" : "Rejected",
+          ...(configuredAnswers
+            ? { answersEncrypted: encryptSensitiveJson(configuredAnswers) }
+            : {}),
+          rejectionReason: decision === "reject" ? reason!.trim() : null,
+          ...(decision === "verify" && documentNumber
+            ? { documentNumberEncrypted: encryptSensitiveJson(documentNumber) }
+            : {}),
+          ...(decision === "verify" && issueDate ? { issueDate } : {}),
+          ...(decision === "verify" && expiryDate ? { expiryDate } : {}),
+          ...(decision === "verify" && issuingAuthority ? { issuingAuthority } : {}),
+          ...(decision === "verify" && verifiedDetails?.issuingCountry?.trim()
+            ? { issuingCountry: verifiedDetails.issuingCountry.trim() }
+            : {}),
+          ...(decision === "verify" && verifiedDetails?.notes?.trim()
+            ? { notes: verifiedDetails.notes.trim() }
+            : {}),
+          ...(decision === "verify" && verifiedDetails?.visibility
+            ? {
+                visibility:
+                  document.requirementSnapshot ||
+                  document.dependantId ||
+                  document.type.startsWith("insurance_")
+                    ? ("Restricted" as const)
+                    : verifiedDetails.visibility,
+              }
+            : {}),
+          updatedAt: new Date(),
+          updatedBy: actor.userId,
+          recordVersion: sql`${employeeDocuments.recordVersion} + 1`,
+        })
+        .where(eq(employeeDocuments.id, documentId));
     await tx.insert(auditEvents).values({
       organisationId,
       actorUserId: actor.userId,
@@ -293,13 +396,19 @@ export async function decideEmployeeDocumentInDatabase(
       actorDisplayName: actor.displayName,
       activeRole: actor.activeRole,
       actorRoles: actor.roles ?? [actor.activeRole],
-      action: decision,
+      action: isIdentityCorrection ? "identity-correction" : decision,
       module: "core-hr",
       entityType: "employee-document",
       entityId: documentId,
       beforeSummary: { status: document.status },
       afterSummary: {
         status: decision === "verify" ? "Valid" : "Rejected",
+        ...(profileIdentity
+          ? {
+              identityFieldsUpdated: Object.keys(profileIdentity),
+              identitySourceDocumentId: document.id,
+            }
+          : {}),
         ...(decision === "verify" ? { officialDetailsConfirmedByHr: true } : {}),
       },
       reason: decision === "reject" ? reason!.trim() : "Verified employee document",
@@ -322,13 +431,17 @@ export async function decideEmployeeDocumentInDatabase(
         .values({
           organisationId,
           recipientUserId: recipient.id,
-          type: `employee-document.${decision === "verify" ? "approved" : "rejected"}`,
-          title:
-            decision === "verify"
+          type: isIdentityCorrection
+            ? "employee-document.identity-updated"
+            : `employee-document.${decision === "verify" ? "approved" : "rejected"}`,
+          title: isIdentityCorrection
+            ? "Your identity details were updated"
+            : decision === "verify"
               ? "HR verified your document"
               : "Your document needs a replacement",
-          message:
-            decision === "verify"
+          message: isIdentityCorrection
+            ? "HR confirmed your profile identity using your approved passport or ID. Open your profile to check the updated details."
+            : decision === "verify"
               ? `HR verified your ${document.dependantId ? "dependant's " : ""}${document.dependantDocumentKind ?? document.type} document. No further action is needed for this upload.`
               : `HR could not verify your ${document.dependantId ? "dependant's " : ""}${document.dependantDocumentKind ?? document.type} document. Open Documents to read HR's explanation and upload a replacement.`,
           link: {
@@ -336,7 +449,7 @@ export async function decideEmployeeDocumentInDatabase(
             entityId: document.id,
             path: employeeDocumentLink(document.employeeId, document.id),
           },
-          deduplicationKey: `document-decision:${document.id}:${decision}`,
+          deduplicationKey: `document-decision:${document.id}:${isIdentityCorrection ? "identity:" + randomUUID() : decision}`,
           createdBy: actor.userId!,
           updatedBy: actor.userId!,
         })

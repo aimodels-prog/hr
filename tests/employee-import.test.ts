@@ -64,6 +64,23 @@ function row(overrides: Partial<NormalizedEmployeeRow> = {}): NormalizedEmployee
   };
 }
 
+test("employee import maps phone and WhatsApp independently, including WhatsApp-only files", () => {
+  const service = new EmployeeImportService();
+  const mapping = service.autoMapHeaders(["Phone", "WhatsApp number"]);
+  assert.equal(mapping.phone, "Phone");
+  assert.equal(mapping.whatsappNumber, "WhatsApp number");
+  const onlyWhatsApp = service.autoMapHeaders(["WhatsApp phone"]);
+  assert.equal(onlyWhatsApp.whatsappNumber, "WhatsApp phone");
+  assert.equal(onlyWhatsApp.phone, undefined);
+  const [person] = service.normalizeData(
+    [{ Name: "Contact Test", Phone: "+968 1111", "WhatsApp number": "+968 2222" }],
+    "People",
+    { ...mapping, legalName: "Name" },
+  );
+  assert.equal(person?.phone, "+968 1111");
+  assert.equal(person?.whatsappNumber, "+968 2222");
+});
+
 test("normalizeData flags missing required fields and unrecognized values instead of guessing", () => {
   const service = new EmployeeImportService();
 

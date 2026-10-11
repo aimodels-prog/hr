@@ -1248,6 +1248,7 @@ export function EmployeeProfileView({ employeeId: requestedEmployeeId }: { emplo
                 editRequested={personalEditRequested}
                 onEditOpened={() => setPersonalEditRequested(false)}
                 onChanged={() => setProfileVersion((value) => value + 1)}
+                onOpenDocuments={() => setActiveTab("documents")}
               />
             )}
           </TabsContent>
@@ -2153,7 +2154,11 @@ export function EmployeeProfileView({ employeeId: requestedEmployeeId }: { emplo
           </TabsContent>
 
           <TabsContent value="documents" className="mt-0">
-            <DocumentsTab employeeId={employeeId} dependants={employee?.dependants ?? []} />
+            <DocumentsTab
+              employeeId={employeeId}
+              dependants={employee?.dependants ?? []}
+              onChanged={() => setProfileVersion((value) => value + 1)}
+            />
           </TabsContent>
 
           <TabsContent value="leave" className="mt-0">

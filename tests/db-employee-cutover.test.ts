@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import postgres from "postgres";
@@ -19,6 +20,7 @@ import {
   listEmploymentHistoryForOrganisation,
   listProfileChangeRequestsForOrganisation,
   updateEmploymentRecordInDatabase,
+  updatePersonalRecordInDatabase,
   updateUserAccessInDatabase,
 } from "../src/lib/db/repositories/employee.repository.server.ts";
 import {
@@ -167,6 +169,7 @@ test(
         organisationId,
         {
           employeeNumber: "TEST-0002",
+          whatsappNumber: "+968 9000 3000",
           legalName: "PostgreSQL Employee",
           preferredName: "PostgreSQL",
           workEmail: `core-employee-${organisationId}@viahr.test`,
@@ -190,6 +193,12 @@ test(
         actor,
       );
 
+      assert.equal(
+        (await listEmployeesForOrganisation(organisationId)).find(
+          (p) => p.id === created.employeeId,
+        )?.whatsappNumber,
+        "+968 9000 3000",
+      );
       await sql`INSERT INTO employment_changes (organisation_id,employee_id,effective_date,field,old_value,new_value,reason,created_by,updated_by)
         VALUES (${organisationId},${created.employeeId},'2026-09-01','salary','100','200','Private salary reason',${managerUserId},${managerUserId})`;
       const selfActor = {
@@ -485,13 +494,90 @@ test(
       const passport = employeeDocuments.find((document) => document.id === passportId);
       assert.equal(passport?.documentNumber, "P-TEST-100");
       assert.equal(passport?.status, "Pending Verification");
+      assert.equal(
+        (await listEmployeesForOrganisation(organisationId)).find(
+          (p) => p.id === created.employeeId,
+        )?.passportNumber,
+        "PASSPORT-SECRET",
+        "Upload must not replace confirmed identity",
+      );
+      await assert.rejects(
+        decideEmployeeDocumentInDatabase(
+          organisationId,
+          passportId,
+          "reject",
+          "Incorrect document",
+          actor,
+          { profileIdentity: { legalName: "Must not apply" } },
+        ),
+        /only while verifying/i,
+      );
+      assert.equal(
+        (await listEmployeeDocumentsForActor(organisationId, actor)).find(
+          (d) => d.id === passportId,
+        )?.status,
+        "Pending Verification",
+      );
       await decideEmployeeDocumentInDatabase(
         organisationId,
         passportId,
         "verify",
         undefined,
         actor,
+        {
+          profileIdentity: {
+            legalName: "Corrected PostgreSQL Employee",
+            dateOfBirth: "1990-04-12",
+            nationality: "Omani",
+          },
+        },
       );
+      const verifiedIdentity = (await listEmployeesForOrganisation(organisationId)).find(
+        (p) => p.id === created.employeeId,
+      )!;
+      assert.equal(verifiedIdentity.legalName, "Corrected PostgreSQL Employee");
+      assert.equal(verifiedIdentity.dateOfBirth, "1990-04-12");
+      assert.equal(verifiedIdentity.nationality, "Omani");
+      assert.equal(verifiedIdentity.passportNumber, "P-TEST-100");
+      const [approvedDocumentBefore] =
+        await sql`SELECT * FROM employee_documents WHERE id=${passportId}`;
+      await assert.rejects(
+        decideEmployeeDocumentInDatabase(organisationId, passportId, "verify", undefined, actor, {
+          profileIdentity: { legalName: "Not applied" },
+          documentNumber: "UNAUTHORISED-EDIT",
+        }),
+        /approved document cannot be edited/i,
+      );
+      await decideEmployeeDocumentInDatabase(
+        organisationId,
+        passportId,
+        "verify",
+        undefined,
+        actor,
+        { profileIdentity: { legalName: "Corrected PostgreSQL Employee Final" } },
+      );
+      assert.equal(
+        (await listEmployeesForOrganisation(organisationId)).find(
+          (p) => p.id === created.employeeId,
+        )?.legalName,
+        "Corrected PostgreSQL Employee Final",
+      );
+      const [approvedDocumentAfter] =
+        await sql`SELECT * FROM employee_documents WHERE id=${passportId}`;
+      assert.deepEqual(
+        approvedDocumentAfter,
+        approvedDocumentBefore,
+        "Identity correction must not modify the approved document",
+      );
+      await assert.rejects(
+        decideEmployeeDocumentInDatabase(organisationId, passportId, "verify", undefined, actor, {
+          profileIdentity: { legalName: "Corrected PostgreSQL Employee Final" },
+        }),
+        /no identity details were changed/i,
+      );
+      const [rawIdentity] =
+        await sql`SELECT passport_number_encrypted FROM employee_sensitive_identifiers WHERE employee_id=${created.employeeId}`;
+      assert.doesNotMatch(String(rawIdentity?.passport_number_encrypted), /P-TEST-100/);
       employeeDocuments = await listEmployeeDocumentsForActor(organisationId, actor);
       assert.equal(
         employeeDocuments.find((document) => document.id === passportId)?.status,
@@ -760,6 +846,29 @@ test(
         (task) => task.selfServiceFormKey === "bank_details",
       );
       assert.ok(personalTask && bankTask);
+      await assert.rejects(
+        saveOnboardingSelfServiceInDatabase(
+          organisationId,
+          {
+            caseId: onboardingCaseId,
+            taskId: personalTask.id,
+            kind: "personal_details",
+            details: {
+              dateOfBirth: "1999-01-01",
+              gender: "Male",
+              nationality: "Omani",
+              maritalStatus: "Single",
+              phone: "+968 9000 1100",
+              address: "Test home address",
+              emergencyContacts: [
+                { name: "Family contact", relationship: "Sibling", phone: "+968 9000 1111" },
+              ],
+            },
+          },
+          employeeActor,
+        ),
+        /identity details have already been verified/i,
+      );
       await saveOnboardingSelfServiceInDatabase(
         organisationId,
         {
@@ -772,6 +881,7 @@ test(
             nationality: "Omani",
             maritalStatus: "Single",
             phone: "+968 9000 1100",
+            whatsappNumber: "+968 9000 3100",
             personalEmail: `personal-${organisationId}@viahr.test`,
             address: "Muscat, Oman",
             emergencyContacts: [
@@ -799,27 +909,119 @@ test(
       const [rawOnboardingBank] =
         await sql`SELECT encrypted_payload FROM employee_bank_details WHERE employee_id = ${created.employeeId}`;
       assert.doesNotMatch(String(rawOnboardingBank?.encrypted_payload), /1234567890/);
-      const requestId = await createProfileChangeRequestInDatabase(
+      await assert.rejects(
+        createProfileChangeRequestInDatabase(
+          organisationId,
+          created.employeeId,
+          { phone: "000" },
+          employeeActor,
+        ),
+        /save contact details directly/i,
+      );
+      await assert.rejects(
+        decideProfileChangeRequestInDatabase(organisationId, randomUUID(), "Approved", "", actor),
+        /save contact details directly/i,
+      );
+      const [beforeReviewNotifications] =
+        await sql`SELECT count(*)::int AS n FROM notifications WHERE organisation_id=${organisationId} AND type='profile.review-requested'`;
+      await updatePersonalRecordInDatabase(
         organisationId,
         created.employeeId,
-        { phone: "+968 9000 1000" },
+        { phone: "+968 9000 1000", whatsappNumber: "+968 9000 3200" },
+        "",
         employeeActor,
       );
-      await decideProfileChangeRequestInDatabase(
-        organisationId,
-        requestId,
-        "Approved",
-        "Identity checked by HR",
-        actor,
+      await assert.rejects(
+        updatePersonalRecordInDatabase(
+          organisationId,
+          managerEmployeeId,
+          { phone: "000" },
+          "",
+          employeeActor,
+        ),
+        /only your own/i,
       );
+      for (const changes of [
+        { nationality: "Unverified" },
+        { dateOfBirth: "1999-01-01" },
+        { salary: { baseMonthly: 9999, currency: "OMR" } },
+      ]) {
+        await assert.rejects(
+          updatePersonalRecordInDatabase(
+            organisationId,
+            created.employeeId,
+            changes,
+            "",
+            employeeActor,
+          ),
+          /identity details must be verified/i,
+        );
+      }
+      const [afterReviewNotifications] =
+        await sql`SELECT count(*)::int AS n FROM notifications WHERE organisation_id=${organisationId} AND type='profile.review-requested'`;
+      assert.equal(afterReviewNotifications?.n, beforeReviewNotifications?.n);
 
       const persistedEmployees = await listEmployeesForOrganisation(organisationId);
       const persisted = persistedEmployees.find((employee) => employee.id === created.employeeId);
       assert.equal(persisted?.weeklyHours, 37.5);
       assert.equal(persisted?.salary?.baseMonthly, 3500);
       assert.equal(persisted?.phone, "+968 9000 1000");
+      assert.equal(persisted?.whatsappNumber, "+968 9000 3200");
+      await updatePersonalRecordInDatabase(
+        organisationId,
+        created.employeeId,
+        { whatsappNumber: "+968 9000 3300" },
+        "",
+        actor,
+      );
+      assert.equal(
+        (await listEmployeesForOrganisation(organisationId)).find(
+          (p) => p.id === created.employeeId,
+        )?.whatsappNumber,
+        "+968 9000 3300",
+      );
+      await updatePersonalRecordInDatabase(
+        organisationId,
+        created.employeeId,
+        { whatsappNumber: "" },
+        "",
+        actor,
+      );
+      const cleared = (await listEmployeesForOrganisation(organisationId)).find(
+        (p) => p.id === created.employeeId,
+      );
+      assert.equal(cleared?.whatsappNumber, undefined);
+      assert.equal(cleared?.phone, "+968 9000 1000");
       const requests = await listProfileChangeRequestsForOrganisation(organisationId);
-      assert.equal(requests.find((request) => request.id === requestId)?.status, "Approved");
+      assert.equal(requests.length, 0, "Contact updates must not create profile approval requests");
+      // Exercise the data migration with a real legacy request, then roll back this fixture.
+      await assert.rejects(
+        sql.begin(async (tx) => {
+          const legacyId = randomUUID();
+          await tx`INSERT INTO profile_change_requests(id,organisation_id,employee_id,changes,status,requested_by,created_by,updated_by) VALUES (${legacyId},${organisationId},${created.employeeId},${JSON.stringify({ phone: "Outdated pending phone" })}::jsonb,'Pending',${created.userId},${created.userId},${created.userId})`;
+          await tx`INSERT INTO notifications(organisation_id,recipient_user_id,type,title,message,created_by,updated_by) VALUES (${organisationId},${managerUserId},'profile.review-requested','Review profile','Legacy request',${created.userId},${created.userId})`;
+          await tx.unsafe(
+            readFileSync(
+              new URL("../drizzle/0072_retire_profile_approvals.sql", import.meta.url),
+              "utf8",
+            ),
+          );
+          const [retired] =
+            await tx`SELECT archived_at FROM profile_change_requests WHERE id=${legacyId}`;
+          assert.ok(retired?.archived_at);
+          const [contact] = await tx`SELECT phone FROM employees WHERE id=${created.employeeId}`;
+          assert.equal(
+            contact?.phone,
+            "+968 9000 1000",
+            "Retirement must not apply stale pending changes",
+          );
+          const [notice] =
+            await tx`SELECT status FROM notifications WHERE organisation_id=${organisationId} AND type='profile.review-requested'`;
+          assert.equal(notice?.status, "Dismissed");
+          throw new Error("Legacy migration test rollback");
+        }),
+        /Legacy migration test rollback/,
+      );
 
       const [auditCount] = await sql`
         SELECT count(*)::int AS count FROM audit_events

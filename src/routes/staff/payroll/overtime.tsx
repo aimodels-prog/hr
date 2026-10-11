@@ -5,7 +5,6 @@ import {
   Banknote,
   CalendarCheck2,
   Clock3,
-  Download,
   Eye,
   FileCheck2,
   Loader2,
@@ -16,6 +15,8 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
+import { ExportMenu } from "@/components/ui/export-menu";
+import { downloadCsvExport, type ExportFormat } from "@/lib/data/excel-export";
 
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { OvertimeService } from "@/lib/data/overtime-service";
@@ -185,7 +186,7 @@ function OvertimeLedgerContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const exportCsv = async () => {
+  const exportCsv = async (format: ExportFormat) => {
     setIsExporting(true);
     try {
       const csv = await overtimeService.exportPayrollOvertimeLedgerCsvAsync(actorContext, {
@@ -195,14 +196,12 @@ function OvertimeLedgerContent() {
         ...(dateTo ? { dateTo } : {}),
         ...(payrollPeriodId !== "all" ? { payrollPeriodId } : {}),
       });
-      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `via-overtime-ledger-${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      await downloadCsvExport(
+        csv,
+        `via-overtime-ledger-${new Date().toISOString().slice(0, 10)}.csv`,
+        format,
+        ["Hours", "Approved Hours", "Rate", "Amount", "Payable Amount"],
+      );
       toast.success(
         `${filteredRows.length} overtime record${filteredRows.length === 1 ? "" : "s"} exported.`,
       );
@@ -249,14 +248,7 @@ function OvertimeLedgerContent() {
               <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
               Refresh
             </Button>
-            <Button onClick={exportCsv} disabled={isExporting || filteredRows.length === 0}>
-              {isExporting ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="mr-2 h-4 w-4" />
-              )}
-              Export CSV
-            </Button>
+            <ExportMenu onExport={exportCsv} disabled={isExporting || filteredRows.length === 0} />
           </div>
         }
       />

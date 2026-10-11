@@ -498,6 +498,20 @@
       "when": 1791300000005,
       "tag": "0070_attendance_record_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1791717381254,
+      "tag": "0071_employee_whatsapp_number",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1791717381255,
+      "tag": "0072_retire_profile_approvals",
+      "breakpoints": true
     }
   ]
 }

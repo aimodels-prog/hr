@@ -106,6 +106,7 @@ export interface Employee extends BaseRecord {
   workEmail: string;
   personalEmail?: string | undefined;
   phone?: string | undefined;
+  whatsappNumber?: string | undefined;
   department: string;
   position: string;
   grade?: string | undefined;

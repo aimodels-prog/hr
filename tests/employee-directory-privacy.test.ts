@@ -11,6 +11,7 @@ const employee: Employee = {
   id: "private-employee",
   lineManagerId: "manager",
   phone: "+000000000",
+  whatsappNumber: "+000000001",
   employmentReviewNote: "PRIVATE_HR_REVIEW",
   terminationReason: "PRIVATE_EXIT_REASON",
   proposedLineManagerEmail: "proposed.manager@via.example",
@@ -50,6 +51,7 @@ function viewer(role: Role, employeeId = "colleague"): CurrentUserContext {
 }
 
 const privatePersonnelFields = [
+  "whatsappNumber",
   "employmentReviewNote",
   "terminationReason",
   "proposedEmploymentDetails",

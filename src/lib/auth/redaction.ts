@@ -49,6 +49,7 @@ const EMPLOYEE_FIELD_ACCESS = {
   workspaceEmail: "directory",
   status: "directory",
   personalEmail: "personnel",
+  whatsappNumber: "personnel",
   address: "personnel",
   homeCountryPhone: "personnel",
   homeCountryAddress: "personnel",

@@ -111,86 +111,101 @@ function setup() {
   return { audit, notifications };
 }
 
-test("profile requests are self-only and cannot contain employment fields", () => {
-  const { audit } = setup();
-  const service = new EmployeeService();
-
-  const request = service.requestProfileChange(
-    "employee-omar",
-    { phone: "+971 50 555 0101" },
-    employee,
-  );
-  assert.equal(request.status, "Pending");
-
-  assert.throws(
-    () => service.requestProfileChange("employee-rana", { phone: "000" }, employee),
-    /only request changes to your own profile/i,
-  );
-  assert.equal(audit.list().at(-1)?.action, "access-denied");
-
-  setup();
-  const freshService = new EmployeeService();
-  assert.throws(
-    () => freshService.requestProfileChange("employee-omar", { status: "Archived" }, employee),
-    /personal and contact details only/i,
-  );
-});
-
-test("only active HR or Super Admin can decide personal-profile requests", () => {
+test("personal contacts save immediately without creating HR approval tasks", () => {
   const { notifications } = setup();
   const service = new EmployeeService();
-  const request = service.requestProfileChange(
+  const count = notifications.listForUser("user-rana").length;
+  service.updatePersonalRecord(
     "employee-omar",
-    { preferredName: "Omar R." },
+    {
+      phone: "+968 9000 5000",
+      address: "Updated address",
+      emergencyContacts: [{ name: "Family", relationship: "Sibling", phone: "+968 9000 2222" }],
+    },
+    "",
     employee,
   );
-  assert.ok(
-    notifications
-      .listForUser("user-rana")
-      .some((notification) => notification.link?.entityId === request.id),
-  );
-
-  assert.throws(
-    () => service.approveProfileChange(request.id, "Looks correct", manager),
-    /Only HR or a Super Admin/i,
-  );
-  service.approveProfileChange(request.id, "Identity checked", hr);
-  assert.equal(service.getById("employee-omar", SYSTEM_CONTEXT)?.preferredName, "Omar R.");
-  assert.ok(
-    notifications
-      .listForUser("user-omar")
-      .some((notification) => notification.title === "Profile update approved"),
-  );
+  assert.equal(service.getById("employee-omar", SYSTEM_CONTEXT)?.phone, "+968 9000 5000");
+  assert.equal(service.getProfileChangeRequests("employee-omar", employee).length, 0);
+  assert.equal(notifications.listForUser("user-rana").length, count);
 });
 
-test("HR cannot approve or reject their own profile change request", () => {
+test("personal editing cannot cross employee boundaries or change identity, employment or financial fields", () => {
   setup();
   const service = new EmployeeService();
-
-  const secondHr: ActorContext = {
-    actor: {
-      userId: "user-aisha",
-      employeeId: "employee-aisha",
-      displayName: "Aisha Al Habsi",
-      activeRole: "HR",
-      roles: ["Employee", "HR"],
-    },
-  };
-
-  const request = service.requestProfileChange("employee-rana", { preferredName: "Rana N." }, hr);
-
   assert.throws(
-    () => service.approveProfileChange(request.id, "Self-approved", hr),
-    /cannot approve your own profile change request/i,
+    () => service.updatePersonalRecord("employee-rana", { phone: "000" }, "", employee),
+    /only your own/i,
+  );
+  for (const changes of [
+    { dateOfBirth: "1990-01-01" },
+    { nationality: "Omani" },
+    { legalName: "Changed name" },
+    { passportNumber: "P-123" },
+    { status: "Archived" },
+    { salary: { baseMonthly: 2000, currency: "OMR" } },
+    { bankDetails: { bankName: "Test", accountNumber: "123", iban: "OM123" } },
+  ]) {
+    for (const actor of [employee, hr])
+      assert.throws(
+        () => service.updatePersonalRecord("employee-omar", changes, "", actor),
+        /identity details must be verified/i,
+      );
+  }
+});
+
+test("phone and WhatsApp save independently without approval, including clearing WhatsApp", () => {
+  setup();
+  const service = new EmployeeService();
+  const before = service.getById("employee-omar", SYSTEM_CONTEXT)!;
+  service.updatePersonalRecord(before.id, { whatsappNumber: "+968 9000 4321" }, "", employee);
+  assert.equal(service.getById(before.id, SYSTEM_CONTEXT)?.whatsappNumber, "+968 9000 4321");
+  assert.equal(service.getById(before.id, SYSTEM_CONTEXT)?.phone, before.phone);
+  assert.equal(
+    service.getDirectoryEmployees(employee).find((p) => p.id === before.id)?.whatsappNumber,
+    undefined,
+  );
+  service.updatePersonalRecord(before.id, { whatsappNumber: "" }, "", employee);
+  assert.equal(service.getById(before.id, SYSTEM_CONTEXT)?.whatsappNumber || "", "");
+  assert.equal(service.getById(before.id, SYSTEM_CONTEXT)?.phone, before.phone);
+});
+
+test("HR and Finance are employees first for their own contacts, with no identity-review bypass", () => {
+  setup();
+  const service = new EmployeeService();
+  for (const actor of [hr, accounts]) {
+    service.updatePersonalRecord(actor.actor.employeeId!, { phone: "+968 9000 5500" }, "", actor);
+    assert.equal(service.getById(actor.actor.employeeId!, SYSTEM_CONTEXT)?.phone, "+968 9000 5500");
+    assert.throws(
+      () =>
+        service.updatePersonalRecord(
+          actor.actor.employeeId!,
+          { nationality: "Changed" },
+          "",
+          actor,
+        ),
+      /identity details must be verified/i,
+    );
+  }
+  service.updatePersonalRecord("employee-omar", { preferredName: "Omar R." }, "", hr);
+  assert.equal(service.getById("employee-omar", SYSTEM_CONTEXT)?.preferredName, "Omar R.");
+});
+
+test("retired profile-approval actions cannot create or apply changes", () => {
+  setup();
+  const service = new EmployeeService();
+  assert.throws(
+    () => service.requestProfileChange("employee-omar", { phone: "000" }, employee),
+    /save contact details directly/i,
   );
   assert.throws(
-    () => service.rejectProfileChange(request.id, "Self-rejected", hr),
-    /cannot reject your own profile change request/i,
+    () => service.approveProfileChange("old-request", "", hr),
+    /save contact details directly/i,
   );
-
-  // A different HR reviewer is unaffected by the self-approval block.
-  service.approveProfileChange(request.id, "Verified by a second reviewer", secondHr);
-  assert.equal(service.getById("employee-rana", SYSTEM_CONTEXT)?.preferredName, "Rana N.");
+  assert.throws(
+    () => service.rejectProfileChange("old-request", "", hr),
+    /save contact details directly/i,
+  );
 });
 
 test("employment and compensation changes enforce separate active roles", () => {

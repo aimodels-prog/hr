@@ -1,6 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
+import readExcelFile from "read-excel-file/node";
 
 async function previewAs(page: Page, userId: string, activeRole: "Employee" | "Super Admin") {
+  await expect(page.getByText("VIA HR System is loading.", { exact: true })).toHaveCount(0, {
+    timeout: 30_000,
+  });
   await page.evaluate(
     ({ selectedUser, selectedRole }) => {
       localStorage.setItem(
@@ -36,11 +40,21 @@ test("audit history is PostgreSQL-backed, restricted and server exported", async
   await expect(page.getByLabel("Filter by record type")).toBeVisible();
   await expect(page.getByLabel("Filter by attention level")).toBeVisible();
 
-  await page.getByRole("button", { name: "Export CSV" }).click();
+  await page.getByRole("button", { name: "Export", exact: true }).click();
+  await page.getByRole("menuitem", { name: "CSV (.csv)", exact: true }).click();
   await expect(page.getByText("Download the complete audit history?")).toBeVisible();
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download CSV" }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/^via-audit-\d{4}-\d{2}-\d{2}\.csv$/);
   await expect(page.getByText(/audit records downloaded/i)).toBeVisible();
+  await page.getByRole("button", { name: "Export", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Excel (.xlsx)", exact: true }).click();
+  const excelPending = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download Excel", exact: true }).click();
+  const excel = await excelPending;
+  expect(excel.suggestedFilename()).toMatch(/^via-audit-\d{4}-\d{2}-\d{2}\.xlsx$/);
+  const sheets = await readExcelFile((await excel.path())!);
+  expect(sheets[0]!.data[0]).toContain("Timestamp");
+  expect(sheets[0]!.data.length).toBeGreaterThan(1);
 });

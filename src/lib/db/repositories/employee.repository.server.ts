@@ -1,10 +1,13 @@
 import "@tanstack/react-start/server-only";
+import {
+  assertDirectProfileChanges,
+  PROFILE_APPROVAL_RETIRED,
+} from "../../data/profile-edit-policy.ts";
 import { isCeoPosition, validateCeoSupervisor } from "../../data/executive-reporting.ts";
 import {
   changedRecordFields,
   changeReason,
   employmentReasonRequired,
-  personalReasonRequired,
 } from "../../data/change-reason-policy.ts";
 import { syncEmployeeAttendanceTracking } from "./attendance-tracking.repository.server.ts";
 
@@ -146,6 +149,7 @@ export async function listEmployeesForOrganisation(organisationId: string): Prom
       workEmail: row.workEmail,
       ...(row.personalEmail ? { personalEmail: row.personalEmail } : {}),
       ...(row.phone ? { phone: row.phone } : {}),
+      ...(row.whatsappNumber ? { whatsappNumber: row.whatsappNumber } : {}),
       department: departmentNames.get(row.departmentId) ?? "Unavailable",
       position: positionNames.get(row.positionId) ?? "Unavailable",
       ...(row.gradeId ? { grade: gradeNames.get(row.gradeId) ?? "Unavailable" } : {}),
@@ -311,7 +315,12 @@ export async function listProfileChangeRequestsForOrganisation(
     db
       .select()
       .from(profileChangeRequests)
-      .where(eq(profileChangeRequests.organisationId, organisationId))
+      .where(
+        and(
+          eq(profileChangeRequests.organisationId, organisationId),
+          isNull(profileChangeRequests.archivedAt),
+        ),
+      )
       .orderBy(asc(profileChangeRequests.createdAt)),
     db
       .select({ id: users.id, displayName: users.displayName })
@@ -377,6 +386,7 @@ export type PersonalRecordChanges = Pick<
   Partial<Employee>,
   | "preferredName"
   | "phone"
+  | "whatsappNumber"
   | "personalEmail"
   | "address"
   | "homeCountryPhone"
@@ -393,6 +403,8 @@ function personalEmployeeValues(changes: PersonalRecordChanges) {
   const values: Partial<typeof employees.$inferInsert> = {};
   if (changes.preferredName !== undefined) values.preferredName = changes.preferredName;
   if (changes.phone !== undefined) values.phone = changes.phone || null;
+  if (changes.whatsappNumber !== undefined)
+    values.whatsappNumber = changes.whatsappNumber.trim() || null;
   if (changes.personalEmail !== undefined)
     values.personalEmail = changes.personalEmail?.trim().toLowerCase() || null;
   if (changes.address !== undefined) values.address = changes.address || null;
@@ -417,9 +429,13 @@ export async function updatePersonalRecordInDatabase(
   reason: string,
   actor: AuditActorContext,
 ): Promise<void> {
-  if (actor.activeRole !== "HR" && actor.activeRole !== "Super Admin") {
-    throw new Error("Only HR or a Super Admin can correct an employee's personal record.");
+  const isSelf = actor.employeeId === employeeId;
+  if (!isSelf && actor.activeRole !== "HR" && actor.activeRole !== "Super Admin") {
+    throw new Error(
+      "You can update only your own personal details. HR can update other employees' records.",
+    );
   }
+  assertDirectProfileChanges(changes);
   let fields = Object.keys(changes);
   if (fields.length === 0) throw new Error("No personal details were changed.");
   const db = getDatabaseClient();
@@ -433,7 +449,11 @@ export async function updatePersonalRecordInDatabase(
     if (!current) throw new Error("Employee not found.");
     fields = changedRecordFields({ ...current }, { ...changes });
     if (!fields.length) throw new Error("No personal details were changed.");
-    reason = changeReason(reason, personalReasonRequired(fields), "Personal details updated by HR");
+    reason = changeReason(
+      reason,
+      false,
+      isSelf ? "Personal details updated by employee" : "Personal details updated by HR",
+    );
     await tx
       .update(employees)
       .set({
@@ -456,7 +476,7 @@ export async function updatePersonalRecordInDatabase(
       entityId: employeeId,
       afterSummary: { changedFields: fields },
       reason,
-      riskLevel: "High",
+      riskLevel: isSelf ? "Low" : "Medium",
     });
   });
 }
@@ -470,92 +490,7 @@ export async function createProfileChangeRequestInDatabase(
   if (actor.employeeId !== employeeId) {
     throw new Error("You can request changes only to your own profile.");
   }
-  const db = getDatabaseClient();
-  return db.transaction(async (tx) => {
-    const [employee] = await tx
-      .select({ id: employees.id })
-      .from(employees)
-      .where(and(eq(employees.organisationId, organisationId), eq(employees.id, employeeId)))
-      .limit(1);
-    if (!employee) throw new Error("Employee not found.");
-    const [pending] = await tx
-      .select({ id: profileChangeRequests.id })
-      .from(profileChangeRequests)
-      .where(
-        and(
-          eq(profileChangeRequests.organisationId, organisationId),
-          eq(profileChangeRequests.employeeId, employeeId),
-          eq(profileChangeRequests.status, "Pending"),
-        ),
-      )
-      .limit(1);
-    if (pending) throw new Error("A profile update is already awaiting HR review.");
-    const [request] = await tx
-      .insert(profileChangeRequests)
-      .values({
-        organisationId,
-        employeeId,
-        changes,
-        status: "Pending",
-        requestedBy: actor.userId ?? employeeId,
-        createdBy: actor.userId ?? employeeId,
-        updatedBy: actor.userId ?? employeeId,
-      })
-      .returning({ id: profileChangeRequests.id });
-    if (!request) throw new Error("The profile request could not be saved.");
-
-    const reviewers = await tx
-      .selectDistinct({ userId: users.id })
-      .from(users)
-      .innerJoin(userRoles, eq(userRoles.userId, users.id))
-      .innerJoin(roles, eq(roles.id, userRoles.roleId))
-      .where(
-        and(
-          eq(users.organisationId, organisationId),
-          eq(users.status, "Active"),
-          inArray(roles.code, ["HR", "Super Admin"]),
-        ),
-      );
-    for (const reviewer of reviewers) {
-      if (reviewer.userId === actor.userId) continue;
-      await tx
-        .insert(notifications)
-        .values({
-          organisationId,
-          recipientUserId: reviewer.userId,
-          type: "profile.review-requested",
-          title: "Profile update awaiting review",
-          message: `${actor.displayName} submitted changes to their personal details.`,
-          priority: "Normal",
-          status: "Unread",
-          deduplicationKey: `profile-review-${request.id}-${reviewer.userId}`,
-          link: {
-            entityType: "profile_change_request",
-            entityId: request.id,
-            path: `/staff/employees/${employeeId}`,
-          },
-          createdBy: actor.userId ?? employeeId,
-          updatedBy: actor.userId ?? employeeId,
-        })
-        .onConflictDoNothing();
-    }
-    await tx.insert(auditEvents).values({
-      organisationId,
-      actorUserId: actor.userId,
-      actorEmployeeId: actor.employeeId,
-      actorDisplayName: actor.displayName,
-      activeRole: actor.activeRole,
-      actorRoles: actor.roles ?? [actor.activeRole],
-      action: "submit",
-      module: "core-hr",
-      entityType: "profile_change_request",
-      entityId: request.id,
-      afterSummary: { changedFields: Object.keys(changes), status: "Pending" },
-      reason: "Employee requested a personal-profile update",
-      riskLevel: "Medium",
-    });
-    return request.id;
-  });
+  throw new Error(PROFILE_APPROVAL_RETIRED);
 }
 
 export async function decideProfileChangeRequestInDatabase(
@@ -568,96 +503,7 @@ export async function decideProfileChangeRequestInDatabase(
   if (actor.activeRole !== "HR" && actor.activeRole !== "Super Admin") {
     throw new Error("Only HR or a Super Admin can review profile changes.");
   }
-  const db = getDatabaseClient();
-  await db.transaction(async (tx) => {
-    const [request] = await tx
-      .select()
-      .from(profileChangeRequests)
-      .where(
-        and(
-          eq(profileChangeRequests.organisationId, organisationId),
-          eq(profileChangeRequests.id, requestId),
-        ),
-      )
-      .limit(1);
-    if (!request || request.status !== "Pending") {
-      throw new Error("This profile request is no longer awaiting review.");
-    }
-    if (request.employeeId === actor.employeeId) {
-      throw new Error("You cannot review your own profile change request.");
-    }
-    const changes = request.changes as PersonalRecordChanges;
-    if (decision === "Approved") {
-      await tx
-        .update(employees)
-        .set({
-          ...personalEmployeeValues(changes),
-          updatedAt: new Date(),
-          updatedBy: actor.userId ?? request.employeeId,
-          recordVersion: sql`${employees.recordVersion} + 1`,
-        })
-        .where(
-          and(eq(employees.organisationId, organisationId), eq(employees.id, request.employeeId)),
-        );
-    }
-    await tx
-      .update(profileChangeRequests)
-      .set({
-        status: decision,
-        reviewerId: actor.userId,
-        reviewedAt: new Date().toISOString(),
-        reviewNotes: reviewerNotes || null,
-        updatedAt: new Date(),
-        updatedBy: actor.userId ?? request.employeeId,
-        recordVersion: sql`${profileChangeRequests.recordVersion} + 1`,
-      })
-      .where(eq(profileChangeRequests.id, request.id));
-    const [employeeUser] = await tx
-      .select({ id: users.id })
-      .from(users)
-      .where(
-        and(eq(users.organisationId, organisationId), eq(users.employeeId, request.employeeId)),
-      )
-      .limit(1);
-    if (employeeUser) {
-      await tx.insert(notifications).values({
-        organisationId,
-        recipientUserId: employeeUser.id,
-        type: `profile.${decision.toLowerCase()}`,
-        title: decision === "Approved" ? "Profile update approved" : "Profile update needs changes",
-        message:
-          decision === "Approved"
-            ? "HR approved the changes to your personal details."
-            : reviewerNotes,
-        priority: decision === "Approved" ? "Normal" : "High",
-        status: "Unread",
-        deduplicationKey: `profile-decision-${request.id}`,
-        link: {
-          entityType: "profile_change_request",
-          entityId: request.id,
-          path: "/staff/me/profile",
-        },
-        createdBy: actor.userId ?? request.employeeId,
-        updatedBy: actor.userId ?? request.employeeId,
-      });
-    }
-    await tx.insert(auditEvents).values({
-      organisationId,
-      actorUserId: actor.userId,
-      actorEmployeeId: actor.employeeId,
-      actorDisplayName: actor.displayName,
-      activeRole: actor.activeRole,
-      actorRoles: actor.roles ?? [actor.activeRole],
-      action: decision === "Approved" ? "approve" : "reject",
-      module: "core-hr",
-      entityType: "profile_change_request",
-      entityId: request.id,
-      beforeSummary: { status: "Pending" },
-      afterSummary: { status: decision, changedFields: Object.keys(changes) },
-      reason: reviewerNotes || `Profile request ${decision.toLowerCase()}`,
-      riskLevel: "High",
-    });
-  });
+  throw new Error(PROFILE_APPROVAL_RETIRED);
 }
 
 export async function changeEmployeeStatusInDatabase(
@@ -1831,6 +1677,7 @@ export async function createEmployeeInDatabase(
         workEmail: input.workEmail.trim().toLowerCase(),
         personalEmail: input.personalEmail?.trim().toLowerCase(),
         phone: input.phone?.trim(),
+        whatsappNumber: input.whatsappNumber?.trim() || null,
         departmentId: department.id,
         positionId: position.id,
         gradeId: grade?.id,

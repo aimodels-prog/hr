@@ -4,7 +4,6 @@ import {
   changedRecordFields,
   changeReason,
   employmentReasonRequired,
-  personalReasonRequired,
 } from "./change-reason-policy.ts";
 import { canReadEmploymentHistory } from "../auth/employment-history.ts";
 import { getMasterDataRepository, getProjectRepository } from "./master-data.ts";
@@ -28,21 +27,7 @@ import {
   type EmploymentChangeResult,
 } from "./employment-change-policy.ts";
 import { SettingsService } from "./settings-service.ts";
-
-const PERSONAL_PROFILE_FIELDS = new Set<keyof Employee>([
-  "preferredName",
-  "phone",
-  "personalEmail",
-  "address",
-  "homeCountryPhone",
-  "homeCountryAddress",
-  "dateOfBirth",
-  "gender",
-  "nationality",
-  "maritalStatus",
-  "emergencyContacts",
-  "dependants",
-]);
+import { assertDirectProfileChanges, PROFILE_APPROVAL_RETIRED } from "./profile-edit-policy.ts";
 
 const EMPLOYMENT_EDIT_FIELDS = new Set<keyof Employee>([
   "staffEntryType",
@@ -64,11 +49,6 @@ const EMPLOYMENT_EDIT_FIELDS = new Set<keyof Employee>([
 type EmployeeEmploymentChanges = Omit<Partial<Employee>, "lineManagerId"> & {
   lineManagerId?: string | null | undefined;
 };
-
-function hasOnlyPersonalProfileFields(changes: Partial<Employee>): boolean {
-  const keys = Object.keys(changes) as Array<keyof Employee>;
-  return keys.length > 0 && keys.every((key) => PERSONAL_PROFILE_FIELDS.has(key));
-}
 
 /**
  * Independently verifies every master-data reference an employee create/update touches,
@@ -279,65 +259,6 @@ export class EmployeeService {
     if (changed) window.dispatchEvent(new CustomEvent("via_hr:data_changed"));
   }
 
-  private notifyProfileReviewers(request: ProfileChangeRequest, actorContext: ActorContext): void {
-    const { notifications } = getApplicationDataServices();
-    const reviewers = this.userRepo
-      .list()
-      .filter(
-        (user) =>
-          user.status === "Active" &&
-          (user.roles.includes("HR") || user.roles.includes("Super Admin")),
-      );
-
-    for (const reviewer of reviewers) {
-      notifications.create(
-        {
-          recipientUserId: reviewer.id,
-          type: "profile.change-request",
-          title: "Profile update requires review",
-          message: `${request.requestedBy} submitted changes to their personal details.`,
-          priority: "Normal",
-          status: "Unread",
-          deduplicationKey: `profile-change-review-${request.id}-${reviewer.id}`,
-          link: {
-            entityType: "profile_change_request",
-            entityId: request.id,
-            path: `/staff/employees/${request.employeeId}`,
-          },
-        },
-        actorContext,
-      );
-    }
-  }
-
-  private notifyEmployeeOfProfileDecision(
-    employeeId: string,
-    requestId: string,
-    title: string,
-    message: string,
-    actorContext: ActorContext,
-  ): void {
-    const user = this.userRepo.list().find((item) => item.employeeId === employeeId);
-    if (!user) return;
-    getApplicationDataServices().notifications.create(
-      {
-        recipientUserId: user.id,
-        type: "profile.change-decision",
-        title,
-        message,
-        priority: "Normal",
-        status: "Unread",
-        deduplicationKey: `profile-change-decision-${requestId}-${user.id}`,
-        link: {
-          entityType: "profile_change_request",
-          entityId: requestId,
-          path: "/staff/me/profile",
-        },
-      },
-      actorContext,
-    );
-  }
-
   private requireSystemRepositoryAccess(context: ActorContext, repository: string): void {
     if (context.actor.userId === "system" && context.actor.roles.includes("Super Admin")) return;
     this.denyProfileAction(
@@ -428,6 +349,7 @@ export class EmployeeService {
         performanceRating: _performanceRating,
         performanceNotes: _performanceNotes,
         personalEmail: _personalEmail,
+        whatsappNumber: _whatsappNumber,
         address: _address,
         homeCountryPhone: _homeCountryPhone,
         homeCountryAddress: _homeCountryAddress,
@@ -945,6 +867,7 @@ export class EmployeeService {
         | "bankDetails"
         | "personalEmail"
         | "phone"
+        | "whatsappNumber"
       >
     >,
     actorContext: ActorContext,
@@ -1434,38 +1357,9 @@ export class EmployeeService {
     changes: Partial<Employee>,
     actorContext: ActorContext,
   ): ProfileChangeRequest {
-    if (actorContext.actor.employeeId !== employeeId) {
-      this.denyProfileAction(
-        "request profile change",
-        employeeId,
-        "You can only request changes to your own profile.",
-        actorContext,
-      );
-    }
-    if (!hasOnlyPersonalProfileFields(changes)) {
-      this.denyProfileAction(
-        "request profile change",
-        employeeId,
-        "Profile requests can contain personal and contact details only.",
-        actorContext,
-      );
-    }
-    const alreadyPending = this.changeRequestRepo
-      .list()
-      .some((request) => request.employeeId === employeeId && request.status === "Pending");
-    if (alreadyPending) throw new Error("A profile update is already awaiting HR review.");
-
-    const request = this.changeRequestRepo.create(
-      {
-        employeeId,
-        changes,
-        status: "Pending",
-        requestedBy: actorContext.actor.displayName,
-      },
-      actorContext,
-    );
-    this.notifyProfileReviewers(request, actorContext);
-    return request;
+    if (actorContext.actor.employeeId !== employeeId)
+      throw new Error("You can request changes only to your own profile.");
+    throw new Error(PROFILE_APPROVAL_RETIRED);
   }
 
   updatePersonalRecord(
@@ -1474,22 +1368,29 @@ export class EmployeeService {
     reason: string,
     actorContext: ActorContext,
   ): Employee {
-    if (actorContext.actor.activeRole !== "HR" && actorContext.actor.activeRole !== "Super Admin") {
+    const isSelf = actorContext.actor.employeeId === employeeId;
+    if (
+      !isSelf &&
+      actorContext.actor.activeRole !== "HR" &&
+      actorContext.actor.activeRole !== "Super Admin"
+    ) {
       this.denyProfileAction(
         "update personal record",
         employeeId,
-        "Only HR or a Super Admin can directly correct an employee's personal record.",
+        "You can update only your own personal details. HR can update other employees' records.",
         actorContext,
       );
     }
-    if (!hasOnlyPersonalProfileFields(changes)) {
-      throw new Error("Only personal and contact details can be changed here.");
-    }
+    assertDirectProfileChanges(changes);
     const employee = this.employeeRepo.getById(employeeId);
     if (!employee) throw new Error("Employee not found.");
     const fields = changedRecordFields({ ...employee }, { ...changes });
     if (!fields.length) throw new Error("No personal details were changed.");
-    reason = changeReason(reason, personalReasonRequired(fields), "Personal details updated by HR");
+    reason = changeReason(
+      reason,
+      false,
+      isSelf ? "Personal details updated by employee" : "Personal details updated by HR",
+    );
 
     return this.employeeRepo.update(employeeId, changes, {
       actor: actorContext.actor,
@@ -1566,51 +1467,7 @@ export class EmployeeService {
     reviewerNotes: string | undefined,
     actorContext: ActorContext,
   ): void {
-    const request = this.changeRequestRepo.getById(requestId);
-    if (!request || request.status !== "Pending") throw new Error("Invalid or non-pending request");
-    if (actorContext.actor.activeRole !== "HR" && actorContext.actor.activeRole !== "Super Admin") {
-      this.denyProfileAction(
-        "approve profile change",
-        request.employeeId,
-        "Only HR or a Super Admin can approve profile changes.",
-        actorContext,
-      );
-    }
-    if (actorContext.actor.employeeId === request.employeeId) {
-      this.denyProfileAction(
-        "approve profile change",
-        request.employeeId,
-        "You cannot approve your own profile change request.",
-        actorContext,
-      );
-    }
-    if (!hasOnlyPersonalProfileFields(request.changes)) {
-      throw new Error("This request contains fields that cannot be approved from the profile.");
-    }
-
-    // Apply changes
-    this.employeeRepo.update(request.employeeId, request.changes, {
-      actor: actorContext.actor,
-      reason: "Approved personal-profile update",
-    });
-
-    this.changeRequestRepo.update(
-      requestId,
-      {
-        status: "Approved",
-        reviewerId: actorContext.actor.userId,
-        reviewedAt: new Date().toISOString(),
-        reviewNotes: reviewerNotes,
-      },
-      actorContext,
-    );
-    this.notifyEmployeeOfProfileDecision(
-      request.employeeId,
-      request.id,
-      "Profile update approved",
-      "HR approved the changes to your personal details.",
-      actorContext,
-    );
+    throw new Error(PROFILE_APPROVAL_RETIRED);
   }
 
   async decideProfileChangeAsync(
@@ -1650,44 +1507,6 @@ export class EmployeeService {
   }
 
   rejectProfileChange(requestId: string, reviewerNotes: string, actorContext: ActorContext): void {
-    const request = this.changeRequestRepo.getById(requestId);
-    if (!request || request.status !== "Pending") throw new Error("Invalid or non-pending request");
-
-    if (actorContext.actor.activeRole !== "HR" && actorContext.actor.activeRole !== "Super Admin") {
-      this.denyProfileAction(
-        "reject profile change",
-        request.employeeId,
-        "Only HR or a Super Admin can reject profile changes.",
-        actorContext,
-      );
-    }
-    if (actorContext.actor.employeeId === request.employeeId) {
-      this.denyProfileAction(
-        "reject profile change",
-        request.employeeId,
-        "You cannot reject your own profile change request.",
-        actorContext,
-      );
-    }
-
-    if (reviewerNotes.trim().length < 3) throw new Error("A rejection reason is required.");
-
-    this.changeRequestRepo.update(
-      requestId,
-      {
-        status: "Rejected",
-        reviewerId: actorContext.actor.userId,
-        reviewedAt: new Date().toISOString(),
-        reviewNotes: reviewerNotes,
-      },
-      actorContext,
-    );
-    this.notifyEmployeeOfProfileDecision(
-      request.employeeId,
-      request.id,
-      "Profile update needs changes",
-      reviewerNotes.trim(),
-      actorContext,
-    );
+    throw new Error(PROFILE_APPROVAL_RETIRED);
   }
 }

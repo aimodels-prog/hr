@@ -4,12 +4,11 @@ import { useEffect, useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Employee } from "@/lib/data/types";
 import { Button } from "@/components/ui/button";
-import { Edit2, CheckCircle2, XCircle } from "lucide-react";
+import { Edit2, XCircle } from "lucide-react";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -35,11 +34,7 @@ import { useForm, useFieldArray } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { EmployeeService } from "@/lib/data/employee-service";
-import {
-  changedRecordFields,
-  personalReasonRequired,
-  changeReason,
-} from "@/lib/data/change-reason-policy";
+import { changedRecordFields } from "@/lib/data/change-reason-policy";
 import { useCurrentUser } from "@/lib/auth";
 import { toast } from "sonner";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -47,6 +42,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 const personalFormSchema = z.object({
   preferredName: z.string().min(1),
   phone: z.string().optional(),
+  whatsappNumber: z.string().trim().max(50).optional(),
   personalEmail: z.string().email("Invalid email").optional().or(z.literal("")),
   address: z.string().optional(),
   homeCountryPhone: z.string().max(50).optional(),
@@ -65,13 +61,13 @@ const personalFormSchema = z.object({
     )
     .optional(),
   dependants: z.array(dependantSchema).max(20).optional(),
-  changeReason: z.string().optional(),
 });
 
 function profileFieldLabel(field: string): string {
   const labels: Record<string, string> = {
     preferredName: "preferred name",
     phone: "phone number",
+    whatsappNumber: "WhatsApp number",
     personalEmail: "personal email",
     address: "residential address",
     dateOfBirth: "date of birth",
@@ -89,36 +85,35 @@ export function PersonalTab({
   onChanged,
   editRequested = false,
   onEditOpened,
+  onOpenDocuments,
 }: {
   employee: Employee;
   onChanged?: () => void;
   editRequested?: boolean;
   onEditOpened?: () => void;
+  onOpenDocuments?: () => void;
 }) {
   const currentUser = useCurrentUser();
   const employeeService = useMemo(() => new EmployeeService(), []);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [, setRefresh] = useState(0);
-  const [rejectingId, setRejectingId] = useState<string | null>(null);
-  const [rejectionReason, setRejectionReason] = useState("");
 
   const changeRequests = employeeService
     .getProfileChangeRequests(employee.id, currentUser.getActorContext())
+    .filter((request) => request.status !== "Pending")
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const pendingRequests = changeRequests.filter((request) => request.status === "Pending");
-  const hasPending = pendingRequests.length > 0;
   useEffect(() => {
     if (!editRequested) return;
-    if (!hasPending) setIsEditOpen(true);
-    else toast.info("Review the pending changes before editing this profile.");
+    setIsEditOpen(true);
     onEditOpened?.();
-  }, [editRequested, hasPending, onEditOpened]);
+  }, [editRequested, onEditOpened]);
 
   const form = useForm<z.infer<typeof personalFormSchema>>({
     resolver: zodResolver(personalFormSchema),
     defaultValues: {
       preferredName: employee.preferredName || "",
       phone: employee.phone || "",
+      whatsappNumber: employee.whatsappNumber || "",
       personalEmail: employee.personalEmail || "",
       address: employee.address || "",
       homeCountryPhone: employee.homeCountryPhone || "",
@@ -129,7 +124,6 @@ export function PersonalTab({
       maritalStatus: employee.maritalStatus,
       emergencyContacts: employee.emergencyContacts || [],
       dependants: employee.dependants || [],
-      changeReason: "",
     },
   });
 
@@ -137,6 +131,7 @@ export function PersonalTab({
     form.reset({
       preferredName: employee.preferredName || "",
       phone: employee.phone || "",
+      whatsappNumber: employee.whatsappNumber || "",
       personalEmail: employee.personalEmail || "",
       address: employee.address || "",
       homeCountryPhone: employee.homeCountryPhone || "",
@@ -147,7 +142,6 @@ export function PersonalTab({
       maritalStatus: employee.maritalStatus,
       emergencyContacts: employee.emergencyContacts || [],
       dependants: employee.dependants || [],
-      changeReason: "",
     });
   }, [employee, form]);
 
@@ -188,6 +182,8 @@ export function PersonalTab({
       if (values.preferredName !== employee.preferredName)
         changes.preferredName = values.preferredName;
       if (values.phone !== employee.phone) changes.phone = values.phone;
+      if ((values.whatsappNumber || "") !== (employee.whatsappNumber || ""))
+        changes.whatsappNumber = values.whatsappNumber || "";
       if (values.personalEmail !== employee.personalEmail)
         changes.personalEmail = values.personalEmail;
       if (values.address !== employee.address) changes.address = values.address;
@@ -215,32 +211,13 @@ export function PersonalTab({
       }
       if (Object.keys(changes).length === 0) throw new Error("No changes were made.");
 
-      if (isSelf) {
-        await employeeService.requestProfileChangeAsync(
-          employee.id,
-          changes,
-          getActorContext("Self-service profile update"),
-        );
-        toast.success("Profile changes sent to HR for review");
-      } else {
-        try {
-          changeReason(
-            values.changeReason || "",
-            personalReasonRequired(Object.keys(changes)),
-            "Contact details updated by HR",
-          );
-        } catch (error) {
-          form.setError("changeReason", { message: (error as Error).message });
-          return;
-        }
-        await employeeService.updatePersonalRecordAsync(
-          employee.id,
-          changes,
-          values.changeReason || "",
-          getActorContext(values.changeReason || "Personal record corrected by HR"),
-        );
-        toast.success("Personal details saved");
-      }
+      await employeeService.updatePersonalRecordAsync(
+        employee.id,
+        changes,
+        "",
+        getActorContext("Personal details updated"),
+      );
+      toast.success("Personal details saved");
       setIsEditOpen(false);
       setRefresh((value) => value + 1);
       onChanged?.();
@@ -249,109 +226,46 @@ export function PersonalTab({
     }
   };
 
-  const handleApprove = async (requestId: string) => {
-    try {
-      await employeeService.decideProfileChangeAsync(
-        requestId,
-        "Approved",
-        "Verified and approved",
-        getActorContext("Approval"),
-      );
-      toast.success("Changes approved");
-      setRefresh((value) => value + 1);
-      onChanged?.();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to approve changes");
-    }
-  };
-
-  const handleReject = async () => {
-    if (!rejectingId) return;
-    try {
-      await employeeService.decideProfileChangeAsync(
-        rejectingId,
-        "Rejected",
-        rejectionReason,
-        getActorContext(rejectionReason),
-      );
-      toast.success("Changes rejected");
-      setRejectingId(null);
-      setRejectionReason("");
-      setRefresh((value) => value + 1);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to reject changes");
-    }
-  };
-
-  const canApprove = currentUser?.activeRole === "HR" || currentUser?.activeRole === "Super Admin";
+  const canManagePersonalDetails =
+    currentUser?.activeRole === "HR" || currentUser?.activeRole === "Super Admin";
   const isSelf = currentUser?.employeeId === employee.id;
 
   return (
     <div className="space-y-6">
-      {hasPending && (
-        <Card className="border-orange-200 bg-orange-50/50">
-          <CardHeader>
-            <CardTitle className="text-orange-800 text-base">
-              Pending Verification Requests
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {pendingRequests.map((req) => (
-              <div
-                key={req.id}
-                className="p-4 bg-white rounded-md border flex items-center justify-between"
-              >
-                <div>
-                  <div className="text-sm font-medium mb-1">Requested by {req.requestedBy}</div>
-                  <div className="text-xs text-muted-foreground break-all">
-                    {Object.keys(req.changes).map(profileFieldLabel).join(", ")}.
-                  </div>
-                </div>
-                {canApprove && (
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-emerald-600"
-                      onClick={() => handleApprove(req.id)}
-                    >
-                      Approve
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-destructive"
-                      onClick={() => setRejectingId(req.id)}
-                    >
-                      Reject
-                    </Button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Personal Details</CardTitle>
-          {(isSelf || canApprove) && (
+          {(isSelf || canManagePersonalDetails) && (
             <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
               <DialogTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={hasPending}
-                  title={hasPending ? "Cannot edit while changes are pending" : "Edit Details"}
-                >
+                <Button variant="ghost" size="sm" title="Edit Details">
                   <Edit2 className="h-4 w-4" />
                   Edit details
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+              <DialogContent
+                aria-describedby="identity-document-help"
+                className="max-w-2xl max-h-[90vh] overflow-y-auto"
+              >
                 <DialogHeader>
                   <DialogTitle>Edit Personal Details</DialogTitle>
+                  <DialogDescription id="identity-document-help">
+                    Contact changes save immediately. HR confirms identity corrections with your
+                    passport or ID in Documents.
+                  </DialogDescription>
+                  {onOpenDocuments && (
+                    <Button
+                      type="button"
+                      variant="link"
+                      className="h-auto justify-start p-0"
+                      onClick={() => {
+                        setIsEditOpen(false);
+                        onOpenDocuments();
+                      }}
+                    >
+                      Open documents
+                    </Button>
+                  )}
                 </DialogHeader>
                 <Form {...form}>
                   <SafeForm onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 pt-4">
@@ -376,7 +290,20 @@ export function PersonalTab({
                           <FormItem>
                             <FormLabel>Personal Phone</FormLabel>
                             <FormControl>
-                              <Input {...field} />
+                              <Input type="tel" autoComplete="tel" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="whatsappNumber"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>WhatsApp number</FormLabel>
+                            <FormControl>
+                              <Input type="tel" placeholder="Include country code" {...field} />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -402,7 +329,12 @@ export function PersonalTab({
                           <FormItem>
                             <FormLabel>Date of Birth</FormLabel>
                             <FormControl>
-                              <Input type="date" {...field} />
+                              <Input
+                                type="date"
+                                {...field}
+                                readOnly
+                                aria-describedby="identity-document-help"
+                              />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -436,7 +368,11 @@ export function PersonalTab({
                           <FormItem>
                             <FormLabel>Nationality</FormLabel>
                             <FormControl>
-                              <Input {...field} />
+                              <Input
+                                {...field}
+                                readOnly
+                                aria-describedby="identity-document-help"
+                              />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -678,44 +614,8 @@ export function PersonalTab({
                       ))}
                     </div>
 
-                    {!isSelf && (
-                      <FormField
-                        control={form.control}
-                        name="changeReason"
-                        render={({ field }) => (
-                          <ChangeNote
-                            required={personalReasonRequired(
-                              changedRecordFields({ ...employee }, form.watch()).filter(
-                                (key) => key !== "changeReason",
-                              ),
-                            )}
-                          >
-                            <FormItem>
-                              <FormLabel>
-                                {personalReasonRequired(
-                                  changedRecordFields({ ...employee }, form.watch()).filter(
-                                    (key) => key !== "changeReason",
-                                  ),
-                                )
-                                  ? "Reason for change *"
-                                  : "Note (optional)"}
-                              </FormLabel>
-                              <FormControl>
-                                <Textarea
-                                  placeholder="For example: Corrected after checking the employee's documents"
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          </ChangeNote>
-                        )}
-                      />
-                    )}
                     <div className="flex justify-end">
-                      <Button type="submit">
-                        {isSelf ? "Send to HR for review" : "Save changes"}
-                      </Button>
+                      <Button type="submit">Save changes</Button>
                     </div>
                   </SafeForm>
                 </Form>
@@ -732,6 +632,10 @@ export function PersonalTab({
             <div>
               <div className="text-muted-foreground">Phone Number</div>
               <div className="font-medium">{employee.phone || "-"}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground">WhatsApp number</div>
+              <div className="font-medium">{employee.whatsappNumber || "—"}</div>
             </div>
             <div>
               <div className="text-muted-foreground">Personal Email</div>
@@ -791,49 +695,6 @@ export function PersonalTab({
           </CardContent>
         </Card>
       )}
-
-      <Dialog
-        open={Boolean(rejectingId)}
-        onOpenChange={(open) => {
-          if (!open) {
-            setRejectingId(null);
-            setRejectionReason("");
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Reject profile changes</DialogTitle>
-            <DialogDescription>
-              Explain what the employee should correct before submitting again.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <label htmlFor="profile-rejection-reason" className="text-sm font-medium">
-              Reason
-            </label>
-            <Textarea
-              id="profile-rejection-reason"
-              value={rejectionReason}
-              onChange={(event) => setRejectionReason(event.target.value)}
-              placeholder="Give a clear reason for the employee"
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRejectingId(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={rejectionReason.trim().length < 3}
-              onClick={handleReject}
-            >
-              Reject changes
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
-import { ChangeNote } from "@/components/ui/change-note";
