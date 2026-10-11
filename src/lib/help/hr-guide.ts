@@ -415,9 +415,10 @@ export const hrGuide = [
     "Manage attendance and Head Office tracking",
     "Show real attendance without marking other locations absent for not using a machine.",
     "/staff/attendance",
-    "head office location department filter not tracked absent records office setup hours flexible lunch",
+    "head office location department filter not tracked absent records office setup hours flexible lunch daily clocked in today dashboard",
     [
       "Open Attendance & Visits. Choose the date and employee, department or location filters you need.",
+      "For a quick daily list, choose Today's attendance on the HR dashboard. It opens Head Office with Clocked in selected, including people who have not clocked out yet. Change the date to review another day, choose All locations for other offices, or select All statuses to see the full roster. Your selections stay selected when you reload the page.",
       "Use Office Setup to review which location is Head Office and who is required to record attendance.",
       "Check employee location assignments and any individual tracking choices, including their effective dates.",
       "Review real clock-in and clock-out records separately from missing-record exceptions.",

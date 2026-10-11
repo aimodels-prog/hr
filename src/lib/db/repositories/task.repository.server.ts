@@ -245,6 +245,7 @@ export async function listTasksForActorInDatabase(
       FROM travel_requests r JOIN employees e ON e.id=r.employee_id
       WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role} IN ('HR','Super Admin')
         AND r.status='Pending HR and Accounts' AND r.hr_approval_status='Pending'
+        AND r.manager_approval_status='Approved'
 
       UNION ALL
       SELECT 'travel-manager-' || r.id, 'Travel', 'Review travel request',
@@ -283,6 +284,7 @@ export async function listTasksForActorInDatabase(
       FROM travel_requests r JOIN employees e ON e.id=r.employee_id
       WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role} IN ('Accounts','Super Admin')
         AND r.status='Pending HR and Accounts' AND r.accounts_approval_status='Pending'
+        AND r.manager_approval_status='Approved' AND r.hr_approval_status='Approved'
 
       UNION ALL
       SELECT 'travel-close-' || r.id, 'Travel', 'Close reimbursement',

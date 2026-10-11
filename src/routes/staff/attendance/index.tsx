@@ -2,6 +2,14 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { recordedAttendanceHours } from "@/lib/data/recorded-hours";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
+import {
+  ATTENDANCE_LIST_FILTERS,
+  attendanceListSearch,
+  defaultAttendanceLocation,
+  matchesAttendanceListFilter,
+} from "@/lib/data/attendance-list";
+import { organisationDate } from "@/lib/data/approved-leave";
+import { SettingsService } from "@/lib/data/settings-service";
 import { AttendanceTrackingSettings } from "@/components/attendance/tracking-settings";
 import { OfficeExceptions } from "@/components/attendance/office-exceptions";
 import { VIA_OFFICE_SCHEDULE } from "@/lib/data/office-schedule";
@@ -78,7 +86,10 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 
 export const Route = createFileRoute("/staff/attendance/")({
-  validateSearch: employeeSearch,
+  validateSearch: (search: Record<string, unknown>) => ({
+    ...employeeSearch(search),
+    ...attendanceListSearch(search),
+  }),
   component: AttendanceAdminRoute,
 });
 
@@ -127,8 +138,15 @@ function AttendanceAdminContent() {
   const employeeService = useMemo(() => new EmployeeService(), []);
   const [revision, setRevision] = useState(0);
   const [section, setSection] = useState("daily");
-  const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"));
-  const [statusFilter, setStatusFilter] = useState("All");
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const today = organisationDate(new Date(), new SettingsService().getAppSettingsSync().timezone);
+  const date = search.date ?? today;
+  const statusFilter = search.status ?? "All";
+  const setDate = (date: string) =>
+    void navigate({ search: (previous) => ({ ...previous, date }), replace: true });
+  const setStatusFilter = (status: string) =>
+    void navigate({ search: (previous) => ({ ...previous, status }), replace: true });
   const [manualOpen, setManualOpen] = useState(false);
   const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
   const [manualEmployeeId, setManualEmployeeId] = useState("");
@@ -313,9 +331,7 @@ function AttendanceAdminContent() {
       .values(),
   ];
   const headOffice = attendanceService.getTrackingPolicy()?.headOfficeLocationId;
-  const defaultOffice = attendanceService
-    .getLocations()
-    .find((item) => item.id === headOffice || item.databaseId === headOffice)?.name;
+  const defaultOffice = defaultAttendanceLocation(attendanceService.getLocations(), headOffice);
   const employeeFilter = useEmployeeFilter(section === "daily" ? defaultOffice : undefined);
   const allRecords = attendanceService
     .getAllRecords(actorContext)
@@ -332,8 +348,15 @@ function AttendanceAdminContent() {
     .getExceptionCases(actorContext)
     .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
   const openExceptionCases = exceptionCases.filter((item) => item.status !== "Resolved");
-  const currentRows = employees
+  const currentRows = employeeService
+    .getEmployees(actorContext)
+    .filter(
+      (employee) =>
+        (!["Archived", "Inactive"].includes(employee.status) && employee.startDate <= date) ||
+        allRecords.some((record) => record.employeeId === employee.id && record.date === date),
+    )
     .filter((employee) => employeeFilter.matchesEmployee(employee.id))
+    .sort((a, b) => (a.preferredName || a.legalName).localeCompare(b.preferredName || b.legalName))
     .map((employee) => {
       const record = allRecords.find(
         (item) => item.employeeId === employee.id && item.date === date,
@@ -368,13 +391,7 @@ function AttendanceAdminContent() {
         source: reconciled?.status === "Not tracked" ? "Not required" : "Updated automatically",
       };
     })
-    .filter((row) => {
-      if (statusFilter === "All") return true;
-      if (statusFilter === "Exceptions") {
-        return ["Late", "Absent", "Missing Punch", "Correction Pending"].includes(row.status);
-      }
-      return row.status === statusFilter;
-    });
+    .filter((row) => matchesAttendanceListFilter(row, statusFilter));
 
   const saveManualRecord = async () => {
     try {
@@ -748,10 +765,7 @@ function AttendanceAdminContent() {
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {[
           ["Staff roster", employees.length],
-          [
-            "Today’s records",
-            allRecords.filter((item) => item.date === format(new Date(), "yyyy-MM-dd")).length,
-          ],
+          ["Today’s records", allRecords.filter((item) => item.date === today).length],
           ["Pending site visits", pendingSiteVisits.length],
           ["Active office zones", clockInLocations.length],
         ].map(([label, value]) => (
@@ -795,27 +809,18 @@ function AttendanceAdminContent() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-col gap-3 sm:flex-row">
               <Input
+                aria-label="Attendance date"
                 className="sm:w-48"
                 type="date"
                 value={date}
                 onChange={(event) => setDate(event.target.value)}
               />
               <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="sm:w-56">
+                <SelectTrigger className="sm:w-56" aria-label="Attendance status">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {[
-                    "All",
-                    "Exceptions",
-                    "Present",
-                    "Late",
-                    "Absent",
-                    "Missing Punch",
-                    "On Leave",
-                    "Holiday",
-                    "Rest Day",
-                  ].map((status) => (
+                  {ATTENDANCE_LIST_FILTERS.map((status) => (
                     <SelectItem key={status} value={status}>
                       {status}
                     </SelectItem>
@@ -832,11 +837,7 @@ function AttendanceAdminContent() {
                     await attendanceService.exportCsvAsync(
                       date,
                       actorContext,
-                      currentRows
-                        .filter((row) =>
-                          attendanceService.isTrackingRequired(row.employee.id, date),
-                        )
-                        .map((row) => row.employee.id),
+                      currentRows.map((row) => row.employee.id),
                     ),
                     "text/csv",
                   );
@@ -936,6 +937,15 @@ function AttendanceAdminContent() {
                       </TableCell>
                     </TableRow>
                   ))}
+                  {!currentRows.length && (
+                    <TableRow>
+                      <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
+                        {statusFilter === "Clocked in"
+                          ? "No clock-ins recorded for this date and selection."
+                          : "No employees match this selection."}
+                      </TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </div>

@@ -114,6 +114,21 @@ test("familiar employee searches go directly to the right action", () => {
     );
 });
 
+test("employees can find internal applications and referrals under Company and through menu search", () => {
+  const groups = navigation("Employee");
+  const opportunities = groups
+    .find((group) => group.label === "Company")
+    ?.items.find((item) => item.url === "/staff/opportunities");
+  assert.equal(opportunities?.title, "Job Opportunities");
+  for (const term of ["apply", "recommend", "referral", "career"])
+    assert.ok(
+      searchNavigation(groups, term)
+        .flatMap((group) => group.items)
+        .some((item) => item.url === "/staff/opportunities"),
+      term,
+    );
+});
+
 test("HR searches include setup, recruiting and approval actions without protected administration", () => {
   for (const [query, url] of [
     ["add department", "/staff/settings?section=departments"],

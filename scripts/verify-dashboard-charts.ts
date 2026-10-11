@@ -59,17 +59,30 @@ try {
   const approvals = await sql`SELECT
     (SELECT count(*) FROM leave_requests WHERE organisation_id=${organisationId} AND archived_at IS NULL AND status IN ('Pending Line Manager','Pending HR','Pending Super Admin','Cancellation Pending','Amendment Pending Line Manager','Amendment Pending HR')) +
     (SELECT count(*) FROM overtime_claims WHERE organisation_id=${organisationId} AND archived_at IS NULL AND status IN ('Pending Pre-authorisation','Pending Manager','Pending HR')) +
-    (SELECT coalesce(sum((manager_approval_status='Pending')::int + (hr_approval_status='Pending')::int + (accounts_approval_status='Pending')::int),0) FROM travel_requests WHERE organisation_id=${organisationId} AND archived_at IS NULL AND status='Pending HR and Accounts') +
+    (SELECT count(*) FROM timesheets WHERE organisation_id=${organisationId} AND archived_at IS NULL AND status IN ('Pending Manager','Pending HR')) +
+    (SELECT count(*) FROM attendance_corrections WHERE organisation_id=${organisationId} AND archived_at IS NULL AND status IN ('Pending Manager','Pending HR')) +
+    (SELECT coalesce(sum(CASE WHEN manager_approval_status='Pending' THEN 1 WHEN manager_approval_status='Approved' AND hr_approval_status='Pending' THEN 1 WHEN manager_approval_status='Approved' AND hr_approval_status='Approved' AND accounts_approval_status='Pending' THEN 1 ELSE 0 END),0) FROM travel_requests WHERE organisation_id=${organisationId} AND archived_at IS NULL AND status='Pending HR and Accounts') +
+    (SELECT count(*) FROM travel_requests CROSS JOIN LATERAL jsonb_array_elements(bookings) booking WHERE organisation_id=${organisationId} AND archived_at IS NULL AND status NOT IN ('Rejected','Withdrawn','Closed') AND booking->>'status'='Pending Finance') +
     (SELECT count(*) FROM travel_requests WHERE organisation_id=${organisationId} AND archived_at IS NULL AND status='Pending Super Admin Closure') +
     (SELECT count(*) FROM training_requests WHERE organisation_id=${organisationId} AND archived_at IS NULL AND status IN ('Pending Supervisor','Pending HR')) +
-    (SELECT count(*) FROM site_visit_requests WHERE organisation_id=${organisationId} AND archived_at IS NULL AND status='Pending HR') AS total`;
+    (SELECT count(*) FROM training_records WHERE organisation_id=${organisationId} AND archived_at IS NULL AND certificate_file_id IS NOT NULL AND hr_verified=false AND rejected_at IS NULL) +
+    (SELECT count(*) FROM site_visit_requests WHERE organisation_id=${organisationId} AND archived_at IS NULL AND (status='Pending HR' OR (status IN ('Approved','Completed') AND details->'extension'->>'status'='Pending'))) +
+    (SELECT count(*) FROM time_away WHERE organisation_id=${organisationId} AND archived_at IS NULL AND status='Pending HR') +
+    (SELECT count(*) FROM employee_documents WHERE organisation_id=${organisationId} AND archived_at IS NULL AND replaced_by_id IS NULL AND status='Pending Verification') +
+    (SELECT count(*) FROM profile_change_requests WHERE organisation_id=${organisationId} AND archived_at IS NULL AND status='Pending') +
+    (SELECT count(*) FROM employees WHERE organisation_id=${organisationId} AND archived_at IS NULL AND employment_confirmation_status='Pending HR Review') +
+    (SELECT count(*) FROM employee_goals WHERE organisation_id=${organisationId} AND archived_at IS NULL AND status IN ('Pending Approval','Completion Pending')) +
+    (SELECT count(*) FROM performance_reviews WHERE organisation_id=${organisationId} AND archived_at IS NULL AND status IN ('Manager Review Pending','Moderation Pending','Acknowledged')) +
+    (SELECT count(*) FROM candidate_recommendations WHERE organisation_id=${organisationId} AND archived_at IS NULL AND review_status='Pending HR Review' AND recommender_employee_id IS NOT NULL) +
+    (SELECT count(*) FROM job_offers WHERE organisation_id=${organisationId} AND archived_at IS NULL AND status='Pending Approval') +
+    (SELECT count(*) FROM payroll_periods WHERE organisation_id=${organisationId} AND archived_at IS NULL AND status='Prepared') AS total`;
   assert.equal(
     chart.priorities.approvals.reduce((sum, row) => sum + row.count, 0),
     Number(approvals[0]!.total),
   );
   const expiry =
     await sql`SELECT expiry_date::text AS date FROM employee_documents WHERE organisation_id=${organisationId}
-      AND archived_at IS NULL AND replaced_by_id IS NULL AND status='Valid' AND expiry_date <= ${today}::date + 90
+      AND archived_at IS NULL AND replaced_by_id IS NULL AND waiver_reason IS NULL AND status='Valid' AND expiry_date <= ${today}::date + 90
       AND employee_id IN ${sql(personIds)}
     UNION ALL SELECT expiry_date::text FROM company_library WHERE organisation_id=${organisationId}
       AND archived_at IS NULL AND kind='Company' AND status='Published' AND expiry_date <= ${today}::date + 90`;

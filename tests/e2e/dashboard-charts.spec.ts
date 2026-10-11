@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { WorkforceAnalytics } from "../../src/lib/data/workforce-analytics";
+import postgres from "postgres";
 
 async function preview(page: Page, role: "HR" | "Employee") {
   await page.evaluate(
@@ -35,6 +36,105 @@ async function figures(
   );
 }
 const shown = (value: number) => value.toLocaleString("en-US", { maximumFractionDigits: 1 });
+
+test("HR opens daily clock-ins from the dashboard and can review another date", async ({
+  page,
+}) => {
+  const url = process.env["VIA_HR_TEST_DATABASE_URL"];
+  expect(url).toBeTruthy();
+  expect(new URL(url!).pathname).toMatch(/test|scratch/i);
+  const sql = postgres(url!, { max: 1 });
+  let recordId: string | undefined;
+  let futureDate: string | undefined;
+  let office: { id: string; name: string; organisation_id: string } | undefined;
+  let originalTracking: postgres.JSONValue | undefined;
+  try {
+    [office] = await sql<{ id: string; name: string; organisation_id: string }[]>`
+      SELECT l.id,l.name,e.organisation_id FROM employees e
+      JOIN locations l ON l.id=e.location_id
+      WHERE lower(e.work_email)='omar.rahman@via-int.com' AND e.archived_at IS NULL`;
+    expect(office).toBeTruthy();
+    const [settings] = await sql`
+      SELECT additional_settings->'attendanceTracking' AS tracking
+      FROM app_settings WHERE organisation_id=${office!.organisation_id}`;
+    originalTracking = settings!.tracking;
+    // Reproduce a real organisation with no tracking policy and an explicit Head Office location.
+    await sql`UPDATE locations SET name='Head Office' WHERE id=${office!.id}`;
+    await sql`UPDATE app_settings SET additional_settings=additional_settings-'attendanceTracking'
+      WHERE organisation_id=${office!.organisation_id}`;
+    await page.goto("/staff");
+    await preview(page, "HR");
+    const data = await figures(page, "hr", 30);
+    const shortcut = page.getByRole("link", { name: "Today's attendance", exact: true });
+    await expect(shortcut).toBeVisible();
+    const [record] = await sql`INSERT INTO attendance_records
+      (organisation_id,employee_id,date,clock_in_at,source,status,created_by,updated_by)
+      SELECT e.organisation_id,e.id,d::date,
+        (d::date + time '08:30') AT TIME ZONE s.timezone,'Hardware Terminal','Present',u.id,u.id
+      FROM employees e JOIN users u ON u.employee_id=e.id
+      JOIN app_settings s ON s.organisation_id=e.organisation_id
+      CROSS JOIN generate_series(${data.today.date}::date+2,${data.today.date}::date+40,interval '1 day') d
+      WHERE lower(e.work_email)='omar.rahman@via-int.com'
+        AND NOT EXISTS (SELECT 1 FROM attendance_records r WHERE r.employee_id=e.id AND r.date=d::date)
+      LIMIT 1 RETURNING id,date::text`;
+    expect(record).toBeTruthy();
+    recordId = record!.id;
+    futureDate = record!.date;
+    await shortcut.click();
+    await expect(
+      page.getByRole("heading", { name: "Manage attendance", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByLabel("Attendance date", { exact: true })).toHaveValue(data.today.date);
+    await expect(page.getByRole("combobox", { name: "Attendance status", exact: true })).toHaveText(
+      "Clocked in",
+    );
+    await expect(page.getByLabel("Filter location", { exact: true })).toHaveValue("Head Office");
+    await page.getByLabel("Attendance date", { exact: true }).fill(futureDate!);
+    const rows = page.locator("[data-section-content] tbody").first();
+    await expect(rows.getByRole("row").filter({ hasText: "Omar" })).toBeVisible({
+      timeout: 30_000,
+    });
+    const omar = rows.getByRole("row").filter({ hasText: "Omar" });
+    await expect(omar.getByRole("cell").nth(2)).toHaveText("08:30");
+    await expect(omar.getByRole("cell").nth(3)).toHaveText("—");
+    await expect(rows).not.toContainText("Not tracked");
+    await page.getByRole("combobox", { name: "Attendance status", exact: true }).click();
+    await page.getByRole("option", { name: "All", exact: true }).click();
+    await expect.poll(() => rows.getByRole("row").count()).toBeGreaterThan(1);
+    await page.reload();
+    await expect(page.getByLabel("Attendance date", { exact: true })).toHaveValue(futureDate!);
+    await expect(page.getByRole("combobox", { name: "Attendance status", exact: true })).toHaveText(
+      "All",
+    );
+    await expect(page.getByLabel("Filter location", { exact: true })).toHaveValue("Head Office");
+    await page.getByLabel("Filter location", { exact: true }).selectOption("Salalah, Oman");
+    await expect(rows).not.toContainText("Omar");
+    await page.reload();
+    await expect(page.getByLabel("Filter location", { exact: true })).toHaveValue("Salalah, Oman");
+    await page.getByLabel("Filter location", { exact: true }).selectOption("all");
+    await expect(omar).toBeVisible();
+    await page.reload();
+    await expect(page.getByLabel("Filter location", { exact: true })).toHaveValue("all");
+    await page.goto(`/staff/attendance?date=${futureDate}&status=All`);
+    await expect(page.getByLabel("Filter location", { exact: true })).toHaveValue("Head Office");
+    await page.goto("/staff");
+    await preview(page, "Employee");
+    await expect(page.getByRole("region", { name: "My working hours", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Today's attendance", exact: true })).toHaveCount(
+      0,
+    );
+  } finally {
+    if (recordId) await sql`DELETE FROM attendance_records WHERE id=${recordId}`;
+    if (office) {
+      await sql`UPDATE locations SET name=${office.name} WHERE id=${office.id}`;
+      if (originalTracking != null)
+        await sql`UPDATE app_settings SET additional_settings=additional_settings ||
+          ${sql.json({ attendanceTracking: originalTracking })}::jsonb
+          WHERE organisation_id=${office.organisation_id}`;
+    }
+    await sql.end();
+  }
+});
 
 test("HR switches to her own employee dashboard and back without carrying an employee filter", async ({
   page,

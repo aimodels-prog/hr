@@ -30,6 +30,7 @@ export async function dashboardPriorities(input: {
   const nextYearStart = `${year + 1}-${input.yearStart}`;
   const ids = people.map((row) => row.id);
   const employeeFilter = input.employeeId ? sql`and employee_id = ${input.employeeId}` : sql``;
+  const profileFilter = input.employeeId ? sql`and id = ${input.employeeId}` : sql``;
   const [balances, requests, movements, holidays, approvals, employeeExpiry, companyExpiry] =
     await Promise.all([
       ids.length
@@ -125,12 +126,25 @@ export async function dashboardPriorities(input: {
         select case when status in ('Pending Line Manager', 'Amendment Pending Line Manager') then 'Leave · Manager' when status = 'Pending Super Admin' then 'Leave · Legacy stage (review)' else 'Leave · HR' end as name
         from leave_requests where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and status in ('Pending Line Manager','Pending HR','Pending Super Admin','Cancellation Pending','Amendment Pending Line Manager','Amendment Pending HR')
         union all select case when status = 'Pending HR' then 'Overtime · HR' else 'Overtime · Manager' end from overtime_claims where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and status in ('Pending Pre-authorisation','Pending Manager','Pending HR')
+        union all select case when status = 'Pending HR' then 'Timesheets · HR' else 'Timesheets · Manager' end from timesheets where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and status in ('Pending Manager','Pending HR')
+        union all select case when status = 'Pending HR' then 'Attendance corrections · HR' else 'Attendance corrections · Manager' end from attendance_corrections where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and status in ('Pending Manager','Pending HR')
         union all select 'Travel · Manager' from travel_requests where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and status = 'Pending HR and Accounts' and manager_approval_status = 'Pending'
-        union all select 'Travel · HR' from travel_requests where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and status = 'Pending HR and Accounts' and hr_approval_status = 'Pending'
-        union all select 'Travel · Finance' from travel_requests where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and status = 'Pending HR and Accounts' and accounts_approval_status = 'Pending'
+        union all select 'Travel · HR' from travel_requests where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and status = 'Pending HR and Accounts' and manager_approval_status = 'Approved' and hr_approval_status = 'Pending'
+        union all select 'Travel · Finance' from travel_requests where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and status = 'Pending HR and Accounts' and manager_approval_status = 'Approved' and hr_approval_status = 'Approved' and accounts_approval_status = 'Pending'
+        union all select 'Travel arrangements · Finance' from travel_requests cross join lateral jsonb_array_elements(bookings) booking where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and status not in ('Rejected','Withdrawn','Closed') and booking->>'status' = 'Pending Finance'
         union all select 'Travel closure · Finance' from travel_requests where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and status = 'Pending Super Admin Closure'
         union all select case when status = 'Pending HR' then 'Training · HR' else 'Training · Supervisor' end from training_requests where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and status in ('Pending Supervisor','Pending HR')
-        union all select 'Visits · HR' from site_visit_requests where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and status = 'Pending HR'
+        union all select 'Training certificates · HR' from training_records where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and certificate_file_id is not null and hr_verified = false and rejected_at is null
+        union all select 'Visits · HR' from site_visit_requests where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and (status = 'Pending HR' or (status in ('Approved','Completed') and details->'extension'->>'status' = 'Pending'))
+        union all select 'Time away · HR' from time_away where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and status = 'Pending HR'
+        union all select 'Documents · HR' from employee_documents where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and replaced_by_id is null and status = 'Pending Verification'
+        union all select 'Profile updates · HR' from profile_change_requests where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and status = 'Pending'
+        union all select 'Employment details · HR' from employees where organisation_id = ${organisationId} ${profileFilter} and archived_at is null and employment_confirmation_status = 'Pending HR Review'
+        union all select 'Objectives · Manager' from employee_goals where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and status in ('Pending Approval','Completion Pending')
+        union all select case when status = 'Manager Review Pending' then 'Performance · Manager' else 'Performance · HR' end from performance_reviews where organisation_id = ${organisationId} ${employeeFilter} and archived_at is null and status in ('Manager Review Pending','Moderation Pending','Acknowledged')
+        union all select 'Referrals · HR' from candidate_recommendations where organisation_id = ${organisationId} and (${input.employeeId ?? null}::uuid is null or recommender_employee_id = ${input.employeeId ?? null}::uuid) and archived_at is null and review_status = 'Pending HR Review' and recommender_employee_id is not null
+        union all select 'Offers · Manager' from job_offers where organisation_id = ${organisationId} and ${!input.employeeId} and archived_at is null and status = 'Pending Approval'
+        union all select 'Payroll · Finance' from payroll_periods where organisation_id = ${organisationId} and ${!input.employeeId} and archived_at is null and status = 'Prepared'
       ) pending group by name order by name`)
         : [],
       scope === "hr" && ids.length
@@ -143,6 +157,7 @@ export async function dashboardPriorities(input: {
                 inArray(employeeDocuments.employeeId, ids),
                 isNull(employeeDocuments.archivedAt),
                 isNull(employeeDocuments.replacedById),
+                isNull(employeeDocuments.waiverReason),
                 eq(employeeDocuments.status, "Valid"),
                 lte(employeeDocuments.expiryDate, sql`(${today}::date + 90)`),
               ),

@@ -324,7 +324,12 @@ function OrganisationHrDashboardDetails() {
   // ---------- Travel (HR approval half of dual approval workflow) ----------
   const pendingHrTravel = travelService
     .getAllRequests(currentUser.getActorContext())
-    .filter((r) => r.status === "Pending HR and Accounts" && r.hrApprovalStatus === "Pending");
+    .filter(
+      (r) =>
+        r.status === "Pending HR and Accounts" &&
+        r.managerApprovalStatus === "Approved" &&
+        r.hrApprovalStatus === "Pending",
+    );
 
   const leaveToday = organisationDate(
     new Date(),

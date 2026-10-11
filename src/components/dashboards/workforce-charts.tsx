@@ -17,7 +17,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { RefreshCw } from "lucide-react";
+import { DoorOpen, RefreshCw } from "lucide-react";
 import { useCurrentUser } from "@/lib/auth";
 import { getWorkforceAnalyticsFn } from "@/lib/server-functions/workforce-analytics.server";
 import { ChartContainer } from "@/components/ui/chart";
@@ -403,6 +403,13 @@ export default function WorkforceCharts({
     <section className="min-w-0 space-y-4" aria-label={label}>
       <div className="flex flex-wrap items-center justify-end gap-3">
         {toolbar && <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">{toolbar}</div>}
+        {scope === "hr" && !employeeId && data && (
+          <Button asChild variant="outline" className="mr-auto">
+            <Link to="/staff/attendance" search={{ date: data.today.date, status: "Clocked in" }}>
+              <DoorOpen className="mr-2 size-4" /> Today's attendance
+            </Link>
+          </Button>
+        )}
         <div className="flex items-center gap-2">
           <h2 className="sr-only">{label}</h2>
           <DashboardInfo label="Reporting period and timezone">
@@ -501,7 +508,7 @@ export default function WorkforceCharts({
                       value: String(
                         data.priorities.approvals.reduce((sum, item) => sum + item.count, 0),
                       ),
-                      note: "Leave, overtime, travel, training & visits",
+                      note: "Current approval and verification stages",
                     },
                   ]
                 : [
@@ -614,9 +621,9 @@ export default function WorkforceCharts({
               />
               <DashboardInfo label="About carryover and eligibility">
                 Carryover is an estimated part of remaining leave, not extra days. It uses the same
-                oldest-leave-first calculation as reminders. Plan old leave before May and confirm
-                the applicable deadline with HR. These figures do not grant leave eligibility or
-                change balances.
+                oldest-leave-first calculation as reminders. Use the carryover deadline in your
+                company's leave policy. These figures do not grant leave eligibility or change
+                balances.
               </DashboardInfo>
             </Panel>
             {scope === "hr" && (
@@ -680,7 +687,12 @@ export default function WorkforceCharts({
                 </Panel>
                 <Panel
                   title="Approvals waiting"
-                  description="Outstanding decisions by responsible role across leave, overtime, travel, training and visits. A travel request can need several decisions, so this is not a unique-request count. Independent of the attendance period."
+                  description="Current approval and verification stages across employee requests, documents, performance and recruitment. Later travel stages appear only when ready for review. Independent of the attendance period."
+                  link={
+                    employeeId
+                      ? detail("overview", "/staff/requests")
+                      : "/staff/requests?view=organisation"
+                  }
                 >
                   <CountChart
                     data={data.priorities.approvals}
@@ -695,14 +707,16 @@ export default function WorkforceCharts({
                     <Link to={detail("travel", "/staff/travel-hr-approvals")}>Travel</Link>
                     <Link to={detail("training", "/staff/training")}>Training</Link>
                     <Link to={detail("attendance", "/staff/attendance")}>Visits</Link>
+                    <Link to={detail("timesheets", "/staff/timesheet-approvals")}>Timesheets</Link>
+                    <Link to={detail("documents", "/staff/employees")}>Documents</Link>
                   </nav>
                 </Panel>
                 <Panel
                   title="Upcoming document expiries"
                   description={
                     employeeId
-                      ? "This employee’s current verified documents expiring within 90 days or overdue, including visa and insurance when recorded."
-                      : "Current verified employee documents and published company documents with recorded expiry dates. Includes visas and insurance when recorded. Buckets are non-overlapping; due today is in 0–30 days. Independent of the attendance period."
+                      ? "This employee's and their dependants' current verified documents expiring within 90 days or overdue, including passports, visas and insurance cards. Waived and replaced documents are excluded."
+                      : "Current verified employee and dependant documents, plus published company documents. Includes passports, visas and insurance cards with expiry dates. Waived and replaced documents are excluded. Buckets do not overlap; due today is in 0–30 days."
                   }
                   link={detail("documents", "/staff/document-expiry")}
                 >
