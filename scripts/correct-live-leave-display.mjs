@@ -45,14 +45,15 @@ try {
     const [policy] = await tx`SELECT id FROM leave_policies WHERE organisation_id=${organisationId}
       AND code='A/L' AND is_enabled AND archived_at IS NULL`;
     if (!policy) throw new Error("Active annual leave policy was not found");
+    // The first import saved its summary as a JSON scalar string; newer events use an object.
     const [restoreAudit] =
       await tx`SELECT id FROM audit_events WHERE organisation_id=${organisationId}
-      AND action='restore-active-leave' AND after_summary->>'sourceSha256'=${expectedSourceSha256}
+      AND action='restore-active-leave' AND after_summary::text LIKE ${`%${expectedSourceSha256}%`}
       LIMIT 1`;
     if (!restoreAudit) throw new Error("The expected opening balance import was not found");
     const [correctionAudit] =
       await tx`SELECT id FROM audit_events WHERE organisation_id=${organisationId}
-      AND action='correct-opening-display-days' AND after_summary->>'sourceSha256'=${expectedSourceSha256}
+      AND action='correct-opening-display-days' AND after_summary::text LIKE ${`%${expectedSourceSha256}%`}
       LIMIT 1`;
     const [history] = await tx`SELECT count(*)::integer AS count FROM leave_requests
       WHERE organisation_id=${organisationId} AND archived_at IS NULL`;
@@ -185,7 +186,7 @@ try {
     ) VALUES (
       ${organisationId}, ${actor.id}, ${actor.employee_id}, 'HR Department', ${actor.role},
       ARRAY[${actor.role}]::text[], 'correct-opening-display-days', 'leave', 'leave-balance',
-      ${organisationId}, ${JSON.stringify({ matched: matched.length, sourceSha256: expectedSourceSha256 })}::jsonb,
+      ${organisationId}, ${tx.json({ matched: matched.length, sourceSha256: expectedSourceSha256 })},
       'Aligned opening balances with whole days displayed in the HR workbook', 'High'
     )`;
     return {
