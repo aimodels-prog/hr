@@ -630,7 +630,8 @@ test(
       assert.equal(reminders[0].recipient_user_id, employeeUserId);
       assert.equal(reminders[0].priority, "Normal");
       assert.equal(reminders[0].link.path, "/staff/leave");
-      assert.match(reminders[0].message, /30 April 2090/);
+      assert.match(reminders[0].message, /10 carried-over days/);
+      assert.doesNotMatch(reminders[0].message, /30 April 2090/);
       await processLeaveUsageReminders(new Date("2090-05-01T08:00:00Z"));
       const annualReminder =
         await sql`SELECT * FROM notifications WHERE organisation_id=${organisationId} AND deduplication_key=${`leave-use:${reminderBalanceId}:annual:2090-05`}`;

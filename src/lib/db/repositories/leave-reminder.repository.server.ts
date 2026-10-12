@@ -143,7 +143,7 @@ export async function processLeaveUsageReminders(now = new Date()) {
               : "Remember to plan your annual leave",
           message:
             stage.kind === "carry"
-              ? `Please plan to use old ${name} leave${carryExpiryDate ? ` by ${deadlineLabel}` : ""}. Your balance includes ${Number(carry.toFixed(2))} carried-over days. Check your dates with HR and request leave.`
+              ? `Please plan to use your carried-over ${name}${carryExpiryDate ? ` by ${deadlineLabel}` : ""}. Your balance includes ${Number(carry.toFixed(2))} carried-over days. Check your dates with HR and request leave.`
               : `You have ${available} days of ${name} available. Plan a break with your manager and submit your leave request. Normal eligibility and approval rules apply.`,
           priority: "Normal",
           status: "Unread",
