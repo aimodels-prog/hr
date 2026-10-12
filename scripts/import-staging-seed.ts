@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 
 import type { AttendancePolicy } from "../src/lib/data/attendance-types.ts";
-import { POLICY_DEFINITIONS } from "../src/lib/data/leave-service.ts";
+import { POLICY_DEFINITIONS } from "../src/lib/data/leave-policy-defaults.ts";
 import { getLeaveEligibility, isOmaniNationality } from "../src/lib/data/leave-eligibility.ts";
 import { createSeedCollections, SEED_SYSTEM_USER_ID } from "../src/lib/data/seeds.ts";
 import type {

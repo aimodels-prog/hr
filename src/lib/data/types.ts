@@ -915,6 +915,8 @@ export interface AppSettings extends BaseRecord {
   probationDurationMonths: number;
   leaveYearStart: string;
   leaveIncludesWeekends?: boolean | undefined;
+  annualCarryExpiryDates?: Record<string, string | null> | undefined;
+  annualCarryExpiryMonthDay?: string | null | undefined;
   leaveYearEnd: string;
   documentReminderDays: number[];
   employeeNumberFormat: string;

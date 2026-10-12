@@ -40,6 +40,8 @@ export const HR_COMPANY_SETTINGS_KEYS = [
   "leaveYearEnd",
   "documentReminderDays",
   "leaveIncludesWeekends",
+  "annualCarryExpiryDates",
+  "annualCarryExpiryMonthDay",
   "requireOnboardingCompletionBeforeDashboard",
 ] as const;
 

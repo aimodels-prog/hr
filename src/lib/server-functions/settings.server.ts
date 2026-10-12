@@ -4,6 +4,7 @@ import { canChangeCompanySettings } from "../auth/company-setup-policy.ts";
 
 import { getDatabaseClient } from "../db/client.ts";
 import { getAppSettings, saveAppSettings } from "../db/repositories/settings.repository.server.ts";
+import { reconcileAnnualCarryExpiryInDatabase } from "../db/repositories/leave.repository.server.ts";
 import { auditEvents } from "../db/schema/system.ts";
 import {
   resolveDefaultOrganisationId,
@@ -22,6 +23,20 @@ const AppSettingsInputSchema = z.object({
   probationDurationMonths: z.number().int().min(0).max(36),
   leaveYearStart: z.string().regex(/^\d{2}-\d{2}$/, "Format must be MM-DD"),
   leaveIncludesWeekends: z.boolean().optional(),
+  annualCarryExpiryDates: z
+    .record(
+      z.string().regex(/^\d{4}$/),
+      z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/)
+        .nullable(),
+    )
+    .optional(),
+  annualCarryExpiryMonthDay: z
+    .string()
+    .regex(/^\d{2}-\d{2}$/)
+    .nullable()
+    .optional(),
   leaveYearEnd: z.string().regex(/^\d{2}-\d{2}$/, "Format must be MM-DD"),
   documentReminderDays: z.array(z.number().int().min(1).max(3650)),
   employeeNumberFormat: z.string().min(1).includes("{0000}", { message: "Must include {0000}" }),
@@ -156,6 +171,25 @@ export const saveAppSettingsFn = createServerFn({ method: "POST" })
     if (!validMonthDay(settings.leaveYearStart) || !validMonthDay(settings.leaveYearEnd)) {
       throw new Error("Leave year dates must use valid MM-DD values.");
     }
+    if (
+      settings.annualCarryExpiryMonthDay &&
+      (!validMonthDay(settings.annualCarryExpiryMonthDay) ||
+        settings.annualCarryExpiryMonthDay === "02-29")
+    )
+      throw new Error("Enter a valid annual carry expiry month and day.");
+    for (const [year, expiry] of Object.entries(settings.annualCarryExpiryDates ?? {})) {
+      if (!expiry) continue;
+      const parsed = new Date(`${expiry}T00:00:00Z`);
+      if (
+        Number(year) < 2000 ||
+        Number(year) > 2200 ||
+        !Number.isFinite(parsed.getTime()) ||
+        parsed.toISOString().slice(0, 10) !== expiry ||
+        expiry < `${Number(year) + 1}-${settings.leaveYearStart}` ||
+        expiry >= `${Number(year) + 2}-${settings.leaveYearStart}`
+      )
+        throw new Error("Carry expiry dates must fall within the following leave year.");
+    }
 
     if (settings.leaveYearStart === settings.leaveYearEnd) {
       throw new Error("Leave year start and end dates must be different.");
@@ -178,8 +212,14 @@ export const saveAppSettingsFn = createServerFn({ method: "POST" })
       schemaVersion: settings.schemaVersion ?? previous.schemaVersion ?? 1,
     };
 
-    return saveAppSettings(orgId, completeSettings, {
+    const saved = await saveAppSettings(orgId, completeSettings, {
       ...actor,
       activeRole: actor.roles.includes("Super Admin") ? "Super Admin" : "HR",
     });
+    if (
+      changedKeys.includes("annualCarryExpiryDates") ||
+      changedKeys.includes("annualCarryExpiryMonthDay")
+    )
+      await reconcileAnnualCarryExpiryInDatabase(orgId, actor);
+    return saved;
   });

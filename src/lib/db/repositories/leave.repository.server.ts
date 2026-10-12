@@ -6,6 +6,7 @@ import { sickLeaveBackdatePermissions } from "../schema/leave.ts";
 import { siteVisitLocalNow } from "../../data/site-visit.ts";
 import { organisationLeaveYear } from "./leave-year.repository.server.ts";
 import { leaveYearForDate } from "../../data/leave-year.ts";
+import { carryExpiryDateForYear, carryPosition } from "../../data/leave-carry.ts";
 import { leaveWorkingDates } from "../../data/leave-working-days.ts";
 import { validateSickPayTiers } from "../../data/sick-leave-payroll.ts";
 import { getLeaveEligibility, isOmaniNationality } from "../../data/leave-eligibility.ts";
@@ -34,6 +35,98 @@ import { appSettings, organisations } from "../schema/organisation.ts";
 import { auditEvents, notifications } from "../schema/system.ts";
 import { roles, userRoles, users } from "../schema/employee.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
+
+async function annualCarryState(
+  tx: Parameters<Parameters<ReturnType<typeof getDatabaseClient>["transaction"]>[0]>[0],
+  organisationId: string,
+  employeeId: string,
+  policyId: string,
+  leaveYear: number,
+  settings: {
+    leaveYearStart: string;
+    annualCarryExpiryDates?: Record<string, string | null>;
+    annualCarryExpiryMonthDay?: string | null;
+  },
+) {
+  const yearStart = `${leaveYear}-${settings.leaveYearStart}`;
+  const nextStart = `${leaveYear + 1}-${settings.leaveYearStart}`;
+  const entries = await tx
+    .select({
+      transactionType: leaveTransactions.transactionType,
+      days: leaveTransactions.days,
+      createdAt: leaveTransactions.createdAt,
+      referenceId: leaveTransactions.referenceId,
+    })
+    .from(leaveTransactions)
+    .where(
+      and(
+        eq(leaveTransactions.organisationId, organisationId),
+        eq(leaveTransactions.employeeId, employeeId),
+        eq(leaveTransactions.policyId, policyId),
+        sql`${leaveTransactions.date} >= ${yearStart}`,
+        sql`${leaveTransactions.date} < ${nextStart}`,
+        isNull(leaveTransactions.archivedAt),
+      ),
+    );
+  const requests = await tx
+    .select({ id: leaveRequests.id, startDate: leaveRequests.startDate })
+    .from(leaveRequests)
+    .where(
+      and(
+        eq(leaveRequests.organisationId, organisationId),
+        eq(leaveRequests.employeeId, employeeId),
+        eq(leaveRequests.policyId, policyId),
+        isNull(leaveRequests.archivedAt),
+      ),
+    );
+  const expiryDate = carryExpiryDateForYear(settings, leaveYear);
+  return {
+    expiryDate,
+    ...carryPosition(
+      entries,
+      new Map(requests.map((request) => [request.id, request.startDate])),
+      expiryDate,
+    ),
+  };
+}
+
+async function carryReserveForRequest(
+  tx: Parameters<Parameters<ReturnType<typeof getDatabaseClient>["transaction"]>[0]>[0],
+  organisationId: string,
+  employeeId: string,
+  policyId: string,
+  leaveYear: number,
+  leaveStartDate: string,
+) {
+  const [settings] = await tx
+    .select({
+      timezone: appSettings.timezone,
+      leaveYearStart: appSettings.leaveYearStart,
+      additionalSettings: appSettings.additionalSettings,
+    })
+    .from(appSettings)
+    .where(eq(appSettings.organisationId, organisationId))
+    .limit(1);
+  if (!settings) throw new Error("Organisation leave settings are unavailable.");
+  const state = await annualCarryState(tx, organisationId, employeeId, policyId, leaveYear, {
+    leaveYearStart: settings.leaveYearStart,
+    annualCarryExpiryDates: (settings.additionalSettings["annualCarryExpiryDates"] ?? {}) as Record<
+      string,
+      string | null
+    >,
+    annualCarryExpiryMonthDay: (settings.additionalSettings["annualCarryExpiryMonthDay"] ??
+      null) as string | null,
+  });
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: settings.timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  return state.expiryDate && (leaveStartDate > state.expiryDate || today > state.expiryDate)
+    ? state.remaining
+    : 0;
+}
 
 function recordFields(row: {
   id: string;
@@ -642,8 +735,20 @@ export async function createLeaveRequestInDatabase(
               sql`${leaveRequests.status} IN ('Pending Line Manager', 'Pending HR', 'Pending Super Admin', 'Amendment Pending Line Manager', 'Amendment Pending HR')`,
             ),
           );
+        const carryReserve =
+          policy.type === "Annual"
+            ? await carryReserveForRequest(
+                tx,
+                organisationId,
+                input.employeeId,
+                input.policyId,
+                leaveYear,
+                input.startDate,
+              )
+            : 0;
         const projected =
           Number(balance?.days ?? 0) -
+          carryReserve -
           pendingRows.reduce((sum, row) => sum + Number(row.days), 0) -
           days;
         const minimum = policy.allowNegativeBalance ? -Number(policy.maxNegativeBalance ?? 0) : 0;
@@ -963,6 +1068,18 @@ export async function approveLeaveRequestInDatabase(
         balanceChange !== 0
       ) {
         const minimum = policy.allowNegativeBalance ? -Number(policy.maxNegativeBalance ?? 0) : 0;
+        const leaveYear = await organisationLeaveYear(organisationId, request.startDate, tx);
+        const carryReserve =
+          policy.type === "Annual" && balanceChange < 0
+            ? await carryReserveForRequest(
+                tx,
+                organisationId,
+                request.employeeId,
+                request.policyId,
+                leaveYear,
+                pendingAmendment?.proposedStartDate ?? request.startDate,
+              )
+            : 0;
         const updated = await tx
           .update(leaveBalances)
           .set({
@@ -980,7 +1097,7 @@ export async function approveLeaveRequestInDatabase(
                 leaveBalances.leaveYear,
                 await organisationLeaveYear(organisationId, request.startDate, tx),
               ),
-              sql`${leaveBalances.balanceDays} + ${balanceChange} >= ${minimum}`,
+              sql`${leaveBalances.balanceDays} + ${balanceChange} - ${carryReserve} >= ${minimum}`,
             ),
           )
           .returning({ id: leaveBalances.id });
@@ -1789,12 +1906,14 @@ export async function rolloverLeaveBalancesInDatabase(
         gender: employees.gender,
         nationality: employees.nationality,
         startDate: employees.startDate,
+        employmentConfirmationStatus: employees.employmentConfirmationStatus,
       })
       .from(employees)
       .where(
         and(
           eq(employees.organisationId, organisationId),
           sql`${employees.status} NOT IN ('Inactive', 'Archived')`,
+          eq(employees.employmentConfirmationStatus, "Confirmed"),
           ...(employeeScopeId ? [eq(employees.id, employeeScopeId)] : []),
         ),
       );
@@ -1829,9 +1948,33 @@ export async function rolloverLeaveBalancesInDatabase(
             ),
           )
           .limit(1);
+        let priorYearCarry = 0;
+        if (policy.type === "Annual" && prior) {
+          const [fullSettings] = await tx
+            .select({ additionalSettings: appSettings.additionalSettings })
+            .from(appSettings)
+            .where(eq(appSettings.organisationId, organisationId))
+            .limit(1);
+          const carryState = await annualCarryState(
+            tx,
+            organisationId,
+            employee.id,
+            policy.id,
+            leaveYear - 1,
+            {
+              leaveYearStart: settings.leaveYearStart,
+              annualCarryExpiryDates: (fullSettings?.additionalSettings["annualCarryExpiryDates"] ??
+                {}) as Record<string, string | null>,
+              annualCarryExpiryMonthDay: (fullSettings?.additionalSettings[
+                "annualCarryExpiryMonthDay"
+              ] ?? null) as string | null,
+            },
+          );
+          priorYearCarry = carryState.remaining;
+        }
         const carry = Math.max(
           0,
-          Math.min(Number(prior?.balance ?? 0), Number(policy.carryForwardLimit)),
+          Math.min(Number(prior?.balance ?? 0) - priorYearCarry, Number(policy.carryForwardLimit)),
         );
         const [override] = await tx
           .select({ days: employeeLeaveEntitlementOverrides.days })
@@ -1914,6 +2057,117 @@ export async function rolloverLeaveBalancesInDatabase(
   return created;
 }
 
+/** Reconcile unused carried days against HR's expiry date without erasing history. */
+export async function reconcileAnnualCarryExpiryInDatabase(
+  organisationId: string,
+  actor: AuditActorContext,
+  now = new Date(),
+): Promise<number> {
+  const db = getDatabaseClient();
+  return db.transaction(async (tx) => {
+    const [settings] = await tx
+      .select({
+        leaveYearStart: appSettings.leaveYearStart,
+        timezone: appSettings.timezone,
+        additionalSettings: appSettings.additionalSettings,
+      })
+      .from(appSettings)
+      .where(eq(appSettings.organisationId, organisationId))
+      .limit(1);
+    if (!settings) throw new Error("Organisation leave settings are unavailable.");
+    const localDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone: settings.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now);
+    const leaveYear = leaveYearForDate(localDate, settings.leaveYearStart);
+    const carrySettings = {
+      leaveYearStart: settings.leaveYearStart,
+      annualCarryExpiryDates: (settings.additionalSettings["annualCarryExpiryDates"] ??
+        {}) as Record<string, string | null>,
+      annualCarryExpiryMonthDay: (settings.additionalSettings["annualCarryExpiryMonthDay"] ??
+        null) as string | null,
+    };
+    const balances = await tx
+      .select({
+        id: leaveBalances.id,
+        employeeId: leaveBalances.employeeId,
+        policyId: leaveBalances.policyId,
+      })
+      .from(leaveBalances)
+      .innerJoin(leavePolicies, eq(leavePolicies.id, leaveBalances.policyId))
+      .where(
+        and(
+          eq(leaveBalances.organisationId, organisationId),
+          eq(leaveBalances.leaveYear, leaveYear),
+          eq(leavePolicies.type, "Annual"),
+          isNull(leaveBalances.archivedAt),
+        ),
+      );
+    let changed = 0;
+    for (const balance of balances) {
+      await tx.execute(sql`SELECT id FROM leave_balances WHERE id=${balance.id} FOR UPDATE`);
+      const carry = await annualCarryState(
+        tx,
+        organisationId,
+        balance.employeeId,
+        balance.policyId,
+        leaveYear,
+        carrySettings,
+      );
+      const delta =
+        carry.expiryDate && localDate > carry.expiryDate
+          ? -carry.remaining
+          : -carry.expiryAdjustment;
+      if (Math.abs(delta) < 0.005) continue;
+      await tx
+        .update(leaveBalances)
+        .set({
+          balanceDays: sql`${leaveBalances.balanceDays} + ${delta}`,
+          updatedAt: now,
+          updatedBy: actor.userId,
+          recordVersion: sql`${leaveBalances.recordVersion} + 1`,
+        })
+        .where(eq(leaveBalances.id, balance.id));
+      await tx.insert(leaveTransactions).values({
+        organisationId,
+        employeeId: balance.employeeId,
+        policyId: balance.policyId,
+        date: localDate,
+        transactionType: "Expiry",
+        days: String(delta),
+        reason:
+          delta < 0
+            ? `Unused carried annual leave expired after ${carry.expiryDate}`
+            : "Carried annual leave restored after expiry date changed",
+        referenceId: balance.id,
+        actorUserId: actor.userId,
+        createdBy: actor.userId,
+        updatedBy: actor.userId,
+      } as typeof leaveTransactions.$inferInsert);
+      changed += 1;
+    }
+    if (changed)
+      await tx.insert(auditEvents).values({
+        organisationId,
+        actorUserId: actor.userId,
+        actorEmployeeId: actor.employeeId,
+        actorDisplayName: actor.displayName,
+        activeRole: actor.activeRole,
+        actorRoles: actor.roles ?? [actor.activeRole],
+        action: "reconcile-carry-expiry",
+        module: "leave",
+        entityType: "leave-balance",
+        entityId: organisationId,
+        afterSummary: { leaveYear, balancesChanged: changed },
+        reason: "Reconciled the unused carried annual leave against the saved expiry date",
+        riskLevel: "High",
+      } as typeof auditEvents.$inferInsert);
+    return changed;
+  });
+}
+
 /** Durable idempotent rollover entry point for the background worker. */
 export async function processScheduledLeaveRollover(now = new Date()): Promise<{
   organisations: number;
@@ -1988,13 +2242,19 @@ export async function processScheduledLeaveRollover(now = new Date()): Promise<{
     }
     const start = `${leaveYear}-${row.settings.leaveYearStart}`;
     if (localDate < start) continue;
-    balancesCreated += await rolloverLeaveBalancesInDatabase(row.organisation.id, leaveYear, {
+    const workerActor = {
       userId: workerUser.userId,
       employeeId: workerUser.employeeId,
       displayName: "VIA background worker",
       roles: [workerUser.role],
       activeRole: workerUser.role,
-    });
+    };
+    balancesCreated += await rolloverLeaveBalancesInDatabase(
+      row.organisation.id,
+      leaveYear,
+      workerActor,
+    );
+    await reconcileAnnualCarryExpiryInDatabase(row.organisation.id, workerActor, now);
   }
   return { organisations: rows.length, balancesCreated, requestsMarkedTaken };
 }

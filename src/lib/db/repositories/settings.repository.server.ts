@@ -30,6 +30,10 @@ function mapAppSettings(
     probationDurationMonths: settingsRow.probationDurationMonths ?? 3,
     leaveYearStart: settingsRow.leaveYearStart,
     leaveIncludesWeekends: settingsRow.additionalSettings["leaveIncludesWeekends"] !== false,
+    annualCarryExpiryDates: (settingsRow.additionalSettings["annualCarryExpiryDates"] ??
+      {}) as Record<string, string | null>,
+    annualCarryExpiryMonthDay: (settingsRow.additionalSettings["annualCarryExpiryMonthDay"] ??
+      null) as string | null,
     leaveYearEnd: settingsRow.leaveYearEnd,
     documentReminderDays: settingsRow.documentReminderDays ?? [],
     employeeNumberFormat: settingsRow.employeeNumberFormat,
@@ -105,10 +109,11 @@ export async function saveAppSettings(
         standardWeeklyHours: String(settings.standardWeeklyHours),
         probationDurationMonths: settings.probationDurationMonths,
         leaveYearStart: settings.leaveYearStart,
-        additionalSettings:
-          settings.leaveIncludesWeekends === undefined
-            ? appSettings.additionalSettings
-            : sql`${appSettings.additionalSettings} || ${JSON.stringify({ leaveIncludesWeekends: settings.leaveIncludesWeekends })}::jsonb`,
+        additionalSettings: sql`${appSettings.additionalSettings} || ${JSON.stringify({
+          leaveIncludesWeekends: settings.leaveIncludesWeekends !== false,
+          annualCarryExpiryDates: settings.annualCarryExpiryDates ?? {},
+          annualCarryExpiryMonthDay: settings.annualCarryExpiryMonthDay ?? null,
+        })}::jsonb`,
         leaveYearEnd: settings.leaveYearEnd,
         documentReminderDays: settings.documentReminderDays,
         employeeNumberFormat: settings.employeeNumberFormat,

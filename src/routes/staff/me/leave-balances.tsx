@@ -358,8 +358,10 @@ function LeaveBalancesRoute() {
                 <span className="pb-1 text-muted-foreground">days available</span>
               </div>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-                VIA provides {formatDays(annualPolicy.baseEntitlementDays)} days each leave year.
-                Changes made by HR will appear here automatically.
+                Your current year allowance is {formatDays(annualBalance.entitlement)} days.
+                {annualBalance.carryExpiryDate
+                  ? ` Older days expire after ${formatDate(annualBalance.carryExpiryDate)}.`
+                  : " Older days have no expiry date set."}
               </p>
               <div className="mt-6 h-2 overflow-hidden rounded-full bg-muted">
                 <div
@@ -374,8 +376,14 @@ function LeaveBalancesRoute() {
             </div>
             <div className="grid grid-cols-2 divide-x divide-y sm:grid-cols-4 lg:grid-cols-2">
               {[
-                ["Yearly allowance", annualPolicy.baseEntitlementDays],
-                ["Carried forward", annualBalance.carriedForward],
+                [
+                  "This year remaining",
+                  annualBalance.available - (annualBalance.carryRemaining ?? 0),
+                ],
+                [
+                  "Earlier year remaining",
+                  annualBalance.carryRemaining ?? annualBalance.carriedForward,
+                ],
                 ["Pending approval", annualBalance.pending],
                 ["Projected remaining", annualBalance.projectedAvailable],
               ].map(([label, value]) => (
@@ -453,10 +461,14 @@ function LeaveBalancesRoute() {
                         </div>
                       </TableCell>
                       <TableCell className="whitespace-nowrap font-medium">
-                        {entitlementLabel(policy)}
+                        {policy.type === "Annual" && balance?.entitlement
+                          ? `${formatDays(balance.entitlement)} days / year`
+                          : entitlementLabel(policy)}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {isLedgerBalance ? formatDays(balance?.carriedForward ?? 0) : "—"}
+                        {isLedgerBalance
+                          ? formatDays(balance?.carryRemaining ?? balance?.carriedForward ?? 0)
+                          : "—"}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {isLedgerBalance

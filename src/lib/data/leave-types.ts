@@ -127,6 +127,8 @@ export interface LeaveBalanceReport {
   policyId: string;
   entitlement: number;
   carriedForward: number;
+  carryRemaining?: number;
+  carryExpiryDate?: string | null;
   accrued: number;
   adjustments: number;
   taken: number;
