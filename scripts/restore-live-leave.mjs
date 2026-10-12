@@ -34,11 +34,13 @@ try {
     if (!settings || settings.leave_year_start !== "01-01")
       throw new Error("This opening balance file requires a January leave year");
     const [actor] = await tx`
-      SELECT u.id, u.employee_id FROM users u
+      SELECT u.id, u.employee_id, r.code AS role FROM users u
       JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id
       WHERE u.organisation_id=${organisationId} AND lower(u.workspace_email)='hr@via-int.com'
-        AND u.status='Active' AND u.archived_at IS NULL AND r.code='HR' LIMIT 1`;
-    if (!actor) throw new Error("Active HR owner was not found");
+        AND u.status='Active' AND u.archived_at IS NULL
+        AND r.code IN ('HR','Super Admin')
+      ORDER BY CASE WHEN r.code='HR' THEN 0 ELSE 1 END LIMIT 1`;
+    if (!actor) throw new Error("Active HR or Super Admin owner was not found");
     const staff = await tx`SELECT id, legal_name, status FROM employees
       WHERE organisation_id=${organisationId} AND archived_at IS NULL`;
     const names = new Map();
@@ -166,8 +168,8 @@ try {
       active_role, actor_roles, action, module, entity_type, entity_id,
       after_summary, reason, risk_level
     ) VALUES (
-      ${organisationId}, ${actor.id}, ${actor.employee_id}, 'HR Department', 'HR',
-      ARRAY['HR']::text[], 'restore-active-leave', 'leave', 'leave-balance',
+      ${organisationId}, ${actor.id}, ${actor.employee_id}, 'HR Department', ${actor.role},
+      ARRAY[${actor.role}]::text[], 'restore-active-leave', 'leave', 'leave-balance',
       ${organisationId}, ${JSON.stringify({ matched: matched.length, unmatched: unmatched.length, sourceSha256: payload.sourceSha256 })}::jsonb,
       'Restored active leave types and opening balances', 'High'
     )`;
