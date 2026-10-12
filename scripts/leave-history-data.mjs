@@ -5,6 +5,13 @@ export const normaliseName = (value) =>
     .trim()
     .toLowerCase()
     .replace(/\s+/g, " ");
+
+/** The annual balance columns in the HR workbook are displayed as whole days. */
+export function displayedLeaveDays(value) {
+  if (typeof value !== "number" || !Number.isFinite(value))
+    throw new Error("A leave balance must be a finite number");
+  return value < 0 ? -Math.floor(-value + 0.5) : Math.floor(value + 0.5);
+}
 export const codes = {
   "A/L": ["Annual Leave", "Annual"],
   AL24: ["Annual Leave (2024 entitlement)", "Annual"],

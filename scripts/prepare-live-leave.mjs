@@ -1,7 +1,7 @@
 import read from "read-excel-file/node";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { normaliseName } from "./leave-history-data.mjs";
+import { displayedLeaveDays, normaliseName } from "./leave-history-data.mjs";
 
 const [workbookPath, matchingPath] = process.argv.slice(2);
 if (!workbookPath || !matchingPath)
@@ -51,12 +51,16 @@ for (const row of sheet.data.slice(34)) {
     Math.abs(entitlement - used - remaining) > 0.02
   )
     throw new Error(`Invalid annual leave calculation for ${name}`);
+  const rawCarry = Math.round((oldCarry.get(key) ?? 0) * 100) / 100;
   rows.push({
     name,
     employeeName: key,
-    entitlement: Math.round(entitlement * 100) / 100,
-    remaining: Math.round(remaining * 100) / 100,
-    carry: Math.round((oldCarry.get(key) ?? 0) * 100) / 100,
+    entitlement: displayedLeaveDays(entitlement),
+    remaining: displayedLeaveDays(remaining),
+    carry: displayedLeaveDays(rawCarry),
+    rawEntitlement: Math.round(entitlement * 100) / 100,
+    rawRemaining: Math.round(remaining * 100) / 100,
+    rawCarry,
   });
 }
 if (rows.length < 20) throw new Error("Too few current-year balance rows");
