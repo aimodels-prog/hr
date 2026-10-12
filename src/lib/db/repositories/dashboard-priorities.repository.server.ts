@@ -6,7 +6,8 @@ import { publicHolidays } from "../schema/master-data.ts";
 import { employeeDocuments } from "../schema/documents.ts";
 import { companyLibrary } from "../schema/company-library.ts";
 import { leaveYearForDate } from "../../data/leave-year.ts";
-import { remainingCarryForReminder } from "../../data/leave-reminders.ts";
+import { carryExpiryDateForYear, carryPosition } from "../../data/leave-carry.ts";
+import { appSettings } from "../schema/organisation.ts";
 import {
   expiryBuckets,
   splitLeaveDays,
@@ -29,6 +30,21 @@ export async function dashboardPriorities(input: {
   const yearStart = `${year}-${input.yearStart}`;
   const nextYearStart = `${year + 1}-${input.yearStart}`;
   const ids = people.map((row) => row.id);
+  const [settings] = await db
+    .select({ additionalSettings: appSettings.additionalSettings })
+    .from(appSettings)
+    .where(eq(appSettings.organisationId, organisationId))
+    .limit(1);
+  const expiryDate = carryExpiryDateForYear(
+    {
+      leaveYearStart: input.yearStart,
+      annualCarryExpiryDates: (settings?.additionalSettings["annualCarryExpiryDates"] ??
+        {}) as Record<string, string | null>,
+      annualCarryExpiryMonthDay: (settings?.additionalSettings["annualCarryExpiryMonthDay"] ??
+        null) as string | null,
+    },
+    year,
+  );
   const employeeFilter = input.employeeId ? sql`and employee_id = ${input.employeeId}` : sql``;
   const profileFilter = input.employeeId ? sql`and id = ${input.employeeId}` : sql``;
   const [balances, requests, movements, holidays, approvals, employeeExpiry, companyExpiry] =
@@ -64,6 +80,7 @@ export async function dashboardPriorities(input: {
       ids.length
         ? db
             .select({
+              id: leaveRequests.id,
               employeeId: leaveRequests.employeeId,
               policyId: leaveRequests.policyId,
               startDate: leaveRequests.startDate,
@@ -96,6 +113,8 @@ export async function dashboardPriorities(input: {
               policyId: leaveTransactions.policyId,
               transactionType: leaveTransactions.transactionType,
               days: leaveTransactions.days,
+              createdAt: leaveTransactions.createdAt,
+              referenceId: leaveTransactions.referenceId,
             })
             .from(leaveTransactions)
             .where(
@@ -180,17 +199,14 @@ export async function dashboardPriorities(input: {
     ]);
   const rows = new Map<string, LeaveChartRow>();
   const requestsByKey = new Map<string, typeof requests>();
-  const movementsByKey = new Map<string, { transactionType: string; days: number }[]>();
+  const movementsByKey = new Map<string, typeof movements>();
   for (const row of requests) {
     const key = `${row.employeeId}:${row.policyId}`;
     requestsByKey.set(key, [...(requestsByKey.get(key) ?? []), row]);
   }
   for (const row of movements) {
     const key = `${row.employeeId}:${row.policyId}`;
-    movementsByKey.set(key, [
-      ...(movementsByKey.get(key) ?? []),
-      { transactionType: row.transactionType, days: Number(row.days) },
-    ]);
+    movementsByKey.set(key, [...(movementsByKey.get(key) ?? []), row]);
   }
   const personById = new Map(people.map((row) => [row.id, row]));
   for (const balance of balances) {
@@ -219,8 +235,16 @@ export async function dashboardPriorities(input: {
       row.used += split.used;
       row.booked += split.booked;
     }
-    row.remaining += Number(balance.balance);
-    row.carry += remainingCarryForReminder(Number(balance.balance), movementsByKey.get(key) ?? []);
+    const carry = carryPosition(
+      movementsByKey.get(key) ?? [],
+      new Map((requestsByKey.get(key) ?? []).map((request) => [request.id, request.startDate])),
+      expiryDate,
+    );
+    const pendingExpiryChange =
+      expiryDate && today > expiryDate ? -carry.remaining : -carry.expiryAdjustment;
+    const available = Number(balance.balance) + pendingExpiryChange;
+    row.remaining += available;
+    row.carry += Math.max(0, Math.min(available, carry.remaining + pendingExpiryChange));
     rows.set(balance.policyId, row);
   }
   return {

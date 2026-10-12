@@ -3,11 +3,12 @@ import { and, eq, gte, inArray, isNull, lt } from "drizzle-orm";
 import { getDatabaseClient } from "../client.ts";
 import { employees, users } from "../schema/employee.ts";
 import { appSettings, organisations } from "../schema/organisation.ts";
-import { leaveBalances, leavePolicies, leaveTransactions } from "../schema/leave.ts";
+import { leaveBalances, leavePolicies, leaveTransactions, leaveRequests } from "../schema/leave.ts";
 import { notifications } from "../schema/system.ts";
 import { leaveYearForDate } from "../../data/leave-year.ts";
 import { reminderRulesFromSettings } from "../../data/reminder-rules.ts";
-import { leaveReminderStage, remainingCarryForReminder } from "../../data/leave-reminders.ts";
+import { leaveReminderStage } from "../../data/leave-reminders.ts";
+import { carryExpiryDateForYear, carryPosition } from "../../data/leave-carry.ts";
 
 export async function processLeaveUsageReminders(now = new Date()) {
   const db = getDatabaseClient();
@@ -28,6 +29,16 @@ export async function processLeaveUsageReminders(now = new Date()) {
       day: "2-digit",
     }).format(now);
     const year = leaveYearForDate(today, settings.leaveYearStart);
+    const carryExpiryDate = carryExpiryDateForYear(
+      {
+        leaveYearStart: settings.leaveYearStart,
+        annualCarryExpiryDates: (settings.additionalSettings["annualCarryExpiryDates"] ??
+          {}) as Record<string, string | null>,
+        annualCarryExpiryMonthDay: (settings.additionalSettings["annualCarryExpiryMonthDay"] ??
+          null) as string | null,
+      },
+      year,
+    );
     const rows = await db
       .select({ balance: leaveBalances, userId: users.id, name: leavePolicies.name })
       .from(leaveBalances)
@@ -74,21 +85,46 @@ export async function processLeaveUsageReminders(now = new Date()) {
           lt(leaveTransactions.date, `${year + 1}-${settings.leaveYearStart}`),
         ),
       );
-    const grouped = new Map<string, Array<{ transactionType: string; days: number }>>();
+    const requests = await db
+      .select({ id: leaveRequests.id, startDate: leaveRequests.startDate })
+      .from(leaveRequests)
+      .where(
+        and(
+          eq(leaveRequests.organisationId, organisationId),
+          isNull(leaveRequests.archivedAt),
+          gte(leaveRequests.startDate, `${year}-${settings.leaveYearStart}`),
+          lt(leaveRequests.startDate, `${year + 1}-${settings.leaveYearStart}`),
+        ),
+      );
+    const requestStartDates = new Map(requests.map((request) => [request.id, request.startDate]));
+    const grouped = new Map<string, typeof transactions>();
     for (const row of transactions) {
       const key = `${row.employeeId}:${row.policyId}`;
       const group = grouped.get(key) ?? [];
-      group.push({ transactionType: row.transactionType, days: Number(row.days) });
+      group.push(row);
       grouped.set(key, group);
     }
     for (const { balance, userId, name } of rows) {
-      const available = Number(balance.balanceDays);
-      if (available <= 0) continue;
-      const carry = remainingCarryForReminder(
-        available,
+      const position = carryPosition(
         grouped.get(`${balance.employeeId}:${balance.policyId}`) ?? [],
+        requestStartDates,
+        carryExpiryDate,
       );
-      const stage = leaveReminderStage(today, year, carry, rules, settings.leaveYearStart);
+      const pendingExpiryChange =
+        carryExpiryDate && today > carryExpiryDate
+          ? -position.remaining
+          : -position.expiryAdjustment;
+      const available = Number(balance.balanceDays) + pendingExpiryChange;
+      if (available <= 0) continue;
+      const carry = Math.max(0, Math.min(available, position.remaining + pendingExpiryChange));
+      const stage = leaveReminderStage(
+        today,
+        year,
+        carry,
+        rules,
+        settings.leaveYearStart,
+        carryExpiryDate,
+      );
       const deadlineLabel = new Intl.DateTimeFormat("en-GB", {
         day: "numeric",
         month: "long",
@@ -107,7 +143,7 @@ export async function processLeaveUsageReminders(now = new Date()) {
               : "Remember to plan your annual leave",
           message:
             stage.kind === "carry"
-              ? `Please plan to use old ${name} leave by ${deadlineLabel}. Your balance includes an estimated ${Number(carry.toFixed(2))} carried-over days, counting approved leave against old days first. Check your dates with HR and request leave. This reminder does not expire or deduct days.`
+              ? `Please plan to use old ${name} leave${carryExpiryDate ? ` by ${deadlineLabel}` : ""}. Your balance includes ${Number(carry.toFixed(2))} carried-over days. Check your dates with HR and request leave.`
               : `You have ${available} days of ${name} available. Plan a break with your manager and submit your leave request. Normal eligibility and approval rules apply.`,
           priority: "Normal",
           status: "Unread",

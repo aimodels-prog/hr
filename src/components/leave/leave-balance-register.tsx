@@ -198,7 +198,7 @@ export function LeaveBalanceRegister({ employeeId }: { employeeId?: string | und
                       {formatDays(row.displayedAllowance)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {formatDays(row.balance.carriedForward)}
+                      {formatDays(row.balance.carryRemaining ?? row.balance.carriedForward)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {formatDays(row.balance.taken + row.balance.approvedFuture)}

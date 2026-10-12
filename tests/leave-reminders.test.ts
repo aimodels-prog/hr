@@ -37,4 +37,12 @@ test("monthly leave reminders become more frequent before May without declaring 
   assert.equal(leaveReminderStage("2027-05-01", 2027, 3).kind, "annual");
   assert.equal(leaveReminderStage("2027-04-01", 2027, 0).kind, "annual");
   assert.equal(leaveReminderStage("2027-01-01", 2026, 3).kind, "annual");
+  assert.equal(
+    leaveReminderStage("2027-10-01", 2027, 3, undefined, "01-01", "2027-12-31").kind,
+    "carry",
+  );
+  assert.equal(
+    leaveReminderStage("2028-01-01", 2027, 3, undefined, "01-01", "2027-12-31").kind,
+    "annual",
+  );
 });

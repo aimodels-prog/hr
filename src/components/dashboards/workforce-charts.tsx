@@ -620,10 +620,8 @@ export default function WorkforceCharts({
                 donut={scope === "self" || Boolean(employeeId)}
               />
               <DashboardInfo label="About carryover and eligibility">
-                Carryover is an estimated part of remaining leave, not extra days. It uses the same
-                oldest-leave-first calculation as reminders. Use the carryover deadline in your
-                company's leave policy. These figures do not grant leave eligibility or change
-                balances.
+                Carried days are included in remaining leave and used first. HR can set an expiry
+                date in leave settings. These figures do not change balances or grant eligibility.
               </DashboardInfo>
             </Panel>
             {scope === "hr" && (

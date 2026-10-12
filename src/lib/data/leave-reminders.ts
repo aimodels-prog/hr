@@ -19,9 +19,10 @@ export function leaveReminderStage(
   carry: number,
   rules: ReminderRules = DEFAULT_REMINDER_RULES,
   leaveYearStart = "01-01",
+  carryExpiryDate?: string | null,
 ) {
   const deadlineYear = leaveYear + (rules.carryDeadline < leaveYearStart ? 1 : 0);
-  const deadline = `${deadlineYear}-${rules.carryDeadline}`;
+  const deadline = carryExpiryDate ?? `${deadlineYear}-${rules.carryDeadline}`;
   if (carry > 0 && today >= `${leaveYear}-${leaveYearStart}` && today <= deadline) {
     let stageDate = `${today.slice(0, 7)}-01`;
     for (const days of rules.carryExtraDays) {
