@@ -21,7 +21,7 @@ export const POLICY_DEFINITIONS = [
     requiresAttachment: false,
     requiresHandoverContact: true,
     countsTowardGratuity: true,
-    eligibility: { minimumServiceMonths: 3 },
+    eligibility: { minimumServiceMonths: 6 },
     approvalChain: ["Line Manager", "HR"],
     noticeRules: {
       enabled: true,
