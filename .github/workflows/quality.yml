@@ -3,7 +3,7 @@ name: VIA HR quality gate
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, "hotfix/**"]
   workflow_dispatch:
 
 permissions:
