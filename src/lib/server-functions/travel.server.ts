@@ -15,6 +15,7 @@ import {
   withdrawTravelRequestInDatabase,
   changeTravelBookingInDatabase,
   listTravelBookingQueue,
+  closeTravelWithoutExpensesInDatabase,
 } from "../db/repositories/travel.repository.server.ts";
 import { resolveOrganisationIdForActor, verifyServerActorRole } from "../db/utils.server.ts";
 
@@ -56,7 +57,7 @@ export const changeTravelBookingFn = createServerFn({ method: "POST" })
       .object({
         actor: Actor,
         requestId: z.string().uuid(),
-        action: z.enum(["request", "approve", "reject", "confirm"]),
+        action: z.enum(["request", "approve", "reject", "confirm", "cancel"]),
         bookingId: z.string().uuid().optional(),
         kind: z.enum(["Car", "Flight", "Hotel", "Other"]).optional(),
         name: z.string().trim().max(150).optional(),
@@ -312,6 +313,15 @@ export const submitTravelExpensesFn = createServerFn({ method: "POST" })
         ).catch(() => undefined);
       throw error;
     }
+  });
+
+export const closeTravelWithoutExpensesFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z.object({ actor: Actor, requestId: z.string().uuid() }).strict().parse(input),
+  )
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    await closeTravelWithoutExpensesInDatabase(v.organisationId, data.requestId, v.actor);
   });
 
 export const closeTravelReimbursementFn = createServerFn({ method: "POST" })

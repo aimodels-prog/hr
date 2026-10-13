@@ -66,7 +66,7 @@ function MyTravelRoute() {
   const handleWithdraw = async (id: string) => {
     await travelService.withdrawRequestAsync(id, currentUser.getActorContext());
     setRequests(travelService.getRequestsForEmployee(employeeId, currentUser.getActorContext()));
-    toast.success("Travel request withdrawn");
+    toast.success("Trip cancelled");
   };
 
   return (
@@ -136,17 +136,17 @@ function MyTravelRoute() {
                           Details
                         </Button>
                       </Link>
-                      {req.status === "Pending HR and Accounts" &&
-                        req.hrApprovalStatus === "Pending" &&
-                        req.accountsApprovalStatus === "Pending" && (
+                      {["Pending HR and Accounts", "Pre-authorised"].includes(req.status) &&
+                        req.employeeId === employeeId &&
+                        !req.bookings?.some((booking) => booking.status === "Confirmed") && (
                           <ConfirmAction
-                            title="Withdraw this travel request?"
-                            description="This request will leave the approval queue. Its history will be kept."
-                            confirmLabel="Withdraw request"
+                            title="Cancel this trip?"
+                            description="The approval history will be kept. Confirmed bookings must be cancelled first."
+                            confirmLabel="Cancel trip"
                             onConfirm={() => handleWithdraw(req.id)}
                           >
                             <Button variant="outline" size="sm" className="ml-2">
-                              Withdraw
+                              Cancel
                             </Button>
                           </ConfirmAction>
                         )}

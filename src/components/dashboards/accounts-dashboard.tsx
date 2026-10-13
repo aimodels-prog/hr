@@ -42,9 +42,26 @@ function AccountsDashboardDetails() {
   // Travel & Expenses
   const allTravel = travelService.getAllRequests(actorContext);
   const pendingTravel = allTravel.filter(
-    (r) => r.status === "Pending HR and Accounts" && r.accountsApprovalStatus === "Pending",
+    (r) =>
+      r.status === "Pending HR and Accounts" &&
+      r.managerApprovalStatus === "Approved" &&
+      r.hrApprovalStatus === "Approved" &&
+      r.accountsApprovalStatus === "Pending" &&
+      r.employeeId !== currentUser.employeeId &&
+      r.managerApprovedBy !== currentUser.id &&
+      r.hrApprovedBy !== currentUser.id &&
+      !r.participants?.some(
+        (participant) =>
+          participant.employeeId === currentUser.employeeId ||
+          participant.decidedBy === currentUser.id,
+      ),
   );
-  const pendingReimbursements = allTravel.filter((r) => r.status === "Pending Super Admin Closure");
+  const pendingReimbursements = allTravel.filter(
+    (r) =>
+      r.status === "Pending Super Admin Closure" &&
+      r.employeeId !== currentUser.employeeId &&
+      !r.participants?.some((participant) => participant.employeeId === currentUser.employeeId),
+  );
 
   // Payroll
   const openPeriods = payrollService

@@ -42,6 +42,9 @@ function NewTravelRequestRoute() {
   const activeCostCentres = getMasterDataRepository("costCentres")
     .list()
     .filter((c) => c.isActive);
+  const activeCurrencies = getMasterDataRepository("currencies")
+    .list()
+    .filter((item) => item.isActive && item.code);
 
   const [purpose, setPurpose] = useState("");
   const [participantIds, setParticipantIds] = useState<string[]>([]);
@@ -50,7 +53,10 @@ function NewTravelRequestRoute() {
   const [endDate, setEndDate] = useState("");
   const [projectId, setProjectId] = useState<string>("none");
   const [costCentreId, setCostCentreId] = useState<string>("none");
-  const [currency, setCurrency] = useState("OMR");
+  const [currency, setCurrency] = useState(
+    () =>
+      activeCurrencies.find((item) => item.code === "OMR")?.code ?? activeCurrencies[0]?.code ?? "",
+  );
 
   const [estTransport, setEstTransport] = useState<number>(0);
   const [estAccommodation, setEstAccommodation] = useState<number>(0);
@@ -64,8 +70,8 @@ function NewTravelRequestRoute() {
 
   const handleSubmit = async () => {
     setIsSubmitting(true);
-    const actorContext = currentUser.getActorContext();
     try {
+      const actorContext = currentUser.getActorContext();
       await travelService.submitRequest(
         {
           employeeId: currentUser!.employeeId!,
@@ -100,7 +106,14 @@ function NewTravelRequestRoute() {
     }
   };
 
-  const isFormValid = purpose && destination && startDate && endDate && currency;
+  const isFormValid = Boolean(
+    purpose.trim().length >= 3 &&
+    destination.trim().length >= 2 &&
+    startDate &&
+    endDate &&
+    endDate >= startDate &&
+    activeCurrencies.some((item) => item.code === currency),
+  );
 
   return (
     <RequirePermission permission="travel:request_self" resourceName="New Travel Request">
@@ -112,11 +125,11 @@ function NewTravelRequestRoute() {
 
         <Alert className="bg-blue-50 text-blue-900 border-blue-200">
           <Info className="w-4 h-4 text-blue-600" />
-          <AlertTitle>Dual Approval Required</AlertTitle>
+          <AlertTitle>How approval works</AlertTitle>
           <AlertDescription>
-            Submitting this request will spawn simultaneous approval tasks. HR must approve your
-            travel dates and policy compliance, while Accounts must approve the financial budget and
-            cost centre allocation.
+            Your supervisor reviews the business need first, followed by HR and Finance. Do not book
+            travel until all three reviews are complete. You can then request any car, flight or
+            hotel arrangements you need.
           </AlertDescription>
         </Alert>
 
@@ -162,7 +175,7 @@ function NewTravelRequestRoute() {
                 placeholder="City, Country"
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Start Date</label>
                 <Input
@@ -176,7 +189,7 @@ function NewTravelRequestRoute() {
                 <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Project Allocation</label>
                 <Select value={projectId} onValueChange={setProjectId}>
@@ -200,7 +213,7 @@ function NewTravelRequestRoute() {
                     <SelectValue placeholder="Select Cost Centre" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">Default Department</SelectItem>
+                    <SelectItem value="none">No cost centre selected</SelectItem>
                     {activeCostCentres.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
                         {c.name}
@@ -228,21 +241,22 @@ function NewTravelRequestRoute() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="OMR">OMR (ر.ع.)</SelectItem>
-                  <SelectItem value="GBP">GBP (£)</SelectItem>
-                  <SelectItem value="USD">USD ($)</SelectItem>
-                  <SelectItem value="EUR">EUR (€)</SelectItem>
+                  {activeCurrencies.map((item) => (
+                    <SelectItem key={item.id} value={item.code!}>
+                      {item.code} {item.symbol ? `(${item.symbol})` : ""}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Transport (Flights, Train, etc)</label>
                 <Input
                   type="number"
                   min="0"
-                  step="0.01"
+                  step="0.001"
                   value={estTransport || ""}
                   onChange={(e) => setEstTransport(parseFloat(e.target.value) || 0)}
                 />
@@ -252,7 +266,7 @@ function NewTravelRequestRoute() {
                 <Input
                   type="number"
                   min="0"
-                  step="0.01"
+                  step="0.001"
                   value={estAccommodation || ""}
                   onChange={(e) => setEstAccommodation(parseFloat(e.target.value) || 0)}
                 />
@@ -262,7 +276,7 @@ function NewTravelRequestRoute() {
                 <Input
                   type="number"
                   min="0"
-                  step="0.01"
+                  step="0.001"
                   value={estPerDiem || ""}
                   onChange={(e) => setEstPerDiem(parseFloat(e.target.value) || 0)}
                 />
@@ -272,7 +286,7 @@ function NewTravelRequestRoute() {
                 <Input
                   type="number"
                   min="0"
-                  step="0.01"
+                  step="0.001"
                   value={estOther || ""}
                   onChange={(e) => setEstOther(parseFloat(e.target.value) || 0)}
                 />
@@ -296,9 +310,23 @@ function NewTravelRequestRoute() {
             </div>
             <div className="space-y-2 mt-4">
               <label className="text-sm font-medium flex items-center gap-1">
-                <Paperclip className="w-3.5 h-3.5" /> Supporting Evidence (optional)
+                <Paperclip className="w-3.5 h-3.5" /> Supporting Evidence (optional, PDF or image,
+                up to 10 MB)
               </label>
-              <Input type="file" onChange={(e) => setEvidenceFile(e.target.files?.[0] ?? null)} />
+              <Input
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png"
+                onChange={(e) => {
+                  const file = e.target.files?.[0] ?? null;
+                  if (file && file.size > 10 * 1024 * 1024) {
+                    toast.error("Supporting evidence must be 10 MB or smaller.");
+                    e.currentTarget.value = "";
+                    setEvidenceFile(null);
+                    return;
+                  }
+                  setEvidenceFile(file);
+                }}
+              />
             </div>
           </CardContent>
           <CardFooter className="flex justify-between bg-muted/20 border-t py-4">

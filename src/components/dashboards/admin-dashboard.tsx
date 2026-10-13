@@ -121,7 +121,7 @@ export function AdminDashboard() {
       value: String(pendingPayroll.length),
     },
     {
-      label: "Reimbursements to Close",
+      label: "Awaiting Finance Settlement",
       value: String(reimbursementClosures.length),
     },
   ];
@@ -150,7 +150,7 @@ export function AdminDashboard() {
             {[
               ["Final leave approvals", pendingLeave.length],
               ["Prepared payroll periods", pendingPayroll.length],
-              ["Reimbursements to close", reimbursementClosures.length],
+              ["Awaiting Finance settlement", reimbursementClosures.length],
               ["Critical document risks", criticalExpiries.length],
             ].map(([label, value]) => (
               <div key={String(label)} className="rounded-xl border bg-muted/20 p-4">

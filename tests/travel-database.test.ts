@@ -15,6 +15,8 @@ import {
   submitTravelExpensesInDatabase,
   changeTravelBookingInDatabase,
   listTravelBookingQueue,
+  closeTravelWithoutExpensesInDatabase,
+  withdrawTravelRequestInDatabase,
 } from "../src/lib/db/repositories/travel.repository.server.ts";
 
 const testDatabaseUrl = process.env["VIA_HR_TEST_DATABASE_URL"]?.trim();
@@ -36,10 +38,13 @@ test(
         "project",
         "costCentre",
         "currency",
+        "foreignCurrency",
         "employee",
         "employeeUser",
         "managerEmployee",
         "managerUser",
+        "participantManagerEmployee",
+        "participantManagerUser",
         "hrEmployee",
         "hrUser",
         "accountsEmployee",
@@ -69,6 +74,7 @@ test(
         ["employment_types", "employmentType", "Full-time", "FT"],
         ["cost_centres", "costCentre", "Operations", "CC-OPS"],
         ["currencies", "currency", "Omani rial", "OMR"],
+        ["currencies", "foreignCurrency", "British pound", "GBP"],
       ] as const)
         await sql.unsafe(
           `INSERT INTO ${table} (id,organisation_id,name,code,is_active,order_index,created_by,updated_by) VALUES ($1,$2,$3,$4,true,1,$5,$5)`,
@@ -79,6 +85,7 @@ test(
       for (const [employeeKey, userKey, name] of [
         ["employee", "employeeUser", "Employee"],
         ["managerEmployee", "managerUser", "Line Manager"],
+        ["participantManagerEmployee", "participantManagerUser", "Participant Manager"],
         ["hrEmployee", "hrUser", "HR"],
         ["accountsEmployee", "accountsUser", "Accounts"],
         ["adminEmployee", "adminUser", "Super Admin"],
@@ -92,6 +99,7 @@ test(
       const roleIds = Object.fromEntries(roleRows.map((row) => [row.code, row.id]));
       for (const [userId, code] of [
         [ids.managerUser, "Line Manager"],
+        [ids.participantManagerUser, "Line Manager"],
         [ids.hrUser, "HR"],
         [ids.accountsUser, "Accounts"],
         [ids.adminUser, "Super Admin"],
@@ -99,8 +107,7 @@ test(
         await sql`INSERT INTO user_roles (organisation_id,user_id,role_id,assigned_by) VALUES (${ids.organisation},${userId},${roleIds[code]},${ids.adminUser})`;
       await sql`UPDATE employees SET line_manager_id=${ids.managerEmployee} WHERE id=${ids.employee}`;
       await sql`UPDATE employees SET employment_confirmation_status='Confirmed' WHERE organisation_id=${ids.organisation}`;
-      await sql`UPDATE employees SET line_manager_id=${ids.hrEmployee} WHERE id=${ids.adminEmployee}`;
-      await sql`INSERT INTO user_roles (organisation_id,user_id,role_id,assigned_by) VALUES (${ids.organisation},${ids.hrUser},${roleIds["Line Manager"]},${ids.adminUser})`;
+      await sql`UPDATE employees SET line_manager_id=${ids.participantManagerEmployee} WHERE id=${ids.adminEmployee}`;
       await sql`INSERT INTO payroll_periods (id,organisation_id,name,start_date,end_date,cutoff_date,payment_date,status,created_by,updated_by) VALUES (${ids.payrollPeriod},${ids.organisation},'September Payroll','2026-09-01','2026-09-30','2026-09-25','2026-09-30','Collecting Inputs',${ids.accountsUser},${ids.accountsUser})`;
 
       const employee = actor(ids.employeeUser!, ids.employee!, "Employee");
@@ -109,6 +116,13 @@ test(
       const hr = actor(ids.hrUser!, ids.hrEmployee!, "HR");
       const accounts = actor(ids.accountsUser!, ids.accountsEmployee!, "Accounts");
       const admin = actor(ids.adminUser!, ids.adminEmployee!, "Super Admin");
+      const dateAfter = (days: number) =>
+        new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+      const tripStart = dateAfter(14);
+      const tripEnd = dateAfter(16);
+      const expenseStart = dateAfter(-16);
+      const expenseEnd = dateAfter(-14);
+      const expenseDate = dateAfter(-15);
       const requestId = await createTravelRequestInDatabase(
         ids.organisation!,
         {
@@ -116,8 +130,8 @@ test(
           participantIds: [ids.adminEmployee!],
           purpose: "Client implementation review",
           destination: "Muscat, Oman",
-          startDate: "2026-08-01",
-          endDate: "2026-08-03",
+          startDate: tripStart,
+          endDate: tripEnd,
           estTransport: 100,
           estAccommodation: 150,
           estPerDiem: 50,
@@ -158,7 +172,18 @@ test(
         "Manager",
         "approve",
         "Participation confirmed",
-        actor(ids.hrUser!, ids.hrEmployee!, "Line Manager"),
+        actor(ids.participantManagerUser!, ids.participantManagerEmployee!, "Line Manager"),
+      );
+      await assert.rejects(
+        decideTravelRequestInDatabase(
+          ids.organisation!,
+          requestId,
+          "HR",
+          "approve",
+          "Same person",
+          actor(ids.managerUser!, ids.managerEmployee!, "HR"),
+        ),
+        /supervisor who approved/,
       );
       await decideTravelRequestInDatabase(
         ids.organisation!,
@@ -167,6 +192,17 @@ test(
         "approve",
         "Dates verified",
         hr,
+      );
+      await assert.rejects(
+        decideTravelRequestInDatabase(
+          ids.organisation!,
+          requestId,
+          "Accounts",
+          "approve",
+          "Same person",
+          actor(ids.hrUser!, ids.hrEmployee!, "Accounts"),
+        ),
+        /different Finance reviewer/,
       );
       await decideTravelRequestInDatabase(
         ids.organisation!,
@@ -184,6 +220,21 @@ test(
           )
         ).length,
         1,
+      );
+      await assert.rejects(
+        changeTravelBookingInDatabase(
+          ids.organisation!,
+          {
+            requestId,
+            action: "request",
+            kind: "Flight",
+            name: "Over budget",
+            details: "Test",
+            estimate: 301,
+          },
+          employee,
+        ),
+        /exceed.*trip budget/,
       );
       await changeTravelBookingInDatabase(
         ids.organisation!,
@@ -244,11 +295,34 @@ test(
       const credits = await officeCredits(
         ids.organisation!,
         [ids.employee!, ids.adminEmployee!],
-        "2026-08-01",
-        "2026-08-03",
+        tripStart,
+        tripEnd,
       );
       assert.equal(credits.length, 6);
       assert.ok(credits.every((c) => c.hours === 8 && c.label.startsWith("Official duty")));
+      // Simulate the passage of time without waiting for the future trip dates.
+      await sql`UPDATE travel_requests SET start_date=${expenseStart},end_date=${expenseEnd} WHERE id=${requestId}`;
+
+      await assert.rejects(
+        submitTravelExpensesInDatabase(
+          ids.organisation!,
+          requestId,
+          [
+            {
+              id: randomUUID(),
+              category: "Transport",
+              amount: 5,
+              currencyId: ids.foreignCurrency!,
+              reference: "FX-001",
+              date: expenseDate,
+              receiptFileId: randomUUID(),
+            },
+          ],
+          "",
+          employee,
+        ),
+        /approved trip currency/,
+      );
 
       const firstLine = randomUUID();
       const firstFile = randomUUID();
@@ -263,7 +337,7 @@ test(
             amount: 120,
             currencyId: ids.currency!,
             reference: "INV-001",
-            date: "2026-08-02",
+            date: expenseDate,
             receiptFileId: firstFile,
           },
         ],
@@ -292,10 +366,10 @@ test(
           {
             id: secondLine,
             category: "Transport",
-            amount: 110,
+            amount: 110.123,
             currencyId: ids.currency!,
             reference: "INV-002",
-            date: "2026-08-02",
+            date: expenseDate,
             receiptFileId: secondFile,
           },
         ],
@@ -316,13 +390,159 @@ test(
         accounts,
       );
       const [final] =
-        await sql`SELECT tr.status,tr.payroll_period_id,r.status AS reimbursement_status FROM travel_requests tr JOIN reimbursements r ON r.travel_request_id=tr.id WHERE tr.id=${requestId}`;
+        await sql`SELECT tr.status,tr.payroll_period_id,r.status AS reimbursement_status,r.amount::text AS reimbursement_amount FROM travel_requests tr JOIN reimbursements r ON r.travel_request_id=tr.id WHERE tr.id=${requestId}`;
       assert.equal(final?.status, "Closed");
       assert.equal(final?.payroll_period_id, ids.payrollPeriod);
       assert.equal(final?.reimbursement_status, "Included in Payroll");
+      assert.equal(final?.reimbursement_amount, "110.123");
       await sql`UPDATE travel_requests SET updated_at=${new Date(Date.now() - 72 * 60 * 60 * 1000)},status='Pending Super Admin Closure' WHERE id=${requestId}`;
       assert.ok((await processTravelWorker()).reminders > 0);
       assert.equal((await processTravelWorker()).reminders, 0);
+
+      const noClaimId = await createTravelRequestInDatabase(
+        ids.organisation!,
+        {
+          employeeId: ids.employee!,
+          purpose: "No-cost client meeting",
+          destination: "Sohar",
+          startDate: dateAfter(30),
+          endDate: dateAfter(31),
+          estTransport: 0,
+          estAccommodation: 0,
+          estPerDiem: 0,
+          estOther: 0,
+          currencyId: ids.currency!,
+        },
+        employee,
+      );
+      await decideTravelRequestInDatabase(
+        ids.organisation!,
+        noClaimId,
+        "Manager",
+        "approve",
+        "Approved",
+        manager,
+      );
+      await decideTravelRequestInDatabase(
+        ids.organisation!,
+        noClaimId,
+        "HR",
+        "approve",
+        "Approved",
+        hr,
+      );
+      await decideTravelRequestInDatabase(
+        ids.organisation!,
+        noClaimId,
+        "Accounts",
+        "approve",
+        "Approved",
+        accounts,
+      );
+      await sql`UPDATE travel_requests SET start_date=${dateAfter(-20)},end_date=${dateAfter(-19)} WHERE id=${noClaimId}`;
+      await closeTravelWithoutExpensesInDatabase(ids.organisation!, noClaimId, employee);
+      const [noClaim] = await sql`SELECT status,actual_total_omr::text AS amount,
+        (SELECT count(*)::int FROM reimbursements WHERE travel_request_id=${noClaimId}) AS reimbursements
+        FROM travel_requests WHERE id=${noClaimId}`;
+      assert.equal(noClaim?.status, "Closed");
+      assert.equal(noClaim?.amount, "0.000");
+      assert.equal(noClaim?.reimbursements, 0);
+
+      const cancelId = await createTravelRequestInDatabase(
+        ids.organisation!,
+        {
+          employeeId: ids.employee!,
+          purpose: "Client visit that was cancelled",
+          destination: "Salalah",
+          startDate: dateAfter(35),
+          endDate: dateAfter(36),
+          estTransport: 10,
+          estAccommodation: 0,
+          estPerDiem: 0,
+          estOther: 0,
+          currencyId: ids.currency!,
+        },
+        employee,
+      );
+      await decideTravelRequestInDatabase(
+        ids.organisation!,
+        cancelId,
+        "Manager",
+        "approve",
+        "Approved",
+        manager,
+      );
+      await decideTravelRequestInDatabase(
+        ids.organisation!,
+        cancelId,
+        "HR",
+        "approve",
+        "Approved",
+        hr,
+      );
+      await decideTravelRequestInDatabase(
+        ids.organisation!,
+        cancelId,
+        "Accounts",
+        "approve",
+        "Approved",
+        accounts,
+      );
+      await changeTravelBookingInDatabase(
+        ids.organisation!,
+        {
+          requestId: cancelId,
+          action: "request",
+          kind: "Car",
+          name: "Airport car",
+          details: "Pickup",
+          estimate: 10,
+        },
+        employee,
+      );
+      const cancelBooking = (await listTravelRequestsForActor(ids.organisation!, employee)).find(
+        (request) => request.id === cancelId,
+      )!.bookings![0]!;
+      await changeTravelBookingInDatabase(
+        ids.organisation!,
+        {
+          requestId: cancelId,
+          action: "approve",
+          bookingId: cancelBooking.id,
+        },
+        accounts,
+      );
+      await changeTravelBookingInDatabase(
+        ids.organisation!,
+        {
+          requestId: cancelId,
+          action: "confirm",
+          bookingId: cancelBooking.id,
+          confirmation: "CAR-02",
+        },
+        travelAdmin,
+      );
+      await assert.rejects(
+        withdrawTravelRequestInDatabase(ids.organisation!, cancelId, employee),
+        /cancel confirmed arrangements/,
+      );
+      await changeTravelBookingInDatabase(
+        ids.organisation!,
+        {
+          requestId: cancelId,
+          action: "cancel",
+          bookingId: cancelBooking.id,
+          confirmation: "Provider confirmed cancellation CAR-02",
+        },
+        travelAdmin,
+      );
+      await withdrawTravelRequestInDatabase(ids.organisation!, cancelId, employee);
+      assert.equal(
+        (await listTravelRequestsForActor(ids.organisation!, employee)).find(
+          (request) => request.id === cancelId,
+        )?.status,
+        "Withdrawn",
+      );
     } finally {
       await sql.end({ timeout: 5 });
     }

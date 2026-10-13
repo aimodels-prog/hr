@@ -243,9 +243,13 @@ export async function listTasksForActorInDatabase(
         (r.created_at::date + 2)::text, NULL, 'Review travel', '/staff/travel-hr-approvals',
         'travel-request', r.id::text, r.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM travel_requests r JOIN employees e ON e.id=r.employee_id
-      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role} IN ('HR','Super Admin')
+      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role}='HR'
         AND r.status='Pending HR and Accounts' AND r.hr_approval_status='Pending'
         AND r.manager_approval_status='Approved'
+        AND r.employee_id<>${employeeId}::uuid
+        AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(r.participants) p WHERE p->>'employeeId'=${employeeId})
+        AND r.manager_approved_by IS DISTINCT FROM ${actor.userId}::uuid
+        AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(r.participants) p WHERE p->>'decidedBy'=${actor.userId})
 
       UNION ALL
       SELECT 'travel-manager-' || r.id, 'Travel', 'Review travel request',
@@ -254,8 +258,11 @@ export async function listTasksForActorInDatabase(
         'travel-request', r.id::text, r.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM travel_requests r JOIN employees e ON e.id=r.employee_id AND e.organisation_id=r.organisation_id
       WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role}='Line Manager'
-        AND e.line_manager_id=${employeeId}::uuid AND r.employee_id<>${employeeId}::uuid
+        AND r.employee_id<>${employeeId}::uuid
         AND r.status='Pending HR and Accounts' AND r.manager_approval_status='Pending'
+        AND ((e.line_manager_id=${employeeId}::uuid AND r.manager_approved_by IS NULL)
+          OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.participants) p
+            WHERE p->>'managerId'=${employeeId} AND p->>'status'='Pending'))
 
       UNION ALL
       SELECT 'goal-manager-' || g.id, 'Performance', 'Review employee objective',
@@ -282,9 +289,14 @@ export async function listTasksForActorInDatabase(
         (r.created_at::date + 2)::text, NULL, 'Review travel', '/staff/travel-accounts-approvals',
         'travel-request', r.id::text, r.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM travel_requests r JOIN employees e ON e.id=r.employee_id
-      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role} IN ('Accounts','Super Admin')
+      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role}='Accounts'
         AND r.status='Pending HR and Accounts' AND r.accounts_approval_status='Pending'
         AND r.manager_approval_status='Approved' AND r.hr_approval_status='Approved'
+        AND r.employee_id<>${employeeId}::uuid
+        AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(r.participants) p WHERE p->>'employeeId'=${employeeId})
+        AND r.manager_approved_by IS DISTINCT FROM ${actor.userId}::uuid
+        AND r.hr_approved_by IS DISTINCT FROM ${actor.userId}::uuid
+        AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(r.participants) p WHERE p->>'decidedBy'=${actor.userId})
 
       UNION ALL
       SELECT 'travel-close-' || r.id, 'Travel', 'Close reimbursement',
@@ -292,8 +304,10 @@ export async function listTasksForActorInDatabase(
         (r.updated_at::date + 2)::text, NULL, 'Review reimbursement', '/staff/travel-closures',
         'travel-request', r.id::text, r.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM travel_requests r JOIN employees e ON e.id=r.employee_id
-      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role} IN ('Accounts','Super Admin')
+      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role}='Accounts'
         AND r.status='Pending Super Admin Closure'
+        AND r.employee_id<>${employeeId}::uuid
+        AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(r.participants) p WHERE p->>'employeeId'=${employeeId})
 
       UNION ALL
       SELECT 'performance-hr-' || r.id, 'Performance',

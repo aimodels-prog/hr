@@ -73,8 +73,7 @@ function TravelManagerApprovals() {
         (!request.managerApprovedBy &&
           employees.some(
             (e) => e.id === request.employeeId && e.lineManagerId === currentUser.employeeId,
-          )) ||
-        currentUser.activeRole === "Super Admin"),
+          ))),
   );
 
   const openDecision = (request: TravelRequest, next: "approve" | "reject") => {

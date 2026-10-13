@@ -8,13 +8,10 @@ export function travelStatusLabel(
 ): string {
   if (request.status === "Pending Super Admin Closure")
     return "Awaiting Finance reimbursement closure";
+  if (request.status === "Withdrawn") return "Cancelled";
   if (request.status !== "Pending HR and Accounts") return request.status;
-  const outstanding = [
-    request.managerApprovalStatus === "Pending" ? "Manager" : "",
-    request.hrApprovalStatus === "Pending" ? "HR" : "",
-    request.accountsApprovalStatus === "Pending" ? "Finance" : "",
-  ].filter(Boolean);
-  return outstanding.length
-    ? `Awaiting ${outstanding.join(" / ")} approval`
-    : "Awaiting approval reconciliation";
+  if (request.managerApprovalStatus === "Pending") return "Awaiting supervisor approval";
+  if (request.hrApprovalStatus === "Pending") return "Awaiting HR approval";
+  if (request.accountsApprovalStatus === "Pending") return "Awaiting Finance approval";
+  return "Awaiting approval reconciliation";
 }

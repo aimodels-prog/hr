@@ -15,6 +15,24 @@ import { parseISO, isAfter, isBefore, isValid } from "date-fns";
 
 const LEGACY_SUPPORTED_CURRENCIES = new Set(["OMR", "GBP", "USD", "EUR"]);
 
+export function resolveTravelDatabaseId(
+  records: Array<{ id: string; databaseId?: string; code?: string }>,
+  id: string,
+  collection: string,
+): string {
+  const item = records.find(
+    (record) => record.id === id || record.databaseId === id || record.code === id,
+  );
+  const isUuid = (value: string) => /^[0-9a-f-]{36}$/i.test(value);
+  const value =
+    item?.databaseId ??
+    (item && isUuid(item.id) ? item.id : undefined) ??
+    (isUuid(id) ? id : undefined);
+  if (!value)
+    throw new Error(`The selected ${collection} record is not available. Refresh and try again.`);
+  return value;
+}
+
 function travelUploadMime(file: File): "application/pdf" | "image/jpeg" | "image/png" {
   const mime = file.type.toLowerCase();
   if (mime === "application/pdf" || mime === "image/jpeg" || mime === "image/png") return mime;
@@ -56,12 +74,11 @@ export class TravelService {
   }
 
   private databaseId(collection: string, id: string): string {
-    const item = getApplicationDataServices()
-      .storage.readCollection<{ id: string; databaseId?: string; code?: string }>(collection)
-      .find((record) => record.id === id || record.databaseId === id || record.code === id);
-    const value = item?.databaseId ?? (/^[0-9a-f-]{36}$/i.test(id) ? id : undefined);
-    if (!value) throw new Error("This record is not connected to PostgreSQL yet.");
-    return value;
+    return resolveTravelDatabaseId(
+      getApplicationDataServices().storage.readCollection(collection),
+      id,
+      collection,
+    );
   }
 
   async hydrateCompatibilityCache(context: ActorContext, canCommit = () => true): Promise<void> {
@@ -382,8 +399,43 @@ export class TravelService {
             : {}),
         },
       });
-      await this.hydrateCompatibilityCache(context);
-      return this.repo.list().find((request) => request.databaseId === id || request.id === id)!;
+      // The database has already accepted the request. A failed cache refresh must not tell
+      // the employee that submission failed and invite an accidental second submission.
+      await this.hydrateCompatibilityCache(context).catch(() => undefined);
+      const saved = this.repo
+        .list()
+        .find((request) => request.databaseId === id || request.id === id);
+      if (saved) return saved;
+      const now = new Date().toISOString();
+      return {
+        id,
+        databaseId: id,
+        employeeId: data.employeeId,
+        participants: data.participants ?? [],
+        purpose: data.purpose,
+        destination: data.destination,
+        startDate: data.startDate,
+        endDate: data.endDate,
+        estTransport: data.estTransport ?? 0,
+        estAccommodation: data.estAccommodation ?? 0,
+        estPerDiem: data.estPerDiem ?? 0,
+        estOther: data.estOther ?? 0,
+        totalEstimate:
+          (data.estTransport ?? 0) +
+          (data.estAccommodation ?? 0) +
+          (data.estPerDiem ?? 0) +
+          (data.estOther ?? 0),
+        currency: data.currency,
+        managerApprovalStatus: "Pending",
+        hrApprovalStatus: "Pending",
+        accountsApprovalStatus: "Pending",
+        status: "Pending HR and Accounts",
+        createdAt: now,
+        updatedAt: now,
+        createdBy: context.actor.userId,
+        updatedBy: context.actor.userId,
+        recordVersion: 1,
+      };
     }
     if (!data.employeeId) {
       throw new Error("Missing required travel information.");
@@ -837,6 +889,24 @@ export class TravelService {
     return updated;
   }
 
+  async closeWithoutExpensesAsync(id: string, context: ActorContext): Promise<TravelRequest> {
+    if (typeof window === "undefined")
+      throw new Error("This action must be completed in the connected application.");
+    const { closeTravelWithoutExpensesFn } = await import("../server-functions/travel.server.ts");
+    await closeTravelWithoutExpensesFn({
+      data: {
+        actor: await this.serverActor(context),
+        requestId: this.databaseId("travelRequests", id),
+      },
+    });
+    await this.hydrateCompatibilityCache(context);
+    const updated = this.repo
+      .list()
+      .find((request) => request.id === id || request.databaseId === id);
+    if (!updated) throw new Error("The completed trip could not be loaded. Refresh the page.");
+    return updated;
+  }
+
   /**
    * Converts a set of expense lines to their OMR-equivalent total.
    * - A line already in OMR uses a rate of 1.
@@ -1060,7 +1130,7 @@ export class TravelService {
     > = {
       "Pre-authorised": {
         title: "Travel request pre-authorised",
-        message: `Your trip to ${req.destination} was pre-authorised by both HR and Accounts.`,
+        message: `Your trip to ${req.destination} was pre-authorised by your supervisor, HR and Accounts.`,
         type: "Success",
       },
       Rejected: {

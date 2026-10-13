@@ -73,6 +73,12 @@ function AccountsTravelApprovalsContent() {
 
   const pendingAccounts = requests.filter(
     (r) =>
+      currentUser.activeRole === "Accounts" &&
+      r.employeeId !== currentUser.employeeId &&
+      !r.participants?.some((participant) => participant.employeeId === currentUser.employeeId) &&
+      r.managerApprovedBy !== currentUser.id &&
+      r.hrApprovedBy !== currentUser.id &&
+      !r.participants?.some((participant) => participant.decidedBy === currentUser.id) &&
       r.accountsApprovalStatus === "Pending" &&
       r.managerApprovalStatus === "Approved" &&
       r.hrApprovalStatus === "Approved" &&

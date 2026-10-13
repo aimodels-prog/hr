@@ -57,13 +57,13 @@ export const travelRequests = pgTable(
     costCentreId: uuid("cost_centre_id").references(() => costCentres.id, {
       onDelete: "restrict",
     }),
-    estTransport: numeric("est_transport", { precision: 14, scale: 2 }).notNull().default("0"),
-    estAccommodation: numeric("est_accommodation", { precision: 14, scale: 2 })
+    estTransport: numeric("est_transport", { precision: 15, scale: 3 }).notNull().default("0"),
+    estAccommodation: numeric("est_accommodation", { precision: 15, scale: 3 })
       .notNull()
       .default("0"),
-    estPerDiem: numeric("est_per_diem", { precision: 14, scale: 2 }).notNull().default("0"),
-    estOther: numeric("est_other", { precision: 14, scale: 2 }).notNull().default("0"),
-    totalEstimate: numeric("total_estimate", { precision: 14, scale: 2 }).notNull(),
+    estPerDiem: numeric("est_per_diem", { precision: 15, scale: 3 }).notNull().default("0"),
+    estOther: numeric("est_other", { precision: 15, scale: 3 }).notNull().default("0"),
+    totalEstimate: numeric("total_estimate", { precision: 15, scale: 3 }).notNull(),
     currency: text("currency").notNull(),
     notes: text("notes"),
     evidenceFileId: uuid("evidence_file_id").references(() => fileMetadata.id, {
@@ -91,8 +91,8 @@ export const travelRequests = pgTable(
     }),
     preAuthorisedAt: timestamp("pre_authorised_at", { withTimezone: true, mode: "string" }),
     authorisedBudget: jsonb("authorised_budget"),
-    actualTotal: numeric("actual_total", { precision: 14, scale: 2 }),
-    actualTotalOmr: numeric("actual_total_omr", { precision: 14, scale: 2 }),
+    actualTotal: numeric("actual_total", { precision: 15, scale: 3 }),
+    actualTotalOmr: numeric("actual_total_omr", { precision: 15, scale: 3 }),
     varianceExplanation: text("variance_explanation"),
     closureNotes: text("closure_notes"),
     closedAt: timestamp("closed_at", { withTimezone: true, mode: "string" }),
@@ -175,7 +175,7 @@ export const expenseItems = pgTable(
       .notNull()
       .references(() => travelRequests.id, { onDelete: "cascade" }),
     category: text("category").notNull(),
-    amount: numeric("amount", { precision: 14, scale: 2 }).notNull(),
+    amount: numeric("amount", { precision: 15, scale: 3 }).notNull(),
     currency: text("currency").notNull(),
     exchangeRate: numeric("exchange_rate", { precision: 14, scale: 6 }),
     reference: text("reference").notNull(),
@@ -218,7 +218,7 @@ export const reimbursements = pgTable(
     employeeId: uuid("employee_id")
       .notNull()
       .references(() => employees.id, { onDelete: "restrict" }),
-    amount: numeric("amount", { precision: 14, scale: 2 }).notNull(),
+    amount: numeric("amount", { precision: 15, scale: 3 }).notNull(),
     currency: text("currency").notNull(),
     status: text("status").notNull(),
     closedAt: timestamp("closed_at", { withTimezone: true, mode: "string" }),
@@ -298,7 +298,7 @@ export const payrollInputs = pgTable(
     unpaidLeaveDays: numeric("unpaid_leave_days", { precision: 8, scale: 2 })
       .notNull()
       .default("0"),
-    reimbursementsTotal: numeric("reimbursements_total", { precision: 14, scale: 2 })
+    reimbursementsTotal: numeric("reimbursements_total", { precision: 15, scale: 3 })
       .notNull()
       .default("0"),
     reimbursementsCurrency: text("reimbursements_currency").notNull(),

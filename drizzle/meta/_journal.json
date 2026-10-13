@@ -519,6 +519,13 @@
       "when": 1791723424754,
       "tag": "0073_vacancy_public_slugs",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1791886205097,
+      "tag": "0074_friendly_the_spike",
+      "breakpoints": true
     }
   ]
 }

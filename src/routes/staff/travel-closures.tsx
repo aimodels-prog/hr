@@ -68,7 +68,13 @@ function TravelClosuresContent() {
   const [selectedReq, setSelectedReq] = useState<TravelRequest | null>(null);
   const [actionType, setActionType] = useState<"approve" | "reject">("approve");
 
-  const pendingClosure = requests.filter((r) => r.status === "Pending Super Admin Closure");
+  const pendingClosure = requests.filter(
+    (r) =>
+      currentUser.activeRole === "Accounts" &&
+      r.employeeId !== currentUser.employeeId &&
+      !r.participants?.some((participant) => participant.employeeId === currentUser.employeeId) &&
+      r.status === "Pending Super Admin Closure",
+  );
   const closed = requests.filter((r) => r.status === "Closed");
 
   const handleOpenAction = (req: TravelRequest, type: "approve" | "reject") => {
@@ -129,13 +135,13 @@ function TravelClosuresContent() {
     <div className="flex flex-col gap-6 max-w-[1200px] mx-auto pb-10">
       <PageHeader
         title="Travel Reimbursement Settlement"
-        description="Accounts reviews post-trip expenses, receipts and variances before settling the reimbursement. Super Admin remains available for exceptional cases."
+        description="Finance reviews post-trip expenses, receipts and variances before settling the reimbursement."
       />
 
       <Tabs defaultValue="pending">
         <TabsList>
           <TabsTrigger value="pending">Action Required ({pendingClosure.length})</TabsTrigger>
-          <TabsTrigger value="closed">Closed / Paid ({closed.length})</TabsTrigger>
+          <TabsTrigger value="closed">Closed ({closed.length})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="pending">

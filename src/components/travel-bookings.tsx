@@ -29,6 +29,7 @@ export function TravelBookings({
       currency: string;
       startDate: string;
       endDate: string;
+      status: TravelRequest["status"];
       bookings: TravelBooking[];
       travellers?: string[];
     }>
@@ -80,7 +81,7 @@ export function TravelBookings({
     ["Pending HR and Accounts", "Pre-authorised"].includes(trip.status);
   const change = async (
     requestId: string,
-    action: "request" | "approve" | "reject" | "confirm",
+    action: "request" | "approve" | "reject" | "confirm" | "cancel",
     bookingId?: string,
   ) => {
     setBusy(true);
@@ -142,6 +143,14 @@ export function TravelBookings({
               </h3>
             )}
             {!trip && <p className="text-sm">{row.travellers?.join(", ")}</p>}
+            {!trip &&
+              user.activeRole === "Accounts" &&
+              row.status !== "Pre-authorised" &&
+              row.bookings.some((booking) => booking.status === "Pending Finance") && (
+                <p className="text-sm text-muted-foreground">
+                  Approve the full travel budget before approving arrangements.
+                </p>
+              )}
             {row.bookings.map((b) => (
               <div key={b.id} className="rounded-lg border p-4 space-y-2">
                 <div className="flex flex-wrap justify-between gap-2">
@@ -150,9 +159,12 @@ export function TravelBookings({
                 </div>
                 <p className="text-sm whitespace-pre-wrap">{b.details}</p>
                 <p className="text-sm">
-                  {row.currency} {b.estimate.toFixed(2)}
+                  {row.currency} {b.estimate.toFixed(3)}
                 </p>
                 {b.confirmation && <p className="text-sm whitespace-pre-wrap">{b.confirmation}</p>}
+                {b.cancellationNote && (
+                  <p className="text-sm whitespace-pre-wrap">Cancellation: {b.cancellationNote}</p>
+                )}
                 {b.documentFileId && (
                   <Button
                     variant="outline"
@@ -188,9 +200,10 @@ export function TravelBookings({
                   </Button>
                 )}
                 {((user.activeRole === "Accounts" && b.status === "Pending Finance") ||
-                  (user.activeRole === "Travel Admin" && b.status === "Approved")) && (
+                  (user.activeRole === "Travel Admin" &&
+                    ["Approved", "Confirmed"].includes(b.status))) && (
                   <div className="space-y-2">
-                    {user.activeRole === "Travel Admin" && (
+                    {user.activeRole === "Travel Admin" && b.status === "Approved" && (
                       <label className="block text-sm">
                         Ticket or booking document (optional, up to 10 MB)
                         <Input
@@ -207,7 +220,9 @@ export function TravelBookings({
                       aria-label={`Booking details for ${b.name}`}
                       placeholder={
                         user.activeRole === "Travel Admin"
-                          ? "Booking reference, pickup / flight / hotel details and instructions"
+                          ? b.status === "Confirmed"
+                            ? "Provider cancellation reference and outcome"
+                            : "Booking reference or provider cancellation details"
                           : "Note (required if declining)"
                       }
                       value={comments[b.id] ?? ""}
@@ -215,7 +230,10 @@ export function TravelBookings({
                     />
                     {user.activeRole === "Accounts" ? (
                       <div className="flex gap-2">
-                        <Button disabled={busy} onClick={() => change(row.id, "approve", b.id)}>
+                        <Button
+                          disabled={busy || row.status !== "Pre-authorised"}
+                          onClick={() => change(row.id, "approve", b.id)}
+                        >
                           Approve cost
                         </Button>
                         <Button
@@ -227,9 +245,23 @@ export function TravelBookings({
                         </Button>
                       </div>
                     ) : (
-                      <Button disabled={busy} onClick={() => change(row.id, "confirm", b.id)}>
-                        Confirm booking
-                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        {b.status === "Approved" && (
+                          <Button
+                            disabled={busy || row.status !== "Pre-authorised"}
+                            onClick={() => change(row.id, "confirm", b.id)}
+                          >
+                            Confirm booking
+                          </Button>
+                        )}
+                        <Button
+                          variant="outline"
+                          disabled={busy || !comments[b.id]?.trim()}
+                          onClick={() => change(row.id, "cancel", b.id)}
+                        >
+                          Mark provider cancellation
+                        </Button>
+                      </div>
                     )}
                   </div>
                 )}

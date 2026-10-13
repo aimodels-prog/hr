@@ -822,23 +822,22 @@ export class ReportService {
             { key: "employee", label: "Employee" },
             { key: "destination", label: "Destination" },
             { key: "status", label: "Status" },
-            { key: "estimatedCost", label: "Estimated Cost", type: "currency" },
-            { key: "actualCost", label: "Actual Cost", type: "currency" },
-            { key: "variance", label: "Variance", type: "currency" },
+            { key: "currency", label: "Currency" },
+            { key: "estimatedCost", label: "Estimated Cost", type: "number" },
+            { key: "actualCost", label: "Actual Cost", type: "number" },
+            { key: "variance", label: "Variance", type: "number" },
           ],
           rows: requests.map((r) => {
             const emp = scopedEmployees.find((e) => e.id === r.employeeId);
-            // Prefer the currency-safe OMR-equivalent total (see TravelService.submitExpenses / actualTotalOmr)
-            // over the raw actualTotal, which silently mixes currencies when expense lines aren't all in OMR.
-            // Fall back to actualTotal only for records closed before actualTotalOmr existed.
-            const actual = r.actualTotalOmr ?? r.actualTotal ?? 0;
+            const actual = r.actualTotal ?? null;
             return {
               employee: emp?.legalName || "Unknown",
               destination: r.destination,
               status: r.status,
+              currency: r.currency,
               estimatedCost: r.totalEstimate,
               actualCost: actual,
-              variance: r.status === "Closed" ? actual - r.totalEstimate : 0,
+              variance: actual === null ? null : actual - r.totalEstimate,
             };
           }),
         };

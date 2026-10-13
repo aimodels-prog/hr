@@ -12,6 +12,7 @@ import { fileMetadata } from "../schema/documents.ts";
 import { employees, roles, userRoles, users } from "../schema/employee.ts";
 import { costCentres, currencies, projects } from "../schema/master-data.ts";
 import { auditEvents, notifications } from "../schema/system.ts";
+import { appSettings } from "../schema/organisation.ts";
 import {
   expenseItems,
   payrollPeriods,
@@ -58,6 +59,18 @@ async function userForEmployee(tx: Tx, org: string, employeeId: string) {
     )
     .limit(1);
   return user?.id;
+}
+async function organisationToday(tx: Tx, org: string): Promise<string> {
+  const [settings] = await tx
+    .select({ timezone: appSettings.timezone })
+    .from(appSettings)
+    .where(eq(appSettings.organisationId, org))
+    .limit(1);
+  if (!settings) throw new Error("Organisation working time is not configured.");
+  const [row] = await tx.execute(
+    sql`select (now() at time zone ${settings.timezone})::date::text as today`,
+  );
+  return String(row?.["today"]);
 }
 async function usersForRoles(tx: Tx, org: string, codes: string[]) {
   if (!codes.length) return [];
@@ -267,6 +280,8 @@ export async function createTravelRequestInDatabase(
     throw new Error("You can only request travel for yourself.");
   if (!input.purpose.trim() || !input.destination.trim())
     throw new Error("Enter the business purpose and destination.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(input.endDate))
+    throw new Error("Choose valid travel dates.");
   if (input.endDate < input.startDate)
     throw new Error("The end date cannot be before the start date.");
   const estimates = [input.estTransport, input.estAccommodation, input.estPerDiem, input.estOther];
@@ -275,6 +290,8 @@ export async function createTravelRequestInDatabase(
   const db = getDatabaseClient();
   const id = randomUUID();
   await db.transaction(async (tx) => {
+    if (input.startDate < (await organisationToday(tx, org)))
+      throw new Error("Travel must be requested before it starts. Ask HR about a past trip.");
     const [employee] = await tx
       .select({
         id: employees.id,
@@ -349,6 +366,14 @@ export async function createTravelRequestInDatabase(
         status: "Pending",
       });
     }
+    const travellerIds = new Set([input.employeeId, ...participantIds]);
+    if (
+      travellerIds.has(employee.lineManagerId) ||
+      participants.some((participant) => travellerIds.has(participant.managerId))
+    )
+      throw new Error(
+        "A traveller cannot also approve this trip as another traveller's supervisor. Submit separate trips or ask HR to confirm an independent supervisor.",
+      );
     await activeReference(tx, currencies, org, input.currencyId, "currency");
     const [currency] = await tx
       .select({ code: currencies.code })
@@ -462,7 +487,7 @@ export async function createTravelRequestInDatabase(
     await notify(
       tx,
       org,
-      await usersForRoles(tx, org, ["HR", "Super Admin"]),
+      await usersForRoles(tx, org, ["HR"]),
       id,
       {
         title: "Travel request submitted",
@@ -509,13 +534,14 @@ export async function withdrawTravelRequestInDatabase(
       .limit(1);
     if (!request || request.employeeId !== actor.employeeId)
       throw new Error("You can only withdraw your own travel request.");
-    if (
-      request.status !== "Pending HR and Accounts" ||
-      request.managerApprovalStatus !== "Pending" ||
-      request.hrApprovalStatus !== "Pending" ||
-      request.accountsApprovalStatus !== "Pending"
-    )
-      throw new Error("This request can no longer be withdrawn.");
+    if (!["Pending HR and Accounts", "Pre-authorised"].includes(request.status))
+      throw new Error("This trip can no longer be cancelled.");
+    if (request.startDate < (await organisationToday(tx, org)))
+      throw new Error("A trip that has already started needs HR assistance to cancel.");
+    if (request.bookings.some((booking) => booking.status === "Confirmed"))
+      throw new Error(
+        "Ask the booking desk to cancel confirmed arrangements before cancelling this trip.",
+      );
     await tx
       .update(travelRequests)
       .set({
@@ -525,6 +551,33 @@ export async function withdrawTravelRequestInDatabase(
         recordVersion: sql`${travelRequests.recordVersion} + 1`,
       })
       .where(eq(travelRequests.id, requestId));
+    const recipients = await usersForRoles(tx, org, ["HR", "Accounts", "Travel Admin"]);
+    const [traveller] = await tx
+      .select({ lineManagerId: employees.lineManagerId })
+      .from(employees)
+      .where(and(eq(employees.organisationId, org), eq(employees.id, request.employeeId)))
+      .limit(1);
+    if (traveller?.lineManagerId) {
+      const manager = await userForEmployee(tx, org, traveller.lineManagerId);
+      if (manager) recipients.push(manager);
+    }
+    for (const participant of request.participants) {
+      const colleague = await userForEmployee(tx, org, participant.employeeId);
+      if (colleague) recipients.push(colleague);
+    }
+    await notify(
+      tx,
+      org,
+      [...new Set(recipients)].filter((id) => id !== actor.userId),
+      requestId,
+      {
+        title: "Trip cancelled",
+        message: `The trip to ${request.destination} on ${request.startDate} has been cancelled. Do not make further arrangements.`,
+        key: `travel-cancelled-${requestId}`,
+        path: `/staff/travel/${requestId}`,
+      },
+      actor.userId!,
+    );
     await tx.insert(auditEvents).values({
       organisationId: org,
       ...auditActor(actor),
@@ -534,7 +587,7 @@ export async function withdrawTravelRequestInDatabase(
       entityId: requestId,
       beforeSummary: { status: request.status },
       afterSummary: { status: "Withdrawn" },
-      reason: "Employee withdrew the travel request",
+      reason: "Employee cancelled the travel request",
       riskLevel: "Medium",
     } as typeof auditEvents.$inferInsert);
   });
@@ -573,29 +626,24 @@ export async function decideTravelRequestInDatabase(
         .where(and(eq(employees.organisationId, org), eq(employees.id, request.employeeId)))
         .limit(1);
       if (
-        role(actor) !== "Super Admin" &&
-        (role(actor) !== "Line Manager" ||
-          (employee?.lineManagerId !== actor.employeeId &&
-            !request.participants.some(
-              (p) => p.managerId === actor.employeeId && p.status === "Pending",
-            )))
+        role(actor) !== "Line Manager" ||
+        (employee?.lineManagerId !== actor.employeeId &&
+          !request.participants.some(
+            (p) => p.managerId === actor.employeeId && p.status === "Pending",
+          ))
       )
         throw new Error("Only the employee's assigned supervisor can review the business need.");
-      const ownerDecision =
-        employee?.lineManagerId === actor.employeeId || role(actor) === "Super Admin";
+      const ownerDecision = employee?.lineManagerId === actor.employeeId;
       if (
         ownerDecision &&
         request.managerApprovedBy &&
         !request.participants.some(
-          (p) =>
-            p.status === "Pending" &&
-            (p.managerId === actor.employeeId || role(actor) === "Super Admin"),
+          (p) => p.status === "Pending" && p.managerId === actor.employeeId,
         )
       )
         throw new Error("You have already approved your assigned travellers.");
       const participants = request.participants.map((p) =>
-        p.status === "Pending" &&
-        (p.managerId === actor.employeeId || role(actor) === "Super Admin")
+        p.status === "Pending" && p.managerId === actor.employeeId
           ? {
               ...p,
               status: decision === "approve" ? ("Approved" as const) : ("Rejected" as const),
@@ -637,11 +685,22 @@ export async function decideTravelRequestInDatabase(
     }
     if (stage !== "Manager" && request.managerApprovalStatus !== "Approved")
       throw new Error("All travellers' supervisors must approve first.");
+    if (
+      stage !== "Manager" &&
+      [request.managerApprovedBy, ...request.participants.map((p) => p.decidedBy)].includes(
+        actor.userId,
+      )
+    )
+      throw new Error(
+        "A supervisor who approved this trip cannot complete another approval stage.",
+      );
     if (stage === "Accounts" && request.hrApprovalStatus !== "Approved")
       throw new Error("HR must approve before Finance reviews the budget.");
-    if (stage === "HR" && !["HR", "Super Admin"].includes(role(actor)))
+    if (stage === "Accounts" && request.hrApprovedBy === actor.userId)
+      throw new Error("A different Finance reviewer must approve the budget.");
+    if (stage === "HR" && role(actor) !== "HR")
       throw new Error("Only HR can complete the HR review.");
-    if (stage === "Accounts" && !["Accounts", "Super Admin"].includes(role(actor)))
+    if (stage === "Accounts" && role(actor) !== "Accounts")
       throw new Error("Only Accounts can complete the budget review.");
     if (decision === "reject" && (reason?.trim().length ?? 0) < 3)
       throw new Error("A clear rejection reason is required.");
@@ -697,7 +756,8 @@ export async function decideTravelRequestInDatabase(
               managerApprovalStatus: nextManager,
               managerNotes: reason?.trim() ?? null,
               managerApprovedAt: decision === "approve" ? decidedAt : null,
-              managerApprovedBy: decision === "approve" ? actor.userId : null,
+              managerApprovedBy:
+                decision === "approve" ? (request.managerApprovedBy ?? actor.userId) : null,
             }
           : {}),
         ...(stage === "HR"
@@ -858,7 +918,7 @@ export async function submitTravelExpensesInDatabase(
       throw new Error("You can only submit expenses for your own trip.");
     if (request.status !== "Pre-authorised")
       throw new Error("Only a pre-authorised trip can submit expenses.");
-    if (new Date().toISOString().slice(0, 10) <= request.endDate)
+    if ((await organisationToday(tx, org)) <= request.endDate)
       throw new Error("Expenses can be submitted from the day after the trip ends.");
     let actualTotal = 0;
     let actualTotalOmr = 0;
@@ -883,6 +943,10 @@ export async function submitTravelExpensesInDatabase(
         .from(currencies)
         .where(eq(currencies.id, line.currencyId));
       if (!currency?.code) throw new Error("An expense currency is invalid.");
+      if (currency.code !== request.currency)
+        throw new Error(
+          `Expense amounts must use the approved trip currency (${request.currency}). Convert foreign receipts to that currency and note the original amount and rate.`,
+        );
       const rate = currency.code === "OMR" ? 1 : line.exchangeRate;
       if (!rate)
         throw new Error(`Enter the exchange rate to OMR for the ${currency.code} expense.`);
@@ -942,7 +1006,7 @@ export async function submitTravelExpensesInDatabase(
         recordVersion: sql`${travelRequests.recordVersion} + 1`,
       })
       .where(eq(travelRequests.id, requestId));
-    const admins = await usersForRoles(tx, org, ["Accounts", "Super Admin"]);
+    const admins = await usersForRoles(tx, org, ["Accounts"]);
     await notify(
       tx,
       org,
@@ -976,6 +1040,60 @@ export async function submitTravelExpensesInDatabase(
   });
 }
 
+export async function closeTravelWithoutExpensesInDatabase(
+  org: string,
+  requestId: string,
+  actor: AuditActorContext,
+) {
+  await getDatabaseClient().transaction(async (tx) => {
+    const [request] = await tx
+      .select()
+      .from(travelRequests)
+      .where(
+        and(
+          eq(travelRequests.organisationId, org),
+          eq(travelRequests.id, requestId),
+          isNull(travelRequests.archivedAt),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!request || request.employeeId !== actor.employeeId)
+      throw new Error("Only the trip organiser can confirm that no expenses are due.");
+    if (request.status !== "Pre-authorised")
+      throw new Error("This trip is not ready to be completed.");
+    if ((await organisationToday(tx, org)) <= request.endDate)
+      throw new Error("Complete the trip before confirming that no expenses are due.");
+    const closedAt = new Date().toISOString();
+    await tx
+      .update(travelRequests)
+      .set({
+        status: "Closed",
+        actualTotal: "0",
+        actualTotalOmr: "0",
+        closureNotes: "No expenses to reimburse",
+        closedAt,
+        closedBy: actor.userId,
+        updatedAt: new Date(),
+        updatedBy: actor.userId,
+        recordVersion: sql`${travelRequests.recordVersion} + 1`,
+      })
+      .where(eq(travelRequests.id, requestId));
+    await tx.insert(auditEvents).values({
+      organisationId: org,
+      ...auditActor(actor),
+      action: "complete-no-expenses",
+      module: "travel",
+      entityType: "travel-request",
+      entityId: requestId,
+      beforeSummary: { status: request.status },
+      afterSummary: { status: "Closed", actualTotalOmr: 0 },
+      reason: "Trip organiser confirmed no reimbursement is due",
+      riskLevel: "Medium",
+    } as typeof auditEvents.$inferInsert);
+  });
+}
+
 export async function closeTravelReimbursementInDatabase(
   org: string,
   requestId: string,
@@ -983,8 +1101,8 @@ export async function closeTravelReimbursementInDatabase(
   notes: string | undefined,
   actor: AuditActorContext,
 ) {
-  if (!["Accounts", "Super Admin"].includes(role(actor)))
-    throw new Error("Only Accounts or a Super Admin can settle or return reimbursements.");
+  if (role(actor) !== "Accounts")
+    throw new Error("Only Finance can settle or return reimbursements.");
   if (decision === "reject" && (notes?.trim().length ?? 0) < 3)
     throw new Error("A clear return reason is required.");
   const db = getDatabaseClient();
@@ -998,8 +1116,11 @@ export async function closeTravelReimbursementInDatabase(
       .where(and(eq(travelRequests.organisationId, org), eq(travelRequests.id, requestId)))
       .limit(1);
     if (!request) throw new Error("Travel request not found.");
-    if (request.employeeId === actor.employeeId)
-      throw new Error("You cannot close your own reimbursement.");
+    if (
+      request.employeeId === actor.employeeId ||
+      request.participants.some((participant) => participant.employeeId === actor.employeeId)
+    )
+      throw new Error("You cannot close a reimbursement for a trip you joined.");
     if (request.status !== "Pending Super Admin Closure")
       throw new Error("This reimbursement is no longer awaiting closure.");
     const traveller = await userForEmployee(tx, org, request.employeeId);
@@ -1276,6 +1397,7 @@ export async function listTravelBookingQueue(org: string, actor: AuditActorConte
       destination: travelRequests.destination,
       startDate: travelRequests.startDate,
       endDate: travelRequests.endDate,
+      status: travelRequests.status,
       currency: travelRequests.currency,
       bookings: travelRequests.bookings,
       organiser: employees.preferredName,
@@ -1309,7 +1431,7 @@ export async function changeTravelBookingInDatabase(
   org: string,
   input: {
     requestId: string;
-    action: "request" | "approve" | "reject" | "confirm";
+    action: "request" | "approve" | "reject" | "confirm" | "cancel";
     bookingId?: string | undefined;
     kind?: "Car" | "Flight" | "Hotel" | "Other" | undefined;
     name?: string | undefined;
@@ -1338,6 +1460,8 @@ export async function changeTravelBookingInDatabase(
       ["Rejected", "Withdrawn", "Closed", "Pending Super Admin Closure"].includes(trip.status)
     )
       throw new Error("This trip is not open for booking changes.");
+    if (trip.endDate < (await organisationToday(tx, org)))
+      throw new Error("Arrangements cannot be changed after the trip has ended.");
     if (trip.managerApprovalStatus !== "Approved" || trip.hrApprovalStatus !== "Approved")
       throw new Error("Supervisor and HR approval are required before requesting arrangements.");
     const bookings = [...trip.bookings];
@@ -1356,6 +1480,14 @@ export async function changeTravelBookingInDatabase(
       )
         throw new Error("Enter the arrangement name, details and estimated cost.");
       if (bookings.length >= 50) throw new Error("This trip has reached its arrangement limit.");
+      const committed = bookings
+        .filter((booking) => !["Rejected", "Cancelled"].includes(booking.status))
+        .reduce((sum, booking) => sum + booking.estimate, 0);
+      const budget = Number(trip.totalEstimate);
+      if (Math.round((committed + input.estimate) * 1000) > Math.round(budget * 1000))
+        throw new Error(
+          `Arrangement estimates exceed the ${trip.currency} ${budget.toFixed(3)} trip budget. Ask Finance to review the budget before requesting more.`,
+        );
       bookings.push({
         id: randomUUID(),
         kind: input.kind,
@@ -1371,8 +1503,21 @@ export async function changeTravelBookingInDatabase(
     } else {
       const booking = bookings.find((b) => b.id === input.bookingId);
       if (!booking) throw new Error("Arrangement not found.");
-      if (input.action === "confirm") {
+      if (input.action === "cancel") {
+        if (role(actor) !== "Travel Admin")
+          throw new Error("Only Travel Admin can cancel booked arrangements.");
+        if (!["Approved", "Confirmed"].includes(booking.status))
+          throw new Error("Only an approved or confirmed booking can be cancelled here.");
+        if (!input.confirmation?.trim())
+          throw new Error("Record the provider cancellation reference or outcome.");
+        booking.status = "Cancelled";
+        booking.cancellationNote = input.confirmation.trim();
+        title = "Travel arrangement cancelled";
+        recipients = await usersForRoles(tx, org, ["Accounts"]);
+      } else if (input.action === "confirm") {
         if (role(actor) !== "Travel Admin") throw new Error("Travel Admin must confirm bookings.");
+        if (trip.status !== "Pre-authorised")
+          throw new Error("The full trip budget must be approved before booking is confirmed.");
         if (booking.status !== "Approved")
           throw new Error("Finance must approve this arrangement first.");
         if (!input.confirmation?.trim())
@@ -1400,6 +1545,10 @@ export async function changeTravelBookingInDatabase(
         title = "Your travel booking is confirmed";
       } else {
         if (role(actor) !== "Accounts") throw new Error("Finance must review arrangement costs.");
+        if (input.action === "approve" && trip.status !== "Pre-authorised")
+          throw new Error(
+            "Approve the full travel budget before approving individual arrangements.",
+          );
         if (
           trip.employeeId === actor.employeeId ||
           trip.participants.some((p) => p.employeeId === actor.employeeId) ||
@@ -1519,7 +1668,7 @@ export async function processTravelWorker(now = new Date()) {
       if (request.status === "Pending Super Admin Closure") {
         stages.push({
           name: "reimbursement closure",
-          recipients: await usersForRoles(tx, request.organisationId, ["Accounts", "Super Admin"]),
+          recipients: await usersForRoles(tx, request.organisationId, ["Accounts"]),
           path: "/staff/travel-closures",
         });
       } else if (request.status === "Pending HR and Accounts") {
@@ -1598,14 +1747,18 @@ export async function processTravelWorker(now = new Date()) {
   const completedTrips = await db
     .select()
     .from(travelRequests)
+    .innerJoin(appSettings, eq(appSettings.organisationId, travelRequests.organisationId))
     .where(
       and(
         eq(travelRequests.status, "Pre-authorised"),
-        lt(travelRequests.endDate, now.toISOString().slice(0, 10)),
+        lt(
+          travelRequests.endDate,
+          sql`(${now.toISOString()}::timestamptz at time zone ${appSettings.timezone})::date`,
+        ),
         isNull(travelRequests.archivedAt),
       ),
     );
-  for (const request of completedTrips) {
+  for (const { travel_requests: request } of completedTrips) {
     await db.transaction(async (tx) => {
       const traveller = await userForEmployee(tx, request.organisationId, request.employeeId);
       if (!traveller) return;

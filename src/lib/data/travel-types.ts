@@ -15,12 +15,13 @@ export interface TravelBooking {
   name: string;
   details: string;
   estimate: number;
-  status: "Pending Finance" | "Approved" | "Rejected" | "Confirmed";
+  status: "Pending Finance" | "Approved" | "Rejected" | "Confirmed" | "Cancelled";
   requestedBy: string;
   requestedAt: string;
   decidedBy?: string;
   decidedAt?: string;
   confirmation?: string;
+  cancellationNote?: string;
   documentFileId?: string;
 }
 

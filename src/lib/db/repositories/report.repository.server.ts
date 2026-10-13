@@ -311,14 +311,15 @@ const definitions: Record<ReportId, QueryDefinition> = {
       c("department", "Department"),
       c("destination", "Destination"),
       c("startDate", "Start", "date"),
-      c("estimate", "Estimate", "currency"),
-      c("actual", "Actual", "currency"),
-      c("variance", "Variance", "currency"),
+      c("currency", "Currency"),
+      c("estimate", "Estimate", "number"),
+      c("actual", "Actual", "number"),
+      c("variance", "Variance", "number"),
       c("status", "Status"),
     ],
     query: (org) =>
       getDatabaseClient().execute(
-        sql`select e.id as "__employeeId", (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department, tr.destination, tr.start_date as "startDate", tr.total_estimate::double precision as estimate, coalesce(tr.actual_total,0)::double precision as actual, (coalesce(tr.actual_total,0)-tr.total_estimate)::double precision as variance, tr.status::text as status from travel_requests tr join employees e on e.id=tr.employee_id join departments d on d.id=e.department_id where tr.organisation_id=${org} and tr.archived_at is null order by tr.start_date desc`,
+        sql`select e.id as "__employeeId", (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department, tr.destination, tr.start_date as "startDate", tr.currency, tr.total_estimate::double precision as estimate, tr.actual_total::double precision as actual, (tr.actual_total-tr.total_estimate)::double precision as variance, tr.status::text as status from travel_requests tr join employees e on e.id=tr.employee_id join departments d on d.id=e.department_id where tr.organisation_id=${org} and tr.archived_at is null order by tr.start_date desc`,
       ),
   },
   onboarding: {

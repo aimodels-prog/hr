@@ -45,6 +45,7 @@ function TravelDetailRoute() {
   const currentUser = useCurrentUser();
   const travelService = useMemo(() => new TravelService(), []);
   const [receiptFiles, setReceiptFiles] = useState<Map<string, File>>(() => new Map());
+  const [isSubmittingExpenses, setIsSubmittingExpenses] = useState(false);
 
   const [request, setRequest] = useState<TravelRequest | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -98,7 +99,7 @@ function TravelDetailRoute() {
       currentUser!.getActorContext(),
     );
     setRequest(updated);
-    toast.success("Travel request withdrawn");
+    toast.success("Trip cancelled");
   };
 
   const getStatusIcon = (status: string) => {
@@ -177,6 +178,8 @@ function TravelDetailRoute() {
   };
 
   const handleSubmitExpenses = async () => {
+    if (isSubmittingExpenses) return;
+    setIsSubmittingExpenses(true);
     try {
       if (expenseLines.length === 0) {
         toast.error("Add at least one expense line.");
@@ -219,6 +222,25 @@ function TravelDetailRoute() {
       toast.success("Expenses sent for final review");
     } catch (error: unknown) {
       toast.error(error instanceof Error ? error.message : "Expenses could not be submitted.");
+    } finally {
+      setIsSubmittingExpenses(false);
+    }
+  };
+
+  const handleNoExpenses = async () => {
+    if (isSubmittingExpenses) return;
+    setIsSubmittingExpenses(true);
+    try {
+      const updated = await travelService.closeWithoutExpensesAsync(
+        request.id,
+        currentUser.getActorContext(),
+      );
+      setRequest(updated);
+      toast.success("Trip completed with no reimbursement due");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The trip could not be completed.");
+    } finally {
+      setIsSubmittingExpenses(false);
     }
   };
 
@@ -251,17 +273,17 @@ function TravelDetailRoute() {
           }
         />
 
-        {request.status === "Pending HR and Accounts" &&
-          request.hrApprovalStatus === "Pending" &&
-          request.accountsApprovalStatus === "Pending" && (
+        {["Pending HR and Accounts", "Pre-authorised"].includes(request.status) &&
+          request.employeeId === currentUser.employeeId &&
+          !request.bookings?.some((booking) => booking.status === "Confirmed") && (
             <div className="flex justify-end">
               <ConfirmAction
-                title="Withdraw this travel request?"
-                description="This request will leave the approval queue. Its history will be kept."
-                confirmLabel="Withdraw request"
+                title="Cancel this trip?"
+                description="The approval history will be kept. Any approved but unbooked arrangements will stop."
+                confirmLabel="Cancel trip"
                 onConfirm={handleWithdraw}
               >
-                <Button variant="outline">Withdraw Request</Button>
+                <Button variant="outline">Cancel Trip</Button>
               </ConfirmAction>
             </div>
           )}
@@ -295,6 +317,20 @@ function TravelDetailRoute() {
               <CardTitle className="text-base">Approval Timeline</CardTitle>
             </CardHeader>
             <CardContent className="p-4 space-y-6">
+              <div className="flex items-start gap-4">
+                {getStatusIcon(request.managerApprovalStatus)}
+                <div>
+                  <div className="font-medium">Supervisor · Business need</div>
+                  <div className="text-sm text-muted-foreground">
+                    {request.managerApprovalStatus}
+                  </div>
+                  {request.managerNotes && (
+                    <div className="text-sm mt-1 bg-muted/50 p-2 rounded">
+                      {request.managerNotes}
+                    </div>
+                  )}
+                </div>
+              </div>
               <div className="flex items-start gap-4">
                 {getStatusIcon(request.hrApprovalStatus)}
                 <div>
@@ -355,7 +391,7 @@ function TravelDetailRoute() {
               <CardTitle className="text-base">Trip Details</CardTitle>
             </CardHeader>
             <CardContent className="p-4 space-y-4 text-sm">
-              <div className="grid grid-cols-2 gap-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-4">
                 <div>
                   <span className="text-muted-foreground block mb-1">Start Date</span>{" "}
                   {request.startDate}
@@ -434,16 +470,23 @@ function TravelDetailRoute() {
                     expenses can be sent for final review.
                   </div>
                 )}
+                {!isSubmissionLocked && (
+                  <p className="text-sm text-muted-foreground">
+                    Use the approved trip currency ({request.currency}) for every claim. If a
+                    receipt uses another currency, convert it and note the original amount and
+                    conversion rate in the description.
+                  </p>
+                )}
                 <div className="space-y-4">
                   {expenseLines.map((line, idx) => (
                     <div
                       key={line.id}
-                      className="grid grid-cols-[repeat(13,minmax(0,1fr))] gap-2 items-center bg-muted/20 p-2 rounded"
+                      className="grid grid-cols-1 sm:grid-cols-[repeat(13,minmax(0,1fr))] gap-2 items-center bg-muted/20 p-2 rounded"
                     >
                       <div className="col-span-1 text-center text-muted-foreground font-mono text-xs">
                         {idx + 1}
                       </div>
-                      <div className="col-span-2">
+                      <div className="col-span-1 sm:col-span-2">
                         <Select
                           value={line.category}
                           onValueChange={(v) =>
@@ -462,7 +505,7 @@ function TravelDetailRoute() {
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="col-span-2">
+                      <div className="col-span-1 sm:col-span-2">
                         <Input
                           type="date"
                           value={line.date}
@@ -470,10 +513,10 @@ function TravelDetailRoute() {
                           disabled={isSubmissionLocked}
                         />
                       </div>
-                      <div className="col-span-2">
+                      <div className="col-span-1 sm:col-span-2">
                         <Input
                           type="number"
-                          step="0.01"
+                          step="0.001"
                           min="0"
                           placeholder={`Amount (${line.currency})`}
                           value={line.amount || ""}
@@ -484,7 +527,7 @@ function TravelDetailRoute() {
                         />
                       </div>
                       {isForeignCurrency && (
-                        <div className="col-span-2">
+                        <div className="col-span-1 sm:col-span-2">
                           <Input
                             type="number"
                             step="0.0001"
@@ -502,7 +545,13 @@ function TravelDetailRoute() {
                           />
                         </div>
                       )}
-                      <div className={isForeignCurrency ? "col-span-2" : "col-span-4"}>
+                      <div
+                        className={
+                          isForeignCurrency
+                            ? "col-span-1 sm:col-span-2"
+                            : "col-span-1 sm:col-span-4"
+                        }
+                      >
                         <Input
                           aria-label="Expense description"
                           placeholder={
@@ -597,7 +646,19 @@ function TravelDetailRoute() {
                 )}
               </CardContent>
               {!isSubmissionLocked && (
-                <div className="p-4 bg-muted/10 border-t flex justify-end gap-2">
+                <div className="p-4 bg-muted/10 border-t flex flex-wrap justify-end gap-2">
+                  {expenseLines.length === 0 && (
+                    <ConfirmAction
+                      title="Complete this trip without expenses?"
+                      description="Only choose this if nobody needs a reimbursement for this trip. This cannot be undone."
+                      confirmLabel="No expenses to claim"
+                      onConfirm={handleNoExpenses}
+                    >
+                      <Button variant="outline" disabled={isSubmittingExpenses}>
+                        No expenses to claim
+                      </Button>
+                    </ConfirmAction>
+                  )}
                   <ConfirmAction
                     title="Discard expense changes?"
                     description="Restore the last saved expenses. Unsaved entries and newly attached receipts will be discarded."
@@ -610,7 +671,9 @@ function TravelDetailRoute() {
                   >
                     <Button variant="outline">Reset</Button>
                   </ConfirmAction>
-                  <Button onClick={handleSubmitExpenses}>Submit for Closure</Button>
+                  <Button disabled={isSubmittingExpenses} onClick={handleSubmitExpenses}>
+                    {isSubmittingExpenses ? "Submitting…" : "Submit expenses for Finance review"}
+                  </Button>
                 </div>
               )}
             </Card>

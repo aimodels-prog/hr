@@ -34,8 +34,11 @@ export function missingClockoutCandidates(at = new Date()) {
         AND v.organisation_id=a.organisation_id AND v.archived_at IS NULL AND v.date=a.date
         AND (v.status='Pending HR' OR (v.status='Approved' AND
           (v.date + v.end_time::time) AT TIME ZONE s.timezone > ${at.toISOString()}::timestamptz)))
-      AND NOT EXISTS (SELECT 1 FROM travel_requests t WHERE t.employee_id=a.employee_id
-        AND t.organisation_id=a.organisation_id AND t.archived_at IS NULL AND t.status='Pre-authorised'
+      AND NOT EXISTS (SELECT 1 FROM travel_requests t WHERE
+        (t.employee_id=a.employee_id OR EXISTS (SELECT 1 FROM jsonb_array_elements(t.participants) p
+          WHERE p->>'employeeId'=a.employee_id::text AND p->>'status'='Approved'))
+        AND t.organisation_id=a.organisation_id AND t.archived_at IS NULL
+        AND t.status IN ('Pre-authorised','Pending Super Admin Closure','Closed')
         AND t.start_date<=a.date AND t.end_date>=(${at.toISOString()}::timestamptz AT TIME ZONE s.timezone)::date)
       AND (a.source <> 'Hardware Terminal' OR EXISTS (
         SELECT 1 FROM attendance_punch_events e JOIN attendance_devices d ON d.id=e.device_id
