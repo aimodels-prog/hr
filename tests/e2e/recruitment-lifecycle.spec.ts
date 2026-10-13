@@ -136,6 +136,14 @@ test("public application progresses through shortlist, interview, offer and onbo
 
   await page.getByText("Browser Candidate", { exact: true }).last().click();
   await expect(page.getByText("Canonical Details")).toBeVisible();
+  await page.getByRole("link", { name: /^Applications \(/ }).click();
+  await expect(page.getByText("Submitted answers")).toBeVisible();
+  await expect(page.getByText("Salary expectation")).toBeVisible();
+  await expect(page.getByText("18000", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Yes, with evidence from regional logistics operations.").first(),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Download submitted CV" })).toBeVisible();
   await page.getByRole("link", { name: /^Interviews \(/ }).click();
   const templateName = await page.evaluate(async (suffix) => {
     const actor = {
