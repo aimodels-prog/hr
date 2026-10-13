@@ -7,7 +7,6 @@ import {
   submitEmployeeReferralInDatabase,
   submitInternalApplicationInDatabase,
 } from "../db/repositories/employee-opportunities.repository.server.ts";
-import { processNextCandidateCvJob } from "../db/repositories/candidate-cv-intake.repository.server.ts";
 import { resolveOrganisationIdForActor, verifyServerActorRole } from "../db/utils.server.ts";
 import { validatePublicCv } from "../recruitment/public-application-validation.server.ts";
 
@@ -108,10 +107,7 @@ export const submitInternalApplicationFn = createServerFn({ method: "POST" })
       },
       verified.actor,
     );
-    void processNextCandidateCvJob(
-      `internal-application:${result.applicationId}`,
-      result.jobId,
-    ).catch(() => undefined);
+    // CV extraction is owned by the durable background worker.
     return result;
   });
 
@@ -166,9 +162,6 @@ export const submitEmployeeReferralFn = createServerFn({ method: "POST" })
       },
       verified.actor,
     );
-    void processNextCandidateCvJob(
-      `employee-referral:${result.recommendationId}`,
-      result.jobId,
-    ).catch(() => undefined);
+    // CV extraction is owned by the durable background worker.
     return result;
   });

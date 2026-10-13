@@ -2,7 +2,6 @@ import "@tanstack/react-start/server-only";
 
 import { ZodError } from "zod";
 
-import { processNextCandidateCvJob } from "../db/repositories/candidate-cv-intake.repository.server.ts";
 import { submitPublicApplicationToDatabase } from "../db/repositories/public-application.repository.server.ts";
 import { listVacanciesForOrganisation } from "../db/repositories/vacancy.repository.server.ts";
 import { resolveDefaultOrganisationId } from "../db/organisation.server.ts";
@@ -53,9 +52,8 @@ export async function resolvePublicRecruitmentRequest(
       mimeType,
       fileBytes: bytes,
     });
-    void processNextCandidateCvJob(`public-submit:${result.applicationId}`, result.jobId).catch(
-      () => undefined,
-    );
+    // The durable background worker owns CV extraction. Public web containers do not
+    // have the private processor connection; claiming here causes an avoidable retry.
     return json(
       {
         referenceId: result.referenceId,

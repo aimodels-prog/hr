@@ -31,7 +31,6 @@ import {
 } from "../db/repositories/candidate-mutation.repository.server.ts";
 import {
   finaliseCandidateCvIntakeInDatabase,
-  processNextCandidateCvJob,
   uploadCandidateCvIntakeToDatabase,
 } from "../db/repositories/candidate-cv-intake.repository.server.ts";
 import {
@@ -484,9 +483,8 @@ export const uploadCandidateCvFn = createServerFn({ method: "POST" })
       verified.actor,
     );
 
-    // The durable job exists before this responsive first attempt. If the request
-    // ends early, the standalone worker can safely resume it later.
-    await processNextCandidateCvJob(`interactive:${verified.actor.userId}`, result.jobId);
+    // The durable background worker processes the queued CV. Web containers do not
+    // connect directly to the private CV processor.
     return result;
   });
 
@@ -803,11 +801,7 @@ export const submitPublicApplicationFn = createServerFn({ method: "POST" })
       mimeType,
       fileBytes: bytes,
     });
-    // The committed queue record remains authoritative. This first attempt keeps the
-    // applicant experience fast, while the standalone worker safely resumes any retry.
-    void processNextCandidateCvJob(`public-submit:${result.applicationId}`, result.jobId).catch(
-      () => undefined,
-    );
+    // The durable background worker processes the queued CV.
     return {
       referenceId: result.referenceId,
       candidateId: result.candidateId,
