@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import postgres from "postgres";
 import { configureAttendanceFixture } from "./attendance-fixture";
 
 test.beforeAll(configureAttendanceFixture);
@@ -23,6 +24,13 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
 }) => {
   test.setTimeout(120_000);
   const suffix = Date.now().toString().slice(-6);
+  const dateAfter = (days: number) =>
+    new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+  const travelStart = dateAfter(14);
+  const travelEnd = dateAfter(16);
+  const completedStart = dateAfter(-16);
+  const completedEnd = dateAfter(-14);
+  const expenseDate = dateAfter(-15);
   const labels = {
     leave: `E2E family appointment ${suffix}`,
     correction: `E2E missed punch correction ${suffix}`,
@@ -35,7 +43,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   await expect(page.getByText("VIA HR System").first()).toBeVisible();
 
   const records = await page.evaluate(
-    async ({ labels }) => {
+    async ({ labels, travelStart, travelEnd }) => {
       const { initializeApplicationData } = await import("/src/lib/data/application-data.ts");
       const { LeaveService } = await import("/src/lib/data/leave-service.ts");
       const { AttendanceService } = await import("/src/lib/data/attendance-service.ts");
@@ -189,8 +197,8 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
           employeeId: "employee-omar",
           purpose: labels.travel,
           destination: "Dubai, UAE",
-          startDate: "2026-06-10",
-          endDate: "2026-06-12",
+          startDate: travelStart,
+          endDate: travelEnd,
           currency: "OMR",
           costCentreId: "cc-operations",
           estTransport: 120,
@@ -207,9 +215,10 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
         timesheetId: submittedTimesheet.id,
         overtimeId: overtime.id,
         travelId: travel.id,
+        travelDatabaseId: travel.databaseId ?? travel.id,
       };
     },
-    { labels },
+    { labels, travelStart, travelEnd },
   );
 
   // Supervisor decisions: the employee's actual reporting line is checked by every service.
@@ -335,10 +344,27 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   await expect(accountsTravelDialog).toBeHidden();
 
   // Post-trip expenses and final closure complete the reimbursement lifecycle.
+  // Move time forward only for this isolated CI trip; a real employee cannot backdate a new request.
+  const testDatabaseUrl = process.env["VIA_HR_TEST_DATABASE_URL"];
+  if (!testDatabaseUrl || !/(test|scratch)/i.test(new URL(testDatabaseUrl).pathname))
+    throw new Error("This journey needs an isolated test database to simulate the completed trip.");
+  const testDb = postgres(testDatabaseUrl, { max: 1, prepare: false });
+  try {
+    const updated = await testDb`
+      UPDATE travel_requests
+      SET start_date=${completedStart}, end_date=${completedEnd},
+          record_version=record_version+1, updated_at=now()
+      WHERE id=${records.travelDatabaseId} AND status='Pre-authorised'
+      RETURNING id
+    `;
+    expect(updated).toHaveLength(1);
+  } finally {
+    await testDb.end();
+  }
   await previewAs(page, "user-omar", "Employee", `/staff/travel/${records.travelId}`);
   await expect(page.getByText("Pre-authorised", { exact: true }).first()).toBeVisible();
   await page.evaluate(
-    async ({ travelId }) => {
+    async ({ travelId, expenseDate }) => {
       const { TravelService } = await import("/src/lib/data/travel-service.ts");
       const expenseLineId = crypto.randomUUID();
       const receipt = new File(["%PDF-1.4\nE2E taxi receipt\n%%EOF"], "e2e-taxi-receipt.pdf", {
@@ -351,7 +377,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
           {
             id: expenseLineId,
             category: "Transport",
-            date: "2026-06-11",
+            date: expenseDate,
             amount: 110,
             currency: "OMR",
             reference: "E2E-TAXI-110",
@@ -371,7 +397,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
         receiptFiles,
       );
     },
-    { travelId: records.travelId },
+    { travelId: records.travelId, expenseDate },
   );
 
   await previewAs(page, "user-mariam", "Accounts", "/staff/travel-closures");
