@@ -184,10 +184,13 @@ function JobDetail() {
       if (!file) return;
       if (file.size > 10 * 1024 * 1024) {
         toast.error("File is too large", { description: "CV must be smaller than 10MB." });
+        setCvFile(null);
+        e.target.value = "";
         return;
       }
       if (!getSupportedCvMimeType(file)) {
         toast.error("Invalid file type", { description: "Please upload a PDF, DOC or DOCX file." });
+        setCvFile(null);
         e.target.value = "";
         return;
       }
@@ -531,23 +534,22 @@ function JobDetail() {
                   <Label>
                     Resume/CV (PDF or DOCX) <span className="text-destructive">*</span>
                   </Label>
-                  <div className="flex items-center gap-4">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full relative"
-                      onClick={() => document.getElementById("cv-upload")?.click()}
+                  <div className="relative rounded-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+                    <input
+                      id="cv-upload"
+                      type="file"
+                      aria-label="Upload resume or CV"
+                      className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+                      accept=".pdf,.doc,.docx"
+                      onChange={handleFileChange}
+                    />
+                    <div
+                      aria-hidden="true"
+                      className="flex h-11 w-full items-center justify-center gap-2 rounded-md border border-input bg-background px-4 text-sm font-medium shadow-sm"
                     >
-                      <Upload className="mr-2 h-4 w-4" />
-                      {cvFile ? cvFile.name : "Choose File"}
-                      <input
-                        id="cv-upload"
-                        type="file"
-                        className="hidden"
-                        accept=".pdf,.doc,.docx"
-                        onChange={handleFileChange}
-                      />
-                    </Button>
+                      <Upload className="h-4 w-4 shrink-0" />
+                      <span className="truncate">{cvFile ? cvFile.name : "Choose File"}</span>
+                    </div>
                   </div>
                 </div>
 

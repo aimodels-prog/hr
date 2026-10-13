@@ -28,6 +28,43 @@ test("careers links use readable references and keep old job links usable", asyn
   await page.locator('input[name="firstName"]').fill("Readable link applicant");
   // No title-based application IDs and no production application is submitted here.
   await expect(page.locator('input[type="file"]')).toHaveCount(1);
+  const desktopPicker = page.waitForEvent("filechooser");
+  await page.getByLabel("Upload resume or CV").click();
+  await (
+    await desktopPicker
+  ).setFiles({
+    name: "applicant-cv.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4\n%%EOF\n"),
+  });
+  await expect(page.getByText("applicant-cv.pdf")).toBeVisible();
+  await page.locator('input[name="lastName"]').fill("Test");
+  await page.locator('input[name="email"]').fill("applicant@example.com");
+  await page.locator('input[name="phone"]').fill("+968 9000 0000");
+  await page.locator('input[name="location"]').fill("Muscat");
+  await page.locator('input[name="yearsOfExperience"]').fill("15");
+  await page.locator('input[name="noticePeriod"]').fill("30 days");
+  const screeningAnswers = page.locator('textarea[name^="screeningAnswers."]');
+  for (let index = 0; index < (await screeningAnswers.count()); index += 1) {
+    await screeningAnswers.nth(index).fill("Relevant experience");
+  }
+  await page.getByRole("checkbox").check();
+  await page.route("**/api/public/applications", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ referenceId: "APP-26-TEST1234" }),
+    }),
+  );
+  const applicationRequest = page.waitForRequest("**/api/public/applications");
+  await page.getByRole("button", { name: "Submit Application" }).click();
+  const submittedApplication = (await applicationRequest).postDataJSON() as {
+    fileName: string;
+    fileBase64: string;
+  };
+  expect(submittedApplication.fileName).toBe("applicant-cv.pdf");
+  expect(submittedApplication.fileBase64).toBeTruthy();
+  await expect(page.getByRole("heading", { name: "Application received" })).toBeVisible();
 
   await page.goto(`/jobs/${vacancy.id}?source=shared#application`);
   await expect(page).toHaveURL(
@@ -47,6 +84,16 @@ test("careers links use readable references and keep old job links usable", asyn
   await expect(
     page.getByRole("heading", { level: 1, name: vacancy.title, exact: true }),
   ).toBeVisible();
+  const mobilePicker = page.waitForEvent("filechooser");
+  await page.getByLabel("Upload resume or CV").click();
+  await (
+    await mobilePicker
+  ).setFiles({
+    name: "mobile-applicant-cv.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4\n%%EOF\n"),
+  });
+  await expect(page.getByText("mobile-applicant-cv.pdf")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
