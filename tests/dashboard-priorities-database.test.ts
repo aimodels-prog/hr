@@ -63,9 +63,9 @@ test(
         b = await person("second");
       await insert("users", {
         id: author,
-        employee_id: a,
+        employee_id: b,
         display_name: "Test HR",
-        workspace_email: "first@viahr.test",
+        workspace_email: "second@viahr.test",
         status: "Active",
       });
       await query`UPDATE employees SET employment_confirmation_status='Pending HR Review',
@@ -346,7 +346,11 @@ test(
       assert.equal(approvals.has("Travel · HR"), false);
       assert.equal(approvals.has("Travel · Finance"), false);
       const tasks = (activeRole: "HR" | "Accounts") =>
-        listTasksForActorInDatabase(org, { activeRole, userId: author }, "2026-10-11");
+        listTasksForActorInDatabase(
+          org,
+          { activeRole, userId: author, employeeId: b },
+          "2026-10-11",
+        );
       assert.equal(
         (await tasks("HR")).some((task) => task.id === `travel-hr-${trip}`),
         false,
