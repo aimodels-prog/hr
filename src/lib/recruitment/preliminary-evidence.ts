@@ -1,6 +1,42 @@
 /** Deterministic screening evidence, not verification of a qualification by its issuer. */
 export const PRELIMINARY_RULES_VERSION = "VIA-EVIDENCE-3";
 
+export const PRELIMINARY_SCORE_WEIGHTS = {
+  compulsoryCriteria: 35,
+  experience: 20,
+  requiredSkills: 25,
+  roleRelevance: 20,
+} as const;
+
+export function explainPreliminaryScore(factors: {
+  score: number;
+  compulsoryScore: number;
+  experienceScore: number;
+  skillScore: number;
+  relevanceScore: number;
+  confirmedCriteria: number;
+  totalCriteria: number;
+  matchedSkills: number;
+  totalSkills: number;
+}): string {
+  const criteria = factors.totalCriteria
+    ? `${factors.confirmedCriteria}/${factors.totalCriteria} have CV/profile evidence`
+    : "none set";
+  const skills = factors.totalSkills
+    ? `${factors.matchedSkills}/${factors.totalSkills} have CV/profile evidence`
+    : "none set";
+  return (
+    `Score ${factors.score}/100: compulsory criteria ${Math.round(factors.compulsoryScore)}/100 ` +
+    `(${PRELIMINARY_SCORE_WEIGHTS.compulsoryCriteria}% weight; ${criteria}); ` +
+    `experience ${Math.round(factors.experienceScore)}/100 ` +
+    `(${PRELIMINARY_SCORE_WEIGHTS.experience}% weight); ` +
+    `required skills ${Math.round(factors.skillScore)}/100 ` +
+    `(${PRELIMINARY_SCORE_WEIGHTS.requiredSkills}% weight; ${skills}); ` +
+    `job-description fit ${Math.round(factors.relevanceScore)}/100 ` +
+    `(${PRELIMINARY_SCORE_WEIGHTS.roleRelevance}% weight). Component ratings are rounded for display.`
+  );
+}
+
 export interface ScreeningFact {
   source: string;
   text: string;

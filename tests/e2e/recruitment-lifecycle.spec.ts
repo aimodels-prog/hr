@@ -126,6 +126,11 @@ test("public application progresses through shortlist, interview, offer and onbo
     .locator("input")
     .fill("1");
   await page.getByRole("button", { name: "Choose Assessment Group" }).click();
+  await page.getByText("Why this score?").first().click();
+  await expect(page.getByText(/Score weighting: compulsory criteria 35%/).first()).toBeVisible();
+  await expect(page.getByText("Compulsory criteria", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Required skills to verify").first()).toBeVisible();
+  await expect(page.getByText("How the score was reached").first()).toBeVisible();
   await expect(page.getByText("Detailed assessment group")).toBeVisible();
   await page.getByRole("button", { name: "Run Detailed Assessment" }).click();
   await page.getByRole("button", { name: "Review Shortlist" }).click();
