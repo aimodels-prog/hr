@@ -39,6 +39,10 @@ test("preliminary screening recognises equivalent professional wording", () => {
   assert.deepEqual(result.missingRequiredSkills, []);
   assert.ok(result.compulsoryChecks.every((check) => check.status === "Confirmed"));
   assert.equal(result.band, "Strong Match");
+  assert.match(result.evidence[0] ?? "", /^Score \d+\/100: compulsory criteria 100\/100/);
+  assert.match(result.evidence[0] ?? "", /35% weight; 2\/2 have CV\/profile evidence/);
+  assert.match(result.evidence[0] ?? "", /25% weight; 2\/2 have CV\/profile evidence/);
+  assert.match(result.evidence[0] ?? "", /job-description fit \d+\/100 \(20% weight\)/);
 });
 
 test("missing CV evidence is sent to HR review rather than treated as a rejection", () => {

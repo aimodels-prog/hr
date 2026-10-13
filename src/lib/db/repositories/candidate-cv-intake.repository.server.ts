@@ -8,7 +8,9 @@ import type { CandidateConsentStatus, CandidateCvSource } from "../../data/types
 import {
   assessPreliminaryCriterion,
   candidateScreeningFacts,
+  explainPreliminaryScore,
   PRELIMINARY_RULES_VERSION,
+  PRELIMINARY_SCORE_WEIGHTS,
 } from "../../recruitment/preliminary-evidence.ts";
 import {
   CV_PROCESSOR_VERSION,
@@ -180,7 +182,11 @@ export function buildCandidatePreliminaryAssessment(
         )
       : 100);
   const score = Math.round(
-    compulsoryScore * 0.35 + experienceScore * 0.2 + skillScore * 0.25 + semanticScore * 0.2,
+    (compulsoryScore * PRELIMINARY_SCORE_WEIGHTS.compulsoryCriteria +
+      experienceScore * PRELIMINARY_SCORE_WEIGHTS.experience +
+      skillScore * PRELIMINARY_SCORE_WEIGHTS.requiredSkills +
+      semanticScore * PRELIMINARY_SCORE_WEIGHTS.roleRelevance) /
+      100,
   );
   const unconfirmed = criterionChecks.some((item) => item.status === "Needs Review");
   const band = unconfirmed
@@ -203,6 +209,17 @@ export function buildCandidatePreliminaryAssessment(
     matchedSkills: matches,
     missingRequiredSkills: missing,
     evidence: [
+      explainPreliminaryScore({
+        score,
+        compulsoryScore,
+        experienceScore,
+        skillScore,
+        relevanceScore: semanticScore,
+        confirmedCriteria: criterionChecks.filter((item) => item.status === "Confirmed").length,
+        totalCriteria: criterionChecks.length,
+        matchedSkills: matches.length,
+        totalSkills: vacancy.skills.required.length,
+      }),
       `${actualYears} years of experience assessed against ${vacancy.minimumExperience}.`,
       ...(experienceConflict
         ? ["CV experience differs from the candidate profile; HR confirmation is required."]

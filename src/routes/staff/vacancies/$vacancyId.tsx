@@ -81,6 +81,7 @@ import { DecisionPanel } from "@/components/offers/decision-panel";
 import { InterviewService } from "@/lib/data/interview-service";
 import { CandidatePreparationService } from "@/lib/data/candidate-preparation-service";
 import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
+import { PreliminaryScoreExplanation } from "@/components/recruitment/preliminary-score-explanation";
 
 export const Route = createFileRoute("/staff/vacancies/$vacancyId")({
   component: VacancyDetailRoute,
@@ -1101,6 +1102,11 @@ function VacancyDetailRoute() {
                                   Add to Screening
                                 </Button>
                               )}
+                              <PreliminaryScoreExplanation
+                                result={match}
+                                vacancyTitle={vacancy.title}
+                                currentVacancyVersion={vacancy.recordVersion}
+                              />
                             </div>
                           );
                         })}
@@ -1245,6 +1251,13 @@ function VacancyDetailRoute() {
                                 </div>
                               </div>
                             </div>
+                            {run.preliminaryScore !== undefined && (
+                              <PreliminaryScoreExplanation
+                                result={run}
+                                vacancyTitle={vacancy.title}
+                                currentVacancyVersion={vacancy.recordVersion}
+                              />
+                            )}
                           </div>
                         );
                       })}

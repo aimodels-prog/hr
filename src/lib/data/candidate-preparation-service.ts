@@ -4,7 +4,9 @@ import {
   assessPreliminaryCriterion,
   candidateScreeningFacts,
   currentPreliminaryRules,
+  explainPreliminaryScore,
   PRELIMINARY_RULES_VERSION,
+  PRELIMINARY_SCORE_WEIGHTS,
 } from "../recruitment/preliminary-evidence.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { recordAccessDenied } from "./audit-service.ts";
@@ -449,7 +451,11 @@ export class CandidatePreparationService {
           ? Math.min(100, Math.round((semanticMatches / roleTokens.size) * 180))
           : 100;
       const preliminaryScore = Math.round(
-        compulsoryScore * 0.45 + experienceScore * 0.25 + skillScore * 0.2 + semanticScore * 0.1,
+        (compulsoryScore * PRELIMINARY_SCORE_WEIGHTS.compulsoryCriteria +
+          experienceScore * PRELIMINARY_SCORE_WEIGHTS.experience +
+          skillScore * PRELIMINARY_SCORE_WEIGHTS.requiredSkills +
+          semanticScore * PRELIMINARY_SCORE_WEIGHTS.roleRelevance) /
+          100,
       );
       const unconfirmed = compulsoryChecks.some((check) => check.status === "Needs Review");
       const route = reusable
@@ -500,6 +506,18 @@ export class CandidatePreparationService {
           matchedSkills,
           missingRequiredSkills,
           evidence: unique([
+            explainPreliminaryScore({
+              score: preliminaryScore,
+              compulsoryScore,
+              experienceScore,
+              skillScore,
+              relevanceScore: semanticScore,
+              confirmedCriteria: compulsoryChecks.filter((check) => check.status === "Confirmed")
+                .length,
+              totalCriteria: compulsoryChecks.length,
+              matchedSkills: matchedSkills.length,
+              totalSkills: requiredSkills.length,
+            }),
             `${actualYears} years of experience recorded against ${vacancy.minimumExperience}.`,
             ...(experienceConflict
               ? ["CV experience differs from the candidate profile; HR confirmation is required."]
