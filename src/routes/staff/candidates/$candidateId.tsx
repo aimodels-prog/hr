@@ -1290,44 +1290,121 @@ function CandidateProfile({
                   </CardContent>
                 </Card>
               ) : (
-                candidate.applications.map((app) => {
-                  const vacancy = vacancies.find((v) => v.id === app.vacancyId);
-                  return (
-                    <Card key={app.id}>
-                      <CardHeader className="pb-3 flex flex-row items-start justify-between space-y-0">
-                        <div>
-                          <CardTitle className="text-lg">
-                            {vacancy?.title || "Unknown Role"}
-                          </CardTitle>
-                          <CardDescription>
-                            Applied on {new Date(app.createdAt).toLocaleDateString()}
-                          </CardDescription>
-                        </div>
-                        <Badge>{app.status}</Badge>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+                [...candidate.applications]
+                  .sort((first, second) => second.createdAt.localeCompare(first.createdAt))
+                  .map((app) => {
+                    const vacancy = vacancies.find((v) => v.id === app.vacancyId);
+                    const submittedCv = cvRecords.find((record) => record.applicationId === app.id);
+                    return (
+                      <Card key={app.id}>
+                        <CardHeader className="pb-3 flex flex-row items-start justify-between space-y-0">
                           <div>
-                            <span className="text-muted-foreground block mb-1">Reference</span>
-                            <span className="font-mono font-medium">{app.referenceId}</span>
+                            <CardTitle className="text-lg">
+                              {vacancy?.title || "Unknown Role"}
+                            </CardTitle>
+                            <CardDescription>
+                              Applied on {new Date(app.createdAt).toLocaleDateString()}
+                            </CardDescription>
                           </div>
+                          <Badge>{app.status}</Badge>
+                        </CardHeader>
+                        <CardContent className="space-y-5">
+                          <div className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
+                            <div>
+                              <span className="text-muted-foreground block mb-1">Reference</span>
+                              <span className="font-mono font-medium">{app.referenceId}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground block mb-1">Submitted</span>
+                              <span className="font-medium">
+                                {new Date(app.createdAt).toLocaleString()}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground block mb-1">Source</span>
+                              <span className="font-medium">{app.source}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground block mb-1">
+                                Notice Period
+                              </span>
+                              <span className="font-medium">{app.noticePeriod}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground block mb-1">
+                                Salary expectation
+                              </span>
+                              <span className="font-medium">
+                                {app.salaryExpectation || "Not provided"}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground block mb-1">
+                                Privacy consent
+                              </span>
+                              <span className="font-medium">
+                                {app.consentGiven
+                                  ? `Given ${new Date(app.consentedAt).toLocaleString()}`
+                                  : "Not recorded"}
+                              </span>
+                            </div>
+                          </div>
+
+                          {app.coverNote && (
+                            <div className="rounded-lg border bg-muted/20 p-4 text-sm">
+                              <p className="mb-2 font-medium">Cover note</p>
+                              <p className="whitespace-pre-wrap break-words">{app.coverNote}</p>
+                            </div>
+                          )}
+
                           <div>
-                            <span className="text-muted-foreground block mb-1">Notice Period</span>
-                            <span className="font-medium">{app.noticePeriod}</span>
+                            <p className="mb-2 text-sm font-medium">Submitted answers</p>
+                            {app.screeningAnswers.length > 0 ? (
+                              <div className="space-y-2">
+                                {app.screeningAnswers.map((item, index) => (
+                                  <div
+                                    key={`${app.id}-answer-${index}`}
+                                    className="rounded-lg border bg-muted/20 p-4 text-sm"
+                                  >
+                                    <p className="font-medium">{item.question}</p>
+                                    <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">
+                                      {item.answer}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-sm text-muted-foreground">
+                                No application questions were submitted.
+                              </p>
+                            )}
                           </div>
-                        </div>
-                        <Button variant="outline" size="sm" asChild>
-                          <Link
-                            to="/staff/vacancies/$vacancyId"
-                            params={{ vacancyId: app.vacancyId }}
-                          >
-                            View Vacancy
-                          </Link>
-                        </Button>
-                      </CardContent>
-                    </Card>
-                  );
-                })
+
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                submittedCv
+                                  ? downloadCandidateCv(submittedCv.id)
+                                  : downloadCv(app.cvFileId)
+                              }
+                            >
+                              <FileText className="mr-2 h-4 w-4" /> Download submitted CV
+                            </Button>
+                            <Button variant="outline" size="sm" asChild>
+                              <Link
+                                to="/staff/vacancies/$vacancyId"
+                                params={{ vacancyId: app.vacancyId }}
+                              >
+                                View Vacancy
+                              </Link>
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })
               )}
             </TabsContent>
 
