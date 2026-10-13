@@ -97,6 +97,49 @@ test("careers links use readable references and keep old job links usable", asyn
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
+
+  // Every published vacancy uses the same application path. Exercise the whole form for
+  // additional roles too, including any role-specific screening questions added later.
+  await page.setViewportSize({ width: 1280, height: 844 });
+  for (const otherVacancy of vacancies.slice(1)) {
+    await page.goto(`/jobs/${otherVacancy.publicSlug}`);
+    await expect(
+      page.getByRole("heading", { level: 1, name: otherVacancy.title, exact: true }),
+    ).toBeVisible();
+    const picker = page.waitForEvent("filechooser");
+    await page.getByLabel("Upload resume or CV").click();
+    await (
+      await picker
+    ).setFiles({
+      name: "future-role-cv.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.4\n%%EOF\n"),
+    });
+    await page.locator('input[name="firstName"]').fill("Future");
+    await page.locator('input[name="lastName"]').fill("Applicant");
+    await page.locator('input[name="email"]').fill("future.applicant@example.com");
+    await page.locator('input[name="phone"]').fill("+968 9000 0001");
+    await page.locator('input[name="location"]').fill("Muscat");
+    await page.locator('input[name="yearsOfExperience"]').fill("10");
+    await page.locator('input[name="noticePeriod"]').fill("30 days");
+    const questions = page.locator('textarea[name^="screeningAnswers."]');
+    for (let index = 0; index < (await questions.count()); index += 1) {
+      await questions.nth(index).fill("Relevant experience");
+    }
+    await page.getByRole("checkbox").check();
+    const requestForVacancy = page.waitForRequest("**/api/public/applications");
+    await page.getByRole("button", { name: "Submit Application" }).click();
+    const payload = (await requestForVacancy).postDataJSON() as {
+      vacancyId: string;
+      fileName: string;
+      fileBase64: string;
+    };
+    expect(payload.vacancyId).toBe(otherVacancy.id);
+    expect(payload.fileName).toBe("future-role-cv.pdf");
+    expect(payload.fileBase64).toBeTruthy();
+    await expect(page.getByRole("heading", { name: "Application received" })).toBeVisible();
+  }
+
   await page.goto("/jobs/not-a-published-role");
   await expect(
     page.getByRole("heading", { name: "This position is no longer available" }),
