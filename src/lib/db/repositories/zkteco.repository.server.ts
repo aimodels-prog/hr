@@ -4,6 +4,7 @@ import {
   flexibleOfficeSchedule,
   VIA_OFFICE_SCHEDULE,
 } from "../../data/office-schedule.ts";
+import { effectiveTerminalPunchTimes } from "../../data/terminal-punches.ts";
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
@@ -97,15 +98,6 @@ function zonedParts(at: Date, timeZone: string): { date: string; time: string } 
     date: `${part("year")}-${part("month")}-${part("day")}`,
     time: `${part("hour")}:${part("minute")}`,
   };
-}
-
-function deduplicatePunchTimes(events: Date[], windowMs: number): Date[] {
-  const effective: Date[] = [];
-  for (const event of events) {
-    const previous = effective[effective.length - 1];
-    if (!previous || event.getTime() - previous.getTime() > windowMs) effective.push(event);
-  }
-  return effective;
 }
 
 function zonedDateTimeToUtc(date: string, time: string, timeZone: string): Date {
@@ -269,12 +261,14 @@ async function projectDailyAttendance(
       ),
     )
     .orderBy(asc(attendancePunchEvents.occurredAt));
-  const deduplicationMs = (policy?.punchDeduplicationMinutes ?? 2) * 60_000;
   const eventDateMarker = eventDate;
   const allEvents = [...priorEvents.map((item) => new Date(item.occurredAt)), eventDateMarker].sort(
     (a, b) => a.getTime() - b.getTime(),
   );
-  const effectiveEvents = deduplicatePunchTimes(allEvents, deduplicationMs);
+  const effectiveEvents = effectiveTerminalPunchTimes(
+    allEvents,
+    policy?.punchDeduplicationMinutes ?? 15,
+  );
   const effectiveIndex = effectiveEvents.indexOf(eventDateMarker);
   let direction =
     effectiveIndex >= 0
@@ -1449,9 +1443,9 @@ export async function changeAttendanceDeviceEmployee(
           .from(attendancePunchEvents)
           .where(eq(attendancePunchEvents.attendanceRecordId, record.id))
           .orderBy(asc(attendancePunchEvents.occurredAt));
-        const effective = deduplicatePunchTimes(
+        const effective = effectiveTerminalPunchTimes(
           remaining.map((e) => new Date(e.occurredAt)),
-          (policy?.punchDeduplicationMinutes ?? 2) * 60_000,
+          policy?.punchDeduplicationMinutes ?? 15,
         );
         const first = effective[0];
         const last = effective.length > 1 ? effective[effective.length - 1] : undefined;

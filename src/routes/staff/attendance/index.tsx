@@ -1654,7 +1654,8 @@ function AttendanceAdminContent() {
                       onChange={(event) => setDeduplicationMinutes(event.target.value)}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Minutes; prevents accidental double taps.
+                      Minutes. Repeat thumbs do not sign staff out; each day starts again at local
+                      midnight.
                     </p>
                   </div>
                   <div className="space-y-2 sm:col-span-2">
