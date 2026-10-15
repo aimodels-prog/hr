@@ -256,7 +256,7 @@ export const attendancePolicies = pgTable(
     lateGraceMinutes: integer("late_grace_minutes").notNull(),
     maximumLocationAccuracyMeters: integer("maximum_location_accuracy_meters").notNull(),
     signOutReminderOffsetsMinutes: integer("sign_out_reminder_offsets_minutes").array().notNull(),
-    punchDeduplicationMinutes: integer("punch_deduplication_minutes").notNull().default(2),
+    punchDeduplicationMinutes: integer("punch_deduplication_minutes").notNull().default(15),
     antiSpoofingMode: text("anti_spoofing_mode").notNull().default("Approved Network"),
     approvedNetworkCidrs: text("approved_network_cidrs").array().notNull().default([]),
   },

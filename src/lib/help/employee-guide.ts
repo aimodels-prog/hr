@@ -249,6 +249,7 @@ export const employeeGuide = [
       "Use your office’s approved clock-in method when you arrive. Head Office may use the fingerprint machine.",
       "Open My Attendance to check that today’s clock-in appears. Allow the office connection to send the record.",
       "Clock out when you finish work, then check the recorded times and hours.",
+      "If you thumb twice soon after arriving, the repeat is kept as a machine record but does not sign you out. The last valid thumb before local midnight is your sign-out; if there is no later valid thumb, the sign-out remains missing for review.",
       "If HR records a company activity, training, approved remote work or an excused closure, your attendance shows that label with credited hours. You do not need to invent clock times. Allocate those hours in your timesheet as usual and submit it for approval. Ask HR if the covered day is incorrect.",
       "If a time is missing or wrong, open that day and request a correction instead of creating another clock-in.",
     ],

@@ -48,6 +48,13 @@ test(
         VALUES (${organisationId}, 'ZKTeco Database Test', ${`zkteco-${organisationId}`}, true,
           ${hrUserId}, ${hrUserId}, ${createdAt}, ${createdAt})
       `;
+      await sql`
+        INSERT INTO app_settings (organisation_id,timezone,base_currency,working_days,
+          standard_daily_hours,standard_weekly_hours,leave_year_start,leave_year_end,
+          document_reminder_days,employee_number_format,candidate_reference_format,created_by,updated_by)
+        VALUES (${organisationId},'Asia/Muscat','OMR',ARRAY[1,2,3,4,5],8,40,'01-01','12-31',
+          ARRAY[30,7],'TEST-{####}','CAN-{####}',${hrUserId},${hrUserId})
+      `;
       for (const [table, id, name] of [
         ["departments", departmentId, "Operations"],
         ["positions", positionId, "Coordinator"],
@@ -679,6 +686,69 @@ test(
         ["Stephen", "Vahid", null],
       );
       assert.ok(originals.every((row) => row.employee_id === null));
+
+      // A second morning thumb must not close attendance. The final valid thumb
+      // belongs to the same local day, and the next local midnight starts anew.
+      const morning = new Date(yesterday);
+      morning.setUTCDate(morning.getUTCDate() - 30);
+      morning.setUTCHours(4, 0, 0, 0); // 08:00 in Asia/Muscat.
+      const morningDate = morning.toISOString().slice(0, 10);
+      const nextLocalDate = new Date(morning.getTime() + 86_400_000).toISOString().slice(0, 10);
+      const repeatedAt = new Date(morning.getTime() + 5 * 60_000);
+      const afternoonAt = new Date(morning.getTime() + 8 * 3_600_000);
+      const afterMidnightAt = new Date(morning.getTime() + 16 * 3_600_000 + 5 * 60_000);
+      const repeatedMorning = await ingestZktecoPunchBatch(organisationId, "front-door", {
+        serialNumber: "SN-TEST-001",
+        punches: [
+          {
+            externalEventId: "morning-first",
+            deviceUserId: "VIA-TERM-101",
+            occurredAt: morning.toISOString(),
+            status: 0,
+          },
+          {
+            externalEventId: "morning-repeat-five-minutes",
+            deviceUserId: "VIA-TERM-101",
+            occurredAt: repeatedAt.toISOString(),
+            status: 0,
+          },
+        ],
+      });
+      assert.equal(repeatedMorning.accepted, 2);
+      const [stillClockedIn] = await sql`
+        SELECT clock_in_at,clock_out_at FROM attendance_records
+        WHERE organisation_id=${organisationId} AND employee_id=${employeeId} AND date=${morningDate}
+      `;
+      assert.equal(new Date(stillClockedIn.clock_in_at).toISOString(), morning.toISOString());
+      assert.equal(stillClockedIn.clock_out_at, null);
+      await ingestZktecoPunchBatch(organisationId, "front-door", {
+        serialNumber: "SN-TEST-001",
+        punches: [
+          {
+            externalEventId: "afternoon-last",
+            deviceUserId: "VIA-TERM-101",
+            occurredAt: afternoonAt.toISOString(),
+            status: 1,
+          },
+          {
+            externalEventId: "next-local-day-first",
+            deviceUserId: "VIA-TERM-101",
+            occurredAt: afterMidnightAt.toISOString(),
+            status: 0,
+          },
+        ],
+      });
+      const [finishedDay] = await sql`
+        SELECT clock_out_at FROM attendance_records
+        WHERE organisation_id=${organisationId} AND employee_id=${employeeId} AND date=${morningDate}
+      `;
+      assert.equal(new Date(finishedDay.clock_out_at).toISOString(), afternoonAt.toISOString());
+      const [newDay] = await sql`
+        SELECT clock_in_at,clock_out_at FROM attendance_records
+        WHERE organisation_id=${organisationId} AND employee_id=${employeeId} AND date=${nextLocalDate}
+      `;
+      assert.equal(new Date(newDay.clock_in_at).toISOString(), afterMidnightAt.toISOString());
+      assert.equal(newDay.clock_out_at, null);
     } finally {
       await sql.end();
     }
