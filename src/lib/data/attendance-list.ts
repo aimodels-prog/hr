@@ -1,6 +1,9 @@
 export const ATTENDANCE_LIST_FILTERS = [
   "All",
   "Clocked in",
+  "Not clocked in",
+  "Working remotely",
+  "Site visit",
   "Exceptions",
   "Present",
   "Late",
@@ -63,7 +66,40 @@ export function matchesAttendanceListFilter(
 ) {
   if (filter === "All") return true;
   if (filter === "Clocked in") return Boolean(row.clockInAt || row.clockIn);
+  if (filter === "On Leave") return ["On Leave", "Half-day Leave"].includes(row.status);
   if (filter === "Exceptions")
     return ["Late", "Absent", "Missing Punch", "Correction Pending"].includes(row.status);
   return row.status === filter;
+}
+
+/** A daily roster label; it does not mutate the saved attendance record. */
+export function dailyAttendanceStatus(
+  row: {
+    status: string;
+    clockIn?: string | undefined;
+    clockInAt?: string | undefined;
+    clockOut?: string | undefined;
+    clockOutAt?: string | undefined;
+    officeExceptionLabel?: string | undefined;
+    workMode?: string | undefined;
+  },
+  date: string,
+  today: string,
+  approvedRemoteWork = false,
+): string {
+  if (["On Leave", "Half-day Leave"].includes(row.status)) return row.status;
+  if (row.officeExceptionLabel === "Approved remote work" || approvedRemoteWork)
+    return "Working remotely";
+  if (row.workMode === "Approved Site Visit") return "Site visit";
+  if (
+    row.status === "Absent" &&
+    !row.clockIn &&
+    !row.clockInAt &&
+    !row.clockOut &&
+    !row.clockOutAt
+  ) {
+    if (date === today) return "Not clocked in";
+    if (date > today) return "Scheduled";
+  }
+  return row.status;
 }

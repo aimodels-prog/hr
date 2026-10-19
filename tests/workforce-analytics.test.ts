@@ -54,6 +54,16 @@ test("approved full leave with a zero-punch record is not an absence or review w
   assert.equal(half!.missing, 1);
 });
 
+test("remote-work days require timesheet hours but not a biometric attendance punch", () => {
+  const [day] = calculateAttendanceAnalytics({
+    ...base,
+    remoteWork: [{ employeeId: "a", startDate: "2026-09-14", endDate: "2026-09-14" }],
+  });
+  assert.equal(day!.expected, 0);
+  assert.equal(day!.leaveDays, 0);
+  assert.equal(day!.missing, 0);
+});
+
 test("chart includes today with a fixed 7/30-day range across year boundaries", () => {
   assert.equal(attendanceChartDateRange("2026-10-06", 30).at(-1), "2026-10-06");
   assert.equal(attendanceChartDateRange("2026-10-06", 30).length, 30);

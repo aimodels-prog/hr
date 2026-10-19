@@ -43,7 +43,9 @@ export function LiveAttendanceCard() {
       ? "Clocked out"
       : record?.clockInAt && Date.parse(record.clockInAt) <= now
         ? "Working"
-        : "Not clocked in";
+        : data?.remoteWorkApproved
+          ? "Working remotely"
+          : "Not clocked in";
   const clockIn =
     record?.clockInAt && data
       ? new Intl.DateTimeFormat(undefined, {
@@ -75,7 +77,13 @@ export function LiveAttendanceCard() {
         </a>
       </section>
     );
-  if (data && !data.tracked && !record?.clockInAt && !record?.clockOutAt)
+  if (
+    data &&
+    !data.tracked &&
+    !data.remoteWorkApproved &&
+    !record?.clockInAt &&
+    !record?.clockOutAt
+  )
     return (
       <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4">
         <div>
@@ -89,6 +97,21 @@ export function LiveAttendanceCard() {
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
         >
           Open timesheet
+        </a>
+      </section>
+    );
+  if (data?.remoteWorkApproved && !record?.clockInAt && !record?.clockOutAt)
+    return (
+      <section
+        aria-label="Today's attendance"
+        className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4 sm:p-5"
+      >
+        <div>
+          <p className="font-medium text-primary">Working remotely today</p>
+          <p className="mt-1 text-sm text-muted-foreground">Record your work in your timesheet.</p>
+        </div>
+        <a href="/staff/me/timesheets" className="text-sm font-medium text-primary">
+          My timesheet
         </a>
       </section>
     );

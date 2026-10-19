@@ -20,6 +20,7 @@ import {
   type WorkforceAnalytics,
 } from "../../data/workforce-analytics.ts";
 import { siteVisitLocalNow } from "../../data/site-visit.ts";
+import { isAbsenceLeave, isRemoteWorkMarker } from "../../data/approved-leave.ts";
 import { dashboardPriorities } from "./dashboard-priorities.repository.server.ts";
 
 export async function getWorkforceAnalytics(
@@ -132,6 +133,7 @@ export async function getWorkforceAnalytics(
               startDate: leaveRequests.startDate,
               endDate: leaveRequests.endDate,
               isHalfDay: leaveRequests.isHalfDay,
+              policySnapshot: leaveRequests.policySnapshot,
             })
             .from(leaveRequests)
             .where(
@@ -269,7 +271,8 @@ export async function getWorkforceAnalytics(
       ...record,
       calculatedHours: recordedAttendanceHours(record),
     })),
-    leave,
+    leave: leave.filter(isAbsenceLeave),
+    remoteWork: leave.filter(isRemoteWorkMarker),
     holidays,
     pendingVisits,
   });
@@ -299,7 +302,7 @@ export async function getWorkforceAnalytics(
       now: at,
       people,
       records: effectiveRecords,
-      leave,
+      leave: leave.filter(isAbsenceLeave),
       pendingVisits,
       tracking,
     }),

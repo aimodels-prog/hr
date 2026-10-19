@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   approvedLeaveFraction,
+  isApprovedRemoteWork,
   organisationDate,
   timesheetAbsences,
 } from "../src/lib/data/approved-leave.ts";
@@ -28,6 +29,26 @@ test("approved leave includes first/last dates, pending changes retain original 
     assert.equal(approvedLeaveFraction([{ ...leave, status }], leave.startDate), 0);
   assert.equal(approvedLeaveFraction([leave], "2026-10-13"), 0);
   assert.equal(organisationDate(new Date("2026-10-07T20:30:00Z"), "Asia/Muscat"), "2026-10-08");
+});
+test("remote work and last-working-day markers are not leave or credited absence", () => {
+  const remote = { ...leave, policySnapshot: { name: "Remote Work Day", type: "Remote" } };
+  const resignation = {
+    ...leave,
+    policySnapshot: { name: "Last working day", type: "Resignation" },
+  };
+  assert.equal(approvedLeaveFraction([remote, resignation], leave.startDate), 0);
+  assert.equal(isApprovedRemoteWork(remote, leave.startDate), true);
+  assert.equal(isApprovedRemoteWork({ ...remote, status: "Pending HR" }, leave.startDate), false);
+  assert.equal(isApprovedRemoteWork(remote, "2026-10-13"), false);
+  const result = timesheetAbsences({
+    dates: ["2026-10-08"],
+    workingDays: [4],
+    dailyHours: 9,
+    holidays: new Set(),
+    leave: [remote],
+  });
+  assert.equal(result.expectedWorkHours, 9);
+  assert.equal(result.entries.length, 0);
 });
 test("timesheets fill leave and half days without converting them into work or double counting weekends/holidays", () => {
   const dates = [

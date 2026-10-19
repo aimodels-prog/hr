@@ -5,10 +5,11 @@ import { employeeSearch, useEmployeeFilter } from "@/components/employees/employ
 import {
   ATTENDANCE_LIST_FILTERS,
   attendanceListSearch,
+  dailyAttendanceStatus,
   defaultAttendanceLocation,
   matchesAttendanceListFilter,
 } from "@/lib/data/attendance-list";
-import { organisationDate } from "@/lib/data/approved-leave";
+import { isApprovedRemoteWork, organisationDate } from "@/lib/data/approved-leave";
 import { SettingsService } from "@/lib/data/settings-service";
 import { AttendanceTrackingSettings } from "@/components/attendance/tracking-settings";
 import { OfficeExceptions } from "@/components/attendance/office-exceptions";
@@ -160,6 +161,7 @@ function AttendanceAdminContent() {
   const [officePreview, setOfficePreview] = useState<GeoReading | null>(null);
   const policy = attendanceService.getPolicy();
   const [policyReady, setPolicyReady] = useState(false);
+  const [attendanceError, setAttendanceError] = useState("");
   const [standardHours, setStandardHours] = useState(String(policy.standardDailyHours));
   const [expectedIn, setExpectedIn] = useState(policy.expectedClockIn);
   const [expectedOut, setExpectedOut] = useState(policy.expectedClockOut);
@@ -258,6 +260,7 @@ function AttendanceAdminContent() {
     let refreshing = false;
     let initialPolicyLoaded = false;
     setPolicyReady(false);
+    setAttendanceError("");
     const refresh = async () => {
       if (refreshing) return;
       refreshing = true;
@@ -270,6 +273,7 @@ function AttendanceAdminContent() {
           "Attendance refresh timed out. Please reload the page.",
         );
         if (active) {
+          setAttendanceError("");
           if (!initialPolicyLoaded) {
             const saved = attendanceService.getPolicy();
             setStandardHours(String(saved.standardDailyHours));
@@ -288,9 +292,10 @@ function AttendanceAdminContent() {
         }
       } catch (error) {
         if (active) {
-          toast.error(
-            error instanceof Error ? error.message : "Attendance could not be refreshed.",
-          );
+          const message =
+            error instanceof Error ? error.message : "Attendance could not be refreshed.";
+          setAttendanceError(message);
+          toast.error(message);
         }
       }
       refreshing = false;
@@ -340,13 +345,33 @@ function AttendanceAdminContent() {
     .getExceptionCases(actorContext)
     .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
   const openExceptionCases = exceptionCases.filter((item) => item.status !== "Resolved");
-  const currentRows = employeeService
+  const accountsByEmployeeId = new Map(
+    employeeService
+      .getUsers(actorContext, { includeArchived: true })
+      .filter((account) => account.employeeId)
+      .map((account) => [account.employeeId!, account]),
+  );
+  const remoteWorkEmployeeIds = new Set(
+    new LeaveService()
+      .getAllRequests(actorContext)
+      .filter((request) => isApprovedRemoteWork(request, date))
+      .map((request) => request.employeeId),
+  );
+  const dayRows = employeeService
     .getEmployees(actorContext)
-    .filter(
-      (employee) =>
-        (!["Archived", "Inactive"].includes(employee.status) && employee.startDate <= date) ||
-        allRecords.some((record) => record.employeeId === employee.id && record.date === date),
-    )
+    .filter((employee) => {
+      const account = accountsByEmployeeId.get(employee.id);
+      const currentEmployee =
+        !["Archived", "Inactive"].includes(employee.status) &&
+        employee.startDate <= date &&
+        (!employee.terminationDate || employee.terminationDate >= date) &&
+        (date !== today || !account || (account.status === "Active" && !account.archivedAt));
+      return (
+        currentEmployee ||
+        (date !== today &&
+          allRecords.some((record) => record.employeeId === employee.id && record.date === date))
+      );
+    })
     .filter((employee) => employeeFilter.matchesEmployee(employee.id))
     .sort((a, b) => (a.preferredName || a.legalName).localeCompare(b.preferredName || b.legalName))
     .map((employee) => {
@@ -355,18 +380,30 @@ function AttendanceAdminContent() {
       );
       // Eligibility controls inferred absence, never visibility of saved evidence.
       const reconciled = attendanceService.reconcileDailyStatus(employee.id, date, actorContext);
-      if (record)
+      if (record) {
+        const status = reconciled?.status ?? record.status;
         return {
           employee,
           ...record,
-          ...(reconciled?.status ? { status: reconciled.status } : {}),
+          status: dailyAttendanceStatus(
+            { ...record, status },
+            date,
+            today,
+            remoteWorkEmployeeIds.has(employee.id),
+          ),
         };
+      }
       if (!reconciled?.status && !attendanceService.isTrackingRequired(employee.id, date))
         return {
           employee,
           id: `untracked-${employee.id}`,
           date,
-          status: "Not tracked",
+          status: dailyAttendanceStatus(
+            { status: "Not tracked" },
+            date,
+            today,
+            remoteWorkEmployeeIds.has(employee.id),
+          ),
           clockIn: undefined,
           clockOut: undefined,
           calculatedHours: 0,
@@ -376,14 +413,19 @@ function AttendanceAdminContent() {
         employee,
         id: `virtual-${employee.id}-${date}`,
         date,
-        status: reconciled?.status ?? "Absent",
+        status: dailyAttendanceStatus(
+          { status: reconciled?.status ?? "Absent" },
+          date,
+          today,
+          remoteWorkEmployeeIds.has(employee.id),
+        ),
         clockIn: undefined,
         clockOut: undefined,
         calculatedHours: 0,
         source: reconciled?.status === "Not tracked" ? "Not required" : "Updated automatically",
       };
-    })
-    .filter((row) => matchesAttendanceListFilter(row, statusFilter));
+    });
+  const currentRows = dayRows.filter((row) => matchesAttendanceListFilter(row, statusFilter));
 
   const saveManualRecord = async () => {
     try {
@@ -754,22 +796,6 @@ function AttendanceAdminContent() {
       <Button asChild variant="outline" className="self-start">
         <a href="/staff/time-away">Time away / HR review</a>
       </Button>
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        {[
-          ["Staff roster", employees.length],
-          ["Today’s records", allRecords.filter((item) => item.date === today).length],
-          ["Pending site visits", pendingSiteVisits.length],
-          ["Active office zones", clockInLocations.length],
-        ].map(([label, value]) => (
-          <Card key={String(label)}>
-            <CardContent className="p-4">
-              <p className="text-sm text-muted-foreground">{label}</p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
       <Tabs value={section} onValueChange={setSection}>
         <div className="overflow-x-auto pb-2">
           <TabsList>
@@ -788,7 +814,77 @@ function AttendanceAdminContent() {
         </div>
 
         <TabsContent value="daily" className="space-y-4">
-          {!attendanceService.getTrackingPolicy() && (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+            {[
+              { label: "People in view", value: dayRows.length, filter: "All" },
+              {
+                label: "Clocked in",
+                value: dayRows.filter((row) => matchesAttendanceListFilter(row, "Clocked in"))
+                  .length,
+                filter: "Clocked in",
+              },
+              {
+                label: date === today ? "Not clocked in" : "Absent",
+                value: dayRows.filter((row) =>
+                  matchesAttendanceListFilter(row, date === today ? "Not clocked in" : "Absent"),
+                ).length,
+                filter: date === today ? "Not clocked in" : "Absent",
+              },
+              {
+                label: "On leave",
+                value: dayRows.filter((row) => matchesAttendanceListFilter(row, "On Leave")).length,
+                filter: "On Leave",
+              },
+              {
+                label: "Working remotely",
+                value: dayRows.filter((row) => row.status === "Working remotely").length,
+                filter: "Working remotely",
+              },
+              {
+                label: "Site visits",
+                value: dayRows.filter((row) => row.status === "Site visit").length,
+                filter: "Site visit",
+              },
+            ].map(({ label, value, filter }) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setStatusFilter(filter)}
+                aria-label={`Show ${label.toLowerCase()}`}
+                aria-pressed={statusFilter === filter}
+                className="rounded-xl border bg-card p-4 text-left transition-colors hover:border-primary/50 aria-pressed:border-primary aria-pressed:bg-primary/5"
+              >
+                <span className="text-sm text-muted-foreground">{label}</span>
+                <span className="mt-1 block text-2xl font-semibold tabular-nums">
+                  {policyReady ? value : "—"}
+                </span>
+              </button>
+            ))}
+          </div>
+          {!policyReady && (
+            <div
+              role={attendanceError ? "alert" : "status"}
+              className="rounded-xl border p-4 text-sm"
+            >
+              {attendanceError || "Checking attendance and approved leave…"}
+              {attendanceError && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="ml-3"
+                  onClick={() => window.location.reload()}
+                >
+                  Retry
+                </Button>
+              )}
+            </div>
+          )}
+          {date === today && (
+            <p className="text-xs text-muted-foreground">
+              Not clocked in means no punch is recorded yet; it is not a confirmed absence.
+            </p>
+          )}
+          {policyReady && !attendanceService.getTrackingPolicy() && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4">
               <p className="text-sm">
                 Head Office tracking needs setup. Saved punches are shown; absence checks are off.
@@ -863,77 +959,85 @@ function AttendanceAdminContent() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {currentRows.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell>
-                        <span className="font-medium">{row.employee.preferredName}</span>
-                        <span className="block text-xs text-muted-foreground">
-                          {row.employee.position}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            ["Absent", "Missing Punch"].includes(row.status)
-                              ? "destructive"
-                              : row.status === "Late"
-                                ? "secondary"
-                                : "outline"
-                          }
-                        >
-                          {("officeExceptionLabel" in row && row.officeExceptionLabel) ||
-                            row.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>{row.clockIn ?? "—"}</TableCell>
-                      <TableCell>{row.clockOut ?? "—"}</TableCell>
-                      <TableCell>
-                        {recordedAttendanceHours(row) ? `${recordedAttendanceHours(row)}h` : "—"}
-                      </TableCell>
-                      <TableCell>{"location" in row ? (row.location ?? "—") : "—"}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {"officeExceptionLabel" in row && row.officeExceptionLabel
-                          ? "HR office exception"
-                          : row.source}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {!row.id.startsWith("virtual-") && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              const storedRecord = allRecords.find(
-                                (record) => record.id === row.id,
-                              );
-                              if (!storedRecord) return;
-                              if (storedRecord.officeExceptionLabel) {
-                                toast.info(
-                                  "Manage this day under Office Exceptions. Original punches are kept.",
-                                );
-                                return;
-                              }
-                              setEditingRecordId(row.id);
-                              setManualEmployeeId(row.employee.id);
-                              setManualClockIn(row.clockIn ?? "");
-                              setManualClockOut(row.clockOut ?? "");
-                              setManualBreak(String(storedRecord.breakMinutes ?? 0));
-                              setManualShiftId(storedRecord.shiftId ?? "Standard Day");
-                              setManualLocation(storedRecord.location ?? "");
-                              setManualSource(
-                                row.source === "Hardware Terminal"
-                                  ? "Hardware Terminal"
-                                  : "Manual Entry",
-                              );
-                              setManualOpen(true);
-                            }}
+                  {policyReady &&
+                    currentRows.map((row) => (
+                      <TableRow key={row.id}>
+                        <TableCell>
+                          <span className="font-medium">{row.employee.preferredName}</span>
+                          <span className="block text-xs text-muted-foreground">
+                            {row.employee.position}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              ["Absent", "Missing Punch"].includes(row.status)
+                                ? "destructive"
+                                : row.status === "Late"
+                                  ? "secondary"
+                                  : "outline"
+                            }
                           >
-                            <PencilLine className="mr-1 h-3.5 w-3.5" /> Edit
-                          </Button>
-                        )}
+                            {("officeExceptionLabel" in row && row.officeExceptionLabel) ||
+                              row.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{row.clockIn ?? "—"}</TableCell>
+                        <TableCell>{row.clockOut ?? "—"}</TableCell>
+                        <TableCell>
+                          {recordedAttendanceHours(row) ? `${recordedAttendanceHours(row)}h` : "—"}
+                        </TableCell>
+                        <TableCell>{"location" in row ? (row.location ?? "—") : "—"}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {"officeExceptionLabel" in row && row.officeExceptionLabel
+                            ? "HR office exception"
+                            : row.source}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {allRecords.some((record) => record.id === row.id) && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                const storedRecord = allRecords.find(
+                                  (record) => record.id === row.id,
+                                );
+                                if (!storedRecord) return;
+                                if (storedRecord.officeExceptionLabel) {
+                                  toast.info(
+                                    "Manage this day under Office Exceptions. Original punches are kept.",
+                                  );
+                                  return;
+                                }
+                                setEditingRecordId(row.id);
+                                setManualEmployeeId(row.employee.id);
+                                setManualClockIn(row.clockIn ?? "");
+                                setManualClockOut(row.clockOut ?? "");
+                                setManualBreak(String(storedRecord.breakMinutes ?? 0));
+                                setManualShiftId(storedRecord.shiftId ?? "Standard Day");
+                                setManualLocation(storedRecord.location ?? "");
+                                setManualSource(
+                                  row.source === "Hardware Terminal"
+                                    ? "Hardware Terminal"
+                                    : "Manual Entry",
+                                );
+                                setManualOpen(true);
+                              }}
+                            >
+                              <PencilLine className="mr-1 h-3.5 w-3.5" /> Edit
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  {!policyReady && (
+                    <TableRow>
+                      <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
+                        Checking attendance…
                       </TableCell>
                     </TableRow>
-                  ))}
-                  {!currentRows.length && (
+                  )}
+                  {policyReady && !currentRows.length && (
                     <TableRow>
                       <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
                         {statusFilter === "Clocked in"

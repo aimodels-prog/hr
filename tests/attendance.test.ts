@@ -3,6 +3,8 @@ import test from "node:test";
 
 import { configureApplicationDataServices } from "../src/lib/data/application-data.ts";
 import { AttendanceService } from "../src/lib/data/attendance-service.ts";
+import { LeaveService } from "../src/lib/data/leave-service.ts";
+import type { LeaveRequest } from "../src/lib/data/leave-types.ts";
 import { AuditService } from "../src/lib/data/audit-service.ts";
 import type { FileRepository, SaveFileInput } from "../src/lib/data/file-repository.ts";
 import { NotificationService } from "../src/lib/data/notification-service.ts";
@@ -180,6 +182,29 @@ test("saved punches remain visible without tracking; missing records do not impl
   assert.equal(service.getMonthlySummary("employee-omar", "2026-09", hr).hours, 9);
   assert.equal(service.reconcileDailyStatus("employee-omar", "2026-09-29", hr), null);
   assert.deepEqual(service.reconcileDailyStatus("employee-omar", "2026-09-30", hr), {
+    status: "Not tracked",
+  });
+});
+
+test("approved remote work is visible without becoming an inferred absence", () => {
+  const { service, storage } = harnessWithClock(() => new Date("2026-10-19T08:00:00Z"));
+  new LeaveService();
+  const existing = storage.readCollection<LeaveRequest>("leave_requests");
+  const template = existing[0];
+  assert.ok(template);
+  storage.writeCollection("leave_requests", [
+    ...existing,
+    {
+      ...template,
+      id: "approved-remote-work",
+      employeeId: "employee-omar",
+      startDate: "2026-10-19",
+      endDate: "2026-10-19",
+      status: "Approved",
+      policySnapshot: { ...template.policySnapshot, name: "Remote Work Day", type: "Remote" },
+    },
+  ]);
+  assert.deepEqual(service.reconcileDailyStatus("employee-omar", "2026-10-19", hr), {
     status: "Not tracked",
   });
 });

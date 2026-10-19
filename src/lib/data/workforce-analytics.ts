@@ -151,6 +151,7 @@ export function calculateAttendanceAnalytics(input: {
   dailyHours: number;
   holidays: { date: string; locationId: string | null }[];
   leave: { employeeId: string; startDate: string; endDate: string; isHalfDay: boolean }[];
+  remoteWork?: { employeeId: string; startDate: string; endDate: string }[];
   records: {
     employeeId: string;
     date: string;
@@ -192,8 +193,15 @@ export function calculateAttendanceAnalytics(input: {
       if (!employedOn(employee, date)) continue;
       const tracked =
         input.tracking === undefined || isAttendanceTracked(input.tracking, employee.id, date);
+      const remoteWork = input.remoteWork?.some(
+        (request) =>
+          request.employeeId === employee.id &&
+          request.startDate <= date &&
+          request.endDate >= date,
+      );
       const scheduled =
         tracked &&
+        !remoteWork &&
         workingDay &&
         !holidays.has(`all:${date}`) &&
         !holidays.has(`${employee.locationId}:${date}`);

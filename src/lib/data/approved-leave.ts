@@ -16,7 +16,31 @@ export interface ApprovedLeaveDates {
   endDate: string;
   isHalfDay: boolean;
   status?: string;
-  policySnapshot?: { name?: string } | null;
+  policySnapshot?: { name?: string; type?: string } | null;
+}
+
+/** Remote work and last-working-day markers record a work arrangement, not absence. */
+export function isAbsenceLeave(leave: { policySnapshot?: unknown }): boolean {
+  const snapshot = leave.policySnapshot;
+  const type =
+    snapshot && typeof snapshot === "object" && "type" in snapshot ? snapshot.type : undefined;
+  return type !== "Remote" && type !== "Resignation";
+}
+
+export function isRemoteWorkMarker(leave: { policySnapshot?: unknown }): boolean {
+  const snapshot = leave.policySnapshot;
+  return Boolean(
+    snapshot && typeof snapshot === "object" && "type" in snapshot && snapshot.type === "Remote",
+  );
+}
+
+export function isApprovedRemoteWork(leave: ApprovedLeaveDates, date: string): boolean {
+  return (
+    isRemoteWorkMarker(leave) &&
+    (!leave.status || isEffectiveLeave({ status: leave.status })) &&
+    leave.startDate <= date &&
+    leave.endDate >= date
+  );
 }
 
 export function isEffectiveLeave(leave: { status: string }): boolean {
@@ -30,6 +54,7 @@ export function approvedLeaveFraction(leaves: readonly ApprovedLeaveDates[], dat
     leaves
       .filter(
         (leave) =>
+          isAbsenceLeave(leave) &&
           (!leave.status || isEffectiveLeave({ status: leave.status })) &&
           leave.startDate <= date &&
           leave.endDate >= date,

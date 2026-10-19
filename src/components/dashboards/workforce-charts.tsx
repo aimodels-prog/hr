@@ -405,7 +405,7 @@ export default function WorkforceCharts({
         {toolbar && <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">{toolbar}</div>}
         {scope === "hr" && !employeeId && data && (
           <Button asChild variant="outline" className="mr-auto">
-            <Link to="/staff/attendance" search={{ date: data.today.date, status: "Clocked in" }}>
+            <Link to="/staff/attendance" search={{ date: data.today.date, status: "All" }}>
               <DoorOpen className="mr-2 size-4" /> Today's attendance
             </Link>
           </Button>

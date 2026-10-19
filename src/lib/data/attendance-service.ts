@@ -5,7 +5,7 @@ import { validateSiteVisitPlan } from "./site-visit.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { LeaveService } from "./leave-service.ts";
-import { approvedLeaveFraction } from "./approved-leave.ts";
+import { approvedLeaveFraction, isApprovedRemoteWork } from "./approved-leave.ts";
 import { getMasterDataRepository } from "./master-data.ts";
 import { LocalRepository, type NewRecord } from "./repository.ts";
 import { SettingsService, syncWorkingHoursCompatibilityCache } from "./settings-service.ts";
@@ -1500,14 +1500,14 @@ export class AttendanceService {
       existing?.status === "Correction Pending"
     )
       return null;
-    const leaveFraction = approvedLeaveFraction(
-      new LeaveService()
-        .getAllRequests(SYSTEM_CONTEXT)
-        .filter((request) => request.employeeId === employeeId),
-      targetDate,
-    );
+    const leaveRequests = new LeaveService()
+      .getAllRequests(SYSTEM_CONTEXT)
+      .filter((request) => request.employeeId === employeeId);
+    const leaveFraction = approvedLeaveFraction(leaveRequests, targetDate);
     if (leaveFraction === 1) return { status: "On Leave" };
     if (leaveFraction > 0) return { status: "Half-day Leave" };
+    if (leaveRequests.some((request) => isApprovedRemoteWork(request, targetDate)))
+      return { status: "Not tracked" };
     if (existing && !["On Leave", "Half-day Leave"].includes(existing.status)) return null;
     if (!this.isTrackingRequired(employeeId, targetDate)) return { status: "Not tracked" };
     const day = new Date(`${targetDate}T12:00:00`);

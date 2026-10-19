@@ -1,7 +1,11 @@
 import "@tanstack/react-start/server-only";
 import { officeCredits, applyOfficeCredits } from "./office-exception.repository.server.ts";
 import { recordedDailyHours } from "../../data/recorded-hours.ts";
-import { EFFECTIVE_LEAVE_STATUSES } from "../../data/approved-leave.ts";
+import {
+  EFFECTIVE_LEAVE_STATUSES,
+  isAbsenceLeave,
+  isRemoteWorkMarker,
+} from "../../data/approved-leave.ts";
 import { leaveDisplayType } from "../../data/leave-presentation.ts";
 import {
   attendanceBreakMinutes,
@@ -779,7 +783,10 @@ export async function captureAttendancePunchInDatabase(
     if (input.direction === "in" && !(input.returnFromSiteVisit && existing?.clockInAt)) {
       if (existing?.clockInAt) throw new Error("You are already clocked in today.");
       const leave = await tx
-        .select({ isHalfDay: leaveRequests.isHalfDay })
+        .select({
+          isHalfDay: leaveRequests.isHalfDay,
+          policySnapshot: leaveRequests.policySnapshot,
+        })
         .from(leaveRequests)
         .where(
           and(
@@ -790,7 +797,9 @@ export async function captureAttendancePunchInDatabase(
             sql`${date} BETWEEN ${leaveRequests.startDate} AND ${leaveRequests.endDate}`,
           ),
         );
-      if (leave.reduce((sum, item) => sum + (item.isHalfDay ? 0.5 : 1), 0) >= 1)
+      if (
+        leave.filter(isAbsenceLeave).reduce((sum, item) => sum + (item.isHalfDay ? 0.5 : 1), 0) >= 1
+      )
         throw new Error(
           "You are on approved leave today. Ask HR to update the leave if you have returned early.",
         );
@@ -999,7 +1008,10 @@ export async function requestAttendanceCorrectionInDatabase(
           )
           .limit(1),
         tx
-          .select({ isHalfDay: leaveRequests.isHalfDay })
+          .select({
+            isHalfDay: leaveRequests.isHalfDay,
+            policySnapshot: leaveRequests.policySnapshot,
+          })
           .from(leaveRequests)
           .where(
             and(
@@ -1013,7 +1025,11 @@ export async function requestAttendanceCorrectionInDatabase(
           ),
       ]);
       if (holiday) throw new Error("Public holidays cannot be changed through a punch correction.");
-      if (approvedLeave.reduce((sum, leave) => sum + (leave.isHalfDay ? 0.5 : 1), 0) >= 1)
+      if (
+        approvedLeave
+          .filter(isAbsenceLeave)
+          .reduce((sum, leave) => sum + (leave.isHalfDay ? 0.5 : 1), 0) >= 1
+      )
         throw new Error("Approved leave days cannot be changed through a punch correction.");
       [record] = await tx
         .insert(attendanceRecords)
@@ -2210,9 +2226,11 @@ export async function getMyLiveAttendance(organisationId: string, actor: AuditAc
     if (span < 0) span += 1440;
     targetMinutes = Math.max(0, span);
   }
+  const absenceLeave = approvedLeave.filter(isAbsenceLeave);
+  const remoteWorkApproved = approvedLeave.some(isRemoteWorkMarker);
   const leaveFraction = Math.min(
     1,
-    approvedLeave.reduce((sum, leave) => sum + (leave.isHalfDay ? 0.5 : 1), 0),
+    absenceLeave.reduce((sum, leave) => sum + (leave.isHalfDay ? 0.5 : 1), 0),
   );
   targetMinutes = Math.round(targetMinutes * (1 - leaveFraction));
   const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
@@ -2252,13 +2270,14 @@ export async function getMyLiveAttendance(organisationId: string, actor: AuditAc
     serverNow: now.toISOString(),
     targetMinutes,
     approvedLeaveFraction: leaveFraction,
-    leaveType: approvedLeave.length
+    remoteWorkApproved,
+    leaveType: absenceLeave.length
       ? leaveDisplayType({
-          policySnapshot: approvedLeave[0]!.policySnapshot as { name?: string } | null,
+          policySnapshot: absenceLeave[0]!.policySnapshot as { name?: string } | null,
         })
       : null,
-    leaveEndDate: approvedLeave.length
-      ? approvedLeave
+    leaveEndDate: absenceLeave.length
+      ? absenceLeave
           .map((leave) => leave.endDate)
           .sort()
           .at(-1)!
