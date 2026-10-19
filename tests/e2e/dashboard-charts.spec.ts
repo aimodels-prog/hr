@@ -87,9 +87,13 @@ test("HR opens daily clock-ins from the dashboard and can review another date", 
     ).toBeVisible();
     await expect(page.getByLabel("Attendance date", { exact: true })).toHaveValue(data.today.date);
     await expect(page.getByRole("combobox", { name: "Attendance status", exact: true })).toHaveText(
-      "Clocked in",
+      "All",
     );
     await expect(page.getByLabel("Filter location", { exact: true })).toHaveValue("Head Office");
+    await page.getByRole("button", { name: "Show clocked in", exact: true }).click();
+    await expect(page.getByRole("combobox", { name: "Attendance status", exact: true })).toHaveText(
+      "Clocked in",
+    );
     await page.getByLabel("Attendance date", { exact: true }).fill(futureDate!);
     const rows = page.locator("[data-section-content] tbody").first();
     await expect(rows.getByRole("row").filter({ hasText: "Omar" })).toBeVisible({
