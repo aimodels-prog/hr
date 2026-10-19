@@ -56,6 +56,18 @@ function EmployeesRoute() {
   const currentUser = useCurrentUser();
   const employeeService = useMemo(() => new EmployeeService(), []);
   const canManageEmployees = currentUser.permissions.has("employee:manage_all");
+  const activeAccountEmployeeIds = useMemo(
+    () =>
+      new Set(
+        canManageEmployees
+          ? employeeService
+              .getUsers(currentUser.getActorContext(), { includeArchived: true })
+              .filter((user) => user.status === "Active" && !user.archivedAt)
+              .map((user) => user.employeeId)
+          : [],
+      ),
+    [employeeService, currentUser, canManageEmployees],
+  );
   const employees = useMemo(
     () =>
       employeeService
@@ -85,7 +97,10 @@ function EmployeesRoute() {
     return employees.filter((employee) => {
       if (canManageEmployees) {
         const status = searchParams.status || "current";
-        const former = ["Inactive", "Archived"].includes(employee.status) || !!employee.archivedAt;
+        const former =
+          ["Inactive", "Archived"].includes(employee.status) ||
+          !!employee.archivedAt ||
+          !activeAccountEmployeeIds.has(employee.id);
         if (status === "current" && former) return false;
         if (status === "former" && !former) return false;
         if (!["current", "former", "all"].includes(status) && employee.status !== status)
@@ -104,7 +119,7 @@ function EmployeesRoute() {
         employee.location,
       ].some((value) => value.toLowerCase().includes(query));
     });
-  }, [employees, searchParams, canManageEmployees]);
+  }, [employees, searchParams, canManageEmployees, activeAccountEmployeeIds]);
 
   const pageSize = 20;
   const totalPages = Math.ceil(filteredEmployees.length / pageSize);

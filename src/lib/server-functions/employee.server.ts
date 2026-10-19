@@ -85,8 +85,21 @@ export const getCoreHrSnapshotFn = createServerFn({ method: "POST" })
       listProfileChangeRequestsForOrganisation(organisationId),
     ]);
 
+    const canManageEmployees = data.activeRole === "HR" || data.activeRole === "Super Admin";
+    const activeAccountEmployeeIds = new Set(
+      allUsers
+        .filter((user) => user.status === "Active" && !user.archivedAt)
+        .map((user) => user.employeeId),
+    );
     return {
-      employees: employees.map((employee) => redactEmployee(employee, viewer)),
+      employees: employees
+        .filter(
+          (employee) =>
+            canManageEmployees ||
+            employee.id === actor.employeeId ||
+            activeAccountEmployeeIds.has(employee.id),
+        )
+        .map((employee) => redactEmployee(employee, viewer)),
       users:
         data.activeRole === "HR" || data.activeRole === "Super Admin"
           ? allUsers
