@@ -215,6 +215,12 @@ export interface LeaveRequest extends BaseRecord {
     /** Dates used to calculate the approved total; unchanged by later calendar edits. */
     workingDates?: string[];
     payTiers?: SickPayTier[];
+    noticeException?: {
+      requiredDays: number;
+      actualDays: number;
+      reason: string;
+      countryManagerEmployeeId?: RecordId;
+    };
     name: string;
     type: string;
     isPaid: boolean;

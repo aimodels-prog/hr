@@ -24,6 +24,8 @@ import { leaveWorkingDates } from "./leave-working-days.ts";
 import { NotificationService } from "./notification-service.ts";
 import { getMasterDataRepository } from "./master-data.ts";
 import { SettingsService } from "./settings-service.ts";
+import { siteVisitLocalNow } from "./site-visit.ts";
+import { leaveNoticeAssessment, validateLeaveNoticeException } from "./leave-notice.ts";
 import { getLeaveEligibility, isOmaniNationality } from "./leave-eligibility.ts";
 
 // Recognises the different labels a policy's approvalChain might use for the line-manager
@@ -683,9 +685,12 @@ export class LeaveService {
       .list()
       .filter((request) => request.status === "Approved" || request.status === "Taken")
       .map((request) => {
+        const payrollPolicySnapshot = { ...request.policySnapshot };
+        delete payrollPolicySnapshot.noticeException;
         const safeRequest = {
           ...request,
           reason: "Not included in payroll",
+          policySnapshot: payrollPolicySnapshot,
         };
         delete safeRequest.attachmentFileId;
         delete safeRequest.handoverContactId;
@@ -886,6 +891,32 @@ export class LeaveService {
       return this.approveAmendment(req, context);
     }
 
+    if (req.status === "Pending HR" && req.policySnapshot.noticeException) {
+      if (context.actor.employeeId === req.employeeId)
+        throw new Error("You cannot approve your own leave request.");
+      const role =
+        context.actor.employeeId === req.policySnapshot.noticeException.countryManagerEmployeeId
+          ? "Country Manager"
+          : context.actor.activeRole === "HR"
+            ? "HR"
+            : null;
+      const step = req.chainApprovals.find((item) => item.role === role);
+      if (!step || step.status !== "Pending")
+        throw new Error("You are not a pending special approver for this request.");
+      step.status = "Approved";
+      step.approvedBy = context.actor.userId;
+      step.date = new Date().toISOString();
+      if (
+        req.chainApprovals.some((item) => item.role !== "Line Manager" && item.status === "Pending")
+      ) {
+        return this.requestRepo.update(req.id, req, context);
+      }
+      req.status = "Pending Line Manager";
+      const updated = this.requestRepo.update(req.id, req, context);
+      this.notifySubmission(updated, context);
+      return updated;
+    }
+
     if (req.status === "Pending Line Manager") {
       const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
       const isAssignedManager =
@@ -1007,6 +1038,27 @@ export class LeaveService {
 
     if (req.status === "Amendment Pending Line Manager" || req.status === "Amendment Pending HR") {
       return this.rejectAmendment(req, reason, context);
+    }
+
+    if (req.status === "Pending HR" && req.policySnapshot.noticeException) {
+      if (context.actor.employeeId === req.employeeId)
+        throw new Error("You cannot decide your own leave request.");
+      const role =
+        context.actor.employeeId === req.policySnapshot.noticeException.countryManagerEmployeeId
+          ? "Country Manager"
+          : context.actor.activeRole === "HR"
+            ? "HR"
+            : null;
+      const step = req.chainApprovals.find((item) => item.role === role);
+      if (!step || step.status !== "Pending")
+        throw new Error("You are not a pending special approver for this request.");
+      if (reason.trim().length < 3) throw new Error("A reason is required to reject a request.");
+      step.status = "Declined";
+      step.approvedBy = context.actor.userId;
+      step.date = new Date().toISOString();
+      req.status = "Declined";
+      req.refusalReason = reason.trim();
+      return this.requestRepo.update(req.id, req, context);
     }
 
     if (req.status === "Pending Line Manager") {
@@ -1208,7 +1260,7 @@ export class LeaveService {
   }
 
   async submitLeaveRequest(
-    payload: Partial<LeaveRequest>,
+    payload: Partial<LeaveRequest> & { noticeExceptionReason?: string },
     context: ActorContext,
     attachment?: File,
   ): Promise<LeaveRequest> {
@@ -1254,6 +1306,9 @@ export class LeaveService {
           startDate: payload.startDate,
           endDate: payload.endDate,
           reason: payload.reason?.trim() || "",
+          ...(payload.noticeExceptionReason
+            ? { noticeExceptionReason: payload.noticeExceptionReason }
+            : {}),
           ...(payload.isHalfDay !== undefined ? { isHalfDay: payload.isHalfDay } : {}),
           ...(handover?.databaseId ? { handoverContactId: handover.databaseId } : {}),
           ...(attachment
@@ -1408,52 +1463,51 @@ export class LeaveService {
     const chainStartsWithManager =
       chainIncludesManager && isManagerRoleName(policy.approvalChain[0] ?? "");
     let status: LeaveRequestStatus = chainStartsWithManager ? "Pending Line Manager" : "Pending HR";
-    let refusalReason = "";
-
-    if (policy.noticeRules && policy.noticeRules.enabled) {
-      const today = new Date();
-      // Reset hours to start of day for fair calendar math
-      today.setHours(0, 0, 0, 0);
-      const start = parseISO(payload.startDate);
-      start.setHours(0, 0, 0, 0);
-
-      const noticeDays = differenceInCalendarDays(start, today);
-      const rules = policy.noticeRules;
-
-      if (workingDays > rules.shortLeaveMaxDays) {
-        if (noticeDays < rules.longLeaveNoticeDays) {
-          status = "Automatically Refused";
-          refusalReason = `Notice period violation: Requests for more than ${rules.shortLeaveMaxDays} working days require at least ${rules.longLeaveNoticeDays} calendar days notice. You requested ${workingDays} days with only ${noticeDays} days notice.`;
+    const today = siteVisitLocalNow(new SettingsService().getAppSettingsSync().timezone).date;
+    const notice = leaveNoticeAssessment(policy.noticeRules, workingDays, payload.startDate, today);
+    if (notice && !payload.noticeExceptionReason?.trim())
+      throw new Error(
+        `This leave normally requires ${notice.requiredDays} days' notice. Choose the special request option and explain why shorter notice is needed.`,
+      );
+    const empService = new EmployeeService();
+    const requester = empService.getById(payload.employeeId, SYSTEM_CONTEXT);
+    const countryManagers = notice
+      ? empService
+          .getEmployees(SYSTEM_CONTEXT)
+          .filter(
+            (item) =>
+              ["country manager", "country manager oman"].includes(
+                item.position.trim().toLowerCase(),
+              ) && !["Inactive", "Archived"].includes(item.status),
+          )
+      : [];
+    if (notice && countryManagers.length !== 1)
+      throw new Error("Ask HR to confirm the active Country Manager for special leave approvals.");
+    const specialApprover = countryManagers[0];
+    if (notice && specialApprover?.id === payload.employeeId)
+      throw new Error("Ask HR to arrange an independent approver for your special leave request.");
+    const noticeException = notice
+      ? {
+          ...notice,
+          reason: validateLeaveNoticeException(payload.noticeExceptionReason),
+          countryManagerEmployeeId: specialApprover!.id,
         }
-      } else {
-        if (noticeDays < rules.shortLeaveNoticeDays) {
-          status = "Automatically Refused";
-          refusalReason = `Notice period violation: Requests for ${rules.shortLeaveMaxDays} working days or fewer require at least ${rules.shortLeaveNoticeDays} calendar days notice. You requested ${workingDays} days with only ${noticeDays} days notice.`;
-        }
-      }
-    }
+      : undefined;
+    if (noticeException) status = "Pending HR";
 
     // Built from the policy's own configured chain rather than a hardcoded two-step sequence,
     // so a manager-only policy (e.g. Compensation Off) stays a single approval and an HR-only
     // policy (e.g. Resignation) never waits on a line-manager step that was never meant to exist.
-    const chainApprovals: LeaveRequest["chainApprovals"] = policy.approvalChain.map((role) => ({
-      role,
-      status: "Pending" as const,
-    }));
+    const chainApprovals: LeaveRequest["chainApprovals"] = noticeException
+      ? ["Country Manager", "HR", "Line Manager"].map((role) => ({ role, status: "Pending" }))
+      : policy.approvalChain.map((role) => ({ role, status: "Pending" }));
 
-    const empService = new EmployeeService();
-    const requester = empService.getById(payload.employeeId, SYSTEM_CONTEXT);
-
-    if (chainIncludesManager && status !== "Automatically Refused" && !requester?.lineManagerId) {
+    if (chainIncludesManager && !requester?.lineManagerId) {
       throw new Error(
         "Your supervisor has not been assigned. Ask HR to update your reporting line before requesting leave.",
       );
     }
-    if (
-      chainIncludesManager &&
-      status !== "Automatically Refused" &&
-      requester?.lineManagerId === payload.employeeId
-    ) {
+    if (chainIncludesManager && requester?.lineManagerId === payload.employeeId) {
       throw new Error("Your reporting line is invalid. Ask HR to assign a different supervisor.");
     }
 
@@ -1469,6 +1523,7 @@ export class LeaveService {
       isPaid: policy.isPaid,
       baseEntitlementDays: policy.baseEntitlementDays,
       accrualMode: policy.accrualMode,
+      ...(noticeException ? { noticeException } : {}),
     };
 
     // Persist the sick-leave pay-percentage tier breakdown at submission time so payroll
@@ -1492,7 +1547,6 @@ export class LeaveService {
       status,
       chainApprovals,
       policySnapshot,
-      ...(refusalReason ? { refusalReason } : {}),
       ...(payload.attachmentUrl ? { attachmentUrl: payload.attachmentUrl } : {}),
       ...(sickPayTiers ? { sickPayTiers } : {}),
     };
@@ -1510,11 +1564,50 @@ export class LeaveService {
       ? `${requester.preferredName} ${requester.legalName}`
       : "An employee";
 
+    const amendment = request.pendingAmendment;
+    const specialNotice = amendment ? undefined : request.policySnapshot.noticeException;
+    const specialStage =
+      Boolean(specialNotice) &&
+      request.status === "Pending HR" &&
+      request.chainApprovals.some((step) => step.role === "Country Manager");
+    if (specialStage && specialNotice) {
+      const pendingManager = request.chainApprovals.find(
+        (step) => step.role === "Country Manager" && step.status === "Pending",
+      );
+      const pendingHr = request.chainApprovals.find(
+        (step) => step.role === "HR" && step.status === "Pending",
+      );
+      const users = storage.readCollection<User>("users");
+      for (const recipient of users.filter(
+        (user) =>
+          user.status === "Active" &&
+          ((pendingManager && user.employeeId === specialNotice.countryManagerEmployeeId) ||
+            (pendingHr && user.roles.includes("HR"))),
+      )) {
+        notifications.create(
+          {
+            recipientUserId: recipient.id,
+            type: "Approval",
+            title: "Short-notice leave exception awaiting your approval",
+            message: `${requesterName} requested ${request.workingDaysRequested} day(s) of ${request.policySnapshot.name}: ${request.startDate} to ${request.endDate}. Reason: ${specialNotice.reason}. Both Country Manager and HR must review before the line manager.`,
+            priority: "High",
+            status: "Unread",
+            deduplicationKey: `leave-special-${request.id}-${recipient.id}`,
+            link: {
+              entityType: "leave-request",
+              entityId: request.id,
+              path: "/staff/leave-approvals",
+            },
+          },
+          context,
+        );
+      }
+      return;
+    }
     const managerStage =
       request.status === "Pending Line Manager" ||
       request.status === "Amendment Pending Line Manager";
     const hrStage = request.status === "Pending HR" || request.status === "Amendment Pending HR";
-    const amendment = request.pendingAmendment;
     const dateSummary = amendment
       ? `${amendment.proposedStartDate} to ${amendment.proposedEndDate}`
       : `${request.startDate} to ${request.endDate}`;
@@ -1533,8 +1626,10 @@ export class LeaveService {
             type: "Approval",
             title: amendment
               ? "Leave date change awaiting your approval"
-              : "Leave request awaiting your approval",
-            message: `${requesterName} ${actionLabel} ${amendment?.proposedWorkingDays ?? request.workingDaysRequested} day(s) of ${request.policySnapshot.name}: ${dateSummary}.`,
+              : specialNotice
+                ? "Short-notice leave exception awaiting your approval"
+                : "Leave request awaiting your approval",
+            message: `${requesterName} ${actionLabel} ${amendment?.proposedWorkingDays ?? request.workingDaysRequested} day(s) of ${request.policySnapshot.name}: ${dateSummary}.${specialNotice ? ` Special request: ${specialNotice.reason}.` : ""}`,
             priority: "High",
             status: "Unread",
             deduplicationKey: amendment
@@ -1560,8 +1655,10 @@ export class LeaveService {
             type: "Approval",
             title: amendment
               ? "Leave date change awaiting HR approval"
-              : "Leave request awaiting HR approval",
-            message: `${requesterName} ${actionLabel} ${amendment?.proposedWorkingDays ?? request.workingDaysRequested} day(s) of ${request.policySnapshot.name}: ${dateSummary}.`,
+              : specialNotice
+                ? "Short-notice leave exception awaiting HR approval"
+                : "Leave request awaiting HR approval",
+            message: `${requesterName} ${actionLabel} ${amendment?.proposedWorkingDays ?? request.workingDaysRequested} day(s) of ${request.policySnapshot.name}: ${dateSummary}.${specialNotice ? ` Special request: ${specialNotice.reason}.` : ""}`,
             priority: "High",
             status: "Unread",
             deduplicationKey: amendment

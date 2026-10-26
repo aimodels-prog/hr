@@ -8,6 +8,14 @@ import {
   DialogFooter,
   DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -23,6 +31,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { LeaveService } from "@/lib/data/leave-service";
 import { SettingsService } from "@/lib/data/settings-service";
+import { siteVisitLocalNow } from "@/lib/data/site-visit";
+import { leaveNoticeAssessment } from "@/lib/data/leave-notice";
 import { EmployeeService } from "@/lib/data/employee-service";
 import type { LeavePolicy, LeaveBalanceReport } from "@/lib/data/leave-types";
 import { useCurrentUser } from "@/lib/auth";
@@ -76,14 +86,20 @@ export function LeaveRequestDialog({
   const [balance, setBalance] = useState<LeaveBalanceReport | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [settingsReady, setSettingsReady] = useState(false);
+  const [timezone, setTimezone] = useState("Asia/Muscat");
+  const [specialRequestOpen, setSpecialRequestOpen] = useState(false);
+  const [specialRequestReason, setSpecialRequestReason] = useState("");
   useEffect(() => {
     setSettingsReady(false);
     if (!open) return;
     let active = true;
     void new SettingsService()
       .getAppSettings()
-      .then(() => {
-        if (active) setSettingsReady(true);
+      .then((settings) => {
+        if (active) {
+          setTimezone(settings.timezone);
+          setSettingsReady(true);
+        }
       })
       .catch(() => {
         if (active) toast.error("Could not load leave settings. Close this form and try again.");
@@ -136,6 +152,11 @@ export function LeaveRequestDialog({
   ]);
 
   const handoverRequired = selectedPolicy?.requiresHandoverContact ?? true;
+  const today = siteVisitLocalNow(timezone).date;
+  const shortNotice =
+    selectedPolicy && !(selectedPolicy.type === "Sick" && startDate < today)
+      ? leaveNoticeAssessment(selectedPolicy.noticeRules, workingDays, startDate, today)
+      : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -155,7 +176,14 @@ export function LeaveRequestDialog({
       return;
     }
 
-    if (workingDays <= 0) {
+    let countedDays: number;
+    try {
+      countedDays = leaveService.calculateWorkingDays(startDate, endDate, isHalfDay);
+    } catch {
+      toast.error("Check the leave dates and try again.");
+      return;
+    }
+    if (countedDays <= 0) {
       toast.error("No leave days are counted for these dates. Check the leave settings.");
       return;
     }
@@ -165,6 +193,19 @@ export function LeaveRequestDialog({
       return;
     }
 
+    const currentNotice =
+      selectedPolicy && !(selectedPolicy.type === "Sick" && startDate < today)
+        ? leaveNoticeAssessment(selectedPolicy.noticeRules, countedDays, startDate, today)
+        : null;
+    if (currentNotice) {
+      setSpecialRequestOpen(true);
+      return;
+    }
+
+    await submitRequest();
+  };
+
+  const submitRequest = async (noticeExceptionReason?: string) => {
     const actorContext = currentUser.getActorContext();
     try {
       setIsSubmitting(true);
@@ -176,6 +217,7 @@ export function LeaveRequestDialog({
           endDate,
           isHalfDay,
           reason,
+          ...(noticeExceptionReason ? { noticeExceptionReason } : {}),
           ...(handoverContactId ? { handoverContactId } : {}),
         },
         actorContext,
@@ -188,16 +230,28 @@ export function LeaveRequestDialog({
           duration: 10000,
         });
       } else {
-        toast.success("Leave request sent", {
-          description: "Your request is now pending approval.",
+        toast.success(noticeExceptionReason ? "Special request sent" : "Leave request sent", {
+          description: noticeExceptionReason
+            ? "Sent to Riccardo and HR first. The line manager will review after both approve."
+            : "Your request is now pending approval.",
         });
       }
 
       onOpenChange(false);
+      setSpecialRequestOpen(false);
+      setSpecialRequestReason("");
       setAttachment(null);
       onSuccess?.();
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to submit request.");
+      if (
+        !noticeExceptionReason &&
+        err instanceof Error &&
+        err.message.includes("Choose the special request option")
+      ) {
+        setSpecialRequestOpen(true);
+      } else {
+        toast.error(err instanceof Error ? err.message : "Failed to submit request.");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -459,7 +513,7 @@ export function LeaveRequestDialog({
 
               {selectedPolicy?.noticeRules?.enabled && (
                 <div className="text-xs text-muted-foreground mt-2 border-t pt-2">
-                  <strong>Notice Rules Apply:</strong>
+                  <strong>Notice period</strong>
                   <ul className="list-disc pl-4 mt-1">
                     <li>
                       &gt; {selectedPolicy.noticeRules.shortLeaveMaxDays} leave days requires{" "}
@@ -470,6 +524,13 @@ export function LeaveRequestDialog({
                       {selectedPolicy.noticeRules.shortLeaveNoticeDays}+ calendar days notice.
                     </li>
                   </ul>
+                  {shortNotice && (
+                    <p className="mt-2 rounded-md border border-red-200 bg-red-50 p-2 font-medium text-red-800">
+                      This request gives {shortNotice.actualDays} of the required{" "}
+                      {shortNotice.requiredDays} days' notice. It needs special approval; you can
+                      explain the circumstances in the next step.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -534,11 +595,52 @@ export function LeaveRequestDialog({
                 (handoverRequired && !handoverContactId)
               }
             >
-              {isSubmitting ? "Submitting..." : "Submit Request"}
+              {isSubmitting
+                ? "Submitting..."
+                : shortNotice
+                  ? "Request special approval"
+                  : "Submit Request"}
             </Button>
           </DialogFooter>
         </SafeForm>
       </DialogContent>
+      <AlertDialog open={specialRequestOpen} onOpenChange={setSpecialRequestOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Ask for a short-notice exception?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This leave normally needs {shortNotice?.requiredDays} calendar days' notice. You are
+              giving {shortNotice?.actualDays}. Explain why you need this exception. Riccardo and HR
+              review it first, then your line manager. Nothing is approved automatically.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="leave-special-reason">Why is shorter notice needed?</Label>
+            <Textarea
+              id="leave-special-reason"
+              value={specialRequestReason}
+              onChange={(event) => setSpecialRequestReason(event.target.value)}
+              placeholder="Briefly explain the circumstances"
+              maxLength={2000}
+            />
+            {specialRequestReason.trim().length > 0 && specialRequestReason.trim().length < 10 && (
+              <p className="text-xs text-muted-foreground">Please add a little more detail.</p>
+            )}
+          </div>
+          <AlertDialogFooter>
+            <Button type="button" variant="outline" onClick={() => setSpecialRequestOpen(false)}>
+              Back to request
+            </Button>
+            <Button
+              type="button"
+              disabled={isSubmitting || specialRequestReason.trim().length < 10}
+              onClick={() => void submitRequest(specialRequestReason.trim())}
+            >
+              {isSubmitting ? "Submitting..." : "Send for special approval"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

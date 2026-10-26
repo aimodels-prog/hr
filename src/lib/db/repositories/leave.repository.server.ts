@@ -4,6 +4,7 @@ import { requireEmployeeSupervisor } from "./supervisor-access.repository.server
 import { randomUUID } from "node:crypto";
 import { sickLeaveBackdatePermissions } from "../schema/leave.ts";
 import { siteVisitLocalNow } from "../../data/site-visit.ts";
+import { leaveNoticeAssessment, validateLeaveNoticeException } from "../../data/leave-notice.ts";
 import { organisationLeaveYear } from "./leave-year.repository.server.ts";
 import { leaveYearForDate } from "../../data/leave-year.ts";
 import { carryExpiryDateForYear, carryPosition } from "../../data/leave-carry.ts";
@@ -30,11 +31,19 @@ import {
   leaveTransactions,
 } from "../schema/index.ts";
 import { fileMetadata } from "../schema/documents.ts";
-import { departments, publicHolidays } from "../schema/master-data.ts";
+import { departments, positions, publicHolidays } from "../schema/master-data.ts";
 import { appSettings, organisations } from "../schema/organisation.ts";
 import { auditEvents, notifications } from "../schema/system.ts";
 import { roles, userRoles, users } from "../schema/employee.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
+
+function payrollSafeLeaveSnapshot(
+  snapshot: LeaveRequest["policySnapshot"],
+): LeaveRequest["policySnapshot"] {
+  const safe = { ...snapshot };
+  delete safe.noticeException;
+  return safe;
+}
 
 async function annualCarryState(
   tx: Parameters<Parameters<ReturnType<typeof getDatabaseClient>["transaction"]>[0]>[0],
@@ -318,7 +327,9 @@ export async function listLeaveSnapshotForActor(
         ? { sickPayTiers: row.sickPayTiers as NonNullable<LeaveRequest["sickPayTiers"]> }
         : {}),
       chainApprovals: row.chainApprovals as LeaveRequest["chainApprovals"],
-      policySnapshot: row.policySnapshot as LeaveRequest["policySnapshot"],
+      policySnapshot: payrollReader
+        ? payrollSafeLeaveSnapshot(row.policySnapshot as LeaveRequest["policySnapshot"])
+        : (row.policySnapshot as LeaveRequest["policySnapshot"]),
     })),
     transactions: transactionRows.map((row) => ({
       ...recordFields(row),
@@ -502,6 +513,7 @@ export async function createLeaveRequestInDatabase(
     startDate: string;
     endDate: string;
     reason: string;
+    noticeExceptionReason?: string;
     isHalfDay?: boolean;
     handoverContactId?: string;
     attachmentFileId?: string;
@@ -756,28 +768,88 @@ export async function createLeaveRequestInDatabase(
           throw new Error("There is not enough leave balance for this request.");
       }
     }
-    const noticeDays = Math.ceil(
-      (new Date(`${input.startDate}T00:00:00Z`).getTime() - Date.now()) / 86_400_000,
+    const notice = backdatePermission
+      ? null
+      : leaveNoticeAssessment(
+          policy.noticeRules as LeavePolicy["noticeRules"],
+          days,
+          input.startDate,
+          siteVisitLocalNow(settings.timezone).date,
+        );
+    if (notice && !input.noticeExceptionReason?.trim())
+      throw new Error(
+        `This leave normally requires ${notice.requiredDays} days' notice. Choose the special request option and explain why shorter notice is needed.`,
+      );
+    const countryManagers = notice
+      ? await tx
+          .select({
+            employeeId: employees.id,
+            userId: users.id,
+            workEmail: employees.workEmail,
+            portalEmail: users.workspaceEmail,
+          })
+          .from(employees)
+          .innerJoin(positions, eq(positions.id, employees.positionId))
+          .innerJoin(
+            users,
+            and(
+              eq(users.employeeId, employees.id),
+              eq(users.organisationId, organisationId),
+              eq(users.status, "Active"),
+              isNull(users.archivedAt),
+            ),
+          )
+          .where(
+            and(
+              eq(employees.organisationId, organisationId),
+              inArray(employees.status, ["Active", "Probation", "Notice"]),
+              isNull(employees.archivedAt),
+              sql`lower(btrim(${positions.name})) IN ('country manager', 'country manager oman')`,
+            ),
+          )
+      : [];
+    const designatedEmail = (
+      process.env["VIA_HR_SPECIAL_LEAVE_APPROVER_EMAIL"] || "r.centonze@via-int.com"
+    )
+      .trim()
+      .toLowerCase();
+    const matchingCountryManagers = countryManagers.filter(
+      (item) =>
+        item.workEmail.toLowerCase() === designatedEmail ||
+        item.portalEmail.toLowerCase() === designatedEmail,
     );
-    const noticeRules = policy.noticeRules as {
-      enabled?: boolean;
-      shortLeaveMaxDays?: number;
-      shortLeaveNoticeDays?: number;
-      longLeaveNoticeDays?: number;
-    } | null;
-    const noticeRule = noticeRules?.enabled
-      ? days > Number(noticeRules.shortLeaveMaxDays ?? 5)
-        ? Number(noticeRules.longLeaveNoticeDays ?? 60)
-        : Number(noticeRules.shortLeaveNoticeDays ?? 14)
-      : 0;
-    const status =
-      !backdatePermission && noticeRule > 0 && noticeDays < noticeRule
-        ? "Automatically Refused"
-        : "Pending Line Manager";
-    const refusalReason =
-      status === "Automatically Refused"
-        ? `${policy.name} must be requested at least ${noticeRule} days in advance.`
-        : undefined;
+    if (notice && matchingCountryManagers.length !== 1)
+      throw new Error(
+        "Ask HR to confirm Riccardo's active Country Manager account for special leave approvals.",
+      );
+    const countryManager = matchingCountryManagers[0];
+    if (notice && countryManager?.employeeId === employee.id)
+      throw new Error("Ask HR to arrange an independent approver for your special leave request.");
+    const hrRecipients = notice
+      ? await tx
+          .selectDistinct({ id: users.id })
+          .from(users)
+          .innerJoin(userRoles, eq(userRoles.userId, users.id))
+          .innerJoin(roles, eq(roles.id, userRoles.roleId))
+          .where(
+            and(
+              eq(users.organisationId, organisationId),
+              eq(users.status, "Active"),
+              eq(roles.code, "HR"),
+              sql`${users.employeeId} <> ${employee.id}`,
+            ),
+          )
+      : [];
+    if (notice && !hrRecipients.length)
+      throw new Error("Ask HR to activate an HR approver before sending a special leave request.");
+    const noticeException = notice
+      ? {
+          ...notice,
+          reason: validateLeaveNoticeException(input.noticeExceptionReason),
+          countryManagerEmployeeId: countryManager!.employeeId,
+        }
+      : undefined;
+    const status = noticeException ? "Pending HR" : "Pending Line Manager";
     await tx.insert(leaveRequests).values({
       id: requestId,
       organisationId,
@@ -791,14 +863,20 @@ export async function createLeaveRequestInDatabase(
       handoverContactId: input.handoverContactId,
       attachmentFileId: input.attachmentFileId,
       status,
-      refusalReason,
-      chainApprovals: [
-        { role: "Line Manager", status: "Pending" },
-        { role: "HR", status: "Pending" },
-      ],
+      chainApprovals: noticeException
+        ? [
+            { role: "Country Manager", status: "Pending" },
+            { role: "HR", status: "Pending" },
+            { role: "Line Manager", status: "Pending" },
+          ]
+        : [
+            { role: "Line Manager", status: "Pending" },
+            { role: "HR", status: "Pending" },
+          ],
       policySnapshot: {
         workingDates,
         payTiers: validateSickPayTiers(policy.payTiers),
+        ...(noticeException ? { noticeException } : {}),
         ...(backdatePermission
           ? {
               backdatePermissionId: backdatePermission.id,
@@ -826,20 +904,48 @@ export async function createLeaveRequestInDatabase(
       actorDisplayName: actor.displayName,
       activeRole: actor.activeRole ?? null,
       actorRoles: actor.roles ?? [],
-      action: status === "Automatically Refused" ? "auto-refuse" : "submit",
+      action: "submit",
       module: "leave",
       entityType: "leave-request",
       entityId: requestId,
       afterSummary: {
         status,
         days,
+        ...(noticeException ? { noticeException } : {}),
         ...(backdatePermission ? { backdatePermissionId: backdatePermission.id } : {}),
       },
-      reason: refusalReason ?? "Submitted a leave request",
+      reason: noticeException
+        ? "Submitted a short-notice special leave request"
+        : "Submitted a leave request",
       riskLevel: "Medium",
     } as typeof auditEvents.$inferInsert);
-    const recipientEmployeeId =
-      status === "Automatically Refused" ? employee.id : employee.lineManagerId;
+    if (noticeException) {
+      const recipients = new Set([countryManager!.userId, ...hrRecipients.map((item) => item.id)]);
+      for (const recipientUserId of recipients) {
+        await tx
+          .insert(notifications)
+          .values({
+            organisationId,
+            recipientUserId,
+            type: "leave_approval",
+            title: "Short-notice leave exception awaiting your approval",
+            message: `${employee.preferredName || employee.legalName} requested ${days} day(s) of ${policy.name}: ${input.startDate} to ${input.endDate}. Reason: ${noticeException.reason}. Country Manager and HR review before the line manager.`,
+            priority: "High",
+            status: "Unread",
+            deduplicationKey: `leave-special-${requestId}-${recipientUserId}`,
+            link: {
+              entityType: "leave-request",
+              entityId: requestId,
+              path: "/staff/leave-approvals",
+            },
+            createdBy: actor.userId,
+            updatedBy: actor.userId,
+          } as typeof notifications.$inferInsert)
+          .onConflictDoNothing();
+      }
+      return requestId;
+    }
+    const recipientEmployeeId = employee.lineManagerId;
     const [recipient] = await tx
       .select({ id: users.id })
       .from(users)
@@ -857,24 +963,16 @@ export async function createLeaveRequestInDatabase(
         .values({
           organisationId,
           recipientUserId: recipient.id,
-          type: status === "Automatically Refused" ? "leave_refused" : "leave_approval",
-          title:
-            status === "Automatically Refused"
-              ? "Leave request could not be submitted"
-              : "Leave request awaiting your review",
-          message:
-            refusalReason ??
-            `A ${days}-day ${policy.name} request is awaiting your supervisor decision.`,
+          type: "leave_approval",
+          title: "Leave request awaiting your review",
+          message: `A ${days}-day ${policy.name} request is awaiting your supervisor decision.`,
           priority: "High",
           status: "Unread",
           deduplicationKey: `leave-submission-${requestId}-${recipient.id}`,
           link: {
             entityType: "leave-request",
             entityId: requestId,
-            path:
-              status === "Automatically Refused"
-                ? "/staff/me/leave-balances"
-                : "/staff/leave-approvals",
+            path: "/staff/leave-approvals",
           },
           createdBy: actor.userId,
           updatedBy: actor.userId,
@@ -968,16 +1066,37 @@ export async function approveLeaveRequestInDatabase(
       request.status === "Amendment Pending Line Manager" ||
       request.status === "Amendment Pending HR";
     const cancellation = request.status === "Cancellation Pending";
+    const noticeException = (request.policySnapshot as LeaveRequest["policySnapshot"])
+      .noticeException;
+    const specialStage =
+      request.status === "Pending HR" &&
+      Boolean(noticeException) &&
+      (request.chainApprovals as LeaveRequest["chainApprovals"]).some(
+        (step) => step.role === "Country Manager",
+      );
     const managerStage =
       request.status === "Pending Line Manager" ||
       request.status === "Amendment Pending Line Manager";
     const hrStage =
       request.status === "Pending HR" || request.status === "Amendment Pending HR" || cancellation;
     const isManager = role === "Line Manager" && actor.employeeId === employee?.lineManagerId;
+    const specialRole = specialStage
+      ? actor.employeeId === noticeException?.countryManagerEmployeeId
+        ? "Country Manager"
+        : role === "HR"
+          ? "HR"
+          : null
+      : null;
+    const pendingSpecialStep = specialRole
+      ? (request.chainApprovals as LeaveRequest["chainApprovals"]).find(
+          (step) => step.role === specialRole && step.status === "Pending",
+        )
+      : undefined;
     if (
-      (managerStage && !isManager) ||
-      (hrStage && role !== "HR" && role !== "Super Admin") ||
-      (!managerStage && !hrStage)
+      (specialStage && !pendingSpecialStep) ||
+      (!specialStage && managerStage && !isManager) ||
+      (!specialStage && hrStage && role !== "HR" && role !== "Super Admin") ||
+      (!specialStage && !managerStage && !hrStage)
     )
       throw new Error("You are not the assigned approver for this leave request.");
     if (actor.employeeId === request.employeeId)
@@ -999,7 +1118,11 @@ export async function approveLeaveRequestInDatabase(
       : (request.chainApprovals as LeaveRequest["chainApprovals"]);
     const chainApprovals = [...sourceApprovals];
     const currentStep = chainApprovals.find((step) =>
-      managerStage ? step.role === "Line Manager" : step.role === "HR",
+      specialStage
+        ? step.role === specialRole && step.status === "Pending"
+        : managerStage
+          ? step.role === "Line Manager"
+          : step.role === "HR",
     );
     if (currentStep) {
       currentStep.status = decision === "approve" ? "Approved" : "Declined";
@@ -1039,7 +1162,13 @@ export async function approveLeaveRequestInDatabase(
       } else {
         nextStatus = "Declined";
       }
-    } else if (managerStage) {
+    } else if (specialStage) {
+      nextStatus = chainApprovals.some(
+        (step) => step.role !== "Line Manager" && step.status === "Pending",
+      )
+        ? "Pending HR"
+        : "Pending Line Manager";
+    } else if (managerStage && (!noticeException || amendment)) {
       nextStatus = amendment ? "Amendment Pending HR" : "Pending HR";
       if (amendment && pendingAmendment) {
         pendingAmendment.chainApprovals = chainApprovals;
@@ -1191,7 +1320,22 @@ export async function approveLeaveRequestInDatabase(
       id: item.id,
       path: "/staff/me/leave-balances",
     }));
-    if (nextStatus === "Pending HR" || nextStatus === "Amendment Pending HR") {
+    if (specialStage && nextStatus === "Pending HR") {
+      recipients = [];
+    } else if (specialStage && nextStatus === "Pending Line Manager") {
+      recipients = (
+        await tx
+          .select({ id: users.id })
+          .from(users)
+          .where(
+            and(
+              eq(users.organisationId, organisationId),
+              eq(users.employeeId, employee.lineManagerId!),
+              eq(users.status, "Active"),
+            ),
+          )
+      ).map((item) => ({ id: item.id, path: "/staff/leave-approvals" }));
+    } else if (nextStatus === "Pending HR" || nextStatus === "Amendment Pending HR") {
       recipients = (
         await tx
           .select({ id: users.id })
@@ -1245,7 +1389,11 @@ export async function approveLeaveRequestInDatabase(
                 ? "Leave request declined"
                 : nextStatus === "Cancellation Approved"
                   ? "Leave cancellation approved"
-                  : "Leave request awaiting HR confirmation",
+                  : specialStage && nextStatus === "Pending Line Manager"
+                    ? "Short-notice leave exception awaiting line manager"
+                    : noticeException && !amendment
+                      ? "Short-notice leave exception awaiting HR confirmation"
+                      : "Leave request awaiting HR confirmation",
           message:
             nextStatus === "Approved"
               ? `${employee.preferredName} will be away from ${request.startDate} to ${request.endDate}.`
@@ -1253,9 +1401,13 @@ export async function approveLeaveRequestInDatabase(
                 ? `The approved leave from ${request.startDate} to ${request.endDate} has been cancelled.`
                 : nextStatus === "Declined"
                   ? reason!.trim()
-                  : `${employee.preferredName}'s leave request has supervisor approval and now needs HR confirmation.`,
+                  : specialStage && nextStatus === "Pending Line Manager"
+                    ? `${employee.preferredName}'s short-notice leave was approved by the Country Manager and HR. The line manager now makes the final decision. Reason: ${noticeException!.reason}.`
+                    : `${employee.preferredName}'s leave request has supervisor approval and now needs HR confirmation.${noticeException && !amendment ? ` Short-notice reason: ${noticeException.reason}.` : ""}`,
           priority:
-            nextStatus === "Pending HR" || nextStatus === "Amendment Pending HR"
+            nextStatus === "Pending HR" ||
+            nextStatus === "Amendment Pending HR" ||
+            nextStatus === "Pending Line Manager"
               ? "High"
               : "Normal",
           status: "Unread",

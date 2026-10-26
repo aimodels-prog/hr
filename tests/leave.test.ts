@@ -5,6 +5,7 @@ import { configureApplicationDataServices } from "../src/lib/data/application-da
 import { AuditService } from "../src/lib/data/audit-service.ts";
 import { LeaveService } from "../src/lib/data/leave-service.ts";
 import { SettingsService } from "../src/lib/data/settings-service.ts";
+import { siteVisitLocalNow } from "../src/lib/data/site-visit.ts";
 import { getLeaveEligibility, isOmaniNationality } from "../src/lib/data/leave-eligibility.ts";
 import type { LeavePolicy, LeaveTransaction } from "../src/lib/data/leave-types.ts";
 import { NotificationService } from "../src/lib/data/notification-service.ts";
@@ -257,6 +258,79 @@ test("a covering colleague is required only for leave types marked as needing a 
         employee,
       ),
     /A covering colleague is required/,
+  );
+});
+
+test("short-notice annual leave goes to Country Manager and HR before the line manager", async () => {
+  const { service, storage } = harness();
+  storage.writeCollection(
+    "employees",
+    storage
+      .readCollection<Employee>("employees")
+      .map((item) =>
+        item.id === "employee-yusuf" ? { ...item, position: "Country Manager" } : item,
+      ),
+  );
+  const annualPolicy = service.getPolicies().find((policy) => policy.type === "Annual")!;
+  service.updatePolicy(annualPolicy.id, { consumesBalance: false }, hr);
+  const today = siteVisitLocalNow(new SettingsService().getAppSettingsSync().timezone).date;
+  const candidate = new Date(`${today}T00:00:00Z`);
+  let leaveDate = "";
+  for (let day = 1; day <= 7; day += 1) {
+    candidate.setUTCDate(candidate.getUTCDate() + 1);
+    const date = candidate.toISOString().slice(0, 10);
+    if (service.calculateWorkingDays(date, date, false) > 0) {
+      leaveDate = date;
+      break;
+    }
+  }
+  assert.ok(leaveDate);
+  const input = {
+    employeeId: "employee-omar",
+    policyId: annualPolicy.id,
+    startDate: leaveDate,
+    endDate: leaveDate,
+    reason: "",
+    handoverContactId: "employee-layla",
+  };
+  await assert.rejects(service.submitLeaveRequest(input, employee), /special request option/);
+  await assert.rejects(
+    service.submitLeaveRequest({ ...input, noticeExceptionReason: "urgent" }, employee),
+    /at least 10 characters/,
+  );
+  const request = await service.submitLeaveRequest(
+    { ...input, noticeExceptionReason: "Urgent family appointment" },
+    employee,
+  );
+  assert.equal(request.status, "Pending HR");
+  assert.equal(request.policySnapshot.noticeException?.requiredDays, 14);
+  assert.equal(request.policySnapshot.noticeException?.reason, "Urgent family appointment");
+  assert.equal(request.policySnapshot.noticeException?.countryManagerEmployeeId, "employee-yusuf");
+  assert.ok(!service.getPendingRequestsForManager(manager).some((item) => item.id === request.id));
+  assert.ok(
+    storage
+      .readCollection<{ title: string }>("notifications")
+      .some((item) => item.title.includes("Short-notice leave exception")),
+  );
+  assert.throws(() => service.approveRequest(request.id, manager), /pending special approver/);
+  assert.equal(service.approveRequest(request.id, superAdmin).status, "Pending HR");
+  assert.throws(() => service.approveRequest(request.id, superAdmin), /pending special approver/);
+  assert.equal(service.approveRequest(request.id, hr).status, "Pending Line Manager");
+  assert.ok(service.getPendingRequestsForManager(manager).some((item) => item.id === request.id));
+  assert.equal(service.approveRequest(request.id, manager).status, "Approved");
+  const accounts: ActorContext = {
+    actor: {
+      userId: "user-mariam",
+      employeeId: "employee-mariam",
+      displayName: "Mariam Said",
+      activeRole: "Accounts",
+      roles: ["Employee", "Accounts"],
+    },
+  };
+  assert.equal(
+    service.getPayrollLeaveRequests(accounts).find((item) => item.id === request.id)?.policySnapshot
+      .noticeException,
+    undefined,
   );
 });
 

@@ -282,6 +282,14 @@ function LeaveAdminContent() {
                               req,
                               policies.find((p) => p.id === req.policyId),
                             )}
+                            {req.policySnapshot.noticeException && (
+                              <Badge
+                                variant="outline"
+                                className="ml-2 border-amber-300 text-amber-800"
+                              >
+                                Special request
+                              </Badge>
+                            )}
                           </TableCell>
                           <TableCell>
                             <Badge
@@ -301,7 +309,12 @@ function LeaveAdminContent() {
                                           : "secondary"
                               }
                             >
-                              {req.status}
+                              {req.policySnapshot.noticeException && req.status === "Pending HR"
+                                ? "Awaiting Riccardo and HR"
+                                : req.policySnapshot.noticeException &&
+                                    req.status === "Pending Line Manager"
+                                  ? "Awaiting line manager"
+                                  : req.status}
                             </Badge>
                           </TableCell>
                           <TableCell
@@ -309,6 +322,7 @@ function LeaveAdminContent() {
                             title={
                               req.refusalReason ||
                               req.cancellationReason ||
+                              req.policySnapshot.noticeException?.reason ||
                               leaveDisplayReason(req.reason)
                             }
                           >
@@ -319,6 +333,10 @@ function LeaveAdminContent() {
                             ) : req.status === "Cancellation Pending" ? (
                               <span className="text-amber-600 font-medium">
                                 Cancel: {req.cancellationReason}
+                              </span>
+                            ) : req.policySnapshot.noticeException && !req.pendingAmendment ? (
+                              <span className="text-amber-800 font-medium">
+                                Special request: {req.policySnapshot.noticeException.reason}
                               </span>
                             ) : (
                               leaveDisplayReason(req.reason) || "—"

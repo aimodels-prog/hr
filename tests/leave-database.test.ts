@@ -445,6 +445,108 @@ test(
       const [restored] = await sql`SELECT balance_days FROM leave_balances WHERE id = ${balanceId}`;
       assert.equal(Number(restored?.balance_days), updatedYearEntitlement);
 
+      // Short-notice leave is an explicit exception request, never an automatic refusal.
+      const countryManagerPositionId = randomUUID();
+      await sql`INSERT INTO positions (id, organisation_id, name, code, is_active, order_index,
+        created_by, updated_by) VALUES (${countryManagerPositionId}, ${organisationId},
+        'Country Manager', 'CM', true, 2, ${hrUserId}, ${hrUserId})`;
+      await sql`UPDATE employees SET position_id=${countryManagerPositionId}
+        WHERE id=${colleagueEmployeeId}`;
+      await sql`UPDATE employees SET work_email='r.centonze@via-int.com'
+        WHERE id=${colleagueEmployeeId}`;
+      await sql`UPDATE users SET workspace_email='r.centonze@via-int.com'
+        WHERE id=${colleagueUserId}`;
+      await sql`UPDATE leave_policies SET notice_rules=${sql.json({
+        enabled: true,
+        shortLeaveMaxDays: 5,
+        shortLeaveNoticeDays: 120,
+        longLeaveNoticeDays: 120,
+      })} WHERE id=${annualPolicyId}`;
+      const specialInput = {
+        employeeId,
+        policyId: annualPolicyId,
+        startDate: isoDate(start),
+        endDate: isoDate(start),
+        reason: "",
+        handoverContactId: colleagueEmployeeId,
+      };
+      await assert.rejects(
+        createLeaveRequestInDatabase(organisationId, specialInput, employeeActor),
+        /Choose the special request option/,
+      );
+      await assert.rejects(
+        createLeaveRequestInDatabase(
+          organisationId,
+          { ...specialInput, noticeExceptionReason: "short" },
+          employeeActor,
+        ),
+        /at least 10 characters/,
+      );
+      const specialId = await createLeaveRequestInDatabase(
+        organisationId,
+        { ...specialInput, noticeExceptionReason: "Urgent family appointment" },
+        employeeActor,
+      );
+      const specialRequest = (
+        await listLeaveSnapshotForActor(organisationId, employeeActor)
+      ).requests.find((item) => item.id === specialId);
+      assert.equal(specialRequest?.status, "Pending HR");
+      assert.equal(specialRequest?.policySnapshot.noticeException?.requiredDays, 120);
+      assert.equal(
+        specialRequest?.policySnapshot.noticeException?.countryManagerEmployeeId,
+        colleagueEmployeeId,
+      );
+      assert.equal(
+        specialRequest?.policySnapshot.noticeException?.reason,
+        "Urgent family appointment",
+      );
+      const [specialCountryManagerNotice] = await sql`SELECT title FROM notifications
+        WHERE link->>'entityId'=${specialId} AND recipient_user_id=${colleagueUserId}`;
+      assert.match(specialCountryManagerNotice.title, /Short-notice leave exception/);
+      const [prematureManagerNotice] = await sql`SELECT count(*)::int AS count FROM notifications
+        WHERE link->>'entityId'=${specialId} AND recipient_user_id=${managerUserId}`;
+      assert.equal(prematureManagerNotice.count, 0);
+      await assert.rejects(
+        approveLeaveRequestInDatabase(organisationId, specialId, managerActor, "approve"),
+        /assigned approver/,
+      );
+      const countryManagerActor = actor(colleagueUserId, colleagueEmployeeId, "Employee");
+      await approveLeaveRequestInDatabase(
+        organisationId,
+        specialId,
+        countryManagerActor,
+        "approve",
+      );
+      assert.equal(
+        (await listLeaveSnapshotForActor(organisationId, hrActor)).requests.find(
+          (item) => item.id === specialId,
+        )?.status,
+        "Pending HR",
+      );
+      await approveLeaveRequestInDatabase(organisationId, specialId, hrActor, "approve");
+      assert.equal(
+        (await listLeaveSnapshotForActor(organisationId, managerActor)).requests.find(
+          (item) => item.id === specialId,
+        )?.status,
+        "Pending Line Manager",
+      );
+      const [finalManagerNotice] = await sql`SELECT title FROM notifications
+        WHERE link->>'entityId'=${specialId} AND recipient_user_id=${managerUserId}`;
+      assert.match(finalManagerNotice.title, /line manager/);
+      await approveLeaveRequestInDatabase(
+        organisationId,
+        specialId,
+        managerActor,
+        "decline",
+        "Unable to accommodate this date",
+      );
+      await sql`UPDATE leave_policies SET notice_rules=${sql.json({
+        enabled: true,
+        shortLeaveMaxDays: 5,
+        shortLeaveNoticeDays: 14,
+        longLeaveNoticeDays: 60,
+      })} WHERE id=${annualPolicyId}`;
+
       // Old or incorrectly configured statutory policies must still enforce nationality.
       const statutoryPolicyIds: string[] = [];
       for (const type of ["Exam", "AccompanyPatient", "Hajj"]) {

@@ -275,6 +275,7 @@ const CreateLeave = z
     startDate: z.string().date(),
     endDate: z.string().date(),
     reason: z.string().trim().max(2000).default(""),
+    noticeExceptionReason: z.string().trim().max(2000).optional(),
     isHalfDay: z.boolean().optional(),
     handoverContactId: z.string().uuid().optional(),
     attachmentFileId: z.string().uuid().optional(),
@@ -316,6 +317,9 @@ export const createLeaveRequestFn = createServerFn({ method: "POST" })
           startDate: data.startDate,
           endDate: data.endDate,
           reason: data.reason,
+          ...(data.noticeExceptionReason
+            ? { noticeExceptionReason: data.noticeExceptionReason }
+            : {}),
           ...(data.isHalfDay !== undefined ? { isHalfDay: data.isHalfDay } : {}),
           ...(data.handoverContactId ? { handoverContactId: data.handoverContactId } : {}),
           ...(uploadedFileId ? { attachmentFileId: uploadedFileId } : {}),

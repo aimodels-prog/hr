@@ -487,6 +487,9 @@ function LeaveBalancesRoute() {
                             Up to {policy.noticeRules.shortLeaveMaxDays} days:{" "}
                             {policy.noticeRules.shortLeaveNoticeDays}-day notice. Longer:{" "}
                             {policy.noticeRules.longLeaveNoticeDays}-day notice.
+                            <span className="block">
+                              Shorter notice can be sent for special approval.
+                            </span>
                           </span>
                         ) : (
                           <span>No advance-notice rule</span>
@@ -623,11 +626,13 @@ function LeaveBalancesRoute() {
                       const reason =
                         request.status === "Automatically Refused"
                           ? request.refusalReason
-                          : request.status === "Cancellation Pending"
-                            ? `Cancellation: ${request.cancellationReason}`
-                            : request.status.startsWith("Amendment") && request.pendingAmendment
-                              ? `Date change: ${request.pendingAmendment.proposedStartDate} to ${request.pendingAmendment.proposedEndDate}. ${request.pendingAmendment.reason}`
-                              : leaveDisplayReason(request.reason) || "—";
+                          : request.policySnapshot.noticeException && !request.pendingAmendment
+                            ? `Special request: ${request.policySnapshot.noticeException.reason}`
+                            : request.status === "Cancellation Pending"
+                              ? `Cancellation: ${request.cancellationReason}`
+                              : request.status.startsWith("Amendment") && request.pendingAmendment
+                                ? `Date change: ${request.pendingAmendment.proposedStartDate} to ${request.pendingAmendment.proposedEndDate}. ${request.pendingAmendment.reason}`
+                                : leaveDisplayReason(request.reason) || "—";
                       return (
                         <TableRow key={request.id}>
                           <TableCell className="whitespace-nowrap">
@@ -635,12 +640,30 @@ function LeaveBalancesRoute() {
                             {request.startDate !== request.endDate &&
                               ` – ${formatDate(request.endDate)}`}
                           </TableCell>
-                          <TableCell>{leaveDisplayType(request, policy)}</TableCell>
+                          <TableCell>
+                            {leaveDisplayType(request, policy)}
+                            {request.policySnapshot.noticeException && (
+                              <Badge
+                                variant="outline"
+                                className="ml-2 border-amber-300 text-amber-800"
+                              >
+                                Special request
+                              </Badge>
+                            )}
+                          </TableCell>
                           <TableCell className="text-right font-medium tabular-nums">
                             {formatDays(request.workingDaysRequested)}
                           </TableCell>
                           <TableCell>
-                            <Badge variant={requestVariant(request.status)}>{request.status}</Badge>
+                            <Badge variant={requestVariant(request.status)}>
+                              {request.policySnapshot.noticeException &&
+                              request.status === "Pending HR"
+                                ? "Awaiting Riccardo and HR"
+                                : request.policySnapshot.noticeException &&
+                                    request.status === "Pending Line Manager"
+                                  ? "Awaiting line manager"
+                                  : request.status}
+                            </Badge>
                           </TableCell>
                           <TableCell className="max-w-64 truncate text-muted-foreground">
                             {reason}
