@@ -737,7 +737,7 @@ const ImportCandidateRow = z.object({
   acceptedSalary: z.string().max(200).optional(),
   remarks: z.string().max(5000).optional(),
   source: z.string().max(200).optional(),
-  originalImportValues: z.record(z.string()).optional(),
+  originalImportValues: z.record(z.string(), z.string()).optional(),
   resolution: z.enum(["create", "merge", "skip", "create_separate"]),
   existingCandidateId: z.string().uuid().optional(),
 });

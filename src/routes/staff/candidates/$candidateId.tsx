@@ -113,7 +113,7 @@ const recruitmentDetailsSchema = z.object({
   phone: z.string().min(1, "Contact number is required"),
   currentTitle: z.string().optional(),
   currentCompany: z.string().optional(),
-  yearsOfExperience: z.coerce.number().min(0, "Experience cannot be negative"),
+  yearsOfExperience: z.coerce.number<number>().min(0, "Experience cannot be negative"),
   nationality: z.string().optional(),
   location: z.string().min(1, "Location is required"),
   projectId: z.string().optional(),
