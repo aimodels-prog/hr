@@ -113,7 +113,7 @@ const recruitmentDetailsSchema = z.object({
   phone: z.string().min(1, "Contact number is required"),
   currentTitle: z.string().optional(),
   currentCompany: z.string().optional(),
-  yearsOfExperience: z.coerce.number().min(0, "Experience cannot be negative"),
+  yearsOfExperience: z.number().min(0, "Experience cannot be negative"),
   nationality: z.string().optional(),
   location: z.string().min(1, "Location is required"),
   projectId: z.string().optional(),
@@ -946,7 +946,19 @@ function CandidateProfile({
                                 <FormItem>
                                   <FormLabel>Experience (Years)</FormLabel>
                                   <FormControl>
-                                    <Input type="number" min="0" step="0.5" {...field} />
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      step="0.5"
+                                      {...field}
+                                      onChange={(event) =>
+                                        field.onChange(
+                                          event.target.value === ""
+                                            ? NaN
+                                            : Number(event.target.value),
+                                        )
+                                      }
+                                    />
                                   </FormControl>
                                   <FormMessage />
                                 </FormItem>

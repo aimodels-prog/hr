@@ -60,7 +60,7 @@ const formSchema = z
     location: z.string().min(1, "Location is required"),
     currentCompany: z.string().optional(),
     currentTitle: z.string().optional(),
-    yearsOfExperience: z.coerce.number().min(0, "Must be zero or more"),
+    yearsOfExperience: z.number().min(0, "Must be zero or more"),
     recommenderType: z.enum([
       "Agency",
       "Employee Referral",
@@ -475,7 +475,16 @@ function RecommendCandidate() {
                   <FormItem>
                     <FormLabel>Years of Experience</FormLabel>
                     <FormControl>
-                      <Input type="number" min={0} {...field} />
+                      <Input
+                        type="number"
+                        min={0}
+                        {...field}
+                        onChange={(event) =>
+                          field.onChange(
+                            event.target.value === "" ? NaN : Number(event.target.value),
+                          )
+                        }
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

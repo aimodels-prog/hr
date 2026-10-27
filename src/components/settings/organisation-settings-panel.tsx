@@ -25,9 +25,9 @@ const orgSchema = z.object({
   organisationName: z.string().min(1, "Required"),
   timezone: z.string().min(1, "Required"),
   baseCurrency: z.string().min(1, "Required"),
-  standardDailyHours: z.coerce.number().min(1).max(24),
-  standardWeeklyHours: z.coerce.number().min(1).max(168),
-  probationDurationMonths: z.coerce.number().int().min(0).max(36),
+  standardDailyHours: z.number().min(1).max(24),
+  standardWeeklyHours: z.number().min(1).max(168),
+  probationDurationMonths: z.number().int().min(0).max(36),
   leaveYearStart: z.string().min(1, "Format MM-DD"),
   leaveYearEnd: z.string().min(1, "Format MM-DD"),
 });
@@ -167,7 +167,16 @@ export function OrganisationSettingsPanel() {
                     <FormItem>
                       <FormLabel>Standard Daily Hours</FormLabel>
                       <FormControl>
-                        <Input type="number" step="0.25" {...field} />
+                        <Input
+                          type="number"
+                          step="0.25"
+                          {...field}
+                          onChange={(event) =>
+                            field.onChange(
+                              event.target.value === "" ? NaN : Number(event.target.value),
+                            )
+                          }
+                        />
                       </FormControl>
                       <p className="text-xs text-muted-foreground">
                         Working time only, excluding breaks. Shared with attendance and timesheets.
@@ -183,7 +192,15 @@ export function OrganisationSettingsPanel() {
                     <FormItem>
                       <FormLabel>Standard Weekly Hours</FormLabel>
                       <FormControl>
-                        <Input type="number" {...field} />
+                        <Input
+                          type="number"
+                          {...field}
+                          onChange={(event) =>
+                            field.onChange(
+                              event.target.value === "" ? NaN : Number(event.target.value),
+                            )
+                          }
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -196,7 +213,17 @@ export function OrganisationSettingsPanel() {
                     <FormItem>
                       <FormLabel>Standard Probation (Months)</FormLabel>
                       <FormControl>
-                        <Input type="number" min={0} max={36} {...field} />
+                        <Input
+                          type="number"
+                          min={0}
+                          max={36}
+                          {...field}
+                          onChange={(event) =>
+                            field.onChange(
+                              event.target.value === "" ? NaN : Number(event.target.value),
+                            )
+                          }
+                        />
                       </FormControl>
                       <p className="text-xs text-muted-foreground">
                         This controls employment probation only. Leave waiting periods are managed
