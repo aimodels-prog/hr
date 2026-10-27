@@ -1,6 +1,7 @@
 import "@tanstack/react-start/server-only";
 import { employeeDocumentLink } from "../../data/document-links.ts";
 import { getEmployeeRequirements } from "./document-requirements.repository.server.ts";
+import { completeMatchingOnboardingDocumentTasksInTransaction } from "./core-hr-lifecycle.repository.server.ts";
 import { validateDocumentAnswers, standardDocumentKeys } from "../../data/document-requirements.ts";
 import { assertHrDocumentWrite } from "../../data/hr-owned-fields.ts";
 import {
@@ -389,6 +390,16 @@ export async function decideEmployeeDocumentInDatabase(
           recordVersion: sql`${employeeDocuments.recordVersion} + 1`,
         })
         .where(eq(employeeDocuments.id, documentId));
+    if (decision === "verify" && !isIdentityCorrection && !document.dependantId) {
+      await completeMatchingOnboardingDocumentTasksInTransaction(
+        tx,
+        organisationId,
+        document.employeeId,
+        document.type,
+        document.fileId,
+        actor,
+      );
+    }
     await tx.insert(auditEvents).values({
       organisationId,
       actorUserId: actor.userId,
@@ -613,6 +624,8 @@ export async function uploadEmployeeDocumentToDatabase(
     issuingCountry?: string;
     notes?: string;
     visibility?: "Public" | "Restricted";
+    /** The dedicated onboarding form completes its selected task itself. */
+    skipOnboardingTaskSync?: boolean;
   },
   actor: AuditActorContext,
 ): Promise<string> {
@@ -778,6 +791,16 @@ export async function uploadEmployeeDocumentToDatabase(
         createdBy: actor.userId,
         reason: "Initial employee document upload",
       } as typeof documentVersions.$inferInsert);
+      if (!input.dependantId && !input.skipOnboardingTaskSync) {
+        await completeMatchingOnboardingDocumentTasksInTransaction(
+          tx,
+          organisationId,
+          input.employeeId,
+          input.type,
+          fileId,
+          actor,
+        );
+      }
       await tx.insert(auditEvents).values({
         organisationId,
         actorUserId: actor.userId,

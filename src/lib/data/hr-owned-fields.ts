@@ -1,8 +1,13 @@
 export function isHrOwnedSetupTask(task: {
+  ownerRole?: string | null;
   selfServiceFormKey?: string | null;
   documentType?: string | null;
 }) {
-  return task.selfServiceFormKey === "employment_details" || task.documentType === "work_permit";
+  return (
+    (task.ownerRole === "HR" && task.selfServiceFormKey === "document_upload") ||
+    task.selfServiceFormKey === "employment_details" ||
+    task.documentType === "work_permit"
+  );
 }
 
 export function canSeeEmploymentDetails(status: string | undefined, role: string) {

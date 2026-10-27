@@ -10,6 +10,16 @@ import {
 test("HR-owned tasks are not employee setup requirements", () => {
   assert.equal(isHrOwnedSetupTask({ selfServiceFormKey: "employment_details" }), true);
   assert.equal(isHrOwnedSetupTask({ documentType: "visa" }), false);
+  assert.equal(
+    isHrOwnedSetupTask({
+      ownerRole: "HR",
+      selfServiceFormKey: "document_upload",
+      documentType: "visa",
+    }),
+    true,
+  );
+  assert.equal(isHrOwnedSetupTask({ ownerRole: "Employee", documentType: "visa" }), false);
+  assert.equal(isHrOwnedSetupTask({ ownerRole: "HR", documentType: "contract" }), false);
   assert.equal(isHrOwnedSetupTask({ documentType: "work_permit" }), true);
   assert.equal(isHrOwnedSetupTask({ selfServiceFormKey: "personal_details" }), false);
   assert.equal(isHrOwnedSetupTask({ documentType: "passport" }), false);

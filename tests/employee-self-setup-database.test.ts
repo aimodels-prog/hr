@@ -220,6 +220,10 @@ test(
       assert.equal(linked?.line_manager_id, null);
       assert.equal(linked?.proposed_line_manager_email, managerEmail);
 
+      // Bulk-confirmed profiles can have a stale HR checklist task; confirmation repairs it.
+      await sql`UPDATE onboarding_tasks SET status='Pending', completed_at=NULL, completed_by=NULL
+        WHERE id=${employmentTask!.id}`;
+
       await assert.rejects(
         createLeaveRequestInDatabase(
           organisationId,
@@ -264,6 +268,10 @@ test(
       assert.ok(managerRoles.some((row) => row.code === "Line Manager"));
       assert.ok(managerRoles.some((row) => row.code === "Employee"));
       assert.equal(confirmedEmployment?.employment_confirmation_status, "Confirmed");
+      const [confirmedTask] = await sql`
+        SELECT status FROM onboarding_tasks WHERE id=${employmentTask!.id}
+      `;
+      assert.equal(confirmedTask?.status, "Completed");
       assert.equal(confirmedEmployment?.proposed_employment_details, null);
       assert.equal(confirmedEmployment?.proposed_line_manager_email, null);
       const expectedProbation = new Date(`${dateAfter(0)}T00:00:00Z`);

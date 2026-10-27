@@ -494,6 +494,13 @@ test(
       const passport = employeeDocuments.find((document) => document.id === passportId);
       assert.equal(passport?.documentNumber, "P-TEST-100");
       assert.equal(passport?.status, "Pending Verification");
+      const uploadedPassportTask = (
+        await listCoreHrLifecycleForActor(organisationId, actor)
+      ).onboardingCases
+        .find((item) => item.id === onboardingCaseId)
+        ?.tasks.find((task) => task.templateTaskId === "passport-copy");
+      assert.equal(uploadedPassportTask?.status, "Completed");
+      assert.equal(uploadedPassportTask.evidenceFileId, passport.fileId);
       assert.equal(
         (await listEmployeesForOrganisation(organisationId)).find(
           (p) => p.id === created.employeeId,

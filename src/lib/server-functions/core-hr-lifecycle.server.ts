@@ -414,6 +414,7 @@ export const completeOnboardingDocumentTaskFn = createServerFn({ method: "POST" 
           ...(data.issuingAuthority ? { issuingAuthority: data.issuingAuthority } : {}),
           ...(data.notes ? { notes: data.notes } : {}),
           visibility: "Restricted",
+          skipOnboardingTaskSync: true,
         },
         verified.actor,
       );

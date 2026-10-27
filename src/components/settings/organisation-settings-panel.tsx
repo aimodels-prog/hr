@@ -25,9 +25,9 @@ const orgSchema = z.object({
   organisationName: z.string().min(1, "Required"),
   timezone: z.string().min(1, "Required"),
   baseCurrency: z.string().min(1, "Required"),
-  standardDailyHours: z.coerce.number<number>().min(1).max(24),
-  standardWeeklyHours: z.coerce.number<number>().min(1).max(168),
-  probationDurationMonths: z.coerce.number<number>().int().min(0).max(36),
+  standardDailyHours: z.coerce.number().min(1).max(24),
+  standardWeeklyHours: z.coerce.number().min(1).max(168),
+  probationDurationMonths: z.coerce.number().int().min(0).max(36),
   leaveYearStart: z.string().min(1, "Format MM-DD"),
   leaveYearEnd: z.string().min(1, "Format MM-DD"),
 });

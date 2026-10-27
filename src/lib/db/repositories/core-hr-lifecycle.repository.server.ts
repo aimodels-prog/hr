@@ -1163,220 +1163,291 @@ export async function updateOnboardingTaskInDatabase(
   actor: AuditActorContext,
 ): Promise<void> {
   const db = getDatabaseClient();
-  await db.transaction(async (tx) => {
-    const [row] = await tx
-      .select({ task: onboardingTasks, lifecycle: onboardingCases, employee: employees })
-      .from(onboardingTasks)
-      .innerJoin(onboardingCases, eq(onboardingTasks.caseId, onboardingCases.id))
-      .innerJoin(employees, eq(onboardingCases.employeeId, employees.id))
+  await db.transaction((tx) => updateOnboardingTaskInTransaction(tx, organisationId, input, actor));
+}
+
+async function updateOnboardingTaskInTransaction(
+  tx: Transaction,
+  organisationId: string,
+  input: {
+    caseId: string;
+    taskId: string;
+    status: OnboardingTaskStatus;
+    evidenceFileId?: string;
+    waiverReason?: string;
+  },
+  actor: AuditActorContext,
+): Promise<void> {
+  const [row] = await tx
+    .select({ task: onboardingTasks, lifecycle: onboardingCases, employee: employees })
+    .from(onboardingTasks)
+    .innerJoin(onboardingCases, eq(onboardingTasks.caseId, onboardingCases.id))
+    .innerJoin(employees, eq(onboardingCases.employeeId, employees.id))
+    .where(
+      and(
+        eq(onboardingTasks.organisationId, organisationId),
+        eq(onboardingTasks.id, input.taskId),
+        eq(onboardingCases.id, input.caseId),
+      ),
+    )
+    .for("update")
+    .limit(1);
+  if (!row) throw new Error("Onboarding task not found.");
+  if (["Completed", "Waived"].includes(row.task.status))
+    throw new Error("This completed task is locked. Its recorded outcome cannot be overwritten.");
+  if (row.lifecycle.status !== "In Progress")
+    throw new Error("This onboarding case is not active.");
+  const explicitlyAssigned = row.task.assignedUserId === actor.userId;
+  const owns =
+    explicitlyAssigned ||
+    (row.task.ownerRole === "Employee" && row.employee.id === actor.employeeId) ||
+    (row.task.ownerRole === "Employee" &&
+      row.task.selfServiceFormKey === "document_upload" &&
+      MANAGER_ROLES.includes(actor.activeRole)) ||
+    (row.task.ownerRole === "Line Manager" &&
+      actor.activeRole === "Line Manager" &&
+      row.employee.lineManagerId === actor.employeeId) ||
+    (row.task.ownerRole === actor.activeRole &&
+      !["Employee", "Line Manager"].includes(row.task.ownerRole)) ||
+    actor.activeRole === "Super Admin";
+  if (input.status === "Waived" && !MANAGER_ROLES.includes(actor.activeRole))
+    throw new Error("Only HR or a Super Admin can waive a task.");
+  if (input.status !== "Waived" && !owns)
+    throw new Error("This task is assigned to another person or responsibility.");
+  if (input.status === "Waived" && (input.waiverReason?.trim().length ?? 0) < 5)
+    throw new Error("Explain why this task is being waived.");
+  if (
+    input.status === "Completed" &&
+    row.task.selfServiceFormKey &&
+    row.task.selfServiceFormKey !== "document_upload"
+  ) {
+    throw new Error("Complete this task through its assigned onboarding form.");
+  }
+  if (input.status === "Completed" && row.task.requiresEvidence && !input.evidenceFileId)
+    throw new Error("Upload the required evidence before completing this task.");
+  if (input.evidenceFileId) {
+    const [file] = await tx
+      .select({
+        id: fileMetadata.id,
+        ownerEntityType: fileMetadata.ownerEntityType,
+        ownerEntityId: fileMetadata.ownerEntityId,
+      })
+      .from(fileMetadata)
       .where(
         and(
-          eq(onboardingTasks.organisationId, organisationId),
-          eq(onboardingTasks.id, input.taskId),
-          eq(onboardingCases.id, input.caseId),
+          eq(fileMetadata.organisationId, organisationId),
+          eq(fileMetadata.id, input.evidenceFileId),
+          eq(fileMetadata.storageStatus, "Available"),
         ),
       )
-      .for("update")
       .limit(1);
-    if (!row) throw new Error("Onboarding task not found.");
-    if (["Completed", "Waived"].includes(row.task.status))
-      throw new Error("This completed task is locked. Its recorded outcome cannot be overwritten.");
-    if (row.lifecycle.status !== "In Progress")
-      throw new Error("This onboarding case is not active.");
-    const explicitlyAssigned = row.task.assignedUserId === actor.userId;
-    const owns =
-      explicitlyAssigned ||
-      (row.task.ownerRole === "Employee" && row.employee.id === actor.employeeId) ||
-      (row.task.ownerRole === "Line Manager" &&
-        actor.activeRole === "Line Manager" &&
-        row.employee.lineManagerId === actor.employeeId) ||
-      (row.task.ownerRole === actor.activeRole &&
-        !["Employee", "Line Manager"].includes(row.task.ownerRole)) ||
-      actor.activeRole === "Super Admin";
-    if (input.status === "Waived" && !MANAGER_ROLES.includes(actor.activeRole))
-      throw new Error("Only HR or a Super Admin can waive a task.");
-    if (input.status !== "Waived" && !owns)
-      throw new Error("This task is assigned to another person or responsibility.");
-    if (input.status === "Waived" && (input.waiverReason?.trim().length ?? 0) < 5)
-      throw new Error("Explain why this task is being waived.");
-    if (
-      input.status === "Completed" &&
-      row.task.selfServiceFormKey &&
-      row.task.selfServiceFormKey !== "document_upload"
-    ) {
-      throw new Error("Complete this task through its assigned onboarding form.");
-    }
-    if (input.status === "Completed" && row.task.requiresEvidence && !input.evidenceFileId)
-      throw new Error("Upload the required evidence before completing this task.");
-    if (input.evidenceFileId) {
-      const [file] = await tx
-        .select({
-          id: fileMetadata.id,
-          ownerEntityType: fileMetadata.ownerEntityType,
-          ownerEntityId: fileMetadata.ownerEntityId,
-        })
-        .from(fileMetadata)
-        .where(
-          and(
-            eq(fileMetadata.organisationId, organisationId),
-            eq(fileMetadata.id, input.evidenceFileId),
-            eq(fileMetadata.storageStatus, "Available"),
-          ),
-        )
-        .limit(1);
-      let belongsToCase =
-        file?.ownerEntityType === "onboarding-case" && file.ownerEntityId === input.caseId;
-      if (file?.ownerEntityType === "employee-document") {
-        const [document] = await tx
-          .select({ employeeId: employeeDocuments.employeeId })
-          .from(employeeDocuments)
-          .where(
-            and(
-              eq(employeeDocuments.organisationId, organisationId),
-              eq(employeeDocuments.id, file.ownerEntityId),
-              eq(employeeDocuments.fileId, input.evidenceFileId),
-              eq(employeeDocuments.employeeId, row.lifecycle.employeeId),
-            ),
-          )
-          .limit(1);
-        belongsToCase = Boolean(document);
-      }
-      if (!file || !belongsToCase)
-        throw new Error("The evidence file is unavailable or belongs to another case.");
-      if (file.ownerEntityType === "employee-document" && row.task.documentType) {
-        const [matchingType] = await tx
-          .select({ id: employeeDocuments.id })
-          .from(employeeDocuments)
-          .where(
-            and(
-              eq(employeeDocuments.id, file.ownerEntityId),
-              eq(
-                employeeDocuments.type,
-                row.task.documentType as (typeof employeeDocuments.$inferSelect)["type"],
-              ),
-            ),
-          )
-          .limit(1);
-        if (!matchingType) throw new Error("Upload the document type requested by this task.");
-      }
-    }
-    if (input.status === "Completed" && row.task.requiresBankDetails) {
-      const [bank] = await tx
-        .select({ id: employeeBankDetails.id })
-        .from(employeeBankDetails)
-        .where(eq(employeeBankDetails.employeeId, row.employee.id))
-        .limit(1);
-      if (!bank)
-        throw new Error("The employee must submit bank details before this task can close.");
-    }
-    if (input.status === "Completed" && row.task.verificationDocumentType) {
-      const [verifiedDocument] = await tx
-        .select({ id: employeeDocuments.id })
+    let belongsToCase =
+      file?.ownerEntityType === "onboarding-case" && file.ownerEntityId === input.caseId;
+    if (file?.ownerEntityType === "employee-document") {
+      const [document] = await tx
+        .select({ employeeId: employeeDocuments.employeeId })
         .from(employeeDocuments)
         .where(
           and(
             eq(employeeDocuments.organisationId, organisationId),
-            eq(employeeDocuments.employeeId, row.employee.id),
-            eq(
-              employeeDocuments.type,
-              row.task.verificationDocumentType as (typeof employeeDocuments.$inferSelect)["type"],
-            ),
-            eq(employeeDocuments.status, "Valid"),
-            isNull(employeeDocuments.archivedAt),
+            eq(employeeDocuments.id, file.ownerEntityId),
+            eq(employeeDocuments.fileId, input.evidenceFileId),
+            eq(employeeDocuments.employeeId, row.lifecycle.employeeId),
           ),
         )
         .limit(1);
-      if (!verifiedDocument) throw new Error("Verify the required employee document first.");
+      belongsToCase = Boolean(document);
     }
-    for (const dependencyId of row.task.dependsOnTaskIds) {
-      const [dependency] = await tx
-        .select({ status: onboardingTasks.status })
-        .from(onboardingTasks)
-        .where(and(eq(onboardingTasks.id, dependencyId), eq(onboardingTasks.caseId, input.caseId)))
+    if (!file || !belongsToCase)
+      throw new Error("The evidence file is unavailable or belongs to another case.");
+    if (file.ownerEntityType === "employee-document" && row.task.documentType) {
+      const [matchingType] = await tx
+        .select({ id: employeeDocuments.id })
+        .from(employeeDocuments)
+        .where(
+          and(
+            eq(employeeDocuments.id, file.ownerEntityId),
+            eq(
+              employeeDocuments.type,
+              row.task.documentType as (typeof employeeDocuments.$inferSelect)["type"],
+            ),
+          ),
+        )
         .limit(1);
-      if (!dependency || !["Completed", "Waived"].includes(dependency.status))
-        throw new Error("Complete this task's dependencies first.");
+      if (!matchingType) throw new Error("Upload the document type requested by this task.");
     }
-    await tx
-      .update(onboardingTasks)
-      .set({
-        status: input.status,
-        completedAt: input.status === "Completed" ? new Date().toISOString() : null,
-        completedBy: input.status === "Completed" ? actor.userId : null,
-        evidenceFileId: input.evidenceFileId ?? null,
-        waiverReason: input.status === "Waived" ? input.waiverReason!.trim() : null,
-        updatedAt: new Date(),
-        updatedBy: actor.userId,
-        recordVersion: sql`${onboardingTasks.recordVersion} + 1`,
-      })
-      .where(eq(onboardingTasks.id, input.taskId));
-    const taskRows = await tx
-      .select({
-        isMandatory: onboardingTasks.isMandatory,
-        status: onboardingTasks.status,
-        checkpoint: onboardingTasks.checkpoint,
-        ownerRole: onboardingTasks.ownerRole,
-        selfServiceFormKey: onboardingTasks.selfServiceFormKey,
-      })
-      .from(onboardingTasks)
-      .where(and(eq(onboardingTasks.caseId, input.caseId), isNull(onboardingTasks.archivedAt)));
-    const progress = taskProgress(taskRows);
-    await tx
-      .update(onboardingCases)
-      .set({
-        ...progress,
-        status: progress.progressPercentage === 100 ? "Completed" : "In Progress",
-        updatedAt: new Date(),
-        updatedBy: actor.userId,
-        recordVersion: sql`${onboardingCases.recordVersion} + 1`,
-      })
-      .where(eq(onboardingCases.id, input.caseId));
-    const selfServiceComplete = employeeSelfServiceComplete(taskRows);
-    if (selfServiceComplete && row.employee.profileSetupStatus !== "Completed") {
-      const [latestEmployee] = await tx
-        .select({
-          staffEntryType: employees.staffEntryType,
-          probationEndDate: employees.probationEndDate,
-        })
-        .from(employees)
-        .where(eq(employees.id, row.employee.id))
-        .limit(1);
-      const today = new Date().toISOString().slice(0, 10);
-      const nextStatus =
-        progress.progressPercentage === 100 && row.employee.status === "Onboarding"
-          ? latestEmployee?.staffEntryType === "New Employee" &&
-            latestEmployee.probationEndDate &&
-            latestEmployee.probationEndDate > today
-            ? "Probation"
-            : "Active"
-          : row.employee.status;
-      await tx
-        .update(employees)
-        .set({
-          status: nextStatus,
-          profileSetupStatus: "Completed",
-          profileSetupCompletedAt: new Date().toISOString(),
-          updatedAt: new Date(),
-          updatedBy: actor.userId,
-          recordVersion: sql`${employees.recordVersion} + 1`,
-        })
-        .where(eq(employees.id, row.employee.id));
-      await recordProfileSetupCompletion(tx, organisationId, row.employee, actor);
-    }
-    await tx
-      .insert(auditEvents)
-      .values(
-        auditValues(
-          organisationId,
-          actor,
-          input.status === "Waived" ? "waive" : "complete",
-          "onboarding-task",
-          input.taskId,
-          input.waiverReason?.trim() || "Updated onboarding task",
-          { caseId: input.caseId, status: input.status },
+  }
+  if (input.status === "Completed" && row.task.requiresBankDetails) {
+    const [bank] = await tx
+      .select({ id: employeeBankDetails.id })
+      .from(employeeBankDetails)
+      .where(eq(employeeBankDetails.employeeId, row.employee.id))
+      .limit(1);
+    if (!bank) throw new Error("The employee must submit bank details before this task can close.");
+  }
+  if (input.status === "Completed" && row.task.verificationDocumentType) {
+    const [verifiedDocument] = await tx
+      .select({ id: employeeDocuments.id })
+      .from(employeeDocuments)
+      .where(
+        and(
+          eq(employeeDocuments.organisationId, organisationId),
+          eq(employeeDocuments.employeeId, row.employee.id),
+          eq(
+            employeeDocuments.type,
+            row.task.verificationDocumentType as (typeof employeeDocuments.$inferSelect)["type"],
+          ),
+          eq(employeeDocuments.status, "Valid"),
+          isNull(employeeDocuments.archivedAt),
         ),
-      );
-  });
+      )
+      .limit(1);
+    if (!verifiedDocument) throw new Error("Verify the required employee document first.");
+  }
+  for (const dependencyId of row.task.dependsOnTaskIds) {
+    const [dependency] = await tx
+      .select({ status: onboardingTasks.status })
+      .from(onboardingTasks)
+      .where(and(eq(onboardingTasks.id, dependencyId), eq(onboardingTasks.caseId, input.caseId)))
+      .limit(1);
+    if (!dependency || !["Completed", "Waived"].includes(dependency.status))
+      throw new Error("Complete this task's dependencies first.");
+  }
+  await tx
+    .update(onboardingTasks)
+    .set({
+      status: input.status,
+      completedAt: input.status === "Completed" ? new Date().toISOString() : null,
+      completedBy: input.status === "Completed" ? actor.userId : null,
+      evidenceFileId: input.evidenceFileId ?? null,
+      waiverReason: input.status === "Waived" ? input.waiverReason!.trim() : null,
+      updatedAt: new Date(),
+      updatedBy: actor.userId,
+      recordVersion: sql`${onboardingTasks.recordVersion} + 1`,
+    })
+    .where(eq(onboardingTasks.id, input.taskId));
+  const taskRows = await tx
+    .select({
+      isMandatory: onboardingTasks.isMandatory,
+      status: onboardingTasks.status,
+      checkpoint: onboardingTasks.checkpoint,
+      ownerRole: onboardingTasks.ownerRole,
+      selfServiceFormKey: onboardingTasks.selfServiceFormKey,
+    })
+    .from(onboardingTasks)
+    .where(and(eq(onboardingTasks.caseId, input.caseId), isNull(onboardingTasks.archivedAt)));
+  const progress = taskProgress(taskRows);
+  await tx
+    .update(onboardingCases)
+    .set({
+      ...progress,
+      status: progress.progressPercentage === 100 ? "Completed" : "In Progress",
+      updatedAt: new Date(),
+      updatedBy: actor.userId,
+      recordVersion: sql`${onboardingCases.recordVersion} + 1`,
+    })
+    .where(eq(onboardingCases.id, input.caseId));
+  const selfServiceComplete = employeeSelfServiceComplete(taskRows);
+  if (selfServiceComplete && row.employee.profileSetupStatus !== "Completed") {
+    const [latestEmployee] = await tx
+      .select({
+        staffEntryType: employees.staffEntryType,
+        probationEndDate: employees.probationEndDate,
+      })
+      .from(employees)
+      .where(eq(employees.id, row.employee.id))
+      .limit(1);
+    const today = new Date().toISOString().slice(0, 10);
+    const nextStatus =
+      progress.progressPercentage === 100 && row.employee.status === "Onboarding"
+        ? latestEmployee?.staffEntryType === "New Employee" &&
+          latestEmployee.probationEndDate &&
+          latestEmployee.probationEndDate > today
+          ? "Probation"
+          : "Active"
+        : row.employee.status;
+    await tx
+      .update(employees)
+      .set({
+        status: nextStatus,
+        profileSetupStatus: "Completed",
+        profileSetupCompletedAt: new Date().toISOString(),
+        updatedAt: new Date(),
+        updatedBy: actor.userId,
+        recordVersion: sql`${employees.recordVersion} + 1`,
+      })
+      .where(eq(employees.id, row.employee.id));
+    await recordProfileSetupCompletion(tx, organisationId, row.employee, actor);
+  }
+  await tx
+    .insert(auditEvents)
+    .values(
+      auditValues(
+        organisationId,
+        actor,
+        input.status === "Waived" ? "waive" : "complete",
+        "onboarding-task",
+        input.taskId,
+        input.waiverReason?.trim() || "Updated onboarding task",
+        { caseId: input.caseId, status: input.status },
+      ),
+    );
+}
+
+/** A normal Documents upload also satisfies its matching employee setup upload task. */
+export async function completeMatchingOnboardingDocumentTasksInTransaction(
+  tx: Transaction,
+  organisationId: string,
+  employeeId: string,
+  documentType: string,
+  fileId: string,
+  actor: AuditActorContext,
+): Promise<void> {
+  const matches = await tx
+    .select({
+      caseId: onboardingCases.id,
+      taskId: onboardingTasks.id,
+      ownerRole: onboardingTasks.ownerRole,
+      dependsOnTaskIds: onboardingTasks.dependsOnTaskIds,
+    })
+    .from(onboardingTasks)
+    .innerJoin(onboardingCases, eq(onboardingTasks.caseId, onboardingCases.id))
+    .where(
+      and(
+        eq(onboardingTasks.organisationId, organisationId),
+        eq(onboardingCases.employeeId, employeeId),
+        eq(onboardingCases.status, "In Progress"),
+        eq(onboardingTasks.status, "Pending"),
+        eq(onboardingTasks.selfServiceFormKey, "document_upload"),
+        eq(onboardingTasks.documentType, documentType),
+        isNull(onboardingTasks.archivedAt),
+      ),
+    );
+  for (const task of matches) {
+    if (task.ownerRole !== "Employee" && !MANAGER_ROLES.includes(actor.activeRole)) continue;
+    if (task.dependsOnTaskIds.length) {
+      const dependencies = await tx
+        .select({ id: onboardingTasks.id, status: onboardingTasks.status })
+        .from(onboardingTasks)
+        .where(
+          and(
+            eq(onboardingTasks.caseId, task.caseId),
+            inArray(onboardingTasks.id, task.dependsOnTaskIds),
+          ),
+        );
+      if (
+        dependencies.length !== task.dependsOnTaskIds.length ||
+        dependencies.some((dependency) => !["Completed", "Waived"].includes(dependency.status))
+      )
+        continue;
+    }
+    await updateOnboardingTaskInTransaction(
+      tx,
+      organisationId,
+      { caseId: task.caseId, taskId: task.taskId, status: "Completed", evidenceFileId: fileId },
+      actor,
+    );
+  }
 }
 
 export async function saveOnboardingSelfServiceInDatabase(
@@ -2064,6 +2135,57 @@ export async function decideEmploymentDetailsInDatabase(
         proposed.locationId,
         today,
       );
+      const confirmedTasks = await tx
+        .update(onboardingTasks)
+        .set({
+          status: "Completed",
+          completedAt: new Date().toISOString(),
+          completedBy: actor.userId,
+          updatedAt: new Date(),
+          updatedBy: actor.userId,
+          recordVersion: sql`${onboardingTasks.recordVersion} + 1`,
+        })
+        .where(
+          and(
+            eq(onboardingTasks.organisationId, organisationId),
+            eq(onboardingTasks.selfServiceFormKey, "employment_details"),
+            eq(onboardingTasks.status, "Pending"),
+            inArray(
+              onboardingTasks.caseId,
+              tx
+                .select({ id: onboardingCases.id })
+                .from(onboardingCases)
+                .where(
+                  and(
+                    eq(onboardingCases.employeeId, employee.id),
+                    eq(onboardingCases.status, "In Progress"),
+                  ),
+                ),
+            ),
+          ),
+        )
+        .returning({ caseId: onboardingTasks.caseId });
+      for (const caseId of new Set(confirmedTasks.map((task) => task.caseId))) {
+        const taskRows = await tx
+          .select({
+            isMandatory: onboardingTasks.isMandatory,
+            status: onboardingTasks.status,
+            checkpoint: onboardingTasks.checkpoint,
+          })
+          .from(onboardingTasks)
+          .where(and(eq(onboardingTasks.caseId, caseId), isNull(onboardingTasks.archivedAt)));
+        const progress = taskProgress(taskRows);
+        await tx
+          .update(onboardingCases)
+          .set({
+            ...progress,
+            status: progress.progressPercentage === 100 ? "Completed" : "In Progress",
+            updatedAt: new Date(),
+            updatedBy: actor.userId,
+            recordVersion: sql`${onboardingCases.recordVersion} + 1`,
+          })
+          .where(eq(onboardingCases.id, caseId));
+      }
     }
     if (input.decision === "Changes Requested") {
       await tx
