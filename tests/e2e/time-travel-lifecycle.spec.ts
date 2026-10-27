@@ -26,6 +26,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   const suffix = Date.now().toString().slice(-6);
   const dateAfter = (days: number) =>
     new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+  const leaveDate = dateAfter(21);
   const travelStart = dateAfter(14);
   const travelEnd = dateAfter(16);
   const completedStart = dateAfter(-16);
@@ -43,7 +44,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   await expect(page.getByText("VIA HR System").first()).toBeVisible();
 
   const records = await page.evaluate(
-    async ({ labels, travelStart, travelEnd }) => {
+    async ({ labels, leaveDate, travelStart, travelEnd }) => {
       const { initializeApplicationData } = await import("/src/lib/data/application-data.ts");
       const { LeaveService } = await import("/src/lib/data/leave-service.ts");
       const { AttendanceService } = await import("/src/lib/data/attendance-service.ts");
@@ -87,8 +88,8 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
         {
           employeeId: "employee-omar",
           policyId: annualPolicy.id,
-          startDate: "2026-11-09",
-          endDate: "2026-11-09",
+          startDate: leaveDate,
+          endDate: leaveDate,
           reason: labels.leave,
           handoverContactId: "employee-layla",
         },
@@ -218,7 +219,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
         travelDatabaseId: travel.databaseId ?? travel.id,
       };
     },
-    { labels, travelStart, travelEnd },
+    { labels, leaveDate, travelStart, travelEnd },
   );
 
   // Supervisor decisions: the employee's actual reporting line is checked by every service.
