@@ -9,6 +9,7 @@ import { organisationLeaveYear } from "./leave-year.repository.server.ts";
 import { leaveYearForDate } from "../../data/leave-year.ts";
 import { carryExpiryDateForYear, carryPosition } from "../../data/leave-carry.ts";
 import { leaveWorkingDates } from "../../data/leave-working-days.ts";
+import { allocateSpecialUnpaidDates } from "../../data/special-leave.ts";
 import { validateSickPayTiers } from "../../data/sick-leave-payroll.ts";
 import { getLeaveEligibility, isOmaniNationality } from "../../data/leave-eligibility.ts";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
@@ -42,6 +43,8 @@ function payrollSafeLeaveSnapshot(
 ): LeaveRequest["policySnapshot"] {
   const safe = { ...snapshot };
   delete safe.noticeException;
+  if (safe.specialRequest)
+    safe.specialRequest = { ...safe.specialRequest, reason: "Special leave approved" };
   return safe;
 }
 
@@ -259,7 +262,13 @@ export async function listLeaveSnapshotForActor(
       .where(
         and(
           eq(leaveRequests.organisationId, organisationId),
-          inArray(leaveRequests.employeeId, employeeIds),
+          actor.activeRole === "Line Manager" && actor.employeeId
+            ? or(
+                inArray(leaveRequests.employeeId, employeeIds),
+                sql`${leaveRequests.policySnapshot}->'specialRequest'->>'countryManagerEmployeeId' = ${actor.employeeId}`,
+                sql`${leaveRequests.policySnapshot}->'noticeException'->>'countryManagerEmployeeId' = ${actor.employeeId}`,
+              )
+            : inArray(leaveRequests.employeeId, employeeIds),
           ...(payrollReader
             ? [inArray(leaveRequests.status, ["Approved", "Taken", "Cancellation Pending"])]
             : []),
@@ -299,11 +308,27 @@ export async function listLeaveSnapshotForActor(
         ),
       ),
   ]);
+  const requestNames = new Map(
+    (
+      await db
+        .select({ id: employees.id, name: employees.preferredName })
+        .from(employees)
+        .where(
+          and(
+            eq(employees.organisationId, organisationId),
+            inArray(employees.id, [...new Set(requestRows.map((row) => row.employeeId))]),
+          ),
+        )
+    ).map((item) => [item.id, item.name]),
+  );
   return {
     policies: policyRows.map(mapPolicy),
     requests: requestRows.map((row) => ({
       ...recordFields(row),
       employeeId: row.employeeId,
+      ...(requestNames.get(row.employeeId)
+        ? { requesterName: requestNames.get(row.employeeId)! }
+        : {}),
       policyId: row.policyId,
       startDate: row.startDate,
       endDate: row.endDate,
@@ -372,6 +397,8 @@ export async function readLeaveAttachmentInDatabase(
       fileId: leaveRequests.attachmentFileId,
       employeeId: leaveRequests.employeeId,
       lineManagerId: employees.lineManagerId,
+      policySnapshot: leaveRequests.policySnapshot,
+      status: leaveRequests.status,
     })
     .from(leaveRequests)
     .innerJoin(employees, eq(employees.id, leaveRequests.employeeId))
@@ -384,9 +411,14 @@ export async function readLeaveAttachmentInDatabase(
     )
     .limit(1);
   if (!row?.fileId) throw new Error("This leave request has no supporting attachment.");
+  const snapshot = row.policySnapshot as LeaveRequest["policySnapshot"];
   const allowed =
     row.employeeId === actor.employeeId ||
     (actor.activeRole === "Line Manager" && row.lineManagerId === actor.employeeId) ||
+    (row.status === "Pending HR" &&
+      actor.employeeId ===
+        (snapshot.specialRequest?.countryManagerEmployeeId ??
+          snapshot.noticeException?.countryManagerEmployeeId)) ||
     actor.activeRole === "HR" ||
     actor.activeRole === "Super Admin";
   if (!allowed) throw new Error("You do not have permission to open this leave attachment.");
@@ -514,6 +546,7 @@ export async function createLeaveRequestInDatabase(
     endDate: string;
     reason: string;
     noticeExceptionReason?: string;
+    specialRequestReason?: string;
     isHalfDay?: boolean;
     handoverContactId?: string;
     attachmentFileId?: string;
@@ -559,7 +592,11 @@ export async function createLeaveRequestInDatabase(
       throw new Error("HR must confirm your employment details before you can request leave.");
     if (input.endDate < input.startDate)
       throw new Error("Leave end date cannot be before the start date.");
-    if (policy.type !== "Annual" && input.reason.trim().length < 3)
+    if (
+      policy.type !== "Annual" &&
+      input.reason.trim().length < 3 &&
+      !input.specialRequestReason?.trim()
+    )
       throw new Error("Explain the reason for this leave request.");
     if (policy.requiresAttachment && !input.attachmentFileId)
       throw new Error(`Supporting evidence is required for ${policy.name}.`);
@@ -690,7 +727,8 @@ export async function createLeaveRequestInDatabase(
       )
       .limit(1);
     if (overlapping.length) throw new Error("These dates overlap another active leave request.");
-    if (policy.consumesBalance) {
+    const specialRequested = Boolean(input.specialRequestReason?.trim());
+    if (policy.consumesBalance && !specialRequested) {
       if (policy.scope === "Once Per Service") {
         const used = await tx
           .select({ id: leaveRequests.id })
@@ -738,7 +776,10 @@ export async function createLeaveRequestInDatabase(
           )
           .limit(1);
         const pendingRows = await tx
-          .select({ days: leaveRequests.workingDaysRequested })
+          .select({
+            days: leaveRequests.workingDaysRequested,
+            snapshot: leaveRequests.policySnapshot,
+          })
           .from(leaveRequests)
           .where(
             and(
@@ -761,7 +802,14 @@ export async function createLeaveRequestInDatabase(
         const projected =
           Number(balance?.days ?? 0) -
           carryReserve -
-          pendingRows.reduce((sum, row) => sum + Number(row.days), 0) -
+          pendingRows.reduce(
+            (sum, row) =>
+              sum +
+              ((row.snapshot as LeaveRequest["policySnapshot"]).specialRequest
+                ? 0
+                : Number(row.days)),
+            0,
+          ) -
           days;
         const minimum = policy.allowNegativeBalance ? -Number(policy.maxNegativeBalance ?? 0) : 0;
         if (projected < minimum)
@@ -776,38 +824,39 @@ export async function createLeaveRequestInDatabase(
           input.startDate,
           siteVisitLocalNow(settings.timezone).date,
         );
-    if (notice && !input.noticeExceptionReason?.trim())
+    if (notice && !input.noticeExceptionReason?.trim() && !input.specialRequestReason?.trim())
       throw new Error(
         `This leave normally requires ${notice.requiredDays} days' notice. Choose the special request option and explain why shorter notice is needed.`,
       );
-    const countryManagers = notice
-      ? await tx
-          .select({
-            employeeId: employees.id,
-            userId: users.id,
-            workEmail: employees.workEmail,
-            portalEmail: users.workspaceEmail,
-          })
-          .from(employees)
-          .innerJoin(positions, eq(positions.id, employees.positionId))
-          .innerJoin(
-            users,
-            and(
-              eq(users.employeeId, employees.id),
-              eq(users.organisationId, organisationId),
-              eq(users.status, "Active"),
-              isNull(users.archivedAt),
-            ),
-          )
-          .where(
-            and(
-              eq(employees.organisationId, organisationId),
-              inArray(employees.status, ["Active", "Probation", "Notice"]),
-              isNull(employees.archivedAt),
-              sql`lower(btrim(${positions.name})) IN ('country manager', 'country manager oman')`,
-            ),
-          )
-      : [];
+    const countryManagers =
+      notice || specialRequested
+        ? await tx
+            .select({
+              employeeId: employees.id,
+              userId: users.id,
+              workEmail: employees.workEmail,
+              portalEmail: users.workspaceEmail,
+            })
+            .from(employees)
+            .innerJoin(positions, eq(positions.id, employees.positionId))
+            .innerJoin(
+              users,
+              and(
+                eq(users.employeeId, employees.id),
+                eq(users.organisationId, organisationId),
+                eq(users.status, "Active"),
+                isNull(users.archivedAt),
+              ),
+            )
+            .where(
+              and(
+                eq(employees.organisationId, organisationId),
+                inArray(employees.status, ["Active", "Probation", "Notice"]),
+                isNull(employees.archivedAt),
+                sql`lower(btrim(${positions.name})) IN ('country manager', 'country manager oman')`,
+              ),
+            )
+        : [];
     const designatedEmail = (
       process.env["VIA_HR_SPECIAL_LEAVE_APPROVER_EMAIL"] || "r.centonze@via-int.com"
     )
@@ -818,34 +867,42 @@ export async function createLeaveRequestInDatabase(
         item.workEmail.toLowerCase() === designatedEmail ||
         item.portalEmail.toLowerCase() === designatedEmail,
     );
-    if (notice && matchingCountryManagers.length !== 1)
+    if ((notice || specialRequested) && matchingCountryManagers.length !== 1)
       throw new Error(
         "Ask HR to confirm Riccardo's active Country Manager account for special leave approvals.",
       );
     const countryManager = matchingCountryManagers[0];
-    if (notice && countryManager?.employeeId === employee.id)
+    if ((notice || specialRequested) && countryManager?.employeeId === employee.id)
       throw new Error("Ask HR to arrange an independent approver for your special leave request.");
-    const hrRecipients = notice
-      ? await tx
-          .selectDistinct({ id: users.id })
-          .from(users)
-          .innerJoin(userRoles, eq(userRoles.userId, users.id))
-          .innerJoin(roles, eq(roles.id, userRoles.roleId))
-          .where(
-            and(
-              eq(users.organisationId, organisationId),
-              eq(users.status, "Active"),
-              eq(roles.code, "HR"),
-              sql`${users.employeeId} <> ${employee.id}`,
-            ),
-          )
-      : [];
-    if (notice && !hrRecipients.length)
+    const hrRecipients =
+      notice || specialRequested
+        ? await tx
+            .selectDistinct({ id: users.id })
+            .from(users)
+            .innerJoin(userRoles, eq(userRoles.userId, users.id))
+            .innerJoin(roles, eq(roles.id, userRoles.roleId))
+            .where(
+              and(
+                eq(users.organisationId, organisationId),
+                eq(users.status, "Active"),
+                eq(roles.code, "HR"),
+                sql`${users.employeeId} <> ${employee.id}`,
+              ),
+            )
+        : [];
+    if ((notice || specialRequested) && !hrRecipients.length)
       throw new Error("Ask HR to activate an HR approver before sending a special leave request.");
-    const noticeException = notice
+    const noticeException =
+      notice && !specialRequested
+        ? {
+            ...notice,
+            reason: validateLeaveNoticeException(input.noticeExceptionReason),
+            countryManagerEmployeeId: countryManager!.employeeId,
+          }
+        : undefined;
+    const specialRequest = specialRequested
       ? {
-          ...notice,
-          reason: validateLeaveNoticeException(input.noticeExceptionReason),
+          reason: validateLeaveNoticeException(input.specialRequestReason),
           countryManagerEmployeeId: countryManager!.employeeId,
         }
       : undefined;
@@ -859,24 +916,31 @@ export async function createLeaveRequestInDatabase(
       endDate: input.endDate,
       isHalfDay: input.isHalfDay ?? false,
       workingDaysRequested: String(days),
-      reason: input.reason.trim() || "Annual leave requested",
+      reason: input.reason.trim() || input.specialRequestReason?.trim() || "Annual leave requested",
       handoverContactId: input.handoverContactId,
       attachmentFileId: input.attachmentFileId,
       status,
-      chainApprovals: noticeException
+      chainApprovals: specialRequest
         ? [
+            { role: "Line Manager", status: "Pending" },
             { role: "Country Manager", status: "Pending" },
             { role: "HR", status: "Pending" },
-            { role: "Line Manager", status: "Pending" },
           ]
-        : [
-            { role: "Line Manager", status: "Pending" },
-            { role: "HR", status: "Pending" },
-          ],
+        : noticeException
+          ? [
+              { role: "Country Manager", status: "Pending" },
+              { role: "HR", status: "Pending" },
+              { role: "Line Manager", status: "Pending" },
+            ]
+          : [
+              { role: "Line Manager", status: "Pending" },
+              { role: "HR", status: "Pending" },
+            ],
       policySnapshot: {
         workingDates,
         payTiers: validateSickPayTiers(policy.payTiers),
         ...(noticeException ? { noticeException } : {}),
+        ...(specialRequest ? { specialRequest } : {}),
         ...(backdatePermission
           ? {
               backdatePermissionId: backdatePermission.id,
@@ -912,11 +976,14 @@ export async function createLeaveRequestInDatabase(
         status,
         days,
         ...(noticeException ? { noticeException } : {}),
+        ...(specialRequest ? { specialRequest } : {}),
         ...(backdatePermission ? { backdatePermissionId: backdatePermission.id } : {}),
       },
-      reason: noticeException
-        ? "Submitted a short-notice special leave request"
-        : "Submitted a leave request",
+      reason: specialRequest
+        ? "Submitted a special leave request"
+        : noticeException
+          ? "Submitted a short-notice special leave request"
+          : "Submitted a leave request",
       riskLevel: "Medium",
     } as typeof auditEvents.$inferInsert);
     if (noticeException) {
@@ -1026,6 +1093,10 @@ export async function approveLeaveRequestInDatabase(
   actor: AuditActorContext,
   decision: "approve" | "decline",
   reason?: string,
+  specialAllocation?: {
+    allocations: Array<{ policyId: string; leaveYear: number; days: number }>;
+    remainingPay: "Paid" | "Unpaid";
+  },
 ): Promise<void> {
   if (!actor.userId) throw new Error("A verified user is required for leave decisions.");
   const actorUserId = actor.userId;
@@ -1044,6 +1115,8 @@ export async function approveLeaveRequestInDatabase(
         locationId: employees.locationId,
         preferredName: employees.preferredName,
         nationality: employees.nationality,
+        gender: employees.gender,
+        startDate: employees.startDate,
       })
       .from(employees)
       .where(
@@ -1066,8 +1139,22 @@ export async function approveLeaveRequestInDatabase(
       request.status === "Amendment Pending Line Manager" ||
       request.status === "Amendment Pending HR";
     const cancellation = request.status === "Cancellation Pending";
-    const noticeException = (request.policySnapshot as LeaveRequest["policySnapshot"])
-      .noticeException;
+    const snapshot = request.policySnapshot as LeaveRequest["policySnapshot"];
+    const noticeException = snapshot.noticeException;
+    const specialRequest = snapshot.specialRequest;
+    const specialCountryStage =
+      request.status === "Pending HR" &&
+      Boolean(specialRequest) &&
+      (request.chainApprovals as LeaveRequest["chainApprovals"]).some(
+        (step) => step.role === "Country Manager" && step.status === "Pending",
+      );
+    const specialHrStage =
+      request.status === "Pending HR" &&
+      Boolean(specialRequest) &&
+      !specialCountryStage &&
+      (request.chainApprovals as LeaveRequest["chainApprovals"]).some(
+        (step) => step.role === "HR" && step.status === "Pending",
+      );
     const specialStage =
       request.status === "Pending HR" &&
       Boolean(noticeException) &&
@@ -1079,7 +1166,9 @@ export async function approveLeaveRequestInDatabase(
       request.status === "Amendment Pending Line Manager";
     const hrStage =
       request.status === "Pending HR" || request.status === "Amendment Pending HR" || cancellation;
-    const isManager = role === "Line Manager" && actor.employeeId === employee?.lineManagerId;
+    // An HR employee may also be the assigned line manager while using the HR view.
+    // Identity, not the currently selected UI role, determines this stage.
+    const isManager = Boolean(actor.employeeId) && actor.employeeId === employee?.lineManagerId;
     const specialRole = specialStage
       ? actor.employeeId === noticeException?.countryManagerEmployeeId
         ? "Country Manager"
@@ -1093,9 +1182,20 @@ export async function approveLeaveRequestInDatabase(
         )
       : undefined;
     if (
+      (specialCountryStage && actor.employeeId !== specialRequest?.countryManagerEmployeeId) ||
+      (specialHrStage && role !== "HR") ||
+      (Boolean(specialRequest) &&
+        request.status === "Pending HR" &&
+        !specialCountryStage &&
+        !specialHrStage) ||
       (specialStage && !pendingSpecialStep) ||
       (!specialStage && managerStage && !isManager) ||
-      (!specialStage && hrStage && role !== "HR" && role !== "Super Admin") ||
+      (!specialStage &&
+        !specialCountryStage &&
+        !specialHrStage &&
+        hrStage &&
+        role !== "HR" &&
+        role !== "Super Admin") ||
       (!specialStage && !managerStage && !hrStage)
     )
       throw new Error("You are not the assigned approver for this leave request.");
@@ -1118,11 +1218,15 @@ export async function approveLeaveRequestInDatabase(
       : (request.chainApprovals as LeaveRequest["chainApprovals"]);
     const chainApprovals = [...sourceApprovals];
     const currentStep = chainApprovals.find((step) =>
-      specialStage
-        ? step.role === specialRole && step.status === "Pending"
-        : managerStage
-          ? step.role === "Line Manager"
-          : step.role === "HR",
+      specialCountryStage
+        ? step.role === "Country Manager" && step.status === "Pending"
+        : specialHrStage
+          ? step.role === "HR" && step.status === "Pending"
+          : specialStage
+            ? step.role === specialRole && step.status === "Pending"
+            : managerStage
+              ? step.role === "Line Manager"
+              : step.role === "HR",
     );
     if (currentStep) {
       currentStep.status = decision === "approve" ? "Approved" : "Declined";
@@ -1162,6 +1266,8 @@ export async function approveLeaveRequestInDatabase(
       } else {
         nextStatus = "Declined";
       }
+    } else if (specialCountryStage) {
+      nextStatus = "Pending HR";
     } else if (specialStage) {
       nextStatus = chainApprovals.some(
         (step) => step.role !== "Line Manager" && step.status === "Pending",
@@ -1176,7 +1282,194 @@ export async function approveLeaveRequestInDatabase(
       }
     } else {
       nextStatus = cancellation ? "Cancellation Approved" : "Approved";
-      if (!cancellation && policy.consumesBalance && ["Annual", "Ledger"].includes(policy.scope)) {
+      if (specialRequest && !cancellation && !amendment) {
+        if (!specialHrStage || !specialAllocation)
+          throw new Error(
+            "HR must choose the balance deductions and pay treatment before final approval.",
+          );
+        const requestedDays = Number(request.workingDaysRequested);
+        const allocations = specialAllocation.allocations;
+        if (
+          allocations.some(
+            (item) =>
+              !Number.isInteger(item.leaveYear) ||
+              !Number.isFinite(item.days) ||
+              item.days <= 0 ||
+              (item.days * 2) % 1 !== 0,
+          )
+        )
+          throw new Error("Choose positive balance deductions in half-day increments.");
+        const keys = allocations.map((item) => `${item.policyId}:${item.leaveYear}`);
+        if (new Set(keys).size !== keys.length)
+          throw new Error("Choose each leave balance only once.");
+        const allocatedDays = allocations.reduce((sum, item) => sum + item.days, 0);
+        if (!Number.isFinite(allocatedDays) || allocatedDays > requestedDays)
+          throw new Error("Balance deductions cannot exceed the requested leave days.");
+        let unpaidAllocatedDays = 0;
+        for (const allocation of allocations) {
+          const [sourcePolicy] = await tx
+            .select()
+            .from(leavePolicies)
+            .where(
+              and(
+                eq(leavePolicies.organisationId, organisationId),
+                eq(leavePolicies.id, allocation.policyId),
+              ),
+            )
+            .limit(1);
+          if (
+            !sourcePolicy ||
+            !sourcePolicy.isEnabled ||
+            sourcePolicy.archivedAt ||
+            !sourcePolicy.consumesBalance ||
+            !["Annual", "Ledger"].includes(sourcePolicy.scope)
+          )
+            throw new Error("Choose an active annual or ledger leave balance for each deduction.");
+          if (Array.isArray(sourcePolicy.payTiers) && sourcePolicy.payTiers.length)
+            throw new Error(
+              "A leave type with tiered pay cannot fund a special request. Choose another balance or mark remaining days paid or unpaid.",
+            );
+          if (!sourcePolicy.isPaid) unpaidAllocatedDays += allocation.days;
+          const sourceEligibility = getLeaveEligibility(sourcePolicy);
+          if (sourceEligibility.omaniOnly && !isOmaniNationality(employee.nationality))
+            throw new Error(`${sourcePolicy.name} is available only to Omani employees.`);
+          if (
+            sourceEligibility.genderRestriction &&
+            employee.gender !== sourceEligibility.genderRestriction
+          )
+            throw new Error(`${sourcePolicy.name} is not available for this employee.`);
+          if (sourceEligibility.minimumServiceMonths !== undefined) {
+            const eligibleFrom = new Date(`${employee.startDate}T00:00:00Z`);
+            eligibleFrom.setUTCMonth(
+              eligibleFrom.getUTCMonth() + sourceEligibility.minimumServiceMonths,
+            );
+            if (request.startDate < eligibleFrom.toISOString().slice(0, 10))
+              throw new Error(`${sourcePolicy.name} is not yet available for this employee.`);
+          }
+          const carryReserve =
+            sourcePolicy.type === "Annual"
+              ? await carryReserveForRequest(
+                  tx,
+                  organisationId,
+                  request.employeeId,
+                  allocation.policyId,
+                  allocation.leaveYear,
+                  request.startDate,
+                )
+              : 0;
+          const updated = await tx
+            .update(leaveBalances)
+            .set({
+              balanceDays: sql`${leaveBalances.balanceDays} - ${allocation.days}`,
+              updatedAt: new Date(),
+              updatedBy: actor.userId,
+              recordVersion: sql`${leaveBalances.recordVersion} + 1`,
+            })
+            .where(
+              and(
+                eq(leaveBalances.organisationId, organisationId),
+                eq(leaveBalances.employeeId, request.employeeId),
+                eq(leaveBalances.policyId, allocation.policyId),
+                eq(leaveBalances.leaveYear, allocation.leaveYear),
+                isNull(leaveBalances.archivedAt),
+                sql`${leaveBalances.balanceDays} - ${allocation.days} - ${carryReserve} >= 0`,
+              ),
+            )
+            .returning({ id: leaveBalances.id });
+          if (!updated.length)
+            throw new Error(
+              `The selected ${sourcePolicy.name} ${allocation.leaveYear} balance is insufficient or expired.`,
+            );
+          const [yearSettings] = await tx
+            .select({ leaveYearStart: appSettings.leaveYearStart })
+            .from(appSettings)
+            .where(eq(appSettings.organisationId, organisationId))
+            .limit(1);
+          await tx.insert(leaveTransactions).values({
+            id: randomUUID(),
+            organisationId,
+            employeeId: request.employeeId,
+            policyId: allocation.policyId,
+            date: `${allocation.leaveYear}-${yearSettings?.leaveYearStart ?? "01-01"}`,
+            transactionType: "Approved Leave",
+            days: String(-allocation.days),
+            reason: `Special leave: ${request.startDate} to ${request.endDate}; HR allocated ${allocation.days} day(s) from ${sourcePolicy.name} ${allocation.leaveYear}`,
+            referenceId: request.id,
+            actorUserId: actor.userId,
+            createdBy: actor.userId,
+            updatedBy: actor.userId,
+          } as typeof leaveTransactions.$inferInsert);
+        }
+        const unpaidByDate = allocateSpecialUnpaidDates(
+          snapshot.workingDates ?? [],
+          request.isHalfDay,
+          requestedDays,
+          allocatedDays,
+          specialAllocation.remainingPay,
+          unpaidAllocatedDays,
+        );
+        requestUpdateExtras = {
+          policySnapshot: {
+            ...snapshot,
+            specialRequest: {
+              ...specialRequest,
+              allocations,
+              remainingPay: specialAllocation.remainingPay,
+              unpaidByDate,
+            },
+          },
+        };
+      }
+      if (specialRequest && cancellation) {
+        const [yearSettings] = await tx
+          .select({ leaveYearStart: appSettings.leaveYearStart })
+          .from(appSettings)
+          .where(eq(appSettings.organisationId, organisationId))
+          .limit(1);
+        for (const allocation of specialRequest.allocations ?? []) {
+          const updated = await tx
+            .update(leaveBalances)
+            .set({
+              balanceDays: sql`${leaveBalances.balanceDays} + ${allocation.days}`,
+              updatedAt: new Date(),
+              updatedBy: actor.userId,
+              recordVersion: sql`${leaveBalances.recordVersion} + 1`,
+            })
+            .where(
+              and(
+                eq(leaveBalances.organisationId, organisationId),
+                eq(leaveBalances.employeeId, request.employeeId),
+                eq(leaveBalances.policyId, allocation.policyId),
+                eq(leaveBalances.leaveYear, allocation.leaveYear),
+              ),
+            )
+            .returning({ id: leaveBalances.id });
+          if (!updated.length)
+            throw new Error(
+              "The original leave balance could not be restored. Ask HR to review this cancellation.",
+            );
+          await tx.insert(leaveTransactions).values({
+            id: randomUUID(),
+            organisationId,
+            employeeId: request.employeeId,
+            policyId: allocation.policyId,
+            date: `${allocation.leaveYear}-${yearSettings?.leaveYearStart ?? "01-01"}`,
+            transactionType: "Cancellation Restoration",
+            days: String(allocation.days),
+            reason: `Special leave cancellation: ${request.startDate} to ${request.endDate}`,
+            referenceId: request.id,
+            actorUserId: actor.userId,
+            createdBy: actor.userId,
+            updatedBy: actor.userId,
+          } as typeof leaveTransactions.$inferInsert);
+        }
+      }
+      if (
+        !specialRequest &&
+        !cancellation &&
+        policy.consumesBalance &&
+        ["Annual", "Ledger"].includes(policy.scope)
+      ) {
         const entitlementYear = await organisationLeaveYear(organisationId, request.startDate, tx);
         const approvedStart = pendingAmendment?.proposedStartDate ?? request.startDate;
         const approvedEnd = pendingAmendment?.proposedEndDate ?? request.endDate;
@@ -1192,6 +1485,7 @@ export async function approveLeaveRequestInDatabase(
           ? Number(request.workingDaysRequested) - pendingAmendment.proposedWorkingDays
           : -Number(request.workingDaysRequested);
       if (
+        !specialRequest &&
         policy.consumesBalance &&
         (policy.scope === "Annual" || policy.scope === "Ledger") &&
         balanceChange !== 0
@@ -1232,7 +1526,7 @@ export async function approveLeaveRequestInDatabase(
           .returning({ id: leaveBalances.id });
         if (!updated.length) throw new Error("There is not enough leave balance available.");
       }
-      if (policy.consumesBalance && balanceChange !== 0) {
+      if (!specialRequest && policy.consumesBalance && balanceChange !== 0) {
         await tx.insert(leaveTransactions).values({
           id: randomUUID(),
           organisationId,
@@ -1335,6 +1629,19 @@ export async function approveLeaveRequestInDatabase(
             ),
           )
       ).map((item) => ({ id: item.id, path: "/staff/leave-approvals" }));
+    } else if (specialRequest && managerStage && nextStatus === "Pending HR") {
+      recipients = (
+        await tx
+          .select({ id: users.id })
+          .from(users)
+          .where(
+            and(
+              eq(users.organisationId, organisationId),
+              eq(users.employeeId, specialRequest.countryManagerEmployeeId),
+              eq(users.status, "Active"),
+            ),
+          )
+      ).map((item) => ({ id: item.id, path: "/staff/leave-approvals" }));
     } else if (nextStatus === "Pending HR" || nextStatus === "Amendment Pending HR") {
       recipients = (
         await tx
@@ -1346,7 +1653,10 @@ export async function approveLeaveRequestInDatabase(
             and(
               eq(users.organisationId, organisationId),
               eq(users.status, "Active"),
-              inArray(roles.code, ["HR", "Super Admin"]),
+              inArray(
+                roles.code,
+                specialRequest && specialCountryStage ? ["HR"] : ["HR", "Super Admin"],
+              ),
             ),
           )
       ).map((item) => ({ id: item.id, path: "/staff/leave-approvals" }));
@@ -1389,11 +1699,15 @@ export async function approveLeaveRequestInDatabase(
                 ? "Leave request declined"
                 : nextStatus === "Cancellation Approved"
                   ? "Leave cancellation approved"
-                  : specialStage && nextStatus === "Pending Line Manager"
-                    ? "Short-notice leave exception awaiting line manager"
-                    : noticeException && !amendment
-                      ? "Short-notice leave exception awaiting HR confirmation"
-                      : "Leave request awaiting HR confirmation",
+                  : specialRequest && nextStatus === "Pending HR"
+                    ? specialCountryStage
+                      ? "Special leave awaiting HR allocation and approval"
+                      : "Special leave awaiting Country Manager approval"
+                    : specialStage && nextStatus === "Pending Line Manager"
+                      ? "Short-notice leave exception awaiting line manager"
+                      : noticeException && !amendment
+                        ? "Short-notice leave exception awaiting HR confirmation"
+                        : "Leave request awaiting HR confirmation",
           message:
             nextStatus === "Approved"
               ? `${employee.preferredName} will be away from ${request.startDate} to ${request.endDate}.`
@@ -1401,9 +1715,11 @@ export async function approveLeaveRequestInDatabase(
                 ? `The approved leave from ${request.startDate} to ${request.endDate} has been cancelled.`
                 : nextStatus === "Declined"
                   ? reason!.trim()
-                  : specialStage && nextStatus === "Pending Line Manager"
-                    ? `${employee.preferredName}'s short-notice leave was approved by the Country Manager and HR. The line manager now makes the final decision. Reason: ${noticeException!.reason}.`
-                    : `${employee.preferredName}'s leave request has supervisor approval and now needs HR confirmation.${noticeException && !amendment ? ` Short-notice reason: ${noticeException.reason}.` : ""}`,
+                  : specialRequest && nextStatus === "Pending HR"
+                    ? `${employee.preferredName}'s special leave from ${request.startDate} to ${request.endDate} needs your review. ${specialRequest.reason}`
+                    : specialStage && nextStatus === "Pending Line Manager"
+                      ? `${employee.preferredName}'s short-notice leave was approved by the Country Manager and HR. The line manager now makes the final decision. Reason: ${noticeException!.reason}.`
+                      : `${employee.preferredName}'s leave request has supervisor approval and now needs HR confirmation.${noticeException && !amendment ? ` Short-notice reason: ${noticeException.reason}.` : ""}`,
           priority:
             nextStatus === "Pending HR" ||
             nextStatus === "Amendment Pending HR" ||
@@ -1418,6 +1734,44 @@ export async function approveLeaveRequestInDatabase(
         } as typeof notifications.$inferInsert)
         .onConflictDoNothing();
     }
+    if (specialRequest && (nextStatus === "Approved" || nextStatus === "Cancellation Approved")) {
+      const financeUsers = await tx
+        .selectDistinct({ id: users.id })
+        .from(users)
+        .innerJoin(userRoles, eq(userRoles.userId, users.id))
+        .innerJoin(roles, eq(roles.id, userRoles.roleId))
+        .where(
+          and(
+            eq(users.organisationId, organisationId),
+            eq(users.status, "Active"),
+            eq(roles.code, "Accounts"),
+          ),
+        );
+      for (const financeUser of financeUsers) {
+        await tx
+          .insert(notifications)
+          .values({
+            organisationId,
+            recipientUserId: financeUser.id,
+            type: "leave_approved",
+            title:
+              nextStatus === "Approved"
+                ? "Special leave approved - finance review"
+                : "Special leave cancelled - finance review",
+            message:
+              nextStatus === "Approved"
+                ? `${employee.preferredName}'s special leave from ${request.startDate} to ${request.endDate} was approved. Check the HR-approved paid and unpaid days in payroll.`
+                : `${employee.preferredName}'s special leave from ${request.startDate} to ${request.endDate} was cancelled. Recheck payroll before processing.`,
+            priority: "Normal",
+            status: "Unread",
+            deduplicationKey: `leave-special-finance-${nextStatus}-${request.id}-${financeUser.id}`,
+            link: { entityType: "leave-request", entityId: request.id, path: "/staff/payroll" },
+            createdBy: actor.userId,
+            updatedBy: actor.userId,
+          } as typeof notifications.$inferInsert)
+          .onConflictDoNothing();
+      }
+    }
     await tx.insert(auditEvents).values({
       organisationId,
       actorUserId: actor.userId,
@@ -1430,7 +1784,13 @@ export async function approveLeaveRequestInDatabase(
       entityType: "leave-request",
       entityId: requestId,
       beforeSummary: { status: request.status },
-      afterSummary: { decision, status: nextStatus },
+      afterSummary: {
+        decision,
+        status: nextStatus,
+        ...(specialRequest && nextStatus === "Approved" && specialAllocation
+          ? { specialAllocation }
+          : {}),
+      },
       reason: reason?.trim() ?? "Leave approval decision",
       riskLevel: "High",
     } as typeof auditEvents.$inferInsert);
@@ -1758,6 +2118,10 @@ export async function requestLeaveChangeInDatabase(
     } else {
       if (row.request.status !== "Approved")
         throw new Error("Only approved future leave can be changed.");
+      if ((row.request.policySnapshot as LeaveRequest["policySnapshot"]).specialRequest)
+        throw new Error(
+          "Cancel this special leave and submit a new request. HR must choose the balance deductions again for changed dates.",
+        );
       if (action.reason.trim().length < 5) throw new Error("Explain why the dates are changing.");
       const originalYear = await organisationLeaveYear(organisationId, row.request.startDate, tx);
       if (

@@ -185,6 +185,8 @@ export interface LeaveAmendmentHistory {
 
 export interface LeaveRequest extends BaseRecord {
   employeeId: RecordId;
+  /** Display name supplied only with a request the viewer may already access. */
+  requesterName?: string;
   policyId: RecordId;
   startDate: string;
   endDate: string;
@@ -220,6 +222,14 @@ export interface LeaveRequest extends BaseRecord {
       actualDays: number;
       reason: string;
       countryManagerEmployeeId?: RecordId;
+    };
+    specialRequest?: {
+      reason: string;
+      countryManagerEmployeeId: RecordId;
+      allocations?: Array<{ policyId: RecordId; leaveYear: number; days: number }>;
+      remainingPay?: "Paid" | "Unpaid";
+      /** The portion of each approved date that payroll must treat as unpaid. */
+      unpaidByDate?: Array<{ date: string; days: number }>;
     };
     name: string;
     type: string;

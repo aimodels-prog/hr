@@ -48,7 +48,10 @@ export async function resolveLeaveReportYears(
   const years = await db.execute<{ year: number }>(sql`
     select leave_year as year from leave_balances where organisation_id=${org} and archived_at is null
     union select ${yearForDate(sql`start_date`, settings.leaveYearStart)} as year
-      from leave_requests where organisation_id=${org} and archived_at is null`);
+      from leave_requests where organisation_id=${org} and archived_at is null
+    union select ${yearForDate(sql`end_date`, settings.leaveYearStart)} as year
+      from leave_requests where organisation_id=${org} and archived_at is null
+        and policy_snapshot->'specialRequest' is not null`);
   return {
     currentYear,
     selectedYear,
@@ -71,7 +74,7 @@ export function queryLeaveBalances(org: string, years?: LeaveReportYears) {
   if (!years) throw new Error("A leave year is required for this report.");
   const start = periodStart(sql`b.leave_year`, years.startMonthDay);
   const nextStart = periodStart(sql`b.leave_year + 1`, years.startMonthDay);
-  const transactionYear = sql`coalesce(rb.leave_year, ${yearForDate(sql`coalesce(rr.start_date, lt.date)`, years.startMonthDay)})`;
+  const transactionYear = sql`coalesce(rb.leave_year, ${yearForDate(sql`case when rr.policy_snapshot->'specialRequest' is not null then lt.date else coalesce(rr.start_date, lt.date) end`, years.startMonthDay)})`;
   return getDatabaseClient().execute(sql`
     select (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department,
       btrim(regexp_replace(p.name, '[[:space:]]+[—–-][[:space:]]+imported history[[:space:]]*$', '', 'i')) as "leaveType",
@@ -103,6 +106,7 @@ export function queryLeaveBalances(org: string, years?: LeaveReportYears) {
         else 0 end),0) as days
       from leave_requests r where r.organisation_id=b.organisation_id and r.employee_id=b.employee_id
         and r.policy_id=b.policy_id and r.archived_at is null
+        and r.policy_snapshot->'specialRequest' is null
         and r.start_date >= ${start} and r.start_date < ${nextStart}
     ) pending
     where b.organisation_id=${org} and b.archived_at is null
@@ -113,16 +117,29 @@ export function queryLeaveBalances(org: string, years?: LeaveReportYears) {
 export function queryLeaveUsage(org: string, years?: LeaveReportYears) {
   if (!years) throw new Error("A leave year is required for this report.");
   const year = yearForDate(sql`r.start_date`, years.startMonthDay);
+  const dateYear = yearForDate(sql`wd.value::date`, years.startMonthDay);
   return getDatabaseClient().execute(sql`
     select (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department,
-      btrim(regexp_replace(coalesce(nullif(btrim(r.policy_snapshot->>'name'), ''), p.name), '[[:space:]]+[—–-][[:space:]]+imported history[[:space:]]*$', '', 'i')) as "leaveType", ${year} as "leaveYear",
-      r.start_date::text as "startDate", r.end_date::text as "endDate",
-      r.working_days_requested::double precision as days, r.status::text as status
+      btrim(regexp_replace(coalesce(nullif(btrim(r.policy_snapshot->>'name'), ''), p.name), '[[:space:]]+[—–-][[:space:]]+imported history[[:space:]]*$', '', 'i')) as "leaveType", usage.leave_year as "leaveYear",
+      usage.start_date as "startDate", usage.end_date as "endDate",
+      usage.days as days, r.status::text as status
     from leave_requests r
     join employees e on e.id=r.employee_id and e.organisation_id=r.organisation_id
     join departments d on d.id=e.department_id and d.organisation_id=r.organisation_id
     join leave_policies p on p.id=r.policy_id and p.organisation_id=r.organisation_id
+    cross join lateral (
+      select ${year} as leave_year, r.start_date::text as start_date,
+        r.end_date::text as end_date, r.working_days_requested::double precision as days
+      where r.policy_snapshot->'specialRequest' is null
+      union all
+      select ${dateYear} as leave_year, min(wd.value::date)::text as start_date,
+        max(wd.value::date)::text as end_date,
+        count(*)::double precision * (case when r.is_half_day then 0.5 else 1 end) as days
+      from jsonb_array_elements_text(r.policy_snapshot->'workingDates') as wd(value)
+      where r.policy_snapshot->'specialRequest' is not null
+      group by 1
+    ) usage
     where r.organisation_id=${org} and r.archived_at is null
-      and ${years.selectedYear === "all" ? sql`true` : sql`${year}=${years.selectedYear}`}
-    order by r.start_date desc, e.legal_name, r.id`);
+      and ${years.selectedYear === "all" ? sql`true` : sql`usage.leave_year=${years.selectedYear}`}
+    order by usage.start_date desc, e.legal_name, r.id`);
 }

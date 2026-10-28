@@ -5,6 +5,7 @@ import { and, desc, eq, inArray, isNull, lte, notInArray, or, sql } from "drizzl
 
 import type { PayrollPeriod } from "../../data/payroll-types.ts";
 import { leaveWorkingDates, payrollLeaveDaysInPeriod } from "../../data/leave-working-days.ts";
+import { specialUnpaidDaysInPeriod } from "../../data/special-leave.ts";
 import { sickLeavePayrollReductions } from "../../data/sick-leave-payroll.ts";
 import { leaveYearForDate } from "../../data/leave-year.ts";
 import { publicHolidays } from "../schema/master-data.ts";
@@ -492,7 +493,11 @@ export async function collectPayrollInputsInDatabase(
       );
     const unpaid = leaveRows
       .filter(({ request, isPaid }) => {
-        const snapshot = request.policySnapshot as { isPaid?: boolean };
+        const snapshot = request.policySnapshot as {
+          isPaid?: boolean;
+          specialRequest?: { unpaidByDate?: Array<{ date: string; days: number }> };
+        };
+        if (snapshot?.specialRequest) return Boolean(snapshot.specialRequest.unpaidByDate?.length);
         return (typeof snapshot?.isPaid === "boolean" ? snapshot.isPaid : isPaid) === false;
       })
       .map(({ request }) => request);
@@ -570,20 +575,25 @@ export async function collectPayrollInputsInDatabase(
           ),
         );
       sickReductions = sickLeavePayrollReductions(
-        history.map(({ request, isPaid, payTiers }) => {
-          const snapshot = request.policySnapshot as {
-            workingDates?: unknown;
-            isPaid?: boolean;
-            payTiers?: unknown;
-          };
-          return {
-            ...request,
-            workingDaysRequested: Number(request.workingDaysRequested),
-            workingDates: snapshot?.workingDates,
-            isPaid: typeof snapshot?.isPaid === "boolean" ? snapshot.isPaid : isPaid,
-            payTiers: snapshot?.payTiers === undefined ? payTiers : snapshot.payTiers,
-          };
-        }),
+        history
+          .filter(
+            ({ request }) =>
+              !(request.policySnapshot as { specialRequest?: unknown }).specialRequest,
+          )
+          .map(({ request, isPaid, payTiers }) => {
+            const snapshot = request.policySnapshot as {
+              workingDates?: unknown;
+              isPaid?: boolean;
+              payTiers?: unknown;
+            };
+            return {
+              ...request,
+              workingDaysRequested: Number(request.workingDaysRequested),
+              workingDates: snapshot?.workingDates,
+              isPaid: typeof snapshot?.isPaid === "boolean" ? snapshot.isPaid : isPaid,
+              payTiers: snapshot?.payTiers === undefined ? payTiers : snapshot.payTiers,
+            };
+          }),
         period,
         settings.leaveYearStart,
         (request) => {
@@ -720,6 +730,20 @@ export async function collectPayrollInputsInDatabase(
       const unpaidLeaveDays = employeeLeave.reduce(
         (sum, item) => {
           try {
+            const special = (
+              item.policySnapshot as {
+                specialRequest?: { unpaidByDate?: Array<{ date: string; days: number }> };
+              }
+            ).specialRequest;
+            if (special)
+              return (
+                sum +
+                specialUnpaidDaysInPeriod(
+                  special.unpaidByDate ?? [],
+                  period.startDate,
+                  period.endDate,
+                )
+              );
             return (
               sum +
               payrollLeaveDaysInPeriod(

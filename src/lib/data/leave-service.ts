@@ -194,8 +194,13 @@ export class LeaveService {
     const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
     const isLineManager =
       Boolean(context.actor.employeeId) && employee?.lineManagerId === context.actor.employeeId;
+    const isSpecialReviewer =
+      req.status === "Pending HR" &&
+      Boolean(context.actor.employeeId) &&
+      (req.policySnapshot.specialRequest?.countryManagerEmployeeId === context.actor.employeeId ||
+        req.policySnapshot.noticeException?.countryManagerEmployeeId === context.actor.employeeId);
 
-    if (!isOwner && !isHrOrAdmin && !isLineManager) {
+    if (!isOwner && !isHrOrAdmin && !isLineManager && !isSpecialReviewer) {
       this.denyAccess(
         "Leave attachment access denied",
         req.id,
@@ -687,6 +692,11 @@ export class LeaveService {
       .map((request) => {
         const payrollPolicySnapshot = { ...request.policySnapshot };
         delete payrollPolicySnapshot.noticeException;
+        if (payrollPolicySnapshot.specialRequest)
+          payrollPolicySnapshot.specialRequest = {
+            ...payrollPolicySnapshot.specialRequest,
+            reason: "Special leave approved",
+          };
         const safeRequest = {
           ...request,
           reason: "Not included in payroll",
@@ -714,7 +724,13 @@ export class LeaveService {
         .list()
         .filter(
           (request) =>
-            request.employeeId === context.actor.employeeId || reportIds.has(request.employeeId),
+            request.employeeId === context.actor.employeeId ||
+            reportIds.has(request.employeeId) ||
+            (request.status === "Pending HR" &&
+              (request.policySnapshot.specialRequest?.countryManagerEmployeeId ===
+                context.actor.employeeId ||
+                request.policySnapshot.noticeException?.countryManagerEmployeeId ===
+                  context.actor.employeeId)),
         )
         .map((request) => this.presentRequest(request));
     }
@@ -742,7 +758,10 @@ export class LeaveService {
   }
 
   getPendingRequestsForManager(context: ActorContext): LeaveRequest[] {
-    if (!context.actor.employeeId || context.actor.activeRole !== "Line Manager") {
+    if (
+      !context.actor.employeeId ||
+      (context.actor.activeRole !== "Line Manager" && !context.actor.roles.includes("Line Manager"))
+    ) {
       this.denyAccess(
         "Manager leave queue denied",
         "manager-queue",
@@ -779,8 +798,18 @@ export class LeaveService {
       .list()
       .filter(
         (r) =>
-          r.status === "Pending Line Manager" ||
-          r.status === "Pending HR" ||
+          (r.status === "Pending HR" &&
+            !(
+              r.policySnapshot.specialRequest &&
+              (context.actor.activeRole !== "HR" ||
+                r.chainApprovals.some(
+                  (step) => step.role === "Country Manager" && step.status === "Pending",
+                ))
+            ) &&
+            !(
+              r.policySnapshot.noticeException &&
+              !r.chainApprovals.some((step) => step.role === "HR" && step.status === "Pending")
+            )) ||
           r.status === "Pending Super Admin" ||
           r.status === "Cancellation Pending" ||
           r.status === "Amendment Pending Line Manager" ||
@@ -848,8 +877,13 @@ export class LeaveService {
     decision: "approve" | "decline",
     reason: string | undefined,
     context: ActorContext,
+    specialAllocation?: {
+      allocations: Array<{ policyId: string; leaveYear: number; days: number }>;
+      remainingPay: "Paid" | "Unpaid";
+    },
   ): Promise<LeaveRequest> {
     if (typeof window === "undefined") {
+      if (specialAllocation) throw new Error("Special leave allocation requires PostgreSQL.");
       return decision === "approve"
         ? this.approveRequest(requestId, context)
         : this.rejectRequest(requestId, reason ?? "", context);
@@ -861,6 +895,7 @@ export class LeaveService {
         requestId,
         decision,
         ...(reason?.trim() ? { reason: reason.trim() } : {}),
+        ...(specialAllocation ? { specialAllocation } : {}),
       },
     });
     await this.hydrateCompatibilityCache(context);
@@ -1260,7 +1295,10 @@ export class LeaveService {
   }
 
   async submitLeaveRequest(
-    payload: Partial<LeaveRequest> & { noticeExceptionReason?: string },
+    payload: Partial<LeaveRequest> & {
+      noticeExceptionReason?: string;
+      specialRequestReason?: string;
+    },
     context: ActorContext,
     attachment?: File,
   ): Promise<LeaveRequest> {
@@ -1270,7 +1308,8 @@ export class LeaveService {
 
     if (
       this.getPolicies().find((policy) => policy.id === payload.policyId)?.type !== "Annual" &&
-      (payload.reason?.trim().length ?? 0) < 3
+      (payload.reason?.trim().length ?? 0) < 3 &&
+      !payload.specialRequestReason
     ) {
       throw new Error("Explain the reason for this leave request.");
     }
@@ -1309,6 +1348,9 @@ export class LeaveService {
           ...(payload.noticeExceptionReason
             ? { noticeExceptionReason: payload.noticeExceptionReason }
             : {}),
+          ...(payload.specialRequestReason
+            ? { specialRequestReason: payload.specialRequestReason }
+            : {}),
           ...(payload.isHalfDay !== undefined ? { isHalfDay: payload.isHalfDay } : {}),
           ...(handover?.databaseId ? { handoverContactId: handover.databaseId } : {}),
           ...(attachment
@@ -1330,6 +1372,8 @@ export class LeaveService {
 
     const policy = this.policyRepo.getById(payload.policyId);
     if (!policy) throw new Error("Policy not found.");
+    if (payload.specialRequestReason)
+      throw new Error("Special leave requests require the connected HR application.");
     if (policy.requiresAttachment && !payload.attachmentFileId) {
       throw new Error(`Supporting evidence is required for ${policy.name}.`);
     }
@@ -2535,7 +2579,7 @@ export class LeaveService {
         req.status === "Pending HR" ||
         req.status === "Pending Super Admin"
       ) {
-        pending += req.workingDaysRequested;
+        if (!req.policySnapshot.specialRequest) pending += req.workingDaysRequested;
       } else if (
         (req.status === "Amendment Pending Line Manager" ||
           req.status === "Amendment Pending HR") &&
@@ -2605,6 +2649,32 @@ export class LeaveService {
     return this.getEligiblePolicies(employeeId, context).map((policy) =>
       this.calculateBalance(employeeId, policy.id, context),
     );
+  }
+
+  /** HR-only choices for final special-leave allocation; PostgreSQL rechecks every balance. */
+  getSpecialAllocationSources(employeeId: string, context: ActorContext) {
+    if (context.actor.activeRole !== "HR")
+      throw new Error("Only HR can allocate special leave balances.");
+    const policies = new Map(
+      this.getEligiblePolicies(employeeId, context).map((policy) => [policy.id, policy]),
+    );
+    return getApplicationDataServices()
+      .storage.readCollection<{
+        employeeId: string;
+        policyId: string;
+        leaveYear: number;
+        balanceDays: number;
+      }>("leave_database_balances")
+      .filter((row) => row.employeeId === employeeId && row.balanceDays > 0)
+      .flatMap((row) => {
+        const policy = policies.get(row.policyId);
+        return policy?.isEnabled &&
+          policy.consumesBalance &&
+          !policy.payTiers?.length &&
+          ["Annual", "Ledger"].includes(policy.scope)
+          ? [{ ...row, policyName: policy.name, isPaid: policy.isPaid }]
+          : [];
+      });
   }
 
   /**

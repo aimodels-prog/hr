@@ -353,6 +353,8 @@ export const hrGuide = [
     [
       "Open Leave Approvals and find the pending request.",
       "Review the leave type, eligibility, dates, allowance and any required evidence.",
+      "For special leave, wait for the line manager and Riccardo. At final HR approval, select any available leave balance and year to deduct from, enter the days for each, and choose whether the remaining days are paid or unpaid. Review the payroll impact before approving.",
+      "Special leave may cross leave years. Cancelling an approved special request restores its chosen balance deductions; changing its dates requires a new request and a fresh HR allocation. Finance receives a notification after approval or cancellation.",
       "Check the manager’s stage and complete the HR action when it is your turn.",
       "For late sickness, open Leave Management → Permit backdated sick leave. Select the employee, first and last sick day, and reason, then Grant permission. It allows one submission for those exact dates within 14 days; normal evidence and approvals still apply.",
       "Check the final status and let the employee correct any returned request.",

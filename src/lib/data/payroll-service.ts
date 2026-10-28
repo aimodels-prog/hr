@@ -15,6 +15,7 @@ import { OvertimeService } from "./overtime-service.ts";
 import { TravelService } from "./travel-service.ts";
 import { LeaveService } from "./leave-service.ts";
 import { payrollLeaveDaysInPeriod } from "./leave-working-days.ts";
+import { specialUnpaidDaysInPeriod } from "./special-leave.ts";
 import { sickLeavePayrollReductions } from "./sick-leave-payroll.ts";
 import { SettingsService } from "./settings-service.ts";
 import { isWithinInterval, parseISO } from "date-fns";
@@ -423,7 +424,9 @@ export class PayrollService {
             "Amendment Pending Line Manager",
             "Amendment Pending HR",
           ].includes(r.status) &&
-          r.policySnapshot.isPaid === false &&
+          (r.policySnapshot.specialRequest
+            ? Boolean(r.policySnapshot.specialRequest.unpaidByDate?.length)
+            : r.policySnapshot.isPaid === false) &&
           !r.archivedAt &&
           r.startDate <= period.endDate &&
           r.endDate >= period.startDate,
@@ -443,6 +446,7 @@ export class PayrollService {
           ].includes(r.status) &&
           !r.archivedAt &&
           r.policySnapshot.type === "Sick" &&
+          !r.policySnapshot.specialRequest &&
           r.startDate <= period.endDate,
       );
       const sickPartialUnpaidDays = sickLeaves.some((r) => r.endDate >= period.startDate)
@@ -488,14 +492,21 @@ export class PayrollService {
         unpaidLeaves.reduce(
           (sum, r) =>
             sum +
-            payrollLeaveDaysInPeriod(
-              {
-                ...r,
-                workingDates: r.policySnapshot.workingDates,
-              },
-              period,
-              () => this.leaveService.calculateWorkingDates(r.startDate, r.endDate, r.isHalfDay),
-            ),
+            (r.policySnapshot.specialRequest
+              ? specialUnpaidDaysInPeriod(
+                  r.policySnapshot.specialRequest.unpaidByDate ?? [],
+                  period.startDate,
+                  period.endDate,
+                )
+              : payrollLeaveDaysInPeriod(
+                  {
+                    ...r,
+                    workingDates: r.policySnapshot.workingDates,
+                  },
+                  period,
+                  () =>
+                    this.leaveService.calculateWorkingDates(r.startDate, r.endDate, r.isHalfDay),
+                )),
           0,
         ) + sickPartialUnpaidDays;
       // Must use the currency-safe OMR-equivalent total (see TravelService.submitExpenses), not the raw

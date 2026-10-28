@@ -191,6 +191,8 @@ export const employeeGuide = [
       "On My Leave Balances, choose Request Leave. Select Leave Type, Start Date and End Date.",
       "Check the calculated days. Complete Reason for Leave and Covering Colleague when required, and attach any supporting evidence requested for that leave type.",
       "Choose Submit Request. Check Request History or My Requests or Approvals to confirm the request appears and follow its progress.",
+      "If the dates cross a leave year, the allowance is exceeded, or the notice is short, choose special approval and explain why. You can also ask for special approval even when the usual rules are met.",
+      "A special request goes to your line manager, then Riccardo, then HR. HR chooses which available leave balances to use and whether any remaining days are paid or unpaid. Finance is notified after HR approves.",
       "Wait for the final decision before treating your leave as approved.",
       "Once approved, your covered days show as leave automatically. You do not need to clock in or enter work hours for full leave days. Half-day leave leaves the other half for work.",
     ],

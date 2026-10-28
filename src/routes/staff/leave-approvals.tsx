@@ -28,6 +28,14 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import { LeaveService } from "@/lib/data/leave-service";
 import { EmployeeService } from "@/lib/data/employee-service";
@@ -50,6 +58,7 @@ function LeaveApprovalsContent() {
   const currentUser = useCurrentUser();
   const leaveService = useMemo(() => new LeaveService(), []);
   const empService = useMemo(() => new EmployeeService(), []);
+  const directoryEmployees = empService.getDirectoryEmployees(currentUser.getActorContext());
 
   const canCompleteHrReview =
     currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
@@ -66,11 +75,19 @@ function LeaveApprovalsContent() {
     { open: false, request: null },
   );
   const [rejectReason, setRejectReason] = useState("");
+  const [allocationRequest, setAllocationRequest] = useState<LeaveRequest | null>(null);
+  const [allocations, setAllocations] = useState<
+    Array<{ policyId: string; leaveYear: number; days: number }>
+  >([]);
+  const [remainingPay, setRemainingPay] = useState<"Paid" | "Unpaid" | "">("");
 
   const loadData = useCallback(() => {
     setSpecialQueue(
       leaveService.getRequests(currentUser.getActorContext()).filter((request) => {
-        if (request.status !== "Pending HR" || !request.policySnapshot.noticeException)
+        if (
+          request.status !== "Pending HR" ||
+          (!request.policySnapshot.noticeException && !request.policySnapshot.specialRequest)
+        )
           return false;
         const countryManagerPending = request.chainApprovals.some(
           (step) => step.role === "Country Manager" && step.status === "Pending",
@@ -78,16 +95,22 @@ function LeaveApprovalsContent() {
         const hrPending = request.chainApprovals.some(
           (step) => step.role === "HR" && step.status === "Pending",
         );
+        if (request.policySnapshot.specialRequest)
+          return (
+            countryManagerPending &&
+            currentUser.employeeId ===
+              request.policySnapshot.specialRequest.countryManagerEmployeeId
+          );
         return (
           (countryManagerPending &&
             currentUser.employeeId ===
-              request.policySnapshot.noticeException.countryManagerEmployeeId) ||
+              request.policySnapshot.noticeException?.countryManagerEmployeeId) ||
           (hrPending && currentUser.activeRole === "HR")
         );
       }),
     );
     if (currentUser.employeeId) {
-      if (currentUser.activeRole === "Line Manager") {
+      if (currentUser.roles.includes("Line Manager") || currentUser.activeRole === "Line Manager") {
         setManagerQueue(leaveService.getPendingRequestsForManager(currentUser.getActorContext()));
       } else {
         setManagerQueue([]);
@@ -101,7 +124,16 @@ function LeaveApprovalsContent() {
             (request) =>
               ["Pending HR", "Amendment Pending HR", "Cancellation Pending"].includes(
                 request.status,
-              ) && !(request.status === "Pending HR" && request.policySnapshot.noticeException),
+              ) &&
+              !(request.status === "Pending HR" && request.policySnapshot.noticeException) &&
+              !(
+                request.status === "Pending HR" &&
+                request.policySnapshot.specialRequest &&
+                (currentUser.activeRole !== "HR" ||
+                  request.chainApprovals.some(
+                    (step) => step.role === "Country Manager" && step.status === "Pending",
+                  ))
+              ),
           ),
       );
     }
@@ -124,6 +156,19 @@ function LeaveApprovalsContent() {
   }, [specialQueue.length, canCompleteHrReview]);
 
   const handleApprove = async (req: LeaveRequest) => {
+    if (
+      req.policySnapshot.specialRequest &&
+      req.status === "Pending HR" &&
+      req.chainApprovals.some((step) => step.role === "HR" && step.status === "Pending") &&
+      !req.chainApprovals.some(
+        (step) => step.role === "Country Manager" && step.status === "Pending",
+      )
+    ) {
+      setAllocationRequest(req);
+      setAllocations([]);
+      setRemainingPay("");
+      return;
+    }
     try {
       await leaveService.decideRequestAsync(
         req.id,
@@ -139,6 +184,24 @@ function LeaveApprovalsContent() {
       loadData();
     } catch (error: unknown) {
       toast.error(error instanceof Error ? error.message : "Failed to approve request");
+    }
+  };
+
+  const handleSpecialFinalApproval = async () => {
+    if (!allocationRequest || !remainingPay) return;
+    try {
+      await leaveService.decideRequestAsync(
+        allocationRequest.id,
+        "approve",
+        undefined,
+        currentUser.getActorContext(),
+        { allocations, remainingPay },
+      );
+      toast.success("Special leave approved and sent to Finance.");
+      setAllocationRequest(null);
+      loadData();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not approve special leave.");
     }
   };
 
@@ -197,12 +260,13 @@ function LeaveApprovalsContent() {
               Number(Boolean(left.policySnapshot.noticeException)),
           )
           .map((req) => {
-            const emp = empService.getById(req.employeeId, currentUser.getActorContext());
+            const emp = directoryEmployees.find((item) => item.id === req.employeeId);
             const policy = policies.find((p) => p.id === req.policyId);
             const reviewStartDate = req.pendingAmendment?.proposedStartDate ?? req.startDate;
             const reviewEndDate = req.pendingAmendment?.proposedEndDate ?? req.endDate;
             const reviewDays =
               req.pendingAmendment?.proposedWorkingDays ?? req.workingDaysRequested;
+            const isSpecial = Boolean(req.policySnapshot.specialRequest);
             const overlaps = leaveService
               .getTeamOverlaps(
                 emp?.department || "",
@@ -217,7 +281,9 @@ function LeaveApprovalsContent() {
                 <CardHeader className="pb-2">
                   <div className="flex justify-between items-start">
                     <div>
-                      <CardTitle className="text-lg">{emp?.preferredName}</CardTitle>
+                      <CardTitle className="text-lg">
+                        {emp?.preferredName ?? req.requesterName ?? "Employee"}
+                      </CardTitle>
                       <CardDescription>
                         {policy?.name} &bull; {reviewDays} working days
                       </CardDescription>
@@ -233,6 +299,18 @@ function LeaveApprovalsContent() {
                   </div>
                 </CardHeader>
                 <CardContent>
+                  {isSpecial && (
+                    <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                      <strong>Special leave - line manager, then Riccardo, then HR</strong>
+                      <p className="mt-1">
+                        This request may cross leave years or exceed the ordinary allowance. HR
+                        decides the balance deductions and pay treatment at final approval.
+                      </p>
+                      <p className="mt-2 whitespace-pre-wrap">
+                        {req.policySnapshot.specialRequest?.reason}
+                      </p>
+                    </div>
+                  )}
                   {req.policySnapshot.noticeException && !req.pendingAmendment && (
                     <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
                       <strong>
@@ -282,12 +360,8 @@ function LeaveApprovalsContent() {
                         <div className="grid grid-cols-[100px_1fr] gap-1">
                           <span className="text-muted-foreground">Handover:</span>
                           <span>
-                            {
-                              empService.getById(
-                                req.handoverContactId,
-                                currentUser.getActorContext(),
-                              )?.preferredName
-                            }
+                            {directoryEmployees.find((item) => item.id === req.handoverContactId)
+                              ?.preferredName ?? "Colleague"}
                           </span>
                         </div>
                       )}
@@ -315,7 +389,7 @@ function LeaveApprovalsContent() {
                               {overlaps.map((o) => (
                                 <li key={o.id}>
                                   {
-                                    empService.getById(o.employeeId, currentUser.getActorContext())
+                                    directoryEmployees.find((item) => item.id === o.employeeId)
                                       ?.preferredName
                                   }{" "}
                                   (Off: {o.startDate} to {o.endDate})
@@ -337,7 +411,9 @@ function LeaveApprovalsContent() {
                                 ? `Approval will return ${req.workingDaysRequested} days to the employee's available balance.`
                                 : req.pendingAmendment
                                   ? `Approval will replace the current dates with ${reviewStartDate} to ${reviewEndDate} and adjust the balance by ${reviewDays - req.workingDaysRequested} day(s).`
-                                  : `Approval will deduct ${req.workingDaysRequested} days from the employee's ${policy?.name} balance.`}
+                                  : isSpecial
+                                    ? "HR will choose the balance deductions and pay treatment before approval."
+                                    : `Approval will deduct ${req.workingDaysRequested} days from the employee's ${policy?.name} balance.`}
                             </div>
                           </div>
                         )}
@@ -354,7 +430,8 @@ function LeaveApprovalsContent() {
                           onClick={() => handleApprove(req)}
                         >
                           <Check className="mr-2 h-4 w-4" />{" "}
-                          {req.policySnapshot.noticeException && !req.pendingAmendment
+                          {(req.policySnapshot.noticeException || isSpecial) &&
+                          !req.pendingAmendment
                             ? "Approve exception"
                             : "Approve"}
                         </Button>
@@ -416,6 +493,187 @@ function LeaveApprovalsContent() {
           <TabsContent value="admin">{renderQueue(adminQueue, true)}</TabsContent>
         )}
       </Tabs>
+
+      <Dialog
+        open={Boolean(allocationRequest)}
+        onOpenChange={(open) => !open && setAllocationRequest(null)}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[650px]">
+          <DialogHeader>
+            <DialogTitle>Allocate special leave before approval</DialogTitle>
+          </DialogHeader>
+          {allocationRequest &&
+            (() => {
+              const sources = leaveService.getSpecialAllocationSources(
+                allocationRequest.employeeId,
+                currentUser.getActorContext(),
+              );
+              const allocated = allocations.reduce(
+                (sum, item) => sum + (Number.isFinite(item.days) ? item.days : 0),
+                0,
+              );
+              const remaining = allocationRequest.workingDaysRequested - allocated;
+              const unpaidAllocated = allocations.reduce((sum, item) => {
+                const source = sources.find(
+                  (row) => row.policyId === item.policyId && row.leaveYear === item.leaveYear,
+                );
+                return sum + (source && !source.isPaid ? item.days : 0);
+              }, 0);
+              return (
+                <div className="space-y-4 text-sm">
+                  <p>
+                    {allocationRequest.workingDaysRequested} day(s), {allocationRequest.startDate}{" "}
+                    to {allocationRequest.endDate}. Choose any available balances to deduct from. A
+                    balance marked unpaid remains unpaid. The remaining days can be paid or unpaid.
+                    Unpaid days are assigned to the latest dates first for payroll.
+                  </p>
+                  {allocations.map((allocation, index) => {
+                    const source = sources.find(
+                      (item) =>
+                        item.policyId === allocation.policyId &&
+                        item.leaveYear === allocation.leaveYear,
+                    );
+                    return (
+                      <div
+                        key={`${allocation.policyId}-${allocation.leaveYear}`}
+                        className="flex flex-wrap items-end gap-2 rounded-md border p-3"
+                      >
+                        <div className="min-w-[180px] flex-1">
+                          <Label>Balance</Label>
+                          <p className="mt-2 font-medium">
+                            {source?.policyName ?? "Leave"} - {allocation.leaveYear} (
+                            {source?.balanceDays ?? 0} available;{" "}
+                            {source?.isPaid ? "paid" : "unpaid"})
+                          </p>
+                        </div>
+                        <div className="w-28">
+                          <Label htmlFor={`special-days-${index}`}>Days</Label>
+                          <Input
+                            id={`special-days-${index}`}
+                            type="number"
+                            min="0.5"
+                            max={source?.balanceDays}
+                            step="0.5"
+                            value={allocation.days || ""}
+                            onChange={(event) =>
+                              setAllocations((rows) =>
+                                rows.map((row, position) =>
+                                  position === index
+                                    ? { ...row, days: Number(event.target.value) }
+                                    : row,
+                                ),
+                              )
+                            }
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() =>
+                            setAllocations((rows) =>
+                              rows.filter((_, position) => position !== index),
+                            )
+                          }
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    );
+                  })}
+                  <div className="space-y-2">
+                    <Label>Add a balance deduction</Label>
+                    <Select
+                      value=""
+                      onValueChange={(value) => {
+                        const source = sources.find(
+                          (item) => `${item.policyId}:${item.leaveYear}` === value,
+                        );
+                        if (source)
+                          setAllocations((rows) => [
+                            ...rows,
+                            { policyId: source.policyId, leaveYear: source.leaveYear, days: 0 },
+                          ]);
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select leave type and year (optional)" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {sources
+                          .filter(
+                            (source) =>
+                              !allocations.some(
+                                (row) =>
+                                  row.policyId === source.policyId &&
+                                  row.leaveYear === source.leaveYear,
+                              ),
+                          )
+                          .map((source) => (
+                            <SelectItem
+                              key={`${source.policyId}:${source.leaveYear}`}
+                              value={`${source.policyId}:${source.leaveYear}`}
+                            >
+                              {source.policyName} - {source.leaveYear} ({source.balanceDays} days;{" "}
+                              {source.isPaid ? "paid" : "unpaid"})
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <p className={remaining < 0 ? "font-medium text-destructive" : "font-medium"}>
+                    Remaining without balance deduction: {remaining} day(s)
+                  </p>
+                  {remainingPay && (
+                    <p className="font-medium">
+                      Payroll will treat{" "}
+                      {unpaidAllocated + (remainingPay === "Unpaid" ? Math.max(0, remaining) : 0)}{" "}
+                      day(s) as unpaid.
+                    </p>
+                  )}
+                  <div className="space-y-2">
+                    <Label>Pay treatment for remaining days</Label>
+                    <Select
+                      value={remainingPay}
+                      onValueChange={(value) => setRemainingPay(value as "Paid" | "Unpaid")}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choose paid or unpaid" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Paid">Paid - no payroll deduction</SelectItem>
+                        <SelectItem value="Unpaid">Unpaid - payroll deduction</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setAllocationRequest(null)}>
+                      Back
+                    </Button>
+                    <Button
+                      disabled={
+                        !remainingPay ||
+                        remaining < 0 ||
+                        allocations.some(
+                          (item) =>
+                            item.days <= 0 ||
+                            item.days >
+                              (sources.find(
+                                (source) =>
+                                  source.policyId === item.policyId &&
+                                  source.leaveYear === item.leaveYear,
+                              )?.balanceDays ?? 0),
+                        )
+                      }
+                      onClick={() => void handleSpecialFinalApproval()}
+                    >
+                      Approve and notify Finance
+                    </Button>
+                  </DialogFooter>
+                </div>
+              );
+            })()}
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={rejectDialog.open}

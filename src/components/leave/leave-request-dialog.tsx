@@ -33,6 +33,7 @@ import { LeaveService } from "@/lib/data/leave-service";
 import { SettingsService } from "@/lib/data/settings-service";
 import { siteVisitLocalNow } from "@/lib/data/site-visit";
 import { leaveNoticeAssessment } from "@/lib/data/leave-notice";
+import { leaveYearForDate } from "@/lib/data/leave-year";
 import { EmployeeService } from "@/lib/data/employee-service";
 import type { LeavePolicy, LeaveBalanceReport } from "@/lib/data/leave-types";
 import { useCurrentUser } from "@/lib/auth";
@@ -87,6 +88,8 @@ export function LeaveRequestDialog({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [settingsReady, setSettingsReady] = useState(false);
   const [timezone, setTimezone] = useState("Asia/Muscat");
+  const [leaveYearStart, setLeaveYearStart] = useState("01-01");
+  const [useSpecialRoute, setUseSpecialRoute] = useState(false);
   const [specialRequestOpen, setSpecialRequestOpen] = useState(false);
   const [specialRequestReason, setSpecialRequestReason] = useState("");
   useEffect(() => {
@@ -98,6 +101,7 @@ export function LeaveRequestDialog({
       .then((settings) => {
         if (active) {
           setTimezone(settings.timezone);
+          setLeaveYearStart(settings.leaveYearStart);
           setSettingsReady(true);
         }
       })
@@ -157,16 +161,26 @@ export function LeaveRequestDialog({
     selectedPolicy && !(selectedPolicy.type === "Sick" && startDate < today)
       ? leaveNoticeAssessment(selectedPolicy.noticeRules, workingDays, startDate, today)
       : null;
+  const crossesLeaveYear = Boolean(
+    startDate &&
+    endDate &&
+    leaveYearForDate(startDate, leaveYearStart) !== leaveYearForDate(endDate, leaveYearStart),
+  );
+  const exceedsAllowance = Boolean(
+    selectedPolicy?.consumesBalance &&
+    workingDays > 0 &&
+    (selectedPolicy.scope === "Annual" || selectedPolicy.scope === "Ledger"
+      ? workingDays > (balance?.projectedAvailable ?? 0)
+      : workingDays > selectedPolicy.baseEntitlementDays),
+  );
+  const needsSpecialRoute = Boolean(
+    shortNotice || crossesLeaveYear || exceedsAllowance || useSpecialRoute,
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!settingsReady) return;
-    if (
-      !policyId ||
-      !startDate ||
-      !endDate ||
-      (selectedPolicy?.type !== "Annual" && reason.trim().length < 3)
-    ) {
+    if (!policyId || !startDate || !endDate) {
       toast.error("Please fill in all required fields.");
       return;
     }
@@ -197,15 +211,20 @@ export function LeaveRequestDialog({
       selectedPolicy && !(selectedPolicy.type === "Sick" && startDate < today)
         ? leaveNoticeAssessment(selectedPolicy.noticeRules, countedDays, startDate, today)
         : null;
-    if (currentNotice) {
+    if (currentNotice || crossesLeaveYear || exceedsAllowance || useSpecialRoute) {
       setSpecialRequestOpen(true);
+      return;
+    }
+
+    if (selectedPolicy?.type !== "Annual" && reason.trim().length < 3) {
+      toast.error("Explain the reason for this leave request.");
       return;
     }
 
     await submitRequest();
   };
 
-  const submitRequest = async (noticeExceptionReason?: string) => {
+  const submitRequest = async (specialRequestReason?: string) => {
     const actorContext = currentUser.getActorContext();
     try {
       setIsSubmitting(true);
@@ -217,7 +236,7 @@ export function LeaveRequestDialog({
           endDate,
           isHalfDay,
           reason,
-          ...(noticeExceptionReason ? { noticeExceptionReason } : {}),
+          ...(specialRequestReason ? { specialRequestReason } : {}),
           ...(handoverContactId ? { handoverContactId } : {}),
         },
         actorContext,
@@ -230,9 +249,9 @@ export function LeaveRequestDialog({
           duration: 10000,
         });
       } else {
-        toast.success(noticeExceptionReason ? "Special request sent" : "Leave request sent", {
-          description: noticeExceptionReason
-            ? "Sent to Riccardo and HR first. The line manager will review after both approve."
+        toast.success(specialRequestReason ? "Special request sent" : "Leave request sent", {
+          description: specialRequestReason
+            ? "Your line manager reviews first, then Riccardo, then HR. HR decides the balance and pay treatment."
             : "Your request is now pending approval.",
         });
       }
@@ -244,7 +263,7 @@ export function LeaveRequestDialog({
       onSuccess?.();
     } catch (err: unknown) {
       if (
-        !noticeExceptionReason &&
+        !specialRequestReason &&
         err instanceof Error &&
         err.message.includes("Choose the special request option")
       ) {
@@ -417,6 +436,12 @@ export function LeaveRequestDialog({
               <h4 className="font-semibold text-sm flex items-center gap-2">
                 <Info className="h-4 w-4" /> Balance Impact Preview
               </h4>
+              {needsSpecialRoute && (
+                <p className="rounded-md border border-amber-200 bg-amber-50 p-2 text-sm text-amber-900">
+                  Special approval is needed. This preview is not a deduction: HR will choose which
+                  balance and year to use, and whether any remaining days are paid or unpaid.
+                </p>
+              )}
 
               {selectedPolicy && !selectedPolicy.consumesBalance ? (
                 <div className="text-sm text-muted-foreground bg-background p-2 rounded border">
@@ -537,9 +562,19 @@ export function LeaveRequestDialog({
           )}
 
           <div className="space-y-4">
+            <div className="flex items-start gap-2 rounded-md border p-3 text-sm">
+              <Checkbox
+                id="special-leave-route"
+                checked={useSpecialRoute}
+                onCheckedChange={(value) => setUseSpecialRoute(Boolean(value))}
+              />
+              <Label htmlFor="special-leave-route" className="cursor-pointer font-normal">
+                Ask for special approval even if this request meets the normal rules
+              </Label>
+            </div>
             <div className="space-y-2">
               <Label>
-                {selectedPolicy?.type === "Annual" ? (
+                {selectedPolicy?.type === "Annual" || needsSpecialRoute ? (
                   "Note (optional)"
                 ) : (
                   <>
@@ -597,7 +632,7 @@ export function LeaveRequestDialog({
             >
               {isSubmitting
                 ? "Submitting..."
-                : shortNotice
+                : needsSpecialRoute
                   ? "Request special approval"
                   : "Submit Request"}
             </Button>
@@ -607,15 +642,20 @@ export function LeaveRequestDialog({
       <AlertDialog open={specialRequestOpen} onOpenChange={setSpecialRequestOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Ask for a short-notice exception?</AlertDialogTitle>
+            <AlertDialogTitle>Send a special leave request?</AlertDialogTitle>
             <AlertDialogDescription>
-              This leave normally needs {shortNotice?.requiredDays} calendar days' notice. You are
-              giving {shortNotice?.actualDays}. Explain why you need this exception. Riccardo and HR
-              review it first, then your line manager. Nothing is approved automatically.
+              {shortNotice
+                ? `This request gives ${shortNotice.actualDays} of ${shortNotice.requiredDays} required days' notice. `
+                : ""}
+              {crossesLeaveYear ? "It crosses entitlement years. " : ""}
+              {exceedsAllowance ? "It exceeds the usual leave allowance. " : ""}
+              Explain the circumstances. Your line manager reviews first, then Riccardo, then HR. HR
+              decides which balances to deduct from and whether any remaining days are paid or
+              unpaid. Nothing is approved automatically.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="leave-special-reason">Why is shorter notice needed?</Label>
+            <Label htmlFor="leave-special-reason">Why is special approval needed?</Label>
             <Textarea
               id="leave-special-reason"
               value={specialRequestReason}

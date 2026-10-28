@@ -276,6 +276,7 @@ const CreateLeave = z
     endDate: z.string().date(),
     reason: z.string().trim().max(2000).default(""),
     noticeExceptionReason: z.string().trim().max(2000).optional(),
+    specialRequestReason: z.string().trim().max(2000).optional(),
     isHalfDay: z.boolean().optional(),
     handoverContactId: z.string().uuid().optional(),
     attachmentFileId: z.string().uuid().optional(),
@@ -320,6 +321,7 @@ export const createLeaveRequestFn = createServerFn({ method: "POST" })
           ...(data.noticeExceptionReason
             ? { noticeExceptionReason: data.noticeExceptionReason }
             : {}),
+          ...(data.specialRequestReason ? { specialRequestReason: data.specialRequestReason } : {}),
           ...(data.isHalfDay !== undefined ? { isHalfDay: data.isHalfDay } : {}),
           ...(data.handoverContactId ? { handoverContactId: data.handoverContactId } : {}),
           ...(uploadedFileId ? { attachmentFileId: uploadedFileId } : {}),
@@ -345,6 +347,23 @@ const DecideLeave = z
     requestId: z.string().uuid(),
     decision: z.enum(["approve", "decline"]),
     reason: z.string().trim().max(2000).optional(),
+    specialAllocation: z
+      .object({
+        allocations: z
+          .array(
+            z
+              .object({
+                policyId: z.string().uuid(),
+                leaveYear: z.number().int(),
+                days: z.number().positive().multipleOf(0.5),
+              })
+              .strict(),
+          )
+          .max(20),
+        remainingPay: z.enum(["Paid", "Unpaid"]),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export const decideLeaveRequestFn = createServerFn({ method: "POST" })
@@ -357,6 +376,7 @@ export const decideLeaveRequestFn = createServerFn({ method: "POST" })
       verified.actor,
       data.decision,
       data.reason,
+      data.specialAllocation,
     );
   });
 
