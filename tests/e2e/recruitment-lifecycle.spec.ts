@@ -207,6 +207,7 @@ test("public application progresses through shortlist, interview, offer and onbo
     .getByRole("combobox");
   await templateSelect.click();
   await page.getByRole("option", { name: templateName }).click();
+  await dialog.getByPlaceholder("Office room or meeting link").fill("VIA Head Office");
   const workingDaysText = await dialog.getByText(/^Working days:/).textContent();
   const weekdayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const allowedWeekdays = new Set(
