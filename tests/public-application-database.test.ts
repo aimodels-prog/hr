@@ -41,6 +41,11 @@ import {
   listAssignedOfferReviewsInDatabase,
 } from "../src/lib/db/repositories/recruitment-offer.repository.server.ts";
 import { listPanelInterviewReadSnapshot } from "../src/lib/db/repositories/recruitment-read.repository.server.ts";
+import {
+  calendarDateInZone,
+  interviewSlotFromLocalTime,
+  isWorkingCalendarDate,
+} from "../src/lib/data/interview-scheduling.ts";
 import { parseCandidateSpreadsheetInDatabase } from "../src/lib/db/repositories/candidate-spreadsheet.repository.server.ts";
 import { listVacanciesForOrganisation } from "../src/lib/db/repositories/vacancy.repository.server.ts";
 
@@ -957,6 +962,79 @@ test(
         [String(merge.merged_into_id), merge.primary_contacts, merge.merge_audits],
         [result.candidateId, 2, 1],
       );
+
+      const [workCalendar] = await sql`
+        SELECT timezone, working_days FROM app_settings
+        WHERE organisation_id = ${vacancy.organisation_id}
+      `;
+      const directCandidateId = randomUUID();
+      await sql`
+        INSERT INTO candidates
+          (id, created_by, updated_by, organisation_id, first_name, last_name, email, phone,
+           location, years_of_experience, stage, do_not_contact)
+        VALUES
+          (${directCandidateId}, ${hr.id}, ${hr.id}, ${vacancy.organisation_id},
+           'Direct', 'Interviewee', ${`direct.${unique}@example.test`},
+           ${`+97154${Math.floor(10_000_000 + Math.random() * 89_999_999)}`},
+           'Dubai', 7, 'Interview', false)
+      `;
+      const timezone = String(workCalendar.timezone);
+      const workingDays = workCalendar.working_days as number[];
+      const firstFutureDate = new Date(Date.now() + 30 * 86_400_000);
+      const dates = Array.from({ length: 14 }, (_, offset) =>
+        calendarDateInZone(new Date(firstFutureDate.getTime() + offset * 86_400_000), timezone),
+      );
+      const workingDate = dates.find((date) => isWorkingCalendarDate(date, workingDays));
+      const restDate = dates.find((date) => !isWorkingCalendarDate(date, workingDays));
+      assert.ok(workingDate);
+      assert.ok(restDate);
+      const directSlot = interviewSlotFromLocalTime(workingDate, "10:00", 30, timezone);
+      const directInput = {
+        candidateId: directCandidateId,
+        vacancyId: String(vacancy.id),
+        source: "Scheduled Recruitment" as const,
+        stageName: "HR Screen",
+        durationMinutes: 30,
+        panelUserIds: [String(hr.id)],
+        location: "VIA office",
+        videoMethod: "In person",
+        notes: "Direct scheduling must be atomic.",
+      };
+      const directInterviewId = await createInterviewInDatabase(
+        String(vacancy.organisation_id),
+        { ...directInput, confirmedSlot: directSlot },
+        actor,
+      );
+      const [directInterview] = await sql`
+        SELECT status, confirmed_slot FROM interviews WHERE id = ${directInterviewId}
+      `;
+      assert.equal(directInterview.status, "Scheduled");
+      assert.equal(directInterview.confirmed_slot.startTime, directSlot.startTime);
+      await assert.rejects(
+        () =>
+          createInterviewInDatabase(
+            String(vacancy.organisation_id),
+            { ...directInput, confirmedSlot: directSlot },
+            actor,
+          ),
+        /already booked/,
+      );
+      await assert.rejects(
+        () =>
+          createInterviewInDatabase(
+            String(vacancy.organisation_id),
+            {
+              ...directInput,
+              confirmedSlot: interviewSlotFromLocalTime(restDate, "10:00", 30, timezone),
+            },
+            actor,
+          ),
+        /working days/,
+      );
+      const [directCount] = await sql`
+        SELECT count(*)::int AS count FROM interviews WHERE candidate_id = ${directCandidateId}
+      `;
+      assert.equal(directCount.count, 1, "a conflict must not create a proposed duplicate");
     } finally {
       await sql.end();
     }

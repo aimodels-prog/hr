@@ -207,6 +207,7 @@ test("local providers return deterministic job, scoring, calendar, and email res
     endDate: new Date("2099-01-11T00:00:00.000Z"),
     durationMinutes: 45,
     timezone: "Asia/Muscat",
+    workingDays: [0, 1, 2, 3, 4],
   };
   assert.deepEqual(
     await calendar.findAvailability(availabilityRequest),

@@ -2,6 +2,7 @@ import { getApplicationDataServices } from "./application-data.ts";
 import { recordAccessDenied } from "./audit-service.ts";
 import { LocalRepository } from "./repository.ts";
 import { ScorecardService } from "./scorecard-service.ts";
+import { SettingsService } from "./settings-service.ts";
 import {
   type ActorContext,
   type Candidate,
@@ -117,8 +118,8 @@ export class InterviewService {
     payload: Partial<InterviewEvent>,
     context: ActorContext,
   ): Promise<InterviewEvent> {
-    if (!payload.candidateId || !payload.vacancyId || !payload.templateId)
-      throw new Error("Vacancy, candidate and scorecard template are required.");
+    if (!payload.candidateId || !payload.vacancyId)
+      throw new Error("Vacancy and candidate are required.");
     const vacancyId = this.databaseVacancyId(payload.vacancyId);
     if (!vacancyId) throw new Error("The vacancy is not connected to PostgreSQL.");
     const { createInterviewFn } = await import("../server-functions/interview.server.ts");
@@ -127,7 +128,7 @@ export class InterviewService {
         actor: this.serverActor(context),
         candidateId: payload.candidateId,
         vacancyId,
-        templateId: payload.templateId,
+        ...(payload.templateId ? { templateId: payload.templateId } : {}),
         source: "Scheduled Recruitment",
         stageName: payload.stageName ?? "Interview",
         durationMinutes: payload.durationMinutes ?? 30,
@@ -136,6 +137,7 @@ export class InterviewService {
         videoMethod: payload.videoMethod ?? "To be confirmed",
         notes: payload.notes ?? "",
         proposedSlots: payload.proposedSlots ?? [],
+        ...(payload.confirmedSlot ? { confirmedSlot: payload.confirmedSlot } : {}),
       },
     });
     await this.refresh(context);
@@ -483,6 +485,7 @@ export class InterviewService {
       });
       throw new Error("Only HR or Super Admin can propose interview slots.");
     }
+    const settings = await new SettingsService().getAppSettings();
     const operation = this.operations.start(
       {
         operationType: "calendar_availability",
@@ -496,6 +499,7 @@ export class InterviewService {
           endDate: endDate.toISOString(),
           durationMinutes,
           timezone,
+          workingDays: settings.workingDays,
         },
       },
       context,
@@ -509,6 +513,7 @@ export class InterviewService {
         endDate,
         durationMinutes,
         timezone,
+        workingDays: settings.workingDays,
       });
       this.operations.complete(operation.id, { slotCount: slots.length }, context, {
         status: this.provider.metadata.mode === "local" ? "Simulated" : "Completed",
@@ -533,9 +538,6 @@ export class InterviewService {
     }
     if (!payload.vacancyId || !payload.candidateId) {
       throw new Error("Vacancy and candidate are required to create an interview.");
-    }
-    if (!payload.templateId) {
-      throw new Error("A scorecard template is required for every interview stage.");
     }
     if (!payload.panelUserIds?.length) {
       throw new Error("At least one panel member is required.");

@@ -102,6 +102,7 @@ export interface CalendarAvailabilityRequest {
   endDate: Date;
   durationMinutes: number;
   timezone: string;
+  workingDays: number[];
 }
 
 export interface CalendarEventRequest {

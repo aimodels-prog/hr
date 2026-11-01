@@ -13,8 +13,10 @@ import type {
   ScorecardCriterion,
   ScorecardRecommendation,
 } from "../../data/types.ts";
+import { assertInterviewWorkingDay } from "../../data/interview-scheduling.ts";
 import { getDatabaseClient } from "../client.ts";
 import { users } from "../schema/employee.ts";
+import { appSettings } from "../schema/organisation.ts";
 import {
   candidateApplications,
   candidates,
@@ -307,7 +309,7 @@ export async function createInterviewInDatabase(
   input: {
     candidateId: string;
     vacancyId?: string;
-    templateId: string;
+    templateId?: string;
     source: "Scheduled Recruitment" | "Manual / Offline";
     stageName: string;
     durationMinutes: number;
@@ -316,6 +318,7 @@ export async function createInterviewInDatabase(
     videoMethod: string;
     notes: string;
     proposedSlots?: InterviewSlot[];
+    confirmedSlot?: InterviewSlot;
     occurredAt?: string;
     timezone?: string;
     positionTitle?: string;
@@ -332,9 +335,13 @@ export async function createInterviewInDatabase(
     throw new Error("Interview stage and a valid duration are required.");
   if (input.source === "Scheduled Recruitment" && !input.vacancyId)
     throw new Error("A vacancy is required for a scheduled interview.");
+  if (input.source === "Manual / Offline" && !input.templateId)
+    throw new Error("Select a scorecard template for a completed offline interview.");
+  if (input.source === "Manual / Offline" && input.confirmedSlot)
+    throw new Error("A completed offline interview cannot be scheduled in the future.");
   const db = getDatabaseClient();
   return db.transaction(async (tx) => {
-    const [[candidate], [template]] = await Promise.all([
+    const [candidateRows, templateRows] = await Promise.all([
       tx
         .select()
         .from(candidates)
@@ -342,21 +349,25 @@ export async function createInterviewInDatabase(
           and(eq(candidates.organisationId, organisationId), eq(candidates.id, input.candidateId)),
         )
         .limit(1),
-      tx
-        .select()
-        .from(interviewTemplates)
-        .where(
-          and(
-            eq(interviewTemplates.organisationId, organisationId),
-            eq(interviewTemplates.id, input.templateId),
-            sql`${interviewTemplates.archivedAt} IS NULL`,
-          ),
-        )
-        .limit(1),
+      input.templateId
+        ? tx
+            .select()
+            .from(interviewTemplates)
+            .where(
+              and(
+                eq(interviewTemplates.organisationId, organisationId),
+                eq(interviewTemplates.id, input.templateId),
+                sql`${interviewTemplates.archivedAt} IS NULL`,
+              ),
+            )
+            .limit(1)
+        : Promise.resolve([]),
     ]);
+    const [candidate] = candidateRows;
+    const [template] = templateRows;
     if (!candidate || candidate.archivedAt || candidate.mergedIntoId)
       throw new Error("Candidate not found.");
-    if (!template) throw new Error("Select an active scorecard template.");
+    if (input.templateId && !template) throw new Error("Select an active scorecard template.");
     if (input.vacancyId) {
       const [vacancy] = await tx
         .select({ id: vacancies.id })
@@ -386,13 +397,32 @@ export async function createInterviewInDatabase(
       manualOutcome = "Pending";
     } else {
       for (const slot of input.proposedSlots ?? []) validSlot(slot);
+      if (input.confirmedSlot) {
+        validSlot(input.confirmedSlot);
+        const [settings] = await tx
+          .select({ timezone: appSettings.timezone, workingDays: appSettings.workingDays })
+          .from(appSettings)
+          .where(eq(appSettings.organisationId, organisationId))
+          .limit(1);
+        if (!settings) throw new Error("Organisation working days are not configured.");
+        assertInterviewWorkingDay(input.confirmedSlot, settings.workingDays, settings.timezone);
+        const slotMinutes =
+          (new Date(input.confirmedSlot.endTime).getTime() -
+            new Date(input.confirmedSlot.startTime).getTime()) /
+          60_000;
+        if (slotMinutes !== input.durationMinutes)
+          throw new Error("The interview time must match its selected duration.");
+        await assertNoPanelConflict(tx, organisationId, id, panelUserIds, input.confirmedSlot);
+        confirmedSlot = input.confirmedSlot;
+        status = "Scheduled";
+      }
     }
     await tx.insert(interviews).values({
       id,
       organisationId,
       candidateId: input.candidateId,
       vacancyId: input.vacancyId,
-      templateId: input.templateId,
+      templateId: input.templateId ?? null,
       source: input.source,
       positionTitle: input.positionTitle?.trim() || null,
       projectName: input.projectName?.trim() || null,
@@ -412,7 +442,9 @@ export async function createInterviewInDatabase(
           input.source === "Manual / Offline" ? "Manual interview recorded" : "Created",
           input.source === "Manual / Offline"
             ? "Recorded an interview completed outside the portal."
-            : "Interview created with proposed times.",
+            : confirmedSlot
+              ? "Interview scheduled directly by HR."
+              : "Interview created with proposed times.",
         ),
       ],
       createdBy: actor.userId!,

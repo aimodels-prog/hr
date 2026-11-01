@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -18,17 +18,22 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { SearchablePeopleList } from "@/components/ui/searchable-people-list";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Info, Calendar, Users } from "lucide-react";
 import { InterviewService } from "@/lib/data/interview-service";
+import {
+  assertInterviewWorkingDay,
+  calendarDateInZone,
+  interviewSlotFromLocalTime,
+  isWorkingCalendarDate,
+} from "@/lib/data/interview-scheduling";
 import { ScorecardService } from "@/lib/data/scorecard-service";
 import { EmployeeService } from "@/lib/data/employee-service";
+import { SettingsService } from "@/lib/data/settings-service";
 import type { InterviewSlot } from "@/lib/data/types";
 import { useCurrentUser } from "@/lib/auth";
 import { toast } from "sonner";
-import { format } from "date-fns";
 
 interface InterviewDialogProps {
   open: boolean;
@@ -49,12 +54,17 @@ export function InterviewDialog({
   const [stageName, setStageName] = useState("HR Screen");
   const [templateId, setTemplateId] = useState<string>("");
   const [duration, setDuration] = useState("30");
-  const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
-  const [location, setLocation] = useState("Google Meet");
+  const [organisation, setOrganisation] = useState<{
+    timezone: string;
+    workingDays: number[];
+  } | null>(null);
+  const [location, setLocation] = useState("");
   const [notes, setNotes] = useState("");
-  const [dateRangeStart, setDateRangeStart] = useState("");
+  const [manualDate, setManualDate] = useState("");
+  const [manualTime, setManualTime] = useState("");
 
   const [isSimulating, setIsSimulating] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [proposedSlots, setProposedSlots] = useState<InterviewSlot[]>([]);
   const [selectedSlotIndex, setSelectedSlotIndex] = useState<number>(-1);
   const [otherPanelUserIds, setOtherPanelUserIds] = useState<string[]>([]);
@@ -66,6 +76,24 @@ export function InterviewDialog({
     () => scorecardService.getApplicableTemplates(vacancyId, stageName),
     [scorecardService, vacancyId, stageName],
   );
+
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    new SettingsService()
+      .getAppSettings()
+      .then((settings) => {
+        if (active)
+          setOrganisation({ timezone: settings.timezone, workingDays: settings.workingDays });
+      })
+      .catch(() => {
+        if (active)
+          toast.error("Working-day settings could not be loaded. Try reopening this form.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [open]);
 
   // Anyone who might sit on this panel - not just HR/managers - so the scheduler can name a
   // real interviewer (a senior IC doing a technical round, for example), not only themselves.
@@ -90,13 +118,16 @@ export function InterviewDialog({
     () => [currentUser!.userId, ...otherPanelUserIds],
     [currentUser, otherPanelUserIds],
   );
+  const manualDateIsRestDay = Boolean(
+    manualDate && organisation && !isWorkingCalendarDate(manualDate, organisation.workingDays),
+  );
 
   const handleSimulate = async () => {
+    if (!organisation) return;
     setIsSimulating(true);
     try {
-      const start = new Date(dateRangeStart || new Date());
-      const end = new Date(start);
-      end.setDate(end.getDate() + 7); // Default to a 1 week range
+      const start = manualDate ? new Date(`${manualDate}T00:00:00Z`) : new Date();
+      const end = new Date(start.getTime() + 7 * 86_400_000);
 
       const slots = await interviewService.proposeSlots(
         panelUserIds,
@@ -104,7 +135,7 @@ export function InterviewDialog({
         start,
         end,
         parseInt(duration),
-        timezone,
+        organisation.timezone,
         {
           ...currentUser!.getActorContext(),
           reason: "Reviewed interview availability",
@@ -112,71 +143,51 @@ export function InterviewDialog({
       );
       setProposedSlots(slots);
       setSelectedSlotIndex(-1);
-    } catch (e) {
-      toast.error("Failed to fetch mock availability");
+      if (!slots.length)
+        toast.info("No working-hour suggestions were found. Choose a time manually.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not suggest interview times.");
     } finally {
       setIsSimulating(false);
     }
   };
 
   const handleSchedule = async () => {
-    if (selectedSlotIndex === -1) {
-      toast.error("Please select a time slot");
-      return;
-    }
-    if (!templateId || templateId === "none") {
-      toast.error("Select the scorecard template HR configured for this stage");
-      return;
-    }
-    const slot = proposedSlots[selectedSlotIndex]!;
-
+    if (!organisation) return;
     try {
-      const interview = await interviewService.createInterviewAsync(
+      const slot =
+        selectedSlotIndex >= 0
+          ? proposedSlots[selectedSlotIndex]!
+          : interviewSlotFromLocalTime(
+              manualDate,
+              manualTime,
+              Number(duration),
+              organisation.timezone,
+            );
+      assertInterviewWorkingDay(slot, organisation.workingDays, organisation.timezone);
+      setIsSaving(true);
+      await interviewService.createInterviewAsync(
         {
           vacancyId,
           candidateId,
-          ...(templateId ? { templateId } : {}),
+          ...(templateId && templateId !== "none" ? { templateId } : {}),
           stageName,
-          durationMinutes: parseInt(duration),
+          durationMinutes: Number(duration),
           panelUserIds,
           location,
           videoMethod: location,
           notes,
-          proposedSlots,
+          confirmedSlot: slot,
         },
         currentUser!.getActorContext(),
       );
-
-      await interviewService
-        .updateWorkflowAsync(
-          interview.id,
-          {
-            action: "candidate-accepted",
-            slot,
-            reason: "HR confirmed the selected interview time",
-          },
-          currentUser!.getActorContext(),
-        )
-        .catch(async (error) => {
-          // A newly created interview has not yet been sent to the candidate, so HR may
-          // confirm the chosen availability directly through the status action.
-          if (!(error instanceof Error) || !error.message.includes("awaiting")) throw error;
-          return interviewService.updateWorkflowAsync(
-            interview.id,
-            {
-              action: "change-status",
-              status: "Scheduled",
-              reason: "HR confirmed the selected interview time",
-            },
-            currentUser!.getActorContext(),
-          );
-        });
-
-      toast.success("Interview scheduled and invitation details saved");
+      toast.success("Interview scheduled. Share the time and location with the candidate.");
       onOpenChange(false);
       onSuccess?.();
-    } catch (e) {
-      toast.error("Failed to schedule interview");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not schedule the interview.");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -191,8 +202,8 @@ export function InterviewDialog({
         <Alert className="bg-blue-50 text-blue-900 border-blue-200">
           <Info className="h-4 w-4" color="blue" />
           <AlertDescription>
-            <strong>Calendar connection is not active yet.</strong> Choose the interview time
-            manually. Google Calendar and Meet can be connected later.
+            Choose a date and time below. Suggested times follow VIA working days, but do not check
+            anyone&apos;s calendar. Confirm with the interview panel before scheduling.
           </AlertDescription>
         </Alert>
 
@@ -206,13 +217,13 @@ export function InterviewDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label>Scorecard Template (Optional)</Label>
+            <Label>Scorecard Template (optional)</Label>
             <Select value={templateId} onValueChange={setTemplateId}>
               <SelectTrigger>
-                <SelectValue placeholder="No template" />
+                <SelectValue placeholder="No scorecard" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="none">No template</SelectItem>
+                <SelectItem value="none">No scorecard</SelectItem>
                 {templates.map((t) => (
                   <SelectItem key={t.id} value={t.id}>
                     {t.name}
@@ -223,7 +234,14 @@ export function InterviewDialog({
           </div>
           <div className="space-y-2">
             <Label>Duration (Minutes)</Label>
-            <Select value={duration} onValueChange={setDuration}>
+            <Select
+              value={duration}
+              onValueChange={(value) => {
+                setDuration(value);
+                setSelectedSlotIndex(-1);
+                setProposedSlots([]);
+              }}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -237,24 +255,16 @@ export function InterviewDialog({
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Location / Video</Label>
+            <Label>Location or video link</Label>
             <Input
               value={location}
               onChange={(e) => setLocation(e.target.value)}
-              placeholder="Google Meet link or Office Room"
+              placeholder="Office room or meeting link"
             />
           </div>
           <div className="space-y-2">
             <Label>Timezone</Label>
-            <Input value={timezone} onChange={(e) => setTimezone(e.target.value)} />
-          </div>
-          <div className="space-y-2">
-            <Label>Earliest Date</Label>
-            <Input
-              type="date"
-              value={dateRangeStart}
-              onChange={(e) => setDateRangeStart(e.target.value)}
-            />
+            <Input value={organisation?.timezone ?? "Loading..."} readOnly />
           </div>
           <div className="space-y-2 col-span-2">
             <Label>Interview Notes / Instructions</Label>
@@ -285,38 +295,117 @@ export function InterviewDialog({
           />
         </div>
 
-        <div className="border-t pt-4">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="font-semibold text-lg">Availability</h3>
-            <Button variant="outline" onClick={handleSimulate} disabled={isSimulating}>
-              {isSimulating ? "Checking..." : "Simulate Availability"}
-            </Button>
+        <div className="border-t pt-4 space-y-4">
+          <div>
+            <h3 className="font-semibold text-lg">Interview time</h3>
+            <p className="text-sm text-muted-foreground">
+              Enter a time manually, or choose a working-day suggestion.
+            </p>
           </div>
-
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="interview-date">Date *</Label>
+              <Input
+                id="interview-date"
+                type="date"
+                value={manualDate}
+                onChange={(event) => {
+                  setManualDate(event.target.value);
+                  setSelectedSlotIndex(-1);
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="interview-time">Time *</Label>
+              <Input
+                id="interview-time"
+                type="time"
+                step={900}
+                value={manualTime}
+                onChange={(event) => {
+                  setManualTime(event.target.value);
+                  setSelectedSlotIndex(-1);
+                }}
+              />
+            </div>
+          </div>
+          {organisation && (
+            <p className="text-xs text-muted-foreground">
+              Working days:{" "}
+              {organisation.workingDays
+                .map((day) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day])
+                .join(", ")}
+              . Timezone: {organisation.timezone}.
+            </p>
+          )}
+          {manualDateIsRestDay && selectedSlotIndex === -1 && (
+            <p className="text-sm text-destructive" role="alert">
+              This is not a VIA working day. Choose another date.
+            </p>
+          )}
+          <Button
+            variant="outline"
+            onClick={handleSimulate}
+            disabled={isSimulating || !organisation}
+          >
+            {isSimulating ? "Finding times..." : "Suggest working times"}
+          </Button>
           {proposedSlots.length > 0 && (
             <div className="space-y-2">
-              <Label>Select a confirmed slot</Label>
+              <Label>Suggested times (not calendar-checked)</Label>
               <div className="grid grid-cols-1 gap-2">
                 {proposedSlots.map((slot, idx) => (
-                  <div
-                    key={idx}
-                    className={`p-3 border rounded-md cursor-pointer flex items-center justify-between ${selectedSlotIndex === idx ? "bg-primary/10 border-primary" : "hover:bg-muted"}`}
-                    onClick={() => setSelectedSlotIndex(idx)}
+                  <button
+                    type="button"
+                    key={`${slot.startTime}-${idx}`}
+                    className={`p-3 border rounded-md text-left flex items-center justify-between ${selectedSlotIndex === idx ? "bg-primary/10 border-primary" : "hover:bg-muted"}`}
+                    onClick={() => {
+                      const start = new Date(slot.startTime);
+                      setManualDate(calendarDateInZone(start, slot.timezone));
+                      setManualTime(
+                        new Intl.DateTimeFormat("en-GB", {
+                          timeZone: slot.timezone,
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          hourCycle: "h23",
+                        }).format(start),
+                      );
+                      setSelectedSlotIndex(idx);
+                    }}
+                    aria-pressed={selectedSlotIndex === idx}
                   >
                     <div className="flex items-center gap-3">
                       <Calendar className="h-5 w-5 text-muted-foreground" />
                       <div>
                         <div className="font-medium">
-                          {format(new Date(slot.startTime), "EEEE, MMM do, yyyy")}
+                          {new Intl.DateTimeFormat("en", {
+                            timeZone: slot.timezone,
+                            weekday: "long",
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          }).format(new Date(slot.startTime))}
                         </div>
                         <div className="text-sm text-muted-foreground">
-                          {format(new Date(slot.startTime), "h:mm a")} -{" "}
-                          {format(new Date(slot.endTime), "h:mm a")} ({slot.timezone})
+                          {new Intl.DateTimeFormat("en", {
+                            timeZone: slot.timezone,
+                            hour: "numeric",
+                            minute: "2-digit",
+                          }).format(new Date(slot.startTime))}{" "}
+                          -{" "}
+                          {new Intl.DateTimeFormat("en", {
+                            timeZone: slot.timezone,
+                            hour: "numeric",
+                            minute: "2-digit",
+                          }).format(new Date(slot.endTime))}{" "}
+                          ({slot.timezone})
                         </div>
                       </div>
                     </div>
-                    {selectedSlotIndex === idx && <Badge>Selected</Badge>}
-                  </div>
+                    {selectedSlotIndex === idx && (
+                      <span className="text-sm font-medium">Selected</span>
+                    )}
+                  </button>
                 ))}
               </div>
             </div>
@@ -327,8 +416,15 @@ export function InterviewDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleSchedule} disabled={selectedSlotIndex === -1}>
-            Schedule Interview
+          <Button
+            onClick={handleSchedule}
+            disabled={
+              isSaving ||
+              !organisation ||
+              (selectedSlotIndex === -1 && (!manualDate || !manualTime || manualDateIsRestDay))
+            }
+          >
+            {isSaving ? "Scheduling..." : "Schedule Interview"}
           </Button>
         </DialogFooter>
       </DialogContent>

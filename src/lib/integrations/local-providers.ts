@@ -1,4 +1,5 @@
 import type { Candidate, CandidateApplication, InterviewSlot, Vacancy } from "../data/types.ts";
+import { suggestWorkingInterviewSlots } from "../data/interview-scheduling.ts";
 import type {
   AiProvider,
   CalendarAvailabilityRequest,
@@ -224,24 +225,7 @@ export class LocalCalendarProvider implements CalendarProvider {
   };
 
   async findAvailability(request: CalendarAvailabilityRequest): Promise<InterviewSlot[]> {
-    const start = new Date(request.startDate);
-    const today = new Date();
-    if (start < today) start.setDate(today.getDate() + 1);
-
-    return [10, 13, 15].flatMap((hour) => {
-      const slotStart = new Date(start);
-      slotStart.setHours(hour, 0, 0, 0);
-      if (slotStart > request.endDate) return [];
-      const slotEnd = new Date(slotStart);
-      slotEnd.setMinutes(slotEnd.getMinutes() + request.durationMinutes);
-      return [
-        {
-          startTime: slotStart.toISOString(),
-          endTime: slotEnd.toISOString(),
-          timezone: request.timezone,
-        },
-      ];
-    });
+    return suggestWorkingInterviewSlots(request);
   }
 
   async createEvent(request: CalendarEventRequest): Promise<CalendarEventResult> {
