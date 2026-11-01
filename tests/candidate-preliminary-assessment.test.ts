@@ -107,33 +107,24 @@ test("experience below the minimum requires review even with a high semantic sco
 });
 
 test("HR receives the requested number in ranking order", () => {
-  const result = selectCandidateAssessmentGroup(
-    ["rank-1", "rank-2", "rank-3", "rank-4"],
-    [],
-    [],
-    3,
-  );
+  const result = selectCandidateAssessmentGroup(["rank-1", "rank-2", "rank-3", "rank-4"], [], 3);
   assert.deepEqual(result.selected, ["rank-1", "rank-2", "rank-3"]);
 });
 
-test("recommended and HR-added candidates remain pinned without changing their scores", () => {
+test("recommended candidates follow their rank; only HR-added candidates remain pinned", () => {
   const result = selectCandidateAssessmentGroup(
     ["rank-1", "rank-2", "recommended", "hr-added"],
-    ["recommended"],
     ["hr-added"],
     3,
   );
-  assert.deepEqual(result.pinned, ["recommended", "hr-added"]);
-  assert.deepEqual(result.selected, ["recommended", "hr-added", "rank-1"]);
-  assert.throws(
-    () => selectCandidateAssessmentGroup(["rank-1", "rank-2"], [], [], 0),
-    /at least one/,
-  );
+  assert.deepEqual(result.pinned, ["hr-added"]);
+  assert.deepEqual(result.selected, ["hr-added", "rank-1", "rank-2"]);
+  assert.throws(() => selectCandidateAssessmentGroup(["rank-1", "rank-2"], [], 0), /at least one/);
 });
 
 test("HR can choose twenty or more candidates when enough prepared candidates exist", () => {
   const ranked = Array.from({ length: 25 }, (_, index) => `rank-${index + 1}`);
-  const result = selectCandidateAssessmentGroup(ranked, [], [], 20);
+  const result = selectCandidateAssessmentGroup(ranked, [], 20);
   assert.equal(result.selected.length, 20);
   assert.deepEqual(result.selected, ranked.slice(0, 20));
 });

@@ -653,8 +653,8 @@ export interface CandidateApplication extends BaseRecord {
   assessmentScoreId?: RecordId | undefined;
   preparationRunId?: RecordId | undefined;
   preparationStatus?: CandidatePreparationStatus | undefined;
-  /** Retained only so older browser records remain readable after migration. */
-  screeningDecision?: CandidateInterviewRecommendation["screeningDecision"] | undefined;
+  /** HR's vacancy-specific screening decision and private review remark. */
+  screeningDecision?: string | undefined;
   internalApplicantEmployeeId?: RecordId | undefined;
   submittedByEmployeeId?: RecordId | undefined;
 }

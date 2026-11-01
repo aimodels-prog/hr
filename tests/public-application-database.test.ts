@@ -21,6 +21,7 @@ import {
   refreshPreliminaryScreeningInDatabase,
   finaliseShortlistInDatabase,
   runDetailedAssessmentInDatabase,
+  setCandidateCvSuitabilityInDatabase,
 } from "../src/lib/db/repositories/recruitment-screening.repository.server.ts";
 import {
   createInterviewInDatabase,
@@ -231,6 +232,50 @@ test(
         activeRole: "HR" as const,
         roles: ["Employee", "HR"] as const,
       };
+      await assert.rejects(
+        setCandidateCvSuitabilityInDatabase(
+          String(vacancy.organisation_id),
+          vacancyId,
+          result.candidateId,
+          "not-suitable",
+          "Candidate too old",
+          actor,
+        ),
+        /job requirements, not a person's age/,
+      );
+      await setCandidateCvSuitabilityInDatabase(
+        String(vacancy.organisation_id),
+        vacancyId,
+        result.candidateId,
+        "not-suitable",
+        "Required infrastructure project experience is not shown",
+        actor,
+      );
+      const [rejected] = await sql`
+        SELECT status, screening_decision FROM candidate_applications WHERE id = ${result.applicationId}
+      `;
+      assert.equal(rejected.status, "Rejected");
+      assert.match(
+        String(rejected.screening_decision),
+        /Required infrastructure project experience/,
+      );
+      await assert.rejects(
+        createAssessmentBatchInDatabase(String(vacancy.organisation_id), vacancyId, 1, actor),
+        /Only 0 candidates/,
+      );
+      await setCandidateCvSuitabilityInDatabase(
+        String(vacancy.organisation_id),
+        vacancyId,
+        result.candidateId,
+        "restore",
+        "",
+        actor,
+      );
+      const [restored] = await sql`
+        SELECT status, screening_decision FROM candidate_applications WHERE id = ${result.applicationId}
+      `;
+      assert.equal(restored.status, "New");
+      assert.equal(restored.screening_decision, null);
       const importPreview = await parseCandidateSpreadsheetInDatabase(
         String(vacancy.organisation_id),
         {

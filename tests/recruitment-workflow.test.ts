@@ -542,7 +542,7 @@ test("a CV intake can continue into a recommended candidate without uploading th
   );
 });
 
-test("HR recommendation is pinned without changing the objective assessment score", async () => {
+test("HR recommendation retains its source without changing the objective assessment score", async () => {
   const { storage } = harness();
   const vacancies = new VacancyService();
   const vacancy = vacancies.saveDraft(

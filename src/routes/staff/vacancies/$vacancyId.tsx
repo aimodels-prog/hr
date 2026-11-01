@@ -52,6 +52,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import {
@@ -82,6 +83,7 @@ import { InterviewService } from "@/lib/data/interview-service";
 import { CandidatePreparationService } from "@/lib/data/candidate-preparation-service";
 import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
 import { PreliminaryScoreExplanation } from "@/components/recruitment/preliminary-score-explanation";
+import { setCandidateCvSuitabilityFn } from "@/lib/server-functions/candidate.server";
 
 export const Route = createFileRoute("/staff/vacancies/$vacancyId")({
   component: VacancyDetailRoute,
@@ -164,6 +166,13 @@ function VacancyDetailRoute() {
     () => new Set(assessmentBatch?.selectedCandidateIds || []),
   );
   const [assessmentChangeReason, setAssessmentChangeReason] = useState("");
+  const [reviewSearch, setReviewSearch] = useState("");
+  const [reviewFilter, setReviewFilter] = useState<"active" | "recommended" | "not-suitable">(
+    "active",
+  );
+  const [rejectCandidateId, setRejectCandidateId] = useState<string | null>(null);
+  const [rejectionRemark, setRejectionRemark] = useState("");
+  const [savingSuitability, setSavingSuitability] = useState(false);
 
   const serverActor = useMemo(
     () => ({
@@ -284,10 +293,44 @@ function VacancyDetailRoute() {
   const [overrides, setOverrides] = useState<ShortlistOverride[]>(
     initialShortlist?.overrides || [],
   );
-  const pinnedCandidateIds = new Set([
-    ...(assessmentBatch?.recommendedCandidateIds || []),
-    ...(assessmentBatch?.hrAddedCandidateIds || []),
-  ]);
+  const pinnedCandidateIds = new Set([...(assessmentBatch?.hrAddedCandidateIds || [])]);
+  const applicationByCandidate = new Map(applications.map((item) => [item.candidateId, item]));
+  const latestRuns = new Map<string, CandidatePreparationRun>();
+  for (const run of [...preparationRuns].sort(
+    (a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
+  )) {
+    if (!latestRuns.has(run.candidateId)) latestRuns.set(run.candidateId, run);
+  }
+  const reviewRuns = [...latestRuns.values()].sort(
+    (a, b) => (b.preliminaryScore ?? -1) - (a.preliminaryScore ?? -1),
+  );
+  const activeReviewRuns = reviewRuns.filter((run) => {
+    const status = applicationByCandidate.get(run.candidateId)?.status;
+    return status !== "Rejected" && status !== "Withdrawn";
+  });
+  const visibleReviewRuns = reviewRuns.filter((run) => {
+    const application = applicationByCandidate.get(run.candidateId);
+    const manualRejection =
+      application?.status === "Rejected" &&
+      application.screeningDecision?.startsWith("Not suitable: ");
+    if (reviewFilter === "not-suitable" && !manualRejection) return false;
+    if (
+      reviewFilter !== "not-suitable" &&
+      ["Rejected", "Withdrawn"].includes(application?.status ?? "")
+    )
+      return false;
+    if (
+      reviewFilter === "recommended" &&
+      !inclusions.some(
+        (item) => item.candidateId === run.candidateId && item.source === "Recommended",
+      )
+    )
+      return false;
+    const candidate = candidates.find((item) => item.id === run.candidateId);
+    return `${candidate?.firstName ?? ""} ${candidate?.lastName ?? ""}`
+      .toLowerCase()
+      .includes(reviewSearch.trim().toLowerCase());
+  });
 
   const form = useForm<z.infer<typeof transitionSchema>>({
     resolver: zodResolver(transitionSchema),
@@ -376,6 +419,34 @@ function VacancyDetailRoute() {
       shortlistService.getDraftForVacancy(vacancy.id) ||
         shortlistService.getFinalizedForVacancy(vacancy.id),
     );
+  };
+
+  const saveSuitability = async (candidateId: string, decision: "not-suitable" | "restore") => {
+    setSavingSuitability(true);
+    try {
+      await setCandidateCvSuitabilityFn({
+        data: {
+          actor: serverActor,
+          vacancyId: databaseVacancyId,
+          candidateId,
+          decision,
+          remark: decision === "not-suitable" ? rejectionRemark.trim() : "",
+        },
+      });
+      await candidateService.hydrateCompatibilityCache(context);
+      refreshScreening();
+      setRejectCandidateId(null);
+      setRejectionRemark("");
+      toast.success(
+        decision === "not-suitable"
+          ? "CV marked not suitable. Your remark is saved privately."
+          : "CV restored to preliminary review.",
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The CV decision could not be saved.");
+    } finally {
+      setSavingSuitability(false);
+    }
   };
 
   const handlePrepareCandidates = async () => {
@@ -1016,16 +1087,23 @@ function VacancyDetailRoute() {
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                   {[
                     ["Applications", applications.length],
-                    ["Prepared", preparationRuns.filter((run) => run.status === "Ready").length],
+                    ["Prepared", activeReviewRuns.filter((run) => run.status === "Ready").length],
                     [
                       "Needs review",
-                      preparationRuns.filter((run) => run.status === "Needs Review").length,
+                      activeReviewRuns.filter((run) => run.status === "Needs Review").length,
                     ],
                     [
                       "Processing issues",
-                      preparationRuns.filter((run) => run.status === "Processing Failed").length,
+                      activeReviewRuns.filter((run) => run.status === "Processing Failed").length,
                     ],
-                    ["Pinned", pinnedCandidateIds.size],
+                    [
+                      "Not suitable",
+                      reviewRuns.filter((run) =>
+                        applicationByCandidate
+                          .get(run.candidateId)
+                          ?.screeningDecision?.startsWith("Not suitable: "),
+                      ).length,
+                    ],
                   ].map(([label, value]) => (
                     <div key={label} className="rounded-lg border bg-muted/20 p-3">
                       <div className="text-xs text-muted-foreground">{label}</div>
@@ -1120,7 +1198,8 @@ function VacancyDetailRoute() {
                       <h3 className="font-semibold">Preliminary review</h3>
                       <p className="text-sm text-muted-foreground">
                         CV text is reused where possible. OCR is reserved for scanned documents;
-                        detailed AI is not used at this stage.
+                        detailed AI is not used at this stage. Recommended CVs are ranked against
+                        the same job requirements; a recommendation does not guarantee selection.
                       </p>
                     </div>
                     <div className="flex flex-wrap items-end gap-3">
@@ -1129,10 +1208,7 @@ function VacancyDetailRoute() {
                         <Input
                           type="number"
                           min={1}
-                          max={Math.max(
-                            1,
-                            new Set(preparationRuns.map((run) => run.candidateId)).size,
-                          )}
+                          max={Math.max(1, activeReviewRuns.length)}
                           value={targetSize}
                           onChange={(event) => {
                             const value = Number(event.target.value);
@@ -1165,7 +1241,7 @@ function VacancyDetailRoute() {
                       <Button
                         variant="outline"
                         onClick={handleCreateAssessmentGroup}
-                        disabled={preparationRuns.length === 0 || isPreparing}
+                        disabled={activeReviewRuns.length === 0 || isPreparing}
                       >
                         Choose Assessment Group
                       </Button>
@@ -1182,15 +1258,46 @@ function VacancyDetailRoute() {
                       </Button>
                     </div>
                   </div>
-                  {preparationRuns.length === 0 ? (
+                  {reviewRuns.length > 0 && (
+                    <div className="flex flex-wrap gap-3 border-b p-4">
+                      <Input
+                        className="max-w-xs"
+                        aria-label="Search CVs by name"
+                        placeholder="Search candidate name"
+                        value={reviewSearch}
+                        onChange={(event) => setReviewSearch(event.target.value)}
+                      />
+                      <select
+                        aria-label="Filter CV reviews"
+                        className="h-10 rounded-md border bg-background px-3 text-sm"
+                        value={reviewFilter}
+                        onChange={(event) =>
+                          setReviewFilter(event.target.value as typeof reviewFilter)
+                        }
+                      >
+                        <option value="active">CVs to review</option>
+                        <option value="recommended">Recommended CVs</option>
+                        <option value="not-suitable">Not suitable</option>
+                      </select>
+                    </div>
+                  )}
+                  {reviewRuns.length === 0 ? (
                     <div className="p-8 text-center text-sm text-muted-foreground">
                       Applications are safely stored. Choose Prepare Applications to build the
                       preliminary review.
                     </div>
+                  ) : visibleReviewRuns.length === 0 ? (
+                    <div className="p-8 text-center text-sm text-muted-foreground">
+                      No CVs match this view.
+                    </div>
                   ) : (
                     <div className="divide-y">
-                      {preparationRuns.map((run, index) => {
+                      {visibleReviewRuns.map((run, index) => {
                         const candidate = candidates.find((item) => item.id === run.candidateId);
+                        const application = applicationByCandidate.get(run.candidateId);
+                        const isNotSuitable =
+                          application?.status === "Rejected" &&
+                          application.screeningDecision?.startsWith("Not suitable: ");
                         const inclusion = inclusions.find(
                           (item) => item.candidateId === run.candidateId,
                         );
@@ -1221,7 +1328,14 @@ function VacancyDetailRoute() {
                                 <span>{run.band || run.status}</span>
                                 {inclusion && <Badge variant="outline">{inclusion.source}</Badge>}
                                 {selected && <Badge>Selected for assessment</Badge>}
+                                {isNotSuitable && <Badge variant="secondary">Not suitable</Badge>}
                               </div>
+                              {isNotSuitable && (
+                                <p className="mt-2 text-sm text-muted-foreground">
+                                  HR remark:{" "}
+                                  {application.screeningDecision?.slice("Not suitable: ".length)}
+                                </p>
+                              )}
                             </div>
                             <StatusBadge status={run.status} />
                             <div className="flex items-center justify-end gap-3 text-right">
@@ -1242,6 +1356,28 @@ function VacancyDetailRoute() {
                                   {selected ? "Remove" : "Select"}
                                 </Button>
                               )}
+                              {isNotSuitable ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={savingSuitability}
+                                  onClick={() => void saveSuitability(run.candidateId, "restore")}
+                                >
+                                  Restore
+                                </Button>
+                              ) : ["New", "On Hold"].includes(application?.status ?? "") ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={savingSuitability || Boolean(selected)}
+                                  onClick={() => {
+                                    setRejectCandidateId(run.candidateId);
+                                    setRejectionRemark("");
+                                  }}
+                                >
+                                  Not suitable
+                                </Button>
+                              ) : null}
                               <div>
                                 <div className="text-xs text-muted-foreground">
                                   Preliminary score
@@ -1273,7 +1409,7 @@ function VacancyDetailRoute() {
                         <p className="text-sm text-muted-foreground">
                           {assessmentBatch.selectedCandidateIds.length} people selected, including{" "}
                           {assessmentBatch.recommendedCandidateIds.length} recommended and{" "}
-                          {assessmentBatch.hrAddedCandidateIds.length} added by HR.
+                          {assessmentBatch.hrAddedCandidateIds.length} explicitly added by HR.
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
@@ -1556,6 +1692,55 @@ function VacancyDetailRoute() {
                     }
                   >
                     {addingFromPool ? "Adding..." : "Add to Screening"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog
+              open={rejectCandidateId !== null}
+              onOpenChange={(open) => {
+                if (!open && !savingSuitability) {
+                  setRejectCandidateId(null);
+                  setRejectionRemark("");
+                }
+              }}
+            >
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Mark CV as not suitable</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-2">
+                  <Label htmlFor="cv-rejection-remark">Private HR remark</Label>
+                  <Textarea
+                    id="cv-rejection-remark"
+                    value={rejectionRemark}
+                    maxLength={500}
+                    onChange={(event) => setRejectionRemark(event.target.value)}
+                    placeholder="For example: required infrastructure project experience is not shown"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    State a job-related reason. This stays in HR review and is not emailed to the
+                    candidate. You can restore the CV later.
+                  </p>
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    disabled={savingSuitability}
+                    onClick={() => setRejectCandidateId(null)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    disabled={savingSuitability || rejectionRemark.trim().length < 5}
+                    onClick={() => {
+                      if (rejectCandidateId)
+                        void saveSuitability(rejectCandidateId, "not-suitable");
+                    }}
+                  >
+                    {savingSuitability ? "Saving..." : "Mark not suitable"}
                   </Button>
                 </DialogFooter>
               </DialogContent>

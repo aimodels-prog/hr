@@ -1369,6 +1369,16 @@ function CandidateProfile({
                             </div>
                           )}
 
+                          {app.status === "Rejected" &&
+                            app.screeningDecision?.startsWith("Not suitable: ") && (
+                              <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-4 text-sm">
+                                <p className="font-medium">Previous HR review</p>
+                                <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">
+                                  {app.screeningDecision.slice("Not suitable: ".length)}
+                                </p>
+                              </div>
+                            )}
+
                           <div>
                             <p className="mb-2 text-sm font-medium">Submitted answers</p>
                             {app.screeningAnswers.length > 0 ? (

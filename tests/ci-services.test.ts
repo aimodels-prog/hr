@@ -38,3 +38,11 @@ test("Both database quality gates provision pinned MinIO and the required CV pro
     /Install locked dependencies and Chromium\s+run: \|\s+npm ci --include=dev/,
   );
 });
+
+test("production staff app can call the private CV processor used by preliminary review", () => {
+  const compose = readFileSync(new URL("../compose.production.yaml", import.meta.url), "utf8");
+  const staffApp = compose.split("\n  app:\n")[1]?.split("\n  careers-app:\n")[0];
+  assert.ok(staffApp, "The production staff app must exist.");
+  assert.match(staffApp, /VIA_HR_CV_PROCESSOR_URL: http:\/\/cv-processor:8080/);
+  assert.match(staffApp, /cv-processor:\s+condition: service_healthy/);
+});

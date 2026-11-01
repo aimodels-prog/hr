@@ -736,7 +736,9 @@ export class CandidatePreparationService {
     const runs = this.getRunsForVacancy(vacancyId, context).filter(
       (run) =>
         run.vacancyRecordVersion === vacancy.recordVersion &&
-        (run.status === "Ready" || run.status === "Needs Review"),
+        (run.status === "Ready" || run.status === "Needs Review") &&
+        this.applicationRepo.getById(run.applicationId)?.status !== "Rejected" &&
+        this.applicationRepo.getById(run.applicationId)?.status !== "Withdrawn",
     );
     const latestByCandidate = new Map<string, CandidatePreparationRun>();
     for (const run of runs) {
@@ -757,12 +759,10 @@ export class CandidatePreparationService {
     const hrAdded = unique(
       inclusions.filter((item) => item.source === "HR Added").map((item) => item.candidateId),
     );
-    const pinned = unique([...recommended, ...hrAdded]).filter((candidateId) =>
-      latestByCandidate.has(candidateId),
-    );
+    const pinned = unique(hrAdded).filter((candidateId) => latestByCandidate.has(candidateId));
     if (pinned.length > targetSize) {
       throw new Error(
-        `${pinned.length} recommended or HR-added candidates are pinned. Increase the assessment number.`,
+        `${pinned.length} candidates explicitly added by HR are pinned. Increase the assessment number.`,
       );
     }
     const selected = [
@@ -815,9 +815,9 @@ export class CandidatePreparationService {
     if (selected.some((candidateId) => !batch.rankedCandidateIds.includes(candidateId))) {
       throw new Error("Every selected person must have a completed preliminary review.");
     }
-    const pinned = unique([...batch.recommendedCandidateIds, ...batch.hrAddedCandidateIds]);
+    const pinned = unique(batch.hrAddedCandidateIds);
     if (pinned.some((candidateId) => !selected.includes(candidateId))) {
-      throw new Error("Recommended and HR-added candidates must remain in the assessment group.");
+      throw new Error("Candidates explicitly added by HR must remain in the assessment group.");
     }
     const latestRuns = this.getRunsForVacancy(batch.vacancyId, context);
     const preparationRunIds = selected.map((candidateId) => {
@@ -952,10 +952,7 @@ export class CandidatePreparationService {
           targetSize: batch.targetSize,
           rankedCandidateIds: rankedScores.map((score) => score.candidateId),
           selectedCandidateIds: [...batch.selectedCandidateIds],
-          pinnedCandidateIds: unique([
-            ...batch.recommendedCandidateIds,
-            ...batch.hrAddedCandidateIds,
-          ]),
+          pinnedCandidateIds: unique(batch.hrAddedCandidateIds),
           unselectedAction: null,
           overrides: [],
           status: "Draft",

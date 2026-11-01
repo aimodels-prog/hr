@@ -120,6 +120,15 @@ test("public application progresses through shortlist, interview, offer and onbo
   await page.goto("/staff/vacancies");
   await page.getByText("Logistics Operations Lead", { exact: true }).click();
   await page.getByRole("link", { name: "Scoring & Shortlist" }).click();
+  await page.getByRole("button", { name: "Not suitable", exact: true }).first().click();
+  await page
+    .getByLabel("Private HR remark")
+    .fill("Required role experience is not shown in this CV");
+  await page.getByRole("button", { name: "Mark not suitable" }).click();
+  await page.getByRole("combobox", { name: "Filter CV reviews" }).selectOption("not-suitable");
+  await expect(page.getByText("Required role experience is not shown in this CV")).toBeVisible();
+  await page.getByRole("button", { name: "Restore" }).click();
+  await page.getByRole("combobox", { name: "Filter CV reviews" }).selectOption("active");
   await page
     .getByText("People to assess", { exact: true })
     .locator("..")

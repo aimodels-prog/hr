@@ -623,6 +623,8 @@ export const hrGuide = [
       "Open the relevant vacancy or candidate assessment area and check that the job requirements are correct.",
       "Wait for the current CV preparation to finish and review any processing problems.",
       "Read the match assessment and compulsory-criteria evidence. Missing information is not the same as confirmed failure.",
+      "Use the preliminary review filters to focus on recommended CVs or CVs already marked not suitable. Recommendations follow the same ranking as other applicants and are not automatically shortlisted.",
+      "For a CV that does not meet the published role requirements, choose Not suitable and save a short, job-related HR remark. It stays private, appears on the candidate's application, and can be restored if you need to reconsider.",
       "Choose the number of candidates you want to review, such as 10 or 20, using the available shortlist or assessment controls.",
       "Review the selected candidates and original CVs before deciding whom to progress.",
     ],

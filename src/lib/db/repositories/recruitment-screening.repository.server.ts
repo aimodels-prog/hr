@@ -55,7 +55,8 @@ function currentPreparationPredicate(requireCurrentRules = true) {
       WHERE a.id=${candidatePreparationRuns.applicationId} AND a.organisation_id=${candidatePreparationRuns.organisationId}
       AND a.candidate_id=${candidatePreparationRuns.candidateId} AND a.vacancy_id=${candidatePreparationRuns.vacancyId}
       AND a.cv_file_id=${candidatePreparationRuns.cvFileId} AND cv.file_id=a.cv_file_id
-      AND cv.archived_at IS NULL AND cv.processing_status='Ready' AND a.archived_at IS NULL)
+      AND cv.archived_at IS NULL AND cv.processing_status='Ready' AND a.archived_at IS NULL
+      AND a.status NOT IN ('Rejected', 'Withdrawn'))
     AND NOT EXISTS (SELECT 1 FROM candidate_preparation_runs newer
       WHERE newer.organisation_id=${candidatePreparationRuns.organisationId}
       AND newer.application_id=${candidatePreparationRuns.applicationId}
@@ -72,6 +73,105 @@ function recruiter(actor: AuditActorContext): void {
 
 function unique(ids: string[]): string[] {
   return [...new Set(ids)];
+}
+
+const UNSUITABLE_PREFIX = "Not suitable: ";
+
+export async function setCandidateCvSuitabilityInDatabase(
+  organisationId: string,
+  vacancyId: string,
+  candidateId: string,
+  decision: "not-suitable" | "restore",
+  remark: string,
+  actor: AuditActorContext,
+): Promise<void> {
+  recruiter(actor);
+  const reason = remark.trim();
+  if (decision === "not-suitable") {
+    if (reason.length < 5 || reason.length > 500)
+      throw new Error("Add a brief, job-related reason (5–500 characters).");
+    if (/\b(?:too old|too young|age|aged|years old|date of birth|dob)\b/i.test(reason))
+      throw new Error("Use the job requirements, not a person's age, as the review reason.");
+  }
+  const db = getDatabaseClient();
+  await db.transaction(async (tx) => {
+    const [vacancy] = await tx
+      .select({ id: vacancies.id })
+      .from(vacancies)
+      .where(and(eq(vacancies.organisationId, organisationId), eq(vacancies.id, vacancyId)))
+      .for("update")
+      .limit(1);
+    if (!vacancy) throw new Error("Vacancy not found.");
+    const [application] = await tx
+      .select()
+      .from(candidateApplications)
+      .where(
+        and(
+          eq(candidateApplications.organisationId, organisationId),
+          eq(candidateApplications.vacancyId, vacancyId),
+          eq(candidateApplications.candidateId, candidateId),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!application || application.archivedAt) throw new Error("Application not found.");
+    if (decision === "not-suitable") {
+      if (!["New", "On Hold", "Rejected"].includes(application.status))
+        throw new Error("This application has passed preliminary review.");
+      if (
+        application.status === "Rejected" &&
+        !application.screeningDecision?.startsWith(UNSUITABLE_PREFIX)
+      )
+        throw new Error("This application was rejected through another workflow.");
+      const [activeBatch] = await tx
+        .select({ selectedCandidateIds: candidateAssessmentBatches.selectedCandidateIds })
+        .from(candidateAssessmentBatches)
+        .where(
+          and(
+            eq(candidateAssessmentBatches.organisationId, organisationId),
+            eq(candidateAssessmentBatches.vacancyId, vacancyId),
+            inArray(candidateAssessmentBatches.status, ["Draft", "Assessment Completed"]),
+          ),
+        )
+        .orderBy(desc(candidateAssessmentBatches.createdAt))
+        .limit(1);
+      if (activeBatch?.selectedCandidateIds.includes(candidateId))
+        throw new Error("Remove this CV from the assessment group before marking it not suitable.");
+    } else if (
+      application.status !== "Rejected" ||
+      !application.screeningDecision?.startsWith(UNSUITABLE_PREFIX)
+    ) {
+      throw new Error("Only a CV marked not suitable here can be restored.");
+    }
+    const newStatus = decision === "not-suitable" ? "Rejected" : "New";
+    const newDecision = decision === "not-suitable" ? `${UNSUITABLE_PREFIX}${reason}` : null;
+    await tx
+      .update(candidateApplications)
+      .set({
+        status: newStatus,
+        screeningDecision: newDecision,
+        updatedAt: new Date(),
+        updatedBy: actor.userId!,
+        recordVersion: sql`${candidateApplications.recordVersion} + 1`,
+      })
+      .where(eq(candidateApplications.id, application.id));
+    await tx.insert(auditEvents).values({
+      organisationId,
+      actorUserId: actor.userId!,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [],
+      action: decision === "not-suitable" ? "reject" : "restore",
+      module: "recruitment",
+      entityType: "candidate-application",
+      entityId: application.id,
+      beforeSummary: { status: application.status },
+      afterSummary: { status: newStatus, screeningDecision: newDecision },
+      reason: decision === "not-suitable" ? reason : "Restored CV to preliminary review",
+      riskLevel: "Medium",
+    });
+  });
 }
 
 /** Reuse the original extraction, but never reuse a score from obsolete screening rules. */
@@ -515,6 +615,8 @@ export async function includeCandidateInAssessmentInDatabase(
         .limit(1);
     }
     if (!application) throw new Error("The vacancy application could not be created.");
+    if (["Rejected", "Withdrawn"].includes(application.status))
+      throw new Error("Restore this candidate's application before adding the CV to screening.");
     if (application.cvFileId !== cv.fileId) {
       await tx
         .update(candidateApplications)
@@ -833,7 +935,6 @@ export async function createAssessmentBatchInDatabase(
     ).filter((id) => latest.has(id));
     const { pinned, selected } = selectCandidateAssessmentGroup(
       ranked.map((run) => run.candidateId),
-      recommended,
       hrAdded,
       targetSize,
     );
@@ -902,7 +1003,6 @@ export async function createAssessmentBatchInDatabase(
 
 export function selectCandidateAssessmentGroup(
   rankedCandidateIds: string[],
-  recommendedCandidateIds: string[],
   hrAddedCandidateIds: string[],
   targetSize: number,
 ): { pinned: string[]; selected: string[] } {
@@ -912,9 +1012,7 @@ export function selectCandidateAssessmentGroup(
   if (ranked.length < targetSize)
     throw new Error(`Only ${ranked.length} prepared candidates are available.`);
   const available = new Set(ranked);
-  const pinned = unique([...recommendedCandidateIds, ...hrAddedCandidateIds]).filter((id) =>
-    available.has(id),
-  );
+  const pinned = unique(hrAddedCandidateIds).filter((id) => available.has(id));
   if (pinned.length > targetSize)
     throw new Error(`${pinned.length} pinned candidates require a larger assessment group.`);
   return {
@@ -959,11 +1057,12 @@ export async function updateAssessmentSelectionInDatabase(
           eq(candidateAssessmentInclusions.organisationId, organisationId),
           eq(candidateAssessmentInclusions.vacancyId, batch.vacancyId),
           eq(candidateAssessmentInclusions.active, true),
+          eq(candidateAssessmentInclusions.source, "HR Added"),
         ),
       );
     const pinned = unique(inclusions.map((item) => item.candidateId));
     if (pinned.some((id) => !selected.includes(id)))
-      throw new Error("Recommended and HR-added candidates must remain selected.");
+      throw new Error("Candidates explicitly added by HR must remain selected.");
     const runs = await tx
       .select()
       .from(candidatePreparationRuns)
@@ -1058,11 +1157,12 @@ export async function runDetailedAssessmentInDatabase(
           eq(candidateAssessmentInclusions.organisationId, organisationId),
           eq(candidateAssessmentInclusions.vacancyId, batch.vacancyId),
           eq(candidateAssessmentInclusions.active, true),
+          eq(candidateAssessmentInclusions.source, "HR Added"),
         ),
       );
     const pinned = unique(inclusions.map((item) => item.candidateId));
     if (pinned.some((id) => !batch.selectedCandidateIds.includes(id)))
-      throw new Error("The group is missing a recommended or HR-added candidate.");
+      throw new Error("The group is missing a candidate explicitly added by HR.");
     const scoreIds: string[] = [];
     const ranked: Array<{ candidateId: string; score: number }> = [];
     for (const candidateId of batch.selectedCandidateIds) {
@@ -1317,9 +1417,9 @@ export async function saveShortlistDraftInDatabase(
     const ranked = scores.map((item) => item.candidateId);
     if (selected.some((id) => !ranked.includes(id)))
       throw new Error("Only assessed candidates can be shortlisted.");
-    const pinned = unique([...batch.recommendedCandidateIds, ...batch.hrAddedCandidateIds]);
+    const pinned = unique(batch.hrAddedCandidateIds);
     if (pinned.some((id) => !selected.includes(id)))
-      throw new Error("Recommended and HR-added candidates must remain shortlisted.");
+      throw new Error("Candidates explicitly added by HR must remain shortlisted.");
     const top = ranked.slice(0, input.targetSize);
     const reasons = new Map(
       input.overrideReasons.map((item) => [item.candidateId, item.reason.trim()]),
@@ -1426,11 +1526,12 @@ export async function finaliseShortlistInDatabase(
           eq(candidateAssessmentInclusions.organisationId, organisationId),
           eq(candidateAssessmentInclusions.vacancyId, snapshot.vacancyId),
           eq(candidateAssessmentInclusions.active, true),
+          eq(candidateAssessmentInclusions.source, "HR Added"),
         ),
       );
     const pinned = unique(inclusions.map((item) => item.candidateId));
     if (pinned.some((id) => !snapshot.selectedCandidateIds.includes(id)))
-      throw new Error("A recommended or HR-added candidate is missing from the shortlist.");
+      throw new Error("A candidate explicitly added by HR is missing from the shortlist.");
     const applications = await tx
       .select()
       .from(candidateApplications)
@@ -1442,7 +1543,12 @@ export async function finaliseShortlistInDatabase(
       )
       .for("update");
     for (const application of applications) {
-      if (["Hired", "Offered", "Withdrawn"].includes(application.status)) continue;
+      if (
+        ["Hired", "Offered", "Withdrawn"].includes(application.status) ||
+        (application.status === "Rejected" &&
+          application.screeningDecision?.startsWith(UNSUITABLE_PREFIX))
+      )
+        continue;
       const selected = snapshot.selectedCandidateIds.includes(application.candidateId);
       const applicationStatus = selected
         ? "Shortlisted"
