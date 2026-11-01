@@ -1171,12 +1171,15 @@ async function buildTimesheetReconciliation(
       ...holidayByDate.keys(),
     ]),
   ]
-    .filter(
-      (date) =>
+    .filter((date) => {
+      const record = recordByDate.get(date);
+      return (
         isAttendanceTracked(tracking, sheet.employeeId, date) ||
+        Boolean(record && (record.clockInAt || record.clockOutAt || record.officeExceptionLabel)) ||
         leaveByDate.has(date) ||
-        holidayByDate.has(date),
-    )
+        holidayByDate.has(date)
+      );
+    })
     .sort()
     .map((date) => {
       const record = recordByDate.get(date);
@@ -1207,12 +1210,12 @@ async function buildTimesheetReconciliation(
           ? holidayHours
             ? "Holiday"
             : "Leave"
-          : !tracked && !requiresExplanation
-            ? "Matched"
+          : incomplete
+            ? "Incomplete Attendance"
             : !record
               ? "Missing Attendance"
-              : incomplete
-                ? "Incomplete Attendance"
+              : !nonWorking && timesheetWorkHours === 0 && attendanceHours > toleranceHours
+                ? "Missing Timesheet"
                 : Math.abs(varianceHours) > toleranceHours
                   ? "Variance"
                   : "Matched";

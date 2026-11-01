@@ -172,9 +172,18 @@ test(
       );
       await submitTimesheetInDatabase(organisationId, timesheetId, employeeActor);
       const [recordedTotals] =
-        await sql`SELECT expected_hours,total_hours FROM timesheets WHERE id=${timesheetId}`;
+        await sql`SELECT expected_hours,total_hours,attendance_reconciliation_snapshot FROM timesheets WHERE id=${timesheetId}`;
       assert.equal(Number(recordedTotals!.expected_hours), 45);
       assert.equal(Number(recordedTotals!.total_hours), 45);
+      const reconciliation = recordedTotals!.attendance_reconciliation_snapshot as {
+        attendanceHours: number;
+        days: Array<{ date: string; attendanceHours: number }>;
+      };
+      assert.ok(
+        reconciliation.days.some((day) => day.attendanceHours > 0),
+        "recorded attendance remains visible without a tracking policy",
+      );
+      assert.ok(reconciliation.attendanceHours > 0);
       await assert.rejects(
         decideTimesheetInDatabase(
           organisationId,

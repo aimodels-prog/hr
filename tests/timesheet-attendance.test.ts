@@ -218,6 +218,27 @@ test("staff outside biometric tracking submit project hours without punch explan
   assert.equal(timesheets.approveTimesheet(saved.id, hr).status, "Approved");
 });
 
+test("stored punches remain visible when biometric tracking has not been configured", () => {
+  const { attendance, storage, timesheets, period } = harness();
+  storage.writeCollection("attendanceTracking", []);
+  addAttendance(attendance, "2026-08-17");
+  const sheet = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
+
+  const blank = timesheets.reconcileAttendance(sheet);
+  const day = blank.days.find((item) => item.date === "2026-08-17");
+  assert.equal(day?.attendanceHours, 9);
+  assert.equal(day?.timesheetWorkHours, 0);
+  assert.equal(day?.status, "Missing Timesheet");
+  assert.equal(day?.requiresExplanation, false);
+  assert.equal(blank.unresolvedCount, 0, "optional attendance does not block a timesheet");
+
+  addProjectHours(sheet, "2026-08-17", 9);
+  assert.equal(
+    timesheets.reconcileAttendance(sheet).days.find((item) => item.date === "2026-08-17")?.status,
+    "Matched",
+  );
+});
+
 test("matching project and attendance hours reconcile without an explanation", () => {
   const { attendance, timesheets, period } = harness();
   addAttendance(attendance, "2026-08-17");

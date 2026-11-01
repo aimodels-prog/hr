@@ -43,7 +43,7 @@ import { TimesheetService } from "@/lib/data/timesheet-service";
 import { getMasterDataRepository, getProjectRepository } from "@/lib/data/master-data";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { parseISO, format, eachDayOfInterval } from "date-fns";
-import { AlertTriangle, CheckCircle2, Trash2, Plus, Copy, Save, Send } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Info, Trash2, Plus, Copy, Save, Send } from "lucide-react";
 import type { TimesheetEntry, TimesheetWithEntries } from "@/lib/data/timesheet-types";
 
 export const Route = createFileRoute("/staff/me/timesheets/$periodId")({
@@ -228,6 +228,11 @@ function TimesheetEntryRoute() {
 
   const diff = timesheet.totalHours - timesheet.expectedHours;
   const reconciliation = tsService.reconcileAttendance(timesheet);
+  const hasAttendanceDifference = reconciliation.days.some((day) =>
+    ["Variance", "Missing Attendance", "Missing Timesheet", "Incomplete Attendance"].includes(
+      day.status,
+    ),
+  );
 
   const updateAttendanceExplanation = (date: string, explanation: string) => {
     setTimesheet((previous) =>
@@ -306,12 +311,16 @@ function TimesheetEntryRoute() {
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
-              {reconciliation.unresolvedCount === 0 ? (
+              {reconciliation.days.length === 0 ? (
+                <Info className="h-5 w-5 text-muted-foreground" />
+              ) : reconciliation.unresolvedCount === 0 && !hasAttendanceDifference ? (
                 <CheckCircle2 className="h-5 w-5 text-emerald-600" />
               ) : (
                 <AlertTriangle className="h-5 w-5 text-amber-600" />
               )}
-              Attendance and Timesheet Check
+              {reconciliation.days.length === 0
+                ? "No attendance to compare"
+                : "Attendance and Timesheet Check"}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -341,6 +350,20 @@ function TimesheetEntryRoute() {
               </Alert>
             )}
 
+            {reconciliation.days.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                No attendance records or approved absences are available for comparison. This does
+                not confirm that your timesheet is complete.
+              </p>
+            )}
+
+            {reconciliation.unresolvedCount === 0 && hasAttendanceDifference && (
+              <p className="text-sm text-amber-800">
+                Recorded attendance and timesheet hours differ. Check the dates below. A recorded
+                punch is shown even when biometric attendance was not required that day.
+              </p>
+            )}
+
             <div className="overflow-x-auto rounded-lg border">
               <Table>
                 <TableHeader>
@@ -354,6 +377,13 @@ function TimesheetEntryRoute() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
+                  {reconciliation.days.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center text-muted-foreground">
+                        No attendance dates to compare.
+                      </TableCell>
+                    </TableRow>
+                  )}
                   {reconciliation.days.map((day) => (
                     <TableRow
                       key={day.date}
@@ -365,7 +395,20 @@ function TimesheetEntryRoute() {
                       <TableCell className="text-right">{day.timesheetWorkHours}</TableCell>
                       <TableCell className="text-right">{day.varianceHours}</TableCell>
                       <TableCell>
-                        <Badge variant={day.resolved ? "secondary" : "destructive"}>
+                        <Badge
+                          variant={
+                            !day.resolved
+                              ? "destructive"
+                              : [
+                                    "Variance",
+                                    "Missing Attendance",
+                                    "Missing Timesheet",
+                                    "Incomplete Attendance",
+                                  ].includes(day.status)
+                                ? "outline"
+                                : "secondary"
+                          }
+                        >
                           {day.status}
                         </Badge>
                       </TableCell>

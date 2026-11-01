@@ -645,16 +645,22 @@ export class TimesheetService {
       start: parseISO(period.startDate),
       end: parseISO(period.endDate),
     })
-      .filter(
-        (day) =>
-          this.attendanceService.isTrackingRequired(
-            timesheet.employeeId,
-            format(day, "yyyy-MM-dd"),
+      .filter((day) => {
+        const date = format(day, "yyyy-MM-dd");
+        const record = attendanceByDate.get(date);
+        return (
+          this.attendanceService.isTrackingRequired(timesheet.employeeId, date) ||
+          Boolean(
+            record &&
+            (record.clockInAt ||
+              record.clockOutAt ||
+              record.clockIn ||
+              record.clockOut ||
+              record.officeExceptionLabel),
           ) ||
-          timesheet.entries.some(
-            (entry) => (entry.isLeave || entry.isHoliday) && entry.hours[format(day, "yyyy-MM-dd")],
-          ),
-      )
+          timesheet.entries.some((entry) => (entry.isLeave || entry.isHoliday) && entry.hours[date])
+        );
+      })
       .map((day) => {
         const date = format(day, "yyyy-MM-dd");
         const record = attendanceByDate.get(date);
@@ -679,6 +685,10 @@ export class TimesheetService {
             : Math.max(0, this.getRecordedDailyHours(settings) - leaveHours - holidayHours),
         );
         const attendanceStatus = record?.status ?? virtualStatus ?? "No Record";
+        const trackingRequired = this.attendanceService.isTrackingRequired(
+          timesheet.employeeId,
+          date,
+        );
         const completeAttendance = Boolean(
           record?.officeExceptionLabel || (record?.clockIn && record?.clockOut),
         );
@@ -692,12 +702,20 @@ export class TimesheetService {
           status = "Variance";
           requiresExplanation = true;
         } else if (fullAbsence) status = holidayHours ? "Holiday" : "Leave";
-        else if (!this.attendanceService.isTrackingRequired(timesheet.employeeId, date))
-          status = "Matched";
-        else if (attendanceStatus === "Rest Day" && workHours === 0) status = "Rest Day";
+        else if (attendanceStatus === "Rest Day" && workHours === 0 && attendanceHours === 0)
+          status = "Rest Day";
         else if ((record?.clockIn || record?.clockOut) && !completeAttendance) {
           status = "Incomplete Attendance";
-          requiresExplanation = workHours > 0;
+          requiresExplanation = trackingRequired && workHours > 0;
+        } else if (!trackingRequired) {
+          // A stored punch is evidence even when biometric tracking was not required.
+          // Show the difference, but do not make optional attendance block approval.
+          if (attendanceHours > settings.attendanceVarianceToleranceHours && workHours === 0)
+            status = "Missing Timesheet";
+          else if (
+            Math.abs(workHours - attendanceHours) > settings.attendanceVarianceToleranceHours
+          )
+            status = "Variance";
         } else if (!record && workHours > 0) {
           status = "Missing Attendance";
           requiresExplanation = true;
