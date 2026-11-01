@@ -95,8 +95,8 @@ export function CandidateInterviewRecommendationDialog({
         <Alert>
           <Sparkles className="h-4 w-4" />
           <AlertDescription>
-            This person will be pinned into HR's chosen assessment group. They receive the same
-            evidence-based score as every other candidate, and the recommendation remains visible.
+            This recommendation adds the candidate to vacancy screening. HR can still select them
+            for interview directly, without running a detailed assessment.
           </AlertDescription>
         </Alert>
         <div className="space-y-4 py-2">

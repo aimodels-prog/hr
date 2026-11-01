@@ -19,6 +19,7 @@ import { users } from "../schema/employee.ts";
 import { appSettings } from "../schema/organisation.ts";
 import {
   candidateApplications,
+  candidateInterviewRecommendations,
   candidates,
   interviewDispositions,
   interviewPanelists,
@@ -504,6 +505,24 @@ export async function createInterviewInDatabase(
             eq(candidateApplications.candidateId, input.candidateId),
           ),
         );
+    if (input.source === "Scheduled Recruitment" && input.vacancyId && status === "Scheduled") {
+      await tx
+        .update(candidateInterviewRecommendations)
+        .set({
+          status: "Interview Scheduled",
+          updatedAt: new Date(),
+          updatedBy: actor.userId,
+          recordVersion: sql`${candidateInterviewRecommendations.recordVersion} + 1`,
+        })
+        .where(
+          and(
+            eq(candidateInterviewRecommendations.organisationId, organisationId),
+            eq(candidateInterviewRecommendations.vacancyId, input.vacancyId),
+            eq(candidateInterviewRecommendations.candidateId, input.candidateId),
+            eq(candidateInterviewRecommendations.status, "Ready to Schedule"),
+          ),
+        );
+    }
     await audit(tx, organisationId, actor, {
       action: "create",
       entityType: "interview",
@@ -604,7 +623,7 @@ export async function updateInterviewWorkflowInDatabase(
         throw new Error(
           `Interview cannot move from ${interview.status} to ${input.status ?? "that status"}.`,
         );
-      if (input.status === "Completed" && !input.waiver) {
+      if (input.status === "Completed" && interview.templateId && !input.waiver) {
         const submitted = await tx
           .select({ panelUserId: interviewScorecards.panelUserId })
           .from(interviewScorecards)
@@ -639,6 +658,24 @@ export async function updateInterviewWorkflowInDatabase(
         recordVersion: sql`${interviews.recordVersion} + 1`,
       })
       .where(eq(interviews.id, interview.id));
+    if (status === "Scheduled" && interview.vacancyId) {
+      await tx
+        .update(candidateInterviewRecommendations)
+        .set({
+          status: "Interview Scheduled",
+          updatedAt: new Date(),
+          updatedBy: actor.userId,
+          recordVersion: sql`${candidateInterviewRecommendations.recordVersion} + 1`,
+        })
+        .where(
+          and(
+            eq(candidateInterviewRecommendations.organisationId, organisationId),
+            eq(candidateInterviewRecommendations.vacancyId, interview.vacancyId),
+            eq(candidateInterviewRecommendations.candidateId, interview.candidateId),
+            eq(candidateInterviewRecommendations.status, "Ready to Schedule"),
+          ),
+        );
+    }
     await audit(tx, organisationId, actor, {
       action: actionLabel,
       entityType: "interview",

@@ -7,6 +7,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   UserCheck,
+  MoreHorizontal,
+  Search,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +45,20 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { GoogleCalendarConnection } from "@/components/interviews/google-calendar-connection";
+import { InterviewDialog } from "@/components/interviews/interview-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export const Route = createFileRoute("/staff/interviews")({
   head: () => ({
@@ -85,6 +101,13 @@ function Interviews() {
   const [declineNote, setDeclineNote] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [schedulingCandidate, setSchedulingCandidate] = useState<{
+    candidateId: string;
+    vacancyId: string;
+  } | null>(null);
+  const [showAllMyInterviews, setShowAllMyInterviews] = useState(false);
+  const [interviewSearch, setInterviewSearch] = useState("");
+  const [interviewStatus, setInterviewStatus] = useState("active");
 
   useEffect(() => {
     let cancelled = false;
@@ -180,13 +203,59 @@ function Interviews() {
     () => allInterviews.filter((i) => i.panelUserIds.includes(userId)).sort(sortByTime),
     [allInterviews, userId],
   );
+  const myInterviewsToScore = useMemo(
+    () =>
+      myInterviews.filter(
+        (interview) =>
+          interview.templateId &&
+          (interview.status === "Completed" ||
+            (interview.status === "Scheduled" &&
+              Boolean(
+                interview.confirmedSlot &&
+                new Date(interview.confirmedSlot.startTime).getTime() <= Date.now(),
+              ))) &&
+          !scorecardService
+            .getScorecardsForInterview(interview.id)
+            .some(
+              (scorecard) => scorecard.panelUserId === userId && scorecard.status === "Submitted",
+            ),
+      ),
+    [myInterviews, scorecardService, userId],
+  );
+  const visibleMyInterviews = showAllMyInterviews ? myInterviews : myInterviewsToScore;
   const awaitingScheduling = useMemo(() => {
     if (!canManage) return [];
     void refreshKey;
     return candidatePoolService
       .getAllInterviewRecommendations(getActorContext())
-      .filter((recommendation) => recommendation.status === "Ready to Schedule");
-  }, [canManage, candidatePoolService, getActorContext, refreshKey]);
+      .filter(
+        (recommendation) =>
+          recommendation.status === "Ready to Schedule" &&
+          !allInterviews.some(
+            (interview) =>
+              interview.candidateId === recommendation.candidateId &&
+              interview.vacancyId === recommendation.vacancyId &&
+              ["Proposed", "Awaiting Candidate", "Scheduled"].includes(interview.status),
+          ),
+      );
+  }, [allInterviews, canManage, candidatePoolService, getActorContext, refreshKey]);
+  const filteredInterviews = useMemo(() => {
+    const query = interviewSearch.trim().toLowerCase();
+    return [...allInterviews]
+      .filter((interview) => {
+        const vacancy = interview.vacancyId ? vacancyById.get(interview.vacancyId) : undefined;
+        const candidate = candidateById.get(interview.candidateId);
+        const text =
+          `${candidate?.firstName ?? ""} ${candidate?.lastName ?? ""} ${vacancy?.title ?? interview.positionTitle ?? ""} ${interview.stageName}`.toLowerCase();
+        if (query && !text.includes(query)) return false;
+        if (interviewStatus === "active")
+          return ["Proposed", "Awaiting Candidate", "Scheduled"].includes(interview.status);
+        if (interviewStatus === "finished")
+          return ["Completed", "Cancelled", "No Show"].includes(interview.status);
+        return interviewStatus === "all" || interview.status === interviewStatus;
+      })
+      .sort(sortByTime);
+  }, [allInterviews, interviewSearch, interviewStatus, candidateById, vacancyById]);
 
   const refresh = () => setRefreshKey((k) => k + 1);
 
@@ -198,7 +267,7 @@ function Interviews() {
   const [waiverAcknowledged, setWaiverAcknowledged] = useState(false);
 
   const statusChangeMetrics = useMemo(() => {
-    if (!statusChangeTarget) return null;
+    if (!statusChangeTarget?.interview.templateId) return null;
     return scorecardService.calculateInterviewMetrics(
       statusChangeTarget.interview.id,
       statusChangeTarget.interview.panelUserIds,
@@ -281,20 +350,93 @@ function Interviews() {
     }
   };
 
+  const sendProposedSlots = async (interview: InterviewEvent) => {
+    try {
+      await interviewService.updateWorkflowAsync(
+        interview.id,
+        { action: "send-slots", reason: "HR shared proposed interview times with the candidate" },
+        getActorContext(),
+      );
+      toast.success("Marked as shared. Record the candidate's response when they reply.");
+      refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not send interview times");
+    }
+  };
+
   return (
     <div className="mx-auto max-w-6xl space-y-8 pb-10">
-      {canManage && <GoogleCalendarConnection />}
-      <div>
-        <h1 className="text-2xl font-semibold">Interviews</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Interviews you are on the panel for, and their scorecards.
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Interviews</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {canManage
+              ? "Schedule candidates, follow up on interviews, and review panel scores."
+              : "Find your assigned interviews and complete your scorecards."}
+          </p>
+        </div>
+        {canManage && (
+          <Button variant="outline" asChild>
+            <Link to="/staff/vacancies">View vacancies</Link>
+          </Button>
+        )}
       </div>
 
+      {canManage && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Card>
+            <CardContent className="pt-5">
+              <p className="text-sm text-muted-foreground">Ready to schedule</p>
+              <p className="mt-1 text-2xl font-semibold">{awaitingScheduling.length}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-5">
+              <p className="text-sm text-muted-foreground">Awaiting candidate response</p>
+              <p className="mt-1 text-2xl font-semibold">
+                {
+                  allInterviews.filter((interview) => interview.status === "Awaiting Candidate")
+                    .length
+                }
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-5">
+              <p className="text-sm text-muted-foreground">Scheduled interviews</p>
+              <p className="mt-1 text-2xl font-semibold">
+                {allInterviews.filter((interview) => interview.status === "Scheduled").length}
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {canManage && (
+        <details className="rounded-xl border bg-card px-4 py-3">
+          <summary className="cursor-pointer text-sm font-medium">
+            Calendar connection and setup
+          </summary>
+          <div className="mt-3">
+            <GoogleCalendarConnection />
+          </div>
+        </details>
+      )}
+
       <div className="space-y-3">
-        <h2 className="text-base font-semibold flex items-center gap-2">
-          <ClipboardCheck className="h-4 w-4 text-primary" /> My Interviews to Score
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <ClipboardCheck className="h-4 w-4 text-primary" /> My scorecards
+            <Badge variant="secondary">{myInterviewsToScore.length} to do</Badge>
+          </h2>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setShowAllMyInterviews((value) => !value)}
+          >
+            {showAllMyInterviews ? "Show scorecards to do" : "Show all my interviews"}
+          </Button>
+        </div>
         {isLoading ? (
           <Card>
             <CardContent className="py-10 text-center text-muted-foreground text-sm">
@@ -307,16 +449,17 @@ function Interviews() {
               {loadError}
             </CardContent>
           </Card>
-        ) : myInterviews.length === 0 ? (
+        ) : visibleMyInterviews.length === 0 ? (
           <Card>
             <CardContent className="py-10 text-center text-muted-foreground text-sm">
-              You are not on the panel for any interview right now. When someone schedules you as an
-              interviewer from a candidate&rsquo;s profile, it will show up here.
+              {showAllMyInterviews
+                ? "You have no assigned interviews yet."
+                : "No scorecards need your attention right now."}
             </CardContent>
           </Card>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {myInterviews.map((interview) => {
+            {visibleMyInterviews.map((interview) => {
               const myScorecard = scorecardService
                 .getScorecardsForInterview(interview.id)
                 .find((s) => s.panelUserId === userId);
@@ -401,8 +544,7 @@ function Interviews() {
           <Card>
             <CardHeader>
               <CardDescription>
-                HR-approved referrals and other approved interview recommendations appear here until
-                an interview is scheduled.
+                Select a candidate to set a time. CV assessment is not required.
               </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
@@ -416,10 +558,16 @@ function Interviews() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {awaitingScheduling.length === 0 ? (
+                  {isLoading ? (
                     <TableRow>
                       <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
-                        No candidates are waiting for interview scheduling.
+                        Loading candidates...
+                      </TableCell>
+                    </TableRow>
+                  ) : awaitingScheduling.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
+                        No candidates are waiting. Select someone from a vacancy to bring them here.
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -435,15 +583,28 @@ function Interviews() {
                           {recommendation.reason}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button asChild size="sm">
-                            <Link
-                              to="/staff/candidates/$candidateId"
-                              params={{ candidateId: recommendation.candidateId }}
-                              hash="interviews"
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <Button
+                              size="sm"
+                              onClick={() =>
+                                setSchedulingCandidate({
+                                  candidateId: recommendation.candidateId,
+                                  vacancyId: recommendation.vacancyId,
+                                })
+                              }
                             >
-                              Review & Schedule
-                            </Link>
-                          </Button>
+                              Schedule
+                            </Button>
+                            <Button asChild size="sm" variant="ghost">
+                              <Link
+                                to="/staff/candidates/$candidateId"
+                                params={{ candidateId: recommendation.candidateId }}
+                                hash="interviews"
+                              >
+                                View candidate
+                              </Link>
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))
@@ -457,32 +618,68 @@ function Interviews() {
 
       {canViewAll && (
         <div className="space-y-3">
-          <h2 className="text-base font-semibold flex items-center gap-2">
-            <Users className="h-4 w-4 text-primary" /> All Interviews
-          </h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-base font-semibold flex items-center gap-2">
+              <Users className="h-4 w-4 text-primary" /> All interviews
+            </h2>
+            <span className="text-sm text-muted-foreground">{filteredInterviews.length} shown</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <div className="relative min-w-[220px] flex-1">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                aria-label="Search interviews"
+                placeholder="Search candidate, role or stage"
+                value={interviewSearch}
+                onChange={(event) => setInterviewSearch(event.target.value)}
+              />
+            </div>
+            <Select value={interviewStatus} onValueChange={setInterviewStatus}>
+              <SelectTrigger className="w-[190px]" aria-label="Filter interviews by status">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Active interviews</SelectItem>
+                <SelectItem value="Scheduled">Scheduled</SelectItem>
+                <SelectItem value="Awaiting Candidate">Awaiting response</SelectItem>
+                <SelectItem value="Proposed">Proposed</SelectItem>
+                <SelectItem value="finished">Finished</SelectItem>
+                <SelectItem value="all">All interviews</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <Card>
-            <CardContent className="p-0">
+            <CardContent className="overflow-x-auto p-0">
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Candidate</TableHead>
                     <TableHead>Vacancy</TableHead>
                     <TableHead>Stage</TableHead>
+                    <TableHead>When</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Panel</TableHead>
                     <TableHead>Scorecards</TableHead>
                     <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {allInterviews.length === 0 ? (
+                  {isLoading ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                        Loading interviews...
+                      </TableCell>
+                    </TableRow>
+                  ) : filteredInterviews.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                        No interviews scheduled yet.
+                        {allInterviews.length === 0
+                          ? "No interviews have been scheduled yet."
+                          : "No interviews match these filters."}
                       </TableCell>
                     </TableRow>
                   ) : (
-                    [...allInterviews].sort(sortByTime).map((interview) => {
+                    filteredInterviews.map((interview) => {
                       const metrics = scorecardService.calculateInterviewMetrics(
                         interview.id,
                         interview.panelUserIds,
@@ -506,6 +703,11 @@ function Interviews() {
                               </Badge>
                             )}
                           </TableCell>
+                          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                            {interview.confirmedSlot
+                              ? new Date(interview.confirmedSlot.startTime).toLocaleString()
+                              : "Time not confirmed"}
+                          </TableCell>
                           <TableCell>
                             <Badge
                               variant={interview.status === "Scheduled" ? "default" : "secondary"}
@@ -513,61 +715,73 @@ function Interviews() {
                               {interview.status}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">
-                            {interview.panelUserIds.map(userName).join(", ")}
-                          </TableCell>
                           <TableCell>
-                            <div className="flex items-center gap-1.5 text-xs">
-                              {metrics.isComplete ? (
-                                <CheckCircle2 className="h-3.5 w-3.5 text-success" />
-                              ) : (
-                                <ClipboardCheck className="h-3.5 w-3.5 text-muted-foreground" />
-                              )}
-                              <span>
-                                {metrics.completedCount}/{metrics.totalExpected}
-                              </span>
-                              {metrics.hasDisagreement && (
-                                <Badge
-                                  variant="outline"
-                                  className="text-[10px] px-1 py-0 border-warning/30 text-warning bg-warning/15 gap-1"
-                                >
-                                  <AlertTriangle className="h-3 w-3" /> Split decision
-                                </Badge>
-                              )}
-                            </div>
+                            {!interview.templateId ? (
+                              <span className="text-xs text-muted-foreground">Not used</span>
+                            ) : (
+                              <div className="flex items-center gap-1.5 text-xs">
+                                {metrics.isComplete ? (
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-success" />
+                                ) : (
+                                  <ClipboardCheck className="h-3.5 w-3.5 text-muted-foreground" />
+                                )}
+                                <span>
+                                  {metrics.completedCount}/{metrics.totalExpected}
+                                </span>
+                                {metrics.hasDisagreement && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[10px] px-1 py-0 border-warning/30 text-warning bg-warning/15 gap-1"
+                                  >
+                                    <AlertTriangle className="h-3 w-3" /> Split decision
+                                  </Badge>
+                                )}
+                              </div>
+                            )}
                           </TableCell>
                           <TableCell className="text-right">
-                            <div className="flex flex-wrap justify-end gap-1">
+                            <div className="flex flex-wrap justify-end gap-2">
                               {canManage && interview.status === "Scheduled" && (
                                 <>
                                   <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => setReschedulingInterview(interview)}
-                                  >
-                                    Reschedule
-                                  </Button>
-                                  <Button
-                                    variant="outline"
                                     size="sm"
                                     onClick={() => openStatusChangeDialog(interview, "Completed")}
                                   >
                                     Complete
                                   </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => openStatusChangeDialog(interview, "No Show")}
-                                  >
-                                    No Show
-                                  </Button>
-                                  <Button
-                                    variant="destructive"
-                                    size="sm"
-                                    onClick={() => openStatusChangeDialog(interview, "Cancelled")}
-                                  >
-                                    Cancel
-                                  </Button>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        aria-label={`More actions for ${candidateName(interview.candidateId)}`}
+                                      >
+                                        <MoreHorizontal className="h-4 w-4" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      <DropdownMenuItem
+                                        onSelect={() => setReschedulingInterview(interview)}
+                                      >
+                                        Reschedule
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        onSelect={() =>
+                                          openStatusChangeDialog(interview, "No Show")
+                                        }
+                                      >
+                                        Mark no-show
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        onSelect={() =>
+                                          openStatusChangeDialog(interview, "Cancelled")
+                                        }
+                                        className="text-destructive"
+                                      >
+                                        Cancel interview
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
                                 </>
                               )}
                               {canManage && interview.status === "Proposed" && (
@@ -575,38 +789,9 @@ function Interviews() {
                                   variant="outline"
                                   size="sm"
                                   disabled={interview.proposedSlots.length === 0}
-                                  onClick={() => {
-                                    try {
-                                      void interviewService
-                                        .updateWorkflowAsync(
-                                          interview.id,
-                                          {
-                                            action: "send-slots",
-                                            reason:
-                                              "Sent proposed interview times to the candidate",
-                                          },
-                                          getActorContext(),
-                                        )
-                                        .then(() => refresh())
-                                        .catch((error) =>
-                                          toast.error(
-                                            error instanceof Error
-                                              ? error.message
-                                              : "Could not send interview times",
-                                          ),
-                                        );
-                                      toast.success("Slots sent to candidate");
-                                      refresh();
-                                    } catch (error) {
-                                      toast.error(
-                                        error instanceof Error
-                                          ? error.message
-                                          : "Could not send slots",
-                                      );
-                                    }
-                                  }}
+                                  onClick={() => void sendProposedSlots(interview)}
                                 >
-                                  Send Slots to Candidate
+                                  Mark times shared
                                 </Button>
                               )}
                               {canManage && interview.status === "Awaiting Candidate" && (
@@ -618,12 +803,16 @@ function Interviews() {
                                   Record Response
                                 </Button>
                               )}
-                              <Button asChild variant="ghost" size="sm">
+                              <Button
+                                asChild
+                                variant={interview.status === "Scheduled" ? "ghost" : "outline"}
+                                size="sm"
+                              >
                                 <Link
                                   to="/staff/candidates/$candidateId"
                                   params={{ candidateId: interview.candidateId }}
                                 >
-                                  Open candidate
+                                  Candidate
                                 </Link>
                               </Button>
                             </div>
@@ -646,6 +835,20 @@ function Interviews() {
           interviewId={scoringInterview.id}
           templateId={scoringInterview.templateId!}
           onSuccess={refresh}
+        />
+      )}
+
+      {schedulingCandidate && (
+        <InterviewDialog
+          open
+          onOpenChange={(open) => !open && setSchedulingCandidate(null)}
+          vacancyId={schedulingCandidate.vacancyId}
+          candidateId={schedulingCandidate.candidateId}
+          candidateName={candidateName(schedulingCandidate.candidateId)}
+          onSuccess={() => {
+            setSchedulingCandidate(null);
+            refresh();
+          }}
         />
       )}
 

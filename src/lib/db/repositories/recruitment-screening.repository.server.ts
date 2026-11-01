@@ -77,6 +77,138 @@ function unique(ids: string[]): string[] {
 
 const UNSUITABLE_PREFIX = "Not suitable: ";
 
+/** HR can progress an application to interview without CV extraction or AI scoring. */
+export async function selectCandidateForInterviewInDatabase(
+  organisationId: string,
+  vacancyId: string,
+  candidateId: string,
+  actor: AuditActorContext,
+): Promise<void> {
+  recruiter(actor);
+  const actorUserId = actor.userId;
+  if (!actorUserId) throw new Error("A verified VIA user is required.");
+  const db = getDatabaseClient();
+  await db.transaction(async (tx) => {
+    const [vacancy] = await tx
+      .select()
+      .from(vacancies)
+      .where(and(eq(vacancies.organisationId, organisationId), eq(vacancies.id, vacancyId)))
+      .for("update")
+      .limit(1);
+    if (!vacancy || vacancy.archivedAt || vacancy.status !== "Open")
+      throw new Error("Select an open vacancy.");
+    const [application] = await tx
+      .select()
+      .from(candidateApplications)
+      .where(
+        and(
+          eq(candidateApplications.organisationId, organisationId),
+          eq(candidateApplications.vacancyId, vacancyId),
+          eq(candidateApplications.candidateId, candidateId),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!application || application.archivedAt) throw new Error("Application not found.");
+    if (!["New", "On Hold", "Shortlisted"].includes(application.status))
+      throw new Error("This application cannot be selected for interview from its current status.");
+    if (!application.consentGiven)
+      throw new Error("Candidate consent is required before selection.");
+    const [candidate] = await tx
+      .select()
+      .from(candidates)
+      .where(and(eq(candidates.organisationId, organisationId), eq(candidates.id, candidateId)))
+      .for("update")
+      .limit(1);
+    if (
+      !candidate ||
+      candidate.archivedAt ||
+      candidate.mergedIntoId ||
+      candidate.stage === "Archived"
+    )
+      throw new Error("This candidate is not available for interview selection.");
+    if (candidate.doNotContact) throw new Error("This candidate is marked Do Not Contact.");
+    const [existing] = await tx
+      .select()
+      .from(candidateInterviewRecommendations)
+      .where(
+        and(
+          eq(candidateInterviewRecommendations.organisationId, organisationId),
+          eq(candidateInterviewRecommendations.applicationId, application.id),
+          sql`${candidateInterviewRecommendations.status} <> 'Withdrawn'`,
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (existing?.status === "Ready to Schedule" || existing?.status === "Interview Scheduled")
+      return;
+    const recommendationId = existing?.id ?? randomUUID();
+    if (existing) {
+      await tx
+        .update(candidateInterviewRecommendations)
+        .set({
+          status: "Ready to Schedule",
+          screeningDecision: "Proceed Without Assessment",
+          updatedAt: new Date(),
+          updatedBy: actorUserId,
+          recordVersion: sql`${candidateInterviewRecommendations.recordVersion} + 1`,
+        })
+        .where(eq(candidateInterviewRecommendations.id, existing.id));
+    } else {
+      await tx.insert(candidateInterviewRecommendations).values({
+        id: recommendationId,
+        organisationId,
+        candidateId,
+        vacancyId,
+        applicationId: application.id,
+        recommendedByUserId: actorUserId,
+        reason: "Selected directly by HR for interview",
+        screeningDecision: "Proceed Without Assessment",
+        status: "Ready to Schedule",
+        createdBy: actorUserId,
+        updatedBy: actorUserId,
+      });
+    }
+    await tx
+      .update(candidateApplications)
+      .set({
+        status: "Shortlisted",
+        hrInterviewRecommendationId: recommendationId,
+        updatedAt: new Date(),
+        updatedBy: actorUserId,
+        recordVersion: sql`${candidateApplications.recordVersion} + 1`,
+      })
+      .where(eq(candidateApplications.id, application.id));
+    if (!["Interview", "Offer", "Hired"].includes(candidate.stage)) {
+      await tx
+        .update(candidates)
+        .set({
+          stage: "Shortlisted",
+          updatedAt: new Date(),
+          updatedBy: actorUserId,
+          recordVersion: sql`${candidates.recordVersion} + 1`,
+        })
+        .where(eq(candidates.id, candidateId));
+    }
+    await tx.insert(auditEvents).values({
+      organisationId,
+      actorUserId,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [],
+      action: "select_for_interview",
+      module: "recruitment",
+      entityType: "candidate-application",
+      entityId: application.id,
+      beforeSummary: { status: application.status },
+      afterSummary: { status: "Shortlisted", recommendationId, assessmentRequired: false },
+      reason: "HR selected the application for interview without a CV assessment",
+      riskLevel: "Medium",
+    });
+  });
+}
+
 export async function setCandidateCvSuitabilityInDatabase(
   organisationId: string,
   vacancyId: string,
@@ -1291,7 +1423,9 @@ export async function runDetailedAssessmentInDatabase(
       await tx
         .update(candidates)
         .set({
-          stage: "Screened",
+          ...(!["Shortlisted", "Interview", "Offer", "Hired"].includes(candidate.stage)
+            ? { stage: "Screened" as const }
+            : {}),
           aiScoreRange: `${overall}/100`,
           updatedAt: new Date(),
           updatedBy: actor.userId,
@@ -1542,9 +1676,24 @@ export async function finaliseShortlistInDatabase(
         ),
       )
       .for("update");
+    const selectedForInterview = await tx
+      .select({ applicationId: candidateInterviewRecommendations.applicationId })
+      .from(candidateInterviewRecommendations)
+      .where(
+        and(
+          eq(candidateInterviewRecommendations.organisationId, organisationId),
+          eq(candidateInterviewRecommendations.vacancyId, snapshot.vacancyId),
+          inArray(candidateInterviewRecommendations.status, [
+            "Ready to Schedule",
+            "Interview Scheduled",
+          ]),
+        ),
+      );
+    const protectedApplications = new Set(selectedForInterview.map((item) => item.applicationId));
     for (const application of applications) {
       if (
         ["Hired", "Offered", "Withdrawn"].includes(application.status) ||
+        protectedApplications.has(application.id) ||
         (application.status === "Rejected" &&
           application.screeningDecision?.startsWith(UNSUITABLE_PREFIX))
       )

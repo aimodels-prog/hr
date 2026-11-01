@@ -41,6 +41,7 @@ import {
   runDetailedAssessmentInDatabase,
   saveShortlistDraftInDatabase,
   setCandidateCvSuitabilityInDatabase,
+  selectCandidateForInterviewInDatabase,
   updateAssessmentSelectionInDatabase,
 } from "../db/repositories/recruitment-screening.repository.server.ts";
 import { importCandidatesInDatabase } from "../db/repositories/candidate-import.repository.server.ts";
@@ -625,6 +626,28 @@ export const setCandidateCvSuitabilityFn = createServerFn({ method: "POST" })
       data.candidateId,
       data.decision,
       data.remark,
+      verified.actor,
+    );
+    return { ok: true };
+  });
+
+export const selectCandidateForInterviewFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: RecruitmentActor,
+        vacancyId: z.string().uuid(),
+        candidateId: z.string().uuid(),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await verifyRecruitmentActor(data.actor);
+    await selectCandidateForInterviewInDatabase(
+      verified.organisationId,
+      data.vacancyId,
+      data.candidateId,
       verified.actor,
     );
     return { ok: true };

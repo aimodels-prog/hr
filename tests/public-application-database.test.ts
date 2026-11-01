@@ -22,6 +22,7 @@ import {
   finaliseShortlistInDatabase,
   runDetailedAssessmentInDatabase,
   setCandidateCvSuitabilityInDatabase,
+  selectCandidateForInterviewInDatabase,
 } from "../src/lib/db/repositories/recruitment-screening.repository.server.ts";
 import {
   createInterviewInDatabase,
@@ -232,6 +233,60 @@ test(
         activeRole: "HR" as const,
         roles: ["Employee", "HR"] as const,
       };
+      const directSelectionCandidateId = randomUUID();
+      const directSelectionApplicationId = randomUUID();
+      await sql`
+        INSERT INTO candidates
+          (id, created_by, updated_by, organisation_id, first_name, last_name, email, phone,
+           location, years_of_experience, stage)
+        VALUES
+          (${directSelectionCandidateId}, ${hr.id}, ${hr.id}, ${vacancy.organisation_id},
+           'No', 'Assessment', ${`no.assessment.${unique}@example.test`},
+           ${`+97152${Math.floor(10_000_000 + Math.random() * 89_999_999)}`},
+           'Dubai', 3, 'Applied')
+      `;
+      await sql`
+        INSERT INTO candidate_applications
+          (id, created_by, updated_by, organisation_id, reference_id, candidate_id, vacancy_id,
+           status, cv_file_id, notice_period, source, consent_given, consented_at)
+        VALUES
+          (${directSelectionApplicationId}, ${hr.id}, ${hr.id}, ${vacancy.organisation_id},
+           ${`TEST-DIRECT-${unique}`}, ${directSelectionCandidateId}, ${vacancy.id},
+           'New', ${String(file.id)}, '30 days', 'HR Upload', true, now())
+      `;
+      await selectCandidateForInterviewInDatabase(
+        String(vacancy.organisation_id),
+        vacancyId,
+        directSelectionCandidateId,
+        actor,
+      );
+      await selectCandidateForInterviewInDatabase(
+        String(vacancy.organisation_id),
+        vacancyId,
+        directSelectionCandidateId,
+        actor,
+      );
+      const [directSelection] = await sql`
+        SELECT
+          (SELECT status FROM candidate_applications WHERE id=${directSelectionApplicationId}) AS application_status,
+          (SELECT stage FROM candidates WHERE id=${directSelectionCandidateId}) AS candidate_stage,
+          (SELECT count(*)::int FROM candidate_interview_recommendations
+            WHERE application_id=${directSelectionApplicationId} AND status='Ready to Schedule') AS selection_count,
+          (SELECT count(*)::int FROM candidate_preparation_runs
+            WHERE application_id=${directSelectionApplicationId}) AS preparation_count,
+          (SELECT count(*)::int FROM candidate_score_runs
+            WHERE application_id=${directSelectionApplicationId}) AS score_count
+      `;
+      assert.deepEqual(
+        [
+          directSelection.application_status,
+          directSelection.candidate_stage,
+          directSelection.selection_count,
+          directSelection.preparation_count,
+          directSelection.score_count,
+        ],
+        ["Shortlisted", "Shortlisted", 1, 0, 0],
+      );
       await assert.rejects(
         setCandidateCvSuitabilityInDatabase(
           String(vacancy.organisation_id),
@@ -423,6 +478,16 @@ test(
         shortlistId,
         "On Hold",
         actor,
+      );
+      const [protectedDirectSelection] = await sql`
+        SELECT ca.status AS application_status, c.stage AS candidate_stage
+        FROM candidate_applications ca JOIN candidates c ON c.id=ca.candidate_id
+        WHERE ca.id=${directSelectionApplicationId}
+      `;
+      assert.deepEqual(
+        [protectedDirectSelection.application_status, protectedDirectSelection.candidate_stage],
+        ["Shortlisted", "Shortlisted"],
+        "finalising a separate assessment must not undo HR's direct interview selection",
       );
       const [screening] = await sql`
         SELECT
@@ -1080,6 +1145,41 @@ test(
         SELECT count(*)::int AS count FROM interviews WHERE candidate_id = ${directCandidateId}
       `;
       assert.equal(directCount.count, 1, "a conflict must not create a proposed duplicate");
+      await updateInterviewWorkflowInDatabase(
+        String(vacancy.organisation_id),
+        {
+          interviewId: directInterviewId,
+          action: "change-status",
+          status: "Completed",
+          reason: "Interview completed without a scorecard template",
+        },
+        actor,
+      );
+      const [completedWithoutTemplate] = await sql`
+        SELECT status FROM interviews WHERE id=${directInterviewId}
+      `;
+      assert.equal(completedWithoutTemplate.status, "Completed");
+      await createInterviewInDatabase(
+        String(vacancy.organisation_id),
+        {
+          ...directInput,
+          candidateId: directSelectionCandidateId,
+          confirmedSlot: interviewSlotFromLocalTime(workingDate, "11:00", 30, timezone),
+        },
+        actor,
+      );
+      const [scheduledSelection] = await sql`
+        SELECT ca.status AS application_status, cir.status AS recommendation_status
+        FROM candidate_applications ca
+        JOIN candidate_interview_recommendations cir
+          ON cir.id=ca.hr_interview_recommendation_id
+        WHERE ca.id=${directSelectionApplicationId}
+      `;
+      assert.deepEqual(
+        [scheduledSelection.application_status, scheduledSelection.recommendation_status],
+        ["Interviewing", "Interview Scheduled"],
+        "scheduling must remove a directly selected candidate from the waiting queue",
+      );
     } finally {
       await sql.end();
     }

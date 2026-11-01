@@ -292,6 +292,12 @@ function CandidateProfile({
   const [empService] = useState(() => new EmployeeService());
 
   const vacancies = useMemo(() => vacancyService.getVacancyRepository().list(), [vacancyService]);
+  const panelUserById = new Map(
+    empService.getUsers(currentUser.getActorContext()).map((user) => [user.id, user.displayName]),
+  );
+  const schedulableApplications = candidate.applications.filter((application) =>
+    ["New", "On Hold", "Shortlisted", "Interviewing"].includes(application.status),
+  );
   const interviews = interviewService.getInterviewsForCandidate(
     candidate.id,
     currentUser.getActorContext(),
@@ -319,6 +325,16 @@ function CandidateProfile({
     candidate.id,
     currentUser.getActorContext(),
   );
+  const preferredInterviewVacancyId =
+    interviewRecommendations.find(
+      (recommendation) =>
+        recommendation.status === "Ready to Schedule" &&
+        schedulableApplications.some(
+          (application) => application.vacancyId === recommendation.vacancyId,
+        ),
+    )?.vacancyId ??
+    schedulableApplications[0]?.vacancyId ??
+    "";
 
   type ActivityEntry = { date: string; label: string; detail: string; kind: string };
   const activityTimeline = useMemo<ActivityEntry[]>(() => {
@@ -459,9 +475,7 @@ function CandidateProfile({
   const [isContactDialogOpen, setIsContactDialogOpen] = useState(false);
   const [isInterviewDialogOpen, setIsInterviewDialogOpen] = useState(false);
   const [isInterviewRecommendationOpen, setIsInterviewRecommendationOpen] = useState(false);
-  const [interviewVacancyId, setInterviewVacancyId] = useState(
-    candidate.applications[0]?.vacancyId || "",
-  );
+  const [interviewVacancyId, setInterviewVacancyId] = useState(preferredInterviewVacancyId);
   const [isManualInterviewDialogOpen, setIsManualInterviewDialogOpen] = useState(false);
   const [isRecruitmentDialogOpen, setIsRecruitmentDialogOpen] = useState(false);
 
@@ -1803,13 +1817,13 @@ function CandidateProfile({
                     </Button>
                     <Button
                       onClick={() => {
-                        setInterviewVacancyId(candidate.applications[0]?.vacancyId || "");
+                        setInterviewVacancyId(preferredInterviewVacancyId);
                         setIsInterviewDialogOpen(true);
                       }}
-                      disabled={candidate.applications.length === 0}
+                      disabled={schedulableApplications.length === 0}
                       title={
-                        candidate.applications.length === 0
-                          ? "Scheduled interviews require a vacancy application. Use Record Manual Interview."
+                        schedulableApplications.length === 0
+                          ? "Scheduled interviews require an active vacancy application. Use Record Manual Interview for an interview that already happened."
                           : undefined
                       }
                     >
@@ -1824,7 +1838,8 @@ function CandidateProfile({
                   <CardHeader className="pb-3">
                     <CardTitle className="text-base">HR Interview Recommendations</CardTitle>
                     <CardDescription>
-                      Each recommendation is connected to the assessment used for that vacancy.
+                      Candidates selected for interview appear here, with or without a CV
+                      assessment.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3">
@@ -1849,7 +1864,9 @@ function CandidateProfile({
                                     ? "Existing assessment used"
                                     : "Completed automatically"
                                 } · `
-                              : "Legacy recommendation · "}
+                              : recommendation.screeningDecision === "Proceed Without Assessment"
+                                ? "Selected without CV assessment · "
+                                : "No detailed assessment · "}
                             {new Date(recommendation.createdAt).toLocaleString()}
                           </p>
                         </div>
@@ -1973,7 +1990,7 @@ function CandidateProfile({
                                       setIsScorecardOpen(true);
                                     }}
                                   >
-                                    View User {uid.slice(0, 5)}'s Scorecard
+                                    {panelUserById.get(uid) || "Panel member"}'s scorecard
                                   </Button>
                                 ))}
                               </div>
@@ -2456,6 +2473,12 @@ function CandidateProfile({
         onOpenChange={setIsInterviewDialogOpen}
         vacancyId={interviewVacancyId}
         candidateId={candidate.id}
+        candidateName={`${candidate.firstName} ${candidate.lastName}`}
+        vacancyOptions={schedulableApplications.map((application) => ({
+          id: application.vacancyId,
+          title:
+            vacancies.find((vacancy) => vacancy.id === application.vacancyId)?.title ?? "Vacancy",
+        }))}
         onSuccess={refresh}
       />
       <CandidateInterviewRecommendationDialog

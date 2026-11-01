@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { SearchablePeopleList } from "@/components/ui/searchable-people-list";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Info, Calendar, Users } from "lucide-react";
 import { InterviewService } from "@/lib/data/interview-service";
@@ -40,6 +41,8 @@ interface InterviewDialogProps {
   onOpenChange: (open: boolean) => void;
   vacancyId: string;
   candidateId: string;
+  candidateName?: string;
+  vacancyOptions?: Array<{ id: string; title: string }>;
   onSuccess?: () => void;
 }
 
@@ -48,9 +51,12 @@ export function InterviewDialog({
   onOpenChange,
   vacancyId,
   candidateId,
+  candidateName,
+  vacancyOptions,
   onSuccess,
 }: InterviewDialogProps) {
   const currentUser = useCurrentUser();
+  const [selectedVacancyId, setSelectedVacancyId] = useState(vacancyId);
   const [stageName, setStageName] = useState("HR Screen");
   const [templateId, setTemplateId] = useState<string>("");
   const [duration, setDuration] = useState("30");
@@ -68,14 +74,19 @@ export function InterviewDialog({
   const [proposedSlots, setProposedSlots] = useState<InterviewSlot[]>([]);
   const [selectedSlotIndex, setSelectedSlotIndex] = useState<number>(-1);
   const [otherPanelUserIds, setOtherPanelUserIds] = useState<string[]>([]);
+  const [includeMeOnPanel, setIncludeMeOnPanel] = useState(true);
 
   const interviewService = useMemo(() => new InterviewService(), []);
   const scorecardService = useMemo(() => new ScorecardService(), []);
   const empService = useMemo(() => new EmployeeService(), []);
   const templates = useMemo(
-    () => scorecardService.getApplicableTemplates(vacancyId, stageName),
-    [scorecardService, vacancyId, stageName],
+    () => scorecardService.getApplicableTemplates(selectedVacancyId, stageName),
+    [scorecardService, selectedVacancyId, stageName],
   );
+
+  useEffect(() => {
+    if (open) setSelectedVacancyId(vacancyId);
+  }, [open, vacancyId]);
 
   useEffect(() => {
     if (!open) return;
@@ -115,8 +126,8 @@ export function InterviewDialog({
   };
 
   const panelUserIds = useMemo(
-    () => [currentUser!.userId, ...otherPanelUserIds],
-    [currentUser, otherPanelUserIds],
+    () => [...(includeMeOnPanel ? [currentUser!.userId] : []), ...otherPanelUserIds],
+    [currentUser, includeMeOnPanel, otherPanelUserIds],
   );
   const manualDateIsRestDay = Boolean(
     manualDate && organisation && !isWorkingCalendarDate(manualDate, organisation.workingDays),
@@ -168,7 +179,7 @@ export function InterviewDialog({
       setIsSaving(true);
       await interviewService.createInterviewAsync(
         {
-          vacancyId,
+          vacancyId: selectedVacancyId,
           candidateId,
           ...(templateId && templateId !== "none" ? { templateId } : {}),
           stageName,
@@ -196,7 +207,12 @@ export function InterviewDialog({
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Schedule Interview</DialogTitle>
-          <DialogDescription>Create a new interview stage for this candidate.</DialogDescription>
+          <DialogDescription>
+            {candidateName
+              ? `Set an interview time for ${candidateName}.`
+              : "Set an interview time for this candidate."}{" "}
+            This does not send an invitation; share the confirmed details with the candidate.
+          </DialogDescription>
         </DialogHeader>
 
         <Alert className="bg-blue-50 text-blue-900 border-blue-200">
@@ -207,9 +223,33 @@ export function InterviewDialog({
           </AlertDescription>
         </Alert>
 
-        <div className="grid grid-cols-2 gap-4 my-4">
+        {vacancyOptions && vacancyOptions.length > 1 && (
           <div className="space-y-2">
-            <Label>Stage Name</Label>
+            <Label>Vacancy *</Label>
+            <Select
+              value={selectedVacancyId}
+              onValueChange={(value) => {
+                setSelectedVacancyId(value);
+                setTemplateId("");
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Choose the vacancy" />
+              </SelectTrigger>
+              <SelectContent>
+                {vacancyOptions.map((option) => (
+                  <SelectItem key={option.id} value={option.id}>
+                    {option.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        <div className="my-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label>Interview stage *</Label>
             <Input
               value={stageName}
               onChange={(e) => setStageName(e.target.value)}
@@ -217,7 +257,7 @@ export function InterviewDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label>Scorecard Template (optional)</Label>
+            <Label>Scorecard template (optional)</Label>
             <Select value={templateId} onValueChange={setTemplateId}>
               <SelectTrigger>
                 <SelectValue placeholder="No scorecard" />
@@ -231,6 +271,9 @@ export function InterviewDialog({
                 ))}
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground">
+              Choose one if panel members should score this interview.
+            </p>
           </div>
           <div className="space-y-2">
             <Label>Duration (Minutes)</Label>
@@ -255,7 +298,7 @@ export function InterviewDialog({
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Location or video link</Label>
+            <Label>Location or video link *</Label>
             <Input
               value={location}
               onChange={(e) => setLocation(e.target.value)}
@@ -266,7 +309,7 @@ export function InterviewDialog({
             <Label>Timezone</Label>
             <Input value={organisation?.timezone ?? "Loading..."} readOnly />
           </div>
-          <div className="space-y-2 col-span-2">
+          <div className="space-y-2 sm:col-span-2">
             <Label>Interview Notes / Instructions</Label>
             <Textarea
               value={notes}
@@ -282,9 +325,15 @@ export function InterviewDialog({
             <Label className="mb-0">Interview Panel</Label>
           </div>
           <p className="text-xs text-muted-foreground mb-3">
-            You are on the panel automatically. Add anyone else conducting this interview - they
-            will be able to see it under their own Interviews page and submit their own scorecard.
+            Select the people conducting the interview. Only panel members receive scorecard tasks.
           </p>
+          <label className="mb-3 flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={includeMeOnPanel}
+              onCheckedChange={(checked) => setIncludeMeOnPanel(checked === true)}
+            />
+            I am interviewing this candidate
+          </label>
           <SearchablePeopleList
             selected={otherPanelUserIds}
             onToggle={togglePanelUser}
@@ -302,7 +351,7 @@ export function InterviewDialog({
               Enter a time manually, or choose a working-day suggestion.
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="interview-date">Date *</Label>
               <Input
@@ -421,6 +470,10 @@ export function InterviewDialog({
             disabled={
               isSaving ||
               !organisation ||
+              !selectedVacancyId ||
+              !stageName.trim() ||
+              !location.trim() ||
+              panelUserIds.length === 0 ||
               (selectedSlotIndex === -1 && (!manualDate || !manualTime || manualDateIsRestDay))
             }
           >

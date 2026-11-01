@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { SearchablePeopleList } from "@/components/ui/searchable-people-list";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -69,6 +70,7 @@ export function ManualInterviewDialog({
   const [templateId, setTemplateId] = useState("");
   const [notes, setNotes] = useState("");
   const [otherPanelUserIds, setOtherPanelUserIds] = useState<string[]>([]);
+  const [includeMeOnPanel, setIncludeMeOnPanel] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
   const vacancies = useMemo(
@@ -118,6 +120,10 @@ export function ManualInterviewDialog({
       toast.error("Select the HR scoring criteria for this interview");
       return;
     }
+    if (!includeMeOnPanel && otherPanelUserIds.length === 0) {
+      toast.error("Select at least one interviewer");
+      return;
+    }
 
     setIsSaving(true);
     try {
@@ -130,7 +136,7 @@ export function ManualInterviewDialog({
           occurredAt: new Date(occurredAt).toISOString(),
           durationMinutes: Number(duration),
           timezone,
-          panelUserIds: [currentUser.userId, ...otherPanelUserIds],
+          panelUserIds: [...(includeMeOnPanel ? [currentUser.userId] : []), ...otherPanelUserIds],
           positionTitle,
           ...(projectName.trim() ? { projectName } : {}),
           location,
@@ -289,9 +295,15 @@ export function ManualInterviewDialog({
             <Label>Interviewers</Label>
           </div>
           <p className="text-xs text-muted-foreground">
-            You are included automatically. Every selected interviewer receives their own scorecard
-            in the Interviews workspace.
+            Select the people who conducted the interview. Each interviewer receives a scorecard.
           </p>
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={includeMeOnPanel}
+              onCheckedChange={(checked) => setIncludeMeOnPanel(checked === true)}
+            />
+            I interviewed this candidate
+          </label>
           <SearchablePeopleList
             selected={otherPanelUserIds}
             onToggle={togglePanelUser}

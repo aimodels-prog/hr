@@ -83,7 +83,10 @@ import { InterviewService } from "@/lib/data/interview-service";
 import { CandidatePreparationService } from "@/lib/data/candidate-preparation-service";
 import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
 import { PreliminaryScoreExplanation } from "@/components/recruitment/preliminary-score-explanation";
-import { setCandidateCvSuitabilityFn } from "@/lib/server-functions/candidate.server";
+import {
+  setCandidateCvSuitabilityFn,
+  selectCandidateForInterviewFn,
+} from "@/lib/server-functions/candidate.server";
 
 export const Route = createFileRoute("/staff/vacancies/$vacancyId")({
   component: VacancyDetailRoute,
@@ -173,6 +176,11 @@ function VacancyDetailRoute() {
   const [rejectCandidateId, setRejectCandidateId] = useState<string | null>(null);
   const [rejectionRemark, setRejectionRemark] = useState("");
   const [savingSuitability, setSavingSuitability] = useState(false);
+  const [applicationSearch, setApplicationSearch] = useState("");
+  const [applicationSource, setApplicationSource] = useState("all");
+  const [applicationView, setApplicationView] = useState("all");
+  const [applicationSort, setApplicationSort] = useState("newest");
+  const [selectingCandidateId, setSelectingCandidateId] = useState<string | null>(null);
 
   const serverActor = useMemo(
     () => ({
@@ -308,6 +316,47 @@ function VacancyDetailRoute() {
     const status = applicationByCandidate.get(run.candidateId)?.status;
     return status !== "Rejected" && status !== "Withdrawn";
   });
+  const interviewSelections = poolService
+    .getAllInterviewRecommendations(context)
+    .filter((item) => item.vacancyId === vacancy.id && item.status !== "Ready for Assessment");
+  const selectedInterviewIds = new Set(interviewSelections.map((item) => item.candidateId));
+  const applicationSources = [...new Set(applications.map((item) => item.source))].sort();
+  const filteredApplications = applications
+    .filter((application) => {
+      const candidate = candidates.find((item) => item.id === application.candidateId);
+      const text =
+        `${candidate?.firstName ?? ""} ${candidate?.lastName ?? ""} ${candidate?.email ?? ""}`.toLowerCase();
+      if (!text.includes(applicationSearch.trim().toLowerCase())) return false;
+      if (applicationSource !== "all" && application.source !== applicationSource) return false;
+      const selected = selectedInterviewIds.has(application.candidateId);
+      const unsuitable =
+        application.status === "Rejected" &&
+        application.screeningDecision?.startsWith("Not suitable: ");
+      if (applicationView === "selected" && !selected) return false;
+      if (
+        applicationView === "review" &&
+        (selected || !["New", "On Hold"].includes(application.status))
+      )
+        return false;
+      if (applicationView === "not-suitable" && !unsuitable) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      if (applicationSort === "name") {
+        const name = (candidateId: string) => {
+          const item = candidates.find((candidate) => candidate.id === candidateId);
+          return `${item?.firstName ?? ""} ${item?.lastName ?? ""}`;
+        };
+        return name(a.candidateId).localeCompare(name(b.candidateId));
+      }
+      if (applicationSort === "score") {
+        return (
+          (latestRuns.get(b.candidateId)?.preliminaryScore ?? -1) -
+          (latestRuns.get(a.candidateId)?.preliminaryScore ?? -1)
+        );
+      }
+      return b.createdAt.localeCompare(a.createdAt);
+    });
   const visibleReviewRuns = reviewRuns.filter((run) => {
     const application = applicationByCandidate.get(run.candidateId);
     const manualRejection =
@@ -446,6 +495,22 @@ function VacancyDetailRoute() {
       toast.error(error instanceof Error ? error.message : "The CV decision could not be saved.");
     } finally {
       setSavingSuitability(false);
+    }
+  };
+
+  const selectForInterview = async (candidateId: string) => {
+    setSelectingCandidateId(candidateId);
+    try {
+      await selectCandidateForInterviewFn({
+        data: { actor: serverActor, vacancyId: databaseVacancyId, candidateId },
+      });
+      await candidateService.hydrateCompatibilityCache(context);
+      refreshScreening();
+      toast.success("Selected for interview. Schedule the interview from the candidate profile.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not select this candidate.");
+    } finally {
+      setSelectingCandidateId(null);
     }
   };
 
@@ -943,8 +1008,11 @@ function VacancyDetailRoute() {
 
           <TabsContent value="applications" className="pt-4">
             <Card>
-              <CardHeader>
+              <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>Applications</CardTitle>
+                <Button variant="outline" onClick={() => setActiveTab("shortlist")}>
+                  Filter and select for interview
+                </Button>
               </CardHeader>
               <CardContent className="space-y-3">
                 {applications.length === 0 ? (
@@ -990,6 +1058,36 @@ function VacancyDetailRoute() {
                 <CardTitle>Interviews</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
+                {interviewSelections.filter((item) => item.status === "Ready to Schedule").length >
+                  0 && (
+                  <div className="rounded-lg border p-4">
+                    <h3 className="font-semibold">Selected, awaiting a time</h3>
+                    <p className="mb-3 text-sm text-muted-foreground">
+                      These candidates were selected for interview but have not been scheduled yet.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {interviewSelections
+                        .filter((item) => item.status === "Ready to Schedule")
+                        .map((item) => {
+                          const candidate = candidates.find(
+                            (person) => person.id === item.candidateId,
+                          );
+                          return (
+                            <Button key={item.id} size="sm" variant="outline" asChild>
+                              <Link
+                                to="/staff/candidates/$candidateId"
+                                params={{ candidateId: item.candidateId }}
+                              >
+                                {candidate
+                                  ? `${candidate.firstName} ${candidate.lastName}`
+                                  : "Open candidate"}
+                              </Link>
+                            </Button>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
                 {interviews.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     No interviews have been scheduled. Schedule one from a shortlisted candidate
@@ -1084,6 +1182,118 @@ function VacancyDetailRoute() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-6">
+                <div className="rounded-lg border">
+                  <div className="flex flex-col gap-1 border-b p-4">
+                    <h3 className="font-semibold">Applications</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Select for interview directly. CV analysis is optional; selecting does not
+                      send an invitation.
+                    </p>
+                  </div>
+                  <div className="grid gap-2 border-b p-4 sm:grid-cols-2 xl:grid-cols-4">
+                    <Input
+                      aria-label="Search applications"
+                      placeholder="Search name or email"
+                      value={applicationSearch}
+                      onChange={(event) => setApplicationSearch(event.target.value)}
+                    />
+                    <select
+                      aria-label="Filter applications by status"
+                      className="h-10 rounded-md border bg-background px-3 text-sm"
+                      value={applicationView}
+                      onChange={(event) => setApplicationView(event.target.value)}
+                    >
+                      <option value="all">All applications</option>
+                      <option value="review">To review</option>
+                      <option value="selected">Selected for interview</option>
+                      <option value="not-suitable">Not suitable</option>
+                    </select>
+                    <select
+                      aria-label="Filter applications by CV source"
+                      className="h-10 rounded-md border bg-background px-3 text-sm"
+                      value={applicationSource}
+                      onChange={(event) => setApplicationSource(event.target.value)}
+                    >
+                      <option value="all">All CV sources</option>
+                      {applicationSources.map((source) => (
+                        <option key={source} value={source}>
+                          {source}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      aria-label="Sort applications"
+                      className="h-10 rounded-md border bg-background px-3 text-sm"
+                      value={applicationSort}
+                      onChange={(event) => setApplicationSort(event.target.value)}
+                    >
+                      <option value="newest">Newest first</option>
+                      <option value="score">Highest preliminary score</option>
+                      <option value="name">Name A–Z</option>
+                    </select>
+                  </div>
+                  <div className="max-h-[30rem] divide-y overflow-y-auto">
+                    {filteredApplications.length === 0 ? (
+                      <p className="p-6 text-center text-sm text-muted-foreground">
+                        No applications match these filters.
+                      </p>
+                    ) : (
+                      filteredApplications.map((application) => {
+                        const candidate = candidates.find(
+                          (item) => item.id === application.candidateId,
+                        );
+                        const selected = selectedInterviewIds.has(application.candidateId);
+                        const canSelect =
+                          ["New", "On Hold", "Shortlisted"].includes(application.status) &&
+                          !candidate?.doNotContact &&
+                          !candidate?.mergedIntoId &&
+                          candidate?.stage !== "Archived";
+                        const score = latestRuns.get(application.candidateId)?.preliminaryScore;
+                        return (
+                          <div
+                            key={application.id}
+                            className="flex flex-wrap items-center justify-between gap-3 p-4"
+                          >
+                            <div className="min-w-0">
+                              <Link
+                                to="/staff/candidates/$candidateId"
+                                params={{ candidateId: application.candidateId }}
+                                className="font-medium hover:underline"
+                              >
+                                {candidate
+                                  ? `${candidate.firstName} ${candidate.lastName}`
+                                  : application.referenceId}
+                              </Link>
+                              <p className="text-xs text-muted-foreground">
+                                {application.source} · {candidate?.email ?? ""}
+                                {score !== undefined ? ` · Score ${score}/100` : " · Not assessed"}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {selected ? (
+                                <Badge>Selected for interview</Badge>
+                              ) : (
+                                <StatusBadge status={application.status} />
+                              )}
+                              {!selected && canSelect && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={selectingCandidateId !== null}
+                                  onClick={() => void selectForInterview(application.candidateId)}
+                                >
+                                  {selectingCandidateId === application.candidateId
+                                    ? "Selecting..."
+                                    : "Select for interview"}
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                   {[
                     ["Applications", applications.length],

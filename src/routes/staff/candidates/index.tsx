@@ -49,6 +49,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { CandidateService } from "@/lib/data/candidate-service";
+import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
 import { VacancyService } from "@/lib/data/vacancy-service";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { getProjectRepository } from "@/lib/data/master-data";
@@ -84,6 +85,7 @@ function CandidatesIndex() {
   const navigate = useNavigate();
   const currentUser = useCurrentUser();
   const [candidateService] = useState(() => new CandidateService());
+  const [candidatePoolService] = useState(() => new CandidatePoolService());
   const [vacancyService] = useState(() => new VacancyService());
   const [empService] = useState(() => new EmployeeService());
   const [refreshKey, setRefreshKey] = useState(0);
@@ -190,6 +192,12 @@ function CandidatesIndex() {
   const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [myCandidatesOnly, setMyCandidatesOnly] = useState(false);
   const [hideDoNotContact, setHideDoNotContact] = useState(false);
+  const selectedForInterview = new Set(
+    candidatePoolService
+      .getAllInterviewRecommendations(currentUser.getActorContext())
+      .filter((record) => record.status === "Ready to Schedule")
+      .map((record) => record.candidateId),
+  );
 
   const [archiveTarget, setArchiveTarget] = useState<{ id: string; name: string } | null>(null);
 
@@ -229,7 +237,11 @@ function CandidatesIndex() {
         .toLowerCase()
         .includes(searchQuery.toLowerCase());
 
-    const matchesStage = stageFilter === "all" || candidate.stage === stageFilter;
+    const matchesStage =
+      stageFilter === "all" ||
+      (stageFilter === "selected-for-interview"
+        ? selectedForInterview.has(candidate.id)
+        : candidate.stage === stageFilter);
     const matchesLocation = locationFilter === "all" || candidate.location === locationFilter;
     const matchesProject = projectFilter === "all" || candidate.projectId === projectFilter;
     const matchesSource = sourceFilter === "all" || candidate.source === sourceFilter;
@@ -382,6 +394,7 @@ function CandidatesIndex() {
             <SelectItem value="Applied">Applied</SelectItem>
             <SelectItem value="Screened">Screened</SelectItem>
             <SelectItem value="Shortlisted">Shortlisted</SelectItem>
+            <SelectItem value="selected-for-interview">Selected for interview</SelectItem>
             <SelectItem value="Interview">Interview</SelectItem>
             <SelectItem value="Offer">Offer</SelectItem>
             <SelectItem value="On Hold">On Hold</SelectItem>
@@ -644,6 +657,9 @@ function CandidatesIndex() {
                           <div>
                             <div className="font-medium flex items-center gap-2">
                               {candidate.firstName} {candidate.lastName}
+                              {selectedForInterview.has(candidate.id) && (
+                                <Badge variant="secondary">Selected for interview</Badge>
+                              )}
                               {candidate.doNotContact && (
                                 <span title="Do Not Contact">
                                   <ShieldAlert className="h-4 w-4 text-destructive" />
