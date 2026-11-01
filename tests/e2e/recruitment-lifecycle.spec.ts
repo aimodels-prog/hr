@@ -207,9 +207,20 @@ test("public application progresses through shortlist, interview, offer and onbo
     .getByRole("combobox");
   await templateSelect.click();
   await page.getByRole("option", { name: templateName }).click();
-  const nextSunday = new Date();
-  nextSunday.setUTCDate(nextSunday.getUTCDate() + ((7 - nextSunday.getUTCDay()) % 7) + 7);
-  await dialog.getByLabel("Date *").fill(nextSunday.toISOString().slice(0, 10));
+  const workingDaysText = await dialog.getByText(/^Working days:/).textContent();
+  const weekdayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const allowedWeekdays = new Set(
+    [...(workingDaysText ?? "").matchAll(/\b(Sun|Mon|Tue|Wed|Thu|Fri|Sat)\b/g)].map(([day]) =>
+      weekdayNames.indexOf(day),
+    ),
+  );
+  expect(allowedWeekdays.size).toBeGreaterThan(0);
+  const interviewDate = new Date();
+  interviewDate.setUTCDate(interviewDate.getUTCDate() + 1);
+  while (!allowedWeekdays.has(interviewDate.getUTCDay())) {
+    interviewDate.setUTCDate(interviewDate.getUTCDate() + 1);
+  }
+  await dialog.getByLabel("Date *").fill(interviewDate.toISOString().slice(0, 10));
   await dialog.getByLabel("Time *").fill("10:00");
   await dialog.getByRole("button", { name: "Schedule Interview" }).click();
   await page.getByRole("link", { name: /^Interviews \(/ }).click();
