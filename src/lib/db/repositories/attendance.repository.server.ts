@@ -963,7 +963,12 @@ export async function requestAttendanceCorrectionInDatabase(
       await requireEmployeeSupervisor(tx, organisationId, actor.employeeId!);
       const [[employee], [settings], [policy]] = await Promise.all([
         tx
-          .select({ id: employees.id, locationId: employees.locationId, status: employees.status })
+          .select({
+            id: employees.id,
+            locationId: employees.locationId,
+            status: employees.status,
+            startDate: employees.startDate,
+          })
           .from(employees)
           .where(
             and(eq(employees.organisationId, organisationId), eq(employees.id, actor.employeeId!)),
@@ -982,6 +987,8 @@ export async function requestAttendanceCorrectionInDatabase(
       ]);
       if (!employee || ["Inactive", "Archived"].includes(employee.status))
         throw new Error("An active employee profile is required.");
+      if (input.date < employee.startDate)
+        throw new Error("Attendance cannot be entered before the employee's start date.");
       if (!policy) throw new Error("Attendance settings are not configured.");
       const timezone = settings?.timezone ?? "UTC";
       const workingDays = settings?.workingDays ?? [1, 2, 3, 4, 5];
@@ -1085,16 +1092,8 @@ export async function requestAttendanceCorrectionInDatabase(
       )
       .limit(1);
     if (pendingCorrection) throw new Error("A correction is already pending for this record.");
-    if (
-      !record.clockInAt &&
-      !isAttendanceTracked(
-        await getAttendanceTrackingPolicy(organisationId),
-        record.employeeId,
-        record.date,
-      )
-    ) {
-      throw new Error("Biometric attendance is not required for this date. Use My timesheet.");
-    }
+    // Historical, voluntarily reported work can be reviewed even before biometric tracking
+    // became mandatory. This creates no absence for other untracked days and still needs approval.
     if (["On Leave", "Holiday", "Rest Day"].includes(record.status))
       throw new Error(`${record.status} days cannot be changed through a punch correction.`);
     if (!input.proposedClockIn && !input.proposedClockOut)
@@ -1172,7 +1171,7 @@ export async function requestAttendanceCorrectionInDatabase(
       organisationId,
       attendanceRecordId: record.id,
       employeeId: actor.employeeId!,
-      correctionType: record.clockOutAt ? "Punch Correction" : "Missed Sign-out",
+      correctionType: clockOutOnly ? "Missed Sign-out" : "Punch Correction",
       originalClockIn: record.clockInAt,
       originalClockOut: record.clockOutAt,
       originalStatus: record.status,

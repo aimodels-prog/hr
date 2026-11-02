@@ -425,17 +425,53 @@ test(
         employeeActor,
       );
       const [missingRecord] = await sql`
-        SELECT r.source, r.status, c.status AS correction_status
+        SELECT r.source, r.status, c.status AS correction_status, c.correction_type
         FROM attendance_records r
         JOIN attendance_corrections c ON c.attendance_record_id = r.id
         WHERE c.id = ${missingCorrectionId}
       `;
       assert.deepEqual(
-        [missingRecord.source, missingRecord.status, missingRecord.correction_status],
-        ["Manual Entry", "Absent", "Pending Manager"],
+        [
+          missingRecord.source,
+          missingRecord.status,
+          missingRecord.correction_status,
+          missingRecord.correction_type,
+        ],
+        ["Manual Entry", "Absent", "Pending Manager", "Punch Correction"],
       );
+      // A voluntary historical work record may still be requested before biometric tracking
+      // began, without changing eligibility or marking every colleague absent on that date.
+      await sql`UPDATE app_settings SET additional_settings = additional_settings - 'attendanceTracking'
+        WHERE organisation_id = ${organisationId}`;
+      const historicalCorrectionId = await requestAttendanceCorrectionInDatabase(
+        organisationId,
+        {
+          employeeId,
+          date: "2026-08-03",
+          proposedClockIn: "08:50",
+          proposedClockOut: "17:40",
+          explanation: "I worked this day before biometric tracking began.",
+        },
+        employeeActor,
+      );
+      const [historicalRecord] = await sql`
+        SELECT r.source, r.status, c.status AS correction_status, c.correction_type
+        FROM attendance_records r JOIN attendance_corrections c ON c.attendance_record_id=r.id
+        WHERE c.id=${historicalCorrectionId}
+      `;
+      assert.deepEqual(
+        [
+          historicalRecord.source,
+          historicalRecord.status,
+          historicalRecord.correction_status,
+          historicalRecord.correction_type,
+        ],
+        ["Manual Entry", "Absent", "Pending Manager", "Punch Correction"],
+      );
+      await sql`UPDATE app_settings SET additional_settings = additional_settings ||
+        ${sql.json({ attendanceTracking: tracking })}::jsonb WHERE organisation_id = ${organisationId}`;
       const employeeView = await listAttendanceForActor(organisationId, employeeActor);
-      assert.equal(employeeView.records.length, 2);
+      assert.equal(employeeView.records.length, 3);
       assert.ok(employeeView.records.every((record) => record.employeeId === employeeId));
       for (const activeRole of ["Accounts", "IT"] as const) {
         const selfView = await listAttendanceForActor(organisationId, {

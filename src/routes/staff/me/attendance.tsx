@@ -143,12 +143,14 @@ function MyAttendanceRoute() {
     [],
   );
   const [revision, setRevision] = useState(0);
+  const [attendanceReady, setAttendanceReady] = useState(false);
   const [currentMonth, setCurrentMonth] = useState(startOfMonth(new Date()));
   const [locating, setLocating] = useState(false);
   const [correctionRecord, setCorrectionRecord] = useState<AttendanceRecord | null>(null);
   const openedCorrectionLink = useRef("");
   const [proposedIn, setProposedIn] = useState("");
   const [proposedOut, setProposedOut] = useState("");
+  const [correctClockIn, setCorrectClockIn] = useState(false);
   const [explanation, setExplanation] = useState("");
   const [evidence, setEvidence] = useState<File | null>(null);
   const [submittingCorrection, setSubmittingCorrection] = useState(false);
@@ -197,7 +199,10 @@ function MyAttendanceRoute() {
           attendanceService.hydrateFromDatabase(actorContext),
           new LeaveService().hydrateCompatibilityCache(actorContext),
         ]);
-        if (active) setRevision((value) => value + 1);
+        if (active) {
+          setAttendanceReady(true);
+          setRevision((value) => value + 1);
+        }
       } catch (error) {
         if (active)
           toast.error(
@@ -216,31 +221,72 @@ function MyAttendanceRoute() {
   }, [actorContext, attendanceService]);
 
   useEffect(() => {
-    if (!employeeId || !search.correct || openedCorrectionLink.current === search.correct) return;
+    if (
+      !attendanceReady ||
+      !employeeId ||
+      !search.correct ||
+      openedCorrectionLink.current === search.correct
+    )
+      return;
+    if (search.correct >= localNow.date) return;
     const record = attendanceService
       .getRecordsForEmployee(employeeId, actorContext)
       .find((item) => item.date === search.correct);
-    if (!record) return;
+    const status =
+      record?.status ??
+      attendanceService.reconcileDailyStatus(employeeId, search.correct, actorContext)?.status;
+    if (["On Leave", "Holiday", "Rest Day"].includes(status ?? "")) return;
     openedCorrectionLink.current = search.correct;
     const pending = attendanceService
       .getCorrectionsForEmployee(employeeId, actorContext)
       .some(
         (item) =>
-          item.attendanceRecordId === record.id &&
+          item.attendanceRecordId === record?.id &&
           ["Pending Manager", "Pending HR", "Approved"].includes(item.status),
       );
-    if (record.clockOut || pending) {
-      toast.info("This record is already completed or awaiting review.");
+    if (pending) {
+      toast.info("This date already has a correction recorded or awaiting review.");
       return;
     }
-    if (record.clockIn && record.date < localNow.date) {
-      setCorrectionRecord(record);
-      setProposedIn(record.clockIn);
-      setProposedOut("");
-      setExplanation("");
-      setEvidence(null);
-    }
-  }, [search.correct, employeeId, actorContext, attendanceService, localNow.date, revision]);
+    const policy = attendanceService.getPolicy();
+    const timestamp = new Date().toISOString();
+    const target =
+      record ??
+      ({
+        id: `virtual-${search.correct}`,
+        employeeId,
+        date: search.correct,
+        status: status ?? "Not tracked",
+        clockIn: undefined,
+        clockOut: undefined,
+        breakMinutes: 0,
+        source: "Manual Entry",
+        calculatedHours: 0,
+        isLate: false,
+        isEarlyDeparture: false,
+        createdAt: timestamp,
+        createdBy: currentUser.userId,
+        updatedAt: timestamp,
+        updatedBy: currentUser.userId,
+        recordVersion: 0,
+      } as AttendanceRecord);
+    setCurrentMonth(startOfMonth(parseISO(search.correct)));
+    setCorrectionRecord(target);
+    setProposedIn(record?.clockIn ?? policy.expectedClockIn);
+    setProposedOut(record?.clockOut ?? (record?.clockIn ? "" : policy.expectedClockOut));
+    setCorrectClockIn(false);
+    setExplanation("");
+    setEvidence(null);
+  }, [
+    search.correct,
+    employeeId,
+    actorContext,
+    attendanceService,
+    localNow.date,
+    revision,
+    currentUser.userId,
+    attendanceReady,
+  ]);
 
   if (!employeeId) return <div className="p-6">Employee profile required.</div>;
 
@@ -356,11 +402,13 @@ function MyAttendanceRoute() {
     );
     setExplanation("");
     setEvidence(null);
+    setCorrectClockIn(false);
   };
 
-  const clockOutOnly = Boolean(
+  const missingClockOut = Boolean(
     correctionRecord?.clockIn && !correctionRecord.clockOut && correctionRecord.date < todayKey,
   );
+  const clockOutOnly = missingClockOut && !correctClockIn;
 
   const submitCorrection = async () => {
     if (!correctionRecord) return;
@@ -720,9 +768,13 @@ function MyAttendanceRoute() {
                     {monthlyRows.map((row) => {
                       const correction = correctionByRecord.get(row.id);
                       const canCorrect =
+                        row.date < todayKey &&
+                        (!currentUser.currentEmployee?.startDate ||
+                          row.date >= currentUser.currentEmployee.startDate) &&
                         !("officeExceptionLabel" in row && row.officeExceptionLabel) &&
-                        (["Absent", "Late", "Missing Punch"].includes(row.status) ||
-                          Boolean(row.clockIn && !row.clockOut && row.date < todayKey));
+                        !["On Leave", "Holiday", "Rest Day", "Correction Pending"].includes(
+                          row.status,
+                        );
                       return (
                         <TableRow key={row.date}>
                           <TableCell>
@@ -756,7 +808,7 @@ function MyAttendanceRoute() {
                                 size="sm"
                                 onClick={() => openCorrection(row)}
                               >
-                                Correct
+                                {row.virtual ? "Add worked time" : "Correct"}
                               </Button>
                             ) : null}
                           </TableCell>
@@ -917,6 +969,16 @@ function MyAttendanceRoute() {
                   : "Original punches are preserved. Your line manager reviews first, followed by HR."}
               </DialogDescription>
             </DialogHeader>
+            {missingClockOut && (
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={() => setCorrectClockIn((value) => !value)}
+              >
+                {correctClockIn ? "Only clock-out is missing" : "Clock-in time is also incorrect"}
+              </Button>
+            )}
             <div className="grid gap-4 py-2 sm:grid-cols-2">
               <div className={clockOutOnly ? "hidden" : "space-y-2"}>
                 <label htmlFor="proposed-in" className="text-sm font-medium">
