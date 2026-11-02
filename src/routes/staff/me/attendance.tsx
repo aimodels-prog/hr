@@ -236,6 +236,7 @@ function MyAttendanceRoute() {
       record?.status ??
       attendanceService.reconcileDailyStatus(employeeId, search.correct, actorContext)?.status;
     if (["On Leave", "Holiday", "Rest Day"].includes(status ?? "")) return;
+    setCurrentMonth(startOfMonth(parseISO(search.correct)));
     openedCorrectionLink.current = search.correct;
     const pending = attendanceService
       .getCorrectionsForEmployee(employeeId, actorContext)
@@ -270,7 +271,6 @@ function MyAttendanceRoute() {
         updatedBy: currentUser.userId,
         recordVersion: 0,
       } as AttendanceRecord);
-    setCurrentMonth(startOfMonth(parseISO(search.correct)));
     setCorrectionRecord(target);
     setProposedIn(record?.clockIn ?? policy.expectedClockIn);
     setProposedOut(record?.clockOut ?? (record?.clockIn ? "" : policy.expectedClockOut));
