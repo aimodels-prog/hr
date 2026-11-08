@@ -22,7 +22,7 @@ export const Route = createFileRoute("/staff/requests")({
   component: RequestCentre,
   validateSearch: (
     search: Record<string, unknown>,
-  ): { view?: "my" | "approvals" | "organisation" | undefined } => ({
+  ): { view?: "my" | "approvals" | "organisation" | "reviewed" | undefined } => ({
     view:
       search["view"] === "approvals"
         ? "approvals"
@@ -30,7 +30,9 @@ export const Route = createFileRoute("/staff/requests")({
           ? "organisation"
           : search["view"] === "my"
             ? "my"
-            : undefined,
+            : search["view"] === "reviewed"
+              ? "reviewed"
+              : undefined,
   }),
 });
 const date = (value: string) => new Date(value).toLocaleString();
@@ -50,7 +52,15 @@ const statusTone: Record<Exclude<RequestGroup, "All">, string> = {
   "In progress": "border-sky-200 bg-sky-50 text-sky-800",
 };
 
-function TrackedRequestRow({ row, view }: { row: TrackedRequest; view: "my" | "organisation" }) {
+function TrackedRequestRow({
+  row,
+  view,
+  canOpen,
+}: {
+  row: TrackedRequest;
+  view: "my" | "organisation" | "reviewed";
+  canOpen: boolean;
+}) {
   const nextStep =
     view === "organisation" && ["Draft", "Returned"].includes(row.group)
       ? "The employee needs to complete or correct this request before submitting it."
@@ -71,10 +81,27 @@ function TrackedRequestRow({ row, view }: { row: TrackedRequest; view: "my" | "o
               <time dateTime={row.updatedAt}>Updated {shortDate(row.updatedAt)}</time>
             </div>
             <h3 className="mt-1 truncate text-base font-semibold text-foreground">
-              {view === "organisation" ? row.employeeName : row.title}
+              {view === "my" ? row.title : row.employeeName}
             </h3>
-            {view === "organisation" && row.title !== row.module && (
+            {view !== "my" && row.title !== row.module && (
               <p className="truncate text-sm text-muted-foreground">{row.title}</p>
+            )}
+            {row.approvedBy.length > 0 && (
+              <p
+                className={cn(
+                  "mt-1 text-sm font-medium",
+                  row.group === "Approved" || row.group === "Waiting"
+                    ? "text-emerald-700"
+                    : "text-muted-foreground",
+                )}
+              >
+                {row.group === "Approved"
+                  ? "Approved by "
+                  : row.group === "Waiting"
+                    ? "Approved so far by "
+                    : "Earlier approval by "}
+                {row.approvedBy.join(", ")}
+              </p>
             )}
             <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{nextStep}</p>
           </div>
@@ -88,18 +115,23 @@ function TrackedRequestRow({ row, view }: { row: TrackedRequest; view: "my" | "o
           >
             {row.status}
           </span>
-          <p className="text-xs text-muted-foreground lg:mt-2">With {row.waitingFor}</p>
+          <p className="text-xs text-muted-foreground lg:mt-2">
+            {row.group === "Waiting" ? "Next: " : "With "}
+            {row.waitingFor}
+          </p>
         </div>
-        <Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
-          <Link to={row.actionUrl}>
-            Open request <ArrowRight aria-hidden="true" />
-          </Link>
-        </Button>
+        {canOpen && (
+          <Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
+            <Link to={row.actionUrl}>
+              Open request <ArrowRight aria-hidden="true" />
+            </Link>
+          </Button>
+        )}
       </div>
       <details className="group mt-3 border-t border-border/60 pt-2 lg:ml-[3.25rem]">
         <summary className="flex min-h-9 w-fit cursor-pointer list-none items-center gap-2 text-xs font-medium text-muted-foreground hover:text-primary [&::-webkit-details-marker]:hidden">
           <Clock3 className="size-3.5" aria-hidden="true" />
-          View history
+          Approval history and next step
           <ChevronDown
             className="size-3.5 transition-transform group-open:rotate-180"
             aria-hidden="true"
@@ -133,6 +165,9 @@ function RequestCentre() {
   const navigate = Route.useNavigate();
   const hr = user.activeRole === "HR";
   const canViewOrganisation = ["HR", "Super Admin"].includes(user.activeRole);
+  const canViewReviewed = ["HR", "Line Manager", "Accounts", "Travel Admin"].includes(
+    user.activeRole,
+  );
   const view = search.view ?? (user.activeRole === "Employee" ? "my" : "approvals");
   useEffect(() => {
     if (hr && !search.view) {
@@ -162,7 +197,7 @@ function RequestCentre() {
       getTrackedRequestsFn({
         data: {
           actor,
-          scope: view === "organisation" ? "organisation" : "my",
+          scope: view === "organisation" ? "organisation" : view === "reviewed" ? "reviewed" : "my",
           page,
           query,
           module,
@@ -172,7 +207,8 @@ function RequestCentre() {
     enabled:
       typeof window !== "undefined" &&
       view !== "approvals" &&
-      (view !== "organisation" || canViewOrganisation),
+      (view !== "organisation" || canViewOrganisation) &&
+      (view !== "reviewed" || canViewReviewed),
     refetchInterval: 60_000,
     staleTime: 15_000,
   });
@@ -215,16 +251,20 @@ function RequestCentre() {
               ? hr
                 ? "HR Approvals"
                 : "Approvals"
-              : view === "organisation"
-                ? "Employee Requests"
-                : "My Requests"}
+              : view === "reviewed"
+                ? "My decisions"
+                : view === "organisation"
+                  ? "Employee Requests"
+                  : "My Requests"}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {view === "approvals"
               ? "Decisions waiting for you."
-              : view === "organisation"
-                ? "Find a request and see who needs to act next."
-                : "Follow your requests from submission to decision."}
+              : view === "reviewed"
+                ? "See decisions you made, including requests still waiting for someone else."
+                : view === "organisation"
+                  ? "Find a request and see who needs to act next."
+                  : "Follow your requests from submission to decision."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -245,7 +285,9 @@ function RequestCentre() {
       <PageSections
         value={view}
         onValueChange={(value) => {
-          void navigate({ search: { view: value as "my" | "approvals" | "organisation" } });
+          void navigate({
+            search: { view: value as "my" | "approvals" | "organisation" | "reviewed" },
+          });
         }}
       >
         <SectionNavigation restoreHash={false}>
@@ -254,9 +296,10 @@ function RequestCentre() {
               ...(user.activeRole !== "Employee" || inbox.data?.length || view === "approvals"
                 ? [["approvals", `Waiting for me${inbox.data ? ` (${inbox.data.length})` : ""}`]]
                 : []),
+              ...(canViewReviewed ? [["reviewed", "My decisions"]] : []),
               ...(canViewOrganisation ? [["organisation", "All employee requests"]] : []),
               ["my", "My requests"],
-            ] as Array<["my" | "approvals" | "organisation", string]>
+            ] as Array<["my" | "approvals" | "organisation" | "reviewed", string]>
           ).map(([value, label]) => (
             <SectionLink key={value} value={value} onClick={(event) => event.preventDefault()}>
               {label}
@@ -264,9 +307,10 @@ function RequestCentre() {
           ))}
         </SectionNavigation>
         <div className="min-w-0 space-y-4">
-          {view === "organisation" && !canViewOrganisation ? (
+          {(view === "organisation" && !canViewOrganisation) ||
+          (view === "reviewed" && !canViewReviewed) ? (
             <p role="alert" className="rounded-xl border bg-card p-5 text-sm">
-              Only HR can access the organisation tracker.
+              This request view is not available in your current role.
             </p>
           ) : (
             <>
@@ -453,7 +497,11 @@ function RequestCentre() {
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-4 sm:px-5">
                   <div>
                     <h2 className="text-base font-semibold">
-                      {view === "approvals" ? "Waiting for your decision" : "Requests"}
+                      {view === "approvals"
+                        ? "Waiting for your decision"
+                        : view === "reviewed"
+                          ? "Decisions you made"
+                          : "Requests"}
                     </h2>
                     {resultCount !== undefined && !active.isPending && (
                       <p className="mt-0.5 text-xs text-muted-foreground">
@@ -537,7 +585,12 @@ function RequestCentre() {
                   ) : (
                     <>
                       {requestQuery.data?.rows.map((row) => (
-                        <TrackedRequestRow key={`${row.module}:${row.id}`} row={row} view={view} />
+                        <TrackedRequestRow
+                          key={`${row.module}:${row.id}`}
+                          row={row}
+                          view={view}
+                          canOpen={view !== "reviewed" || hr}
+                        />
                       ))}
                       {requestQuery.data && !requestQuery.data.total && (
                         <div className="px-5 py-12 text-center">

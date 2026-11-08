@@ -157,7 +157,46 @@ test(
         await sql`SELECT count(*)::int count FROM notifications WHERE organisation_id=${ids.org} AND type='workflow.request_update'`;
       assert.equal(unchanged!.count, before!.count);
       await sql`INSERT INTO google_calendar_connections (organisation_id,account_email,refresh_token_encrypted,connected_by,email_enabled_at) VALUES (${ids.org},'hr@via-int.com','test-not-a-real-token',${ids.managerUser},now())`;
-      await sql`UPDATE leave_requests SET status='Pending HR' WHERE id=${ids.request}`;
+      await sql`UPDATE leave_requests SET status='Pending HR', chain_approvals=${JSON.stringify([
+        {
+          role: "Line Manager",
+          status: "Approved",
+          approvedBy: ids.managerUser,
+          date: "2026-11-02T09:00:00.000Z",
+        },
+        { role: "HR", status: "Pending" },
+      ])}::jsonb WHERE id=${ids.request}`;
+      await sql`INSERT INTO audit_events (organisation_id,actor_user_id,actor_employee_id,actor_display_name,active_role,actor_roles,action,module,entity_type,entity_id,reason)
+        VALUES (${ids.org},${ids.managerUser},${ids.manager},'Task Manager','Line Manager',ARRAY['Employee','Line Manager'],'approve','leave','leave-request',${ids.request},'Manager approved this leave')`;
+      const reviewed = await listTrackedRequests(ids.org!, managerActor, {
+        scope: "reviewed",
+        page: 1,
+      });
+      assert.equal(reviewed.total, 1);
+      assert.equal(reviewed.rows[0]?.id, ids.request);
+      assert.equal(reviewed.rows[0]?.waitingFor, "HR");
+      assert.deepEqual(reviewed.rows[0]?.approvedBy, ["Task Manager"]);
+      const employeeProgress = await listTrackedRequests(ids.org!, employeeActor, {
+        scope: "my",
+        page: 1,
+      });
+      assert.deepEqual(employeeProgress.rows[0]?.approvedBy, ["Task Manager"]);
+      assert.equal(
+        employeeProgress.rows[0]?.actionUrl,
+        `/staff/me/leave-balances#request=${ids.request}`,
+      );
+      await assert.rejects(
+        () =>
+          listTrackedRequests(
+            ids.org!,
+            { ...employeeActor, activeRole: "Employee" },
+            {
+              scope: "reviewed",
+              page: 1,
+            },
+          ),
+        /approval role/i,
+      );
       await enqueueWorkflowEmails();
       const [queued] =
         await sql`SELECT count(*)::int count FROM workflow_notification_emails WHERE organisation_id=${ids.org}`;

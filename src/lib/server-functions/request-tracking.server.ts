@@ -27,7 +27,7 @@ export const getTrackedRequestsFn = createServerFn({ method: "GET" })
     z
       .object({
         actor: Actor,
-        scope: z.enum(["my", "organisation"]),
+        scope: z.enum(["my", "organisation", "reviewed"]),
         page: z.number().int().min(1).max(100000),
         query: z.string().max(160).optional(),
         module: z.enum(["All", ...REQUEST_MODULES]).optional(),

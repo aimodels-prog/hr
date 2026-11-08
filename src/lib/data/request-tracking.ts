@@ -5,6 +5,7 @@ export const REQUEST_MODULES = [
   "Timesheets",
   "Overtime",
   "Attendance corrections",
+  "Time Away",
   "Visits",
   "Travel",
   "Training",
@@ -47,6 +48,7 @@ export const STATUS_GROUPS: Record<string, string[]> = {
     "Expired",
     "Hired",
     "Payroll Locked",
+    "Replaced",
   ],
   Rejected: ["Rejected", "Declined", "Automatically Refused"],
 };
@@ -60,6 +62,13 @@ export interface RequestEvent {
   at: string;
   comment?: string | undefined;
 }
+export interface RequestDecision {
+  actorName: string;
+  role: string;
+  outcome: "Approved" | "Rejected" | "Returned" | "Moderated" | "Locked" | "Closed";
+  at: string;
+  comment?: string | undefined;
+}
 export interface TrackedRequest {
   id: string;
   module: string;
@@ -70,6 +79,7 @@ export interface TrackedRequest {
   group: Exclude<RequestGroup, "All">;
   waitingFor: string;
   nextStep: string;
+  approvedBy: string[];
   createdAt: string;
   updatedAt: string;
   actionUrl: string;
@@ -90,7 +100,11 @@ export interface RequestRow {
 }
 const text = (value: unknown) => (typeof value === "string" ? value : undefined);
 
-export function toTrackedRequest(row: RequestRow): TrackedRequest {
+export function toTrackedRequest(
+  row: RequestRow,
+  decisions: RequestDecision[] = [],
+  reviewerNames: Record<string, string> = {},
+): TrackedRequest {
   const group = requestGroup(row.status);
   const meta = row.metadata ?? {};
   const manager = row.manager_name
@@ -150,30 +164,86 @@ export function toTrackedRequest(row: RequestRow): TrackedRequest {
     nextStep = "The original visit is approved; the extension still needs HR review.";
   }
 
+  if (group === "Approved" && waitingFor === "No approval pending") {
+    nextStep = "Approved. No further decision is waiting.";
+  }
+
   const events: RequestEvent[] = [{ label: "Record created", at: row.created_at }];
-  const event = (key: string, label: string, commentKey?: string) => {
+  const nameFor = (key: string) => {
+    const id = text(meta[key]);
+    return id ? reviewerNames[id] : undefined;
+  };
+  const event = (key: string, label: string, commentKey?: string, actorKey?: string) => {
     const at = text(meta[key]);
     if (at && Number.isFinite(Date.parse(at)))
       events.push({
-        label,
+        label: actorKey && nameFor(actorKey) ? `${label} by ${nameFor(actorKey)}` : label,
         at,
         ...(commentKey && text(meta[commentKey]) ? { comment: text(meta[commentKey]) } : {}),
       });
   };
   event("submittedAt", "Submitted");
-  event("managerAt", "Manager decision recorded", "managerComment");
-  event("hrAt", "HR decision recorded", "hrComment");
-  event("financeAt", "Finance decision recorded");
-  event("approvedAt", "Approval recorded");
-  event("closedAt", "Completed");
+  if (decisions.length) {
+    for (const decision of decisions) {
+      if (!Number.isFinite(Date.parse(decision.at))) continue;
+      events.push({
+        label: `${decision.actorName} (${decision.role}) ${decision.outcome.toLowerCase()}`,
+        at: decision.at,
+        ...(decision.comment ? { comment: decision.comment } : {}),
+      });
+    }
+  } else {
+    event("managerAt", "Line Manager decision recorded", "managerComment", "managerBy");
+    event("hrAt", "HR decision recorded", "hrComment", "hrBy");
+    event("financeAt", "Finance decision recorded", undefined, "financeBy");
+    event("approvedAt", "Approval recorded", undefined, "approvedBy");
+  }
+  if (!decisions.some((decision) => decision.outcome === "Closed"))
+    event("closedAt", "Completed", undefined, "closedBy");
   const chain = meta["chain"];
-  if (Array.isArray(chain))
+  if (!decisions.length && Array.isArray(chain))
     for (const step of chain) {
       if (!step || typeof step !== "object") continue;
       const at = text(step.date);
+      const by = text(step.approvedBy);
       if (at && Number.isFinite(Date.parse(at)) && ["Approved", "Declined"].includes(step.status))
-        events.push({ label: `${text(step.role) ?? "Reviewer"}: ${step.status}`, at });
+        events.push({
+          label: `${text(step.role) ?? "Reviewer"}: ${step.status}${by && reviewerNames[by] ? ` by ${reviewerNames[by]}` : ""}`,
+          at,
+        });
     }
+  const latestDecisionByActor = new Map<string, RequestDecision>();
+  for (const decision of [...decisions].sort((a, b) => a.at.localeCompare(b.at)))
+    latestDecisionByActor.set(decision.actorName, decision);
+  const approvedBy = [...latestDecisionByActor.values()]
+    .filter((decision) => decision.outcome === "Approved")
+    .map((decision) => decision.actorName);
+  if (Array.isArray(chain))
+    for (const step of chain)
+      if (step && typeof step === "object" && step.status === "Approved") {
+        const name = reviewerNames[text(step.approvedBy) ?? ""];
+        if (name) approvedBy.push(name);
+      }
+  const approvedStage = (actorKey: string, atKey: string, statusKey?: string) => {
+    const name = nameFor(actorKey);
+    if (!name) return;
+    if (latestDecisionByActor.has(name)) return;
+    if (statusKey && meta[statusKey] === "Approved") {
+      approvedBy.push(name);
+      return;
+    }
+    if (
+      !statusKey &&
+      (group === "Approved" ||
+        (group === "Waiting" && /Pending (HR|Accounts|Finance)/.test(row.status))) &&
+      (text(meta[atKey]) || (row.module === "Time Away" && group === "Approved"))
+    )
+      approvedBy.push(name);
+  };
+  approvedStage("managerBy", "managerAt", row.module === "Travel" ? "manager" : undefined);
+  approvedStage("hrBy", "hrAt", row.module === "Travel" ? "hr" : undefined);
+  approvedStage("financeBy", "financeAt", row.module === "Travel" ? "finance" : undefined);
+  if (group === "Approved") approvedStage("approvedBy", "approvedAt");
   events.sort((a, b) => a.at.localeCompare(b.at));
   return {
     id: row.id,
@@ -185,6 +255,7 @@ export function toTrackedRequest(row: RequestRow): TrackedRequest {
     group,
     waitingFor,
     nextStep,
+    approvedBy: [...new Set(approvedBy)],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     actionUrl: row.action_url,

@@ -583,6 +583,15 @@ export function staffNavigation(role: Role, can: (permission: Permission) => boo
         url: "/staff/requests?view=approvals",
         keywords: "approve timesheet HR timesheets approvals leave documents training",
       },
+      ...(!["HR", "Line Manager", "Accounts", "Travel Admin"].includes(role)
+        ? []
+        : [
+            {
+              title: "My decisions",
+              url: "/staff/requests?view=reviewed",
+              keywords: "approved reviewed rejected returned history",
+            },
+          ]),
       ...(hr
         ? [
             {
@@ -742,6 +751,12 @@ export function staffNavigation(role: Role, can: (permission: Permission) => boo
         url: "/staff/requests?view=organisation",
         icon: FileSearch,
         keywords: "approval status history all employees",
+      },
+      {
+        title: "My decisions",
+        url: "/staff/requests?view=reviewed",
+        icon: ClipboardCheck,
+        keywords: "approved reviewed rejected returned history",
       },
       {
         title: "My Requests",
