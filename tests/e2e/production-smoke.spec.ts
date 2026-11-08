@@ -492,7 +492,7 @@ test("production release smoke request centre loads HR tracking and personal app
     .getByRole("link", { name: /^Waiting for me/ })
     .last()
     .click();
-  await expect(page.getByRole("heading", { name: "Approvals", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "HR Approvals", exact: true })).toBeVisible();
   await expect(page.getByText("Loading requests…")).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByText(/Requests could not be refreshed/)).toHaveCount(0);
   await signInAs(page, "omar.rahman@via-int.com", "Omar Rahman", "/staff/requests?view=my");
