@@ -106,10 +106,7 @@ function LeaveApprovalsContent() {
       }),
     );
     if (currentUser.employeeId) {
-      if (
-        currentUser.roles.includes("Line Manager") ||
-        ["Line Manager", "HR", "Super Admin"].includes(currentUser.activeRole)
-      ) {
+      if (currentUser.roles.includes("Line Manager") || currentUser.activeRole === "Line Manager") {
         setManagerQueue(leaveService.getPendingRequestsForManager(currentUser.getActorContext()));
       } else {
         setManagerQueue([]);
