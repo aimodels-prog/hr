@@ -292,7 +292,7 @@ test(
             "Certificate verified",
             employeeActor,
           ),
-        /Only HR or Super Admin/i,
+        /Only HR/i,
       );
       await assert.rejects(
         decideTrainingRecordInDatabase(ids.org!, manualRecordId, "Reject", "", hrActor),

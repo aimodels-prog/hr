@@ -17,6 +17,7 @@ test("HR navigation is grouped, searchable and has one home for each page", asyn
   await asRole(page, "user-rana", "HR");
   const nav = page.getByRole("navigation", { name: "Main navigation", exact: true });
   for (const group of [
+    "HR",
     "Employees",
     "Time & Leave",
     "Recruitment",
@@ -29,7 +30,8 @@ test("HR navigation is grouped, searchable and has one home for each page", asyn
       "false",
     );
   }
-  await expect(nav.getByRole("link", { name: "Approvals", exact: true })).toBeVisible();
+  await nav.getByRole("button", { name: "HR", exact: true }).click();
+  await expect(nav.getByRole("link", { name: "HR Approvals", exact: true })).toBeVisible();
   await expect(nav.getByRole("button", { name: "My Work", exact: true })).toHaveCount(0);
   await nav.getByRole("button", { name: "Recruitment", exact: true }).click();
   await expect(nav.getByRole("link", { name: "Offers", exact: true })).toHaveCount(1);
@@ -227,7 +229,7 @@ test("HR and employee workspaces have separate menus and working request views",
   page,
 }) => {
   await asRole(page, "user-rana", "HR", "/staff/requests");
-  await expect(page.getByRole("heading", { name: "Approvals", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "HR Approvals", exact: true })).toBeVisible();
   const sections = page.getByRole("navigation", { name: "Page sections", exact: true });
   await sections.getByRole("link", { name: "My requests", exact: true }).click();
   await expect(page).toHaveURL(/view=my/);

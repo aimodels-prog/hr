@@ -809,7 +809,7 @@ test(
             "Self approval denied",
             actor,
           ),
-        /assigned independent/,
+        /Line Manager role/,
       );
       const assigned = await listAssignedOfferReviewsInDatabase(
         String(vacancy.organisation_id),

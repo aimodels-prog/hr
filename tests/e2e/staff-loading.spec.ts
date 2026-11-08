@@ -88,11 +88,10 @@ test("HR charts and navigation remain usable while recruitment is stalled", asyn
       timeout: 10000,
     });
     // Navigate within the app, keeping the in-flight recruitment request pending.
-    await page
-      .getByRole("navigation", { name: "Main navigation", exact: true })
-      .getByRole("link", { name: "Approvals", exact: true })
-      .click({ timeout: 10000 });
-    await expect(page.getByRole("heading", { name: "Approvals", exact: true })).toBeVisible({
+    const nav = page.getByRole("navigation", { name: "Main navigation", exact: true });
+    await nav.getByRole("button", { name: "HR", exact: true }).click();
+    await nav.getByRole("link", { name: "HR Approvals", exact: true }).click({ timeout: 10000 });
+    await expect(page.getByRole("heading", { name: "HR Approvals", exact: true })).toBeVisible({
       timeout: 10000,
     });
     await expect(page.getByText("Organisation data is unavailable", { exact: true })).toHaveCount(

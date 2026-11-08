@@ -77,6 +77,16 @@ test(
       roles: ["Employee", "Super Admin"] as const,
       activeRole: "Super Admin" as const,
     };
+    const hrActor = {
+      ...actor,
+      roles: ["Employee", "HR", "Super Admin"] as const,
+      activeRole: "HR" as const,
+    };
+    const accountsActor = {
+      ...actor,
+      roles: ["Employee", "HR", "Accounts", "Super Admin"] as const,
+      activeRole: "Accounts" as const,
+    };
 
     try {
       await sql`
@@ -130,7 +140,7 @@ test(
       await sql`
         INSERT INTO user_roles (organisation_id, user_id, role_id, assigned_by, reason)
         SELECT ${organisationId}, ${managerUserId}, id, ${managerUserId}, 'Test administrator'
-        FROM roles WHERE code IN ('Employee', 'HR', 'Super Admin')
+        FROM roles WHERE code IN ('Employee', 'HR', 'Accounts', 'Super Admin')
         ON CONFLICT DO NOTHING
       `;
 
@@ -374,12 +384,16 @@ test(
       )!;
       assert.equal(cv.visibility, "Restricted");
       assert.equal(cv.requirementSnapshot?.name, "Updated CV");
+      await assert.rejects(
+        decideEmployeeDocumentInDatabase(organisationId, documentId, "verify", undefined, actor),
+        /Only HR/,
+      );
       await decideEmployeeDocumentInDatabase(
         organisationId,
         documentId,
         "verify",
         undefined,
-        actor,
+        hrActor,
       );
       const changedConfig = config.definitions.map((r) =>
         r.id === "cv" ? { ...r, name: "Employee CV" } : r,
@@ -412,7 +426,7 @@ test(
         replacement,
         "verify",
         undefined,
-        actor,
+        hrActor,
       );
       cvDocs = await listEmployeeDocumentsForActor(organisationId, actor);
       assert.equal(cvDocs.find((d) => d.id === documentId)?.status, "Replaced");
@@ -514,7 +528,7 @@ test(
           passportId,
           "reject",
           "Incorrect document",
-          actor,
+          hrActor,
           { profileIdentity: { legalName: "Must not apply" } },
         ),
         /only while verifying/i,
@@ -530,7 +544,7 @@ test(
         passportId,
         "verify",
         undefined,
-        actor,
+        hrActor,
         {
           profileIdentity: {
             legalName: "Corrected PostgreSQL Employee",
@@ -549,7 +563,7 @@ test(
       const [approvedDocumentBefore] =
         await sql`SELECT * FROM employee_documents WHERE id=${passportId}`;
       await assert.rejects(
-        decideEmployeeDocumentInDatabase(organisationId, passportId, "verify", undefined, actor, {
+        decideEmployeeDocumentInDatabase(organisationId, passportId, "verify", undefined, hrActor, {
           profileIdentity: { legalName: "Not applied" },
           documentNumber: "UNAUTHORISED-EDIT",
         }),
@@ -560,7 +574,7 @@ test(
         passportId,
         "verify",
         undefined,
-        actor,
+        hrActor,
         { profileIdentity: { legalName: "Corrected PostgreSQL Employee Final" } },
       );
       assert.equal(
@@ -577,7 +591,7 @@ test(
         "Identity correction must not modify the approved document",
       );
       await assert.rejects(
-        decideEmployeeDocumentInDatabase(organisationId, passportId, "verify", undefined, actor, {
+        decideEmployeeDocumentInDatabase(organisationId, passportId, "verify", undefined, hrActor, {
           profileIdentity: { legalName: "Corrected PostgreSQL Employee Final" },
         }),
         /no identity details were changed/i,
@@ -620,7 +634,7 @@ test(
         },
         actor,
       );
-      await decideEmployeeDocumentInDatabase(organisationId, visaId, "verify", undefined, actor, {
+      await decideEmployeeDocumentInDatabase(organisationId, visaId, "verify", undefined, hrActor, {
         documentNumber: "VISA-100",
         issuingAuthority: "UAE Authority",
         issuingCountry: "United Arab Emirates",
@@ -674,7 +688,7 @@ test(
         replacementId,
         "verify",
         undefined,
-        actor,
+        hrActor,
       );
       employeeDocuments = await listEmployeeDocumentsForActor(organisationId, actor);
       assert.equal(
@@ -716,7 +730,7 @@ test(
         pendingRevision,
         "reject",
         "Please correct this upload",
-        actor,
+        hrActor,
       );
       employeeDocuments = await listEmployeeDocumentsForActor(organisationId, actor);
       assert.equal(
@@ -735,7 +749,7 @@ test(
           pendingRevision,
           "verify",
           undefined,
-          actor,
+          hrActor,
         ),
         /not awaiting/,
       );
@@ -744,7 +758,7 @@ test(
         correctedRevision,
         "verify",
         undefined,
-        actor,
+        hrActor,
       );
       employeeDocuments = await listEmployeeDocumentsForActor(organisationId, actor);
       assert.equal(
@@ -926,7 +940,7 @@ test(
         /save contact details directly/i,
       );
       await assert.rejects(
-        decideProfileChangeRequestInDatabase(organisationId, randomUUID(), "Approved", "", actor),
+        decideProfileChangeRequestInDatabase(organisationId, randomUUID(), "Approved", "", hrActor),
         /save contact details directly/i,
       );
       const [beforeReviewNotifications] =
@@ -1072,24 +1086,23 @@ test(
               status: "Waived",
               waiverReason: "Approved test clearance waiver",
             },
-            actor,
+            hrActor,
           );
         }
         await grantOffboardingClearanceInDatabase(
           organisationId,
           offboardingCaseId,
           "financial",
-          actor,
+          accountsActor,
         );
         await grantOffboardingClearanceInDatabase(
           organisationId,
           offboardingCaseId,
           "legal",
-          actor,
+          hrActor,
         );
         return { caseId: offboardingCaseId, taskId: offboarding.tasks[0]!.id };
       };
-      const hrActor = { ...actor, activeRole: "HR" as const, roles: ["HR"] as const };
       const snapshot = async (caseId: string, employeeId: string) => ({
         cases: await sql`SELECT * FROM offboarding_cases WHERE id = ${caseId}`,
         tasks: await sql`SELECT * FROM offboarding_tasks WHERE case_id = ${caseId} ORDER BY id`,
@@ -1115,7 +1128,12 @@ test(
           error,
         );
         await assert.rejects(
-          grantOffboardingClearanceInDatabase(organisationId, closed.caseId, "financial", actor),
+          grantOffboardingClearanceInDatabase(
+            organisationId,
+            closed.caseId,
+            "financial",
+            accountsActor,
+          ),
           error,
         );
         await assert.rejects(

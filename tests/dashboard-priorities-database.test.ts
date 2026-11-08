@@ -336,13 +336,13 @@ test(
         "Attendance corrections · HR",
         "Time away · HR",
         "Documents · HR",
-        "Profile updates · HR",
         "Employment details · HR",
         "Visits · HR",
         "Leave · HR",
         "Travel · Manager",
       ])
         assert.equal(approvals.get(name), 1, name);
+      assert.equal(approvals.has("Profile updates · HR"), false);
       assert.equal(approvals.has("Travel · HR"), false);
       assert.equal(approvals.has("Travel · Finance"), false);
       const tasks = (activeRole: "HR" | "Accounts") =>
