@@ -119,7 +119,7 @@ test("public application progresses through shortlist, interview, offer and onbo
 
   await page.goto("/staff/vacancies");
   await page.getByText("Logistics Operations Lead", { exact: true }).click();
-  await page.getByRole("link", { name: "Scoring & Shortlist" }).click();
+  await page.getByRole("tab", { name: "CV analysis (optional)" }).click();
   await page.getByRole("button", { name: "Not suitable", exact: true }).first().click();
   await page
     .getByLabel("Private HR remark")
@@ -202,12 +202,18 @@ test("public application progresses through shortlist, interview, offer and onbo
   await page.getByRole("button", { name: "Schedule Interview" }).click();
   const dialog = page.getByRole("dialog", { name: "Schedule Interview" });
   const templateSelect = dialog
-    .getByText("Scorecard Template", { exact: false })
+    .getByText("Scorecard template (optional)", { exact: true })
     .locator("..")
     .getByRole("combobox");
   await templateSelect.click();
   await page.getByRole("option", { name: templateName }).click();
-  await dialog.getByPlaceholder("Office room or meeting link").fill("VIA Head Office");
+  await dialog
+    .getByText("Interview format", { exact: true })
+    .locator("..")
+    .getByRole("combobox")
+    .click();
+  await page.getByRole("option", { name: "In person" }).click();
+  await dialog.getByPlaceholder("Office or meeting room").fill("VIA Head Office");
   const workingDaysText = await dialog.getByText(/^Working days:/).textContent();
   const weekdayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const allowedWeekdays = new Set(
