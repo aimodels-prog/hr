@@ -51,6 +51,8 @@ test("HR pages have clear functional homes and no finance or system-settings esc
   assert.equal(home("/staff/leave-admin"), "Time & Leave");
   assert.equal(home("/staff/requests?view=approvals"), "HR");
   assert.equal(home("/staff/requests?view=organisation"), "HR");
+  assert.equal(home("/staff/requests?view=my"), "HR");
+  assert.equal(activeNavigationUrl(groups, "/staff/requests?view=my"), "/staff/requests?view=my");
   assert.equal(
     activeNavigationUrl(groups, "/staff/leave-approvals"),
     "/staff/requests?view=approvals",

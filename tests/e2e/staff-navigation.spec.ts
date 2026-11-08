@@ -229,6 +229,7 @@ test("HR and employee workspaces have separate menus and working request views",
   page,
 }) => {
   await asRole(page, "user-rana", "HR", "/staff/requests");
+  await expect(page).toHaveURL(/view=approvals/);
   await expect(page.getByRole("heading", { name: "HR Approvals", exact: true })).toBeVisible();
   const sections = page.getByRole("navigation", { name: "Page sections", exact: true });
   await sections.getByRole("link", { name: "My requests", exact: true }).click();

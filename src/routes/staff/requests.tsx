@@ -134,6 +134,11 @@ function RequestCentre() {
   const hr = user.activeRole === "HR";
   const canViewOrganisation = ["HR", "Super Admin"].includes(user.activeRole);
   const view = search.view ?? (user.activeRole === "Employee" ? "my" : "approvals");
+  useEffect(() => {
+    if (hr && !search.view) {
+      void navigate({ search: { view: "approvals" }, replace: true });
+    }
+  }, [hr, navigate, search.view]);
   const actor = {
     actorId: user.id,
     ...(user.workspaceEmail ? { actorEmail: user.workspaceEmail } : {}),

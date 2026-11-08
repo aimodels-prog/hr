@@ -743,6 +743,12 @@ export function staffNavigation(role: Role, can: (permission: Permission) => boo
         icon: FileSearch,
         keywords: "approval status history all employees",
       },
+      {
+        title: "My Requests",
+        url: "/staff/requests?view=my",
+        icon: ClipboardCheck,
+        keywords: "my own submitted requests status history",
+      },
     ],
   };
   const result = hr
