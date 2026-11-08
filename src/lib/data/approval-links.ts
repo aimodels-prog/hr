@@ -1,5 +1,5 @@
 import type { AppTask } from "./task-service.ts";
-import type { Notification } from "./types.ts";
+import type { Notification, Role } from "./types.ts";
 
 const FOCUSABLE_APPROVAL_PATHS = new Set([
   "/staff/leave-approvals",
@@ -25,6 +25,11 @@ export function approvalActionUrl(task: Pick<AppTask, "actionUrl" | "sourceId">)
 
 export function focusedApprovalId(hash: string): string | null {
   return new URLSearchParams(hash.replace(/^#/, "")).get("review");
+}
+
+export function leaveRequestHistoryUrl(requestId: string, activeRole: Role): string {
+  const path = activeRole === "HR" ? "/staff/leave-admin" : "/staff/me/leave-balances";
+  return `${path}#request=${encodeURIComponent(requestId)}`;
 }
 
 export function isApprovalNotification(

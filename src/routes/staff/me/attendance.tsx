@@ -20,6 +20,7 @@ import { AttendanceService } from "@/lib/data/attendance-service";
 import { LeaveService } from "@/lib/data/leave-service";
 import { flexibleOfficeSchedule } from "@/lib/data/office-schedule";
 import {
+  canCancelSiteVisit,
   siteVisitLocalNow,
   siteVisitReturnLabel,
   type SiteVisitReturnPlan,
@@ -158,7 +159,7 @@ function MyAttendanceRoute() {
   const [visitDate, setVisitDate] = useState(localNow.date);
   const [visitStart, setVisitStart] = useState(localNow.time);
   const [visitEnd, setVisitEnd] = useState("17:00");
-  const [visitOrigin, setVisitOrigin] = useState<SiteVisitOrigin>("Home");
+  const [visitOrigin, setVisitOrigin] = useState<SiteVisitOrigin | null>(null);
   const [returnPlan, setReturnPlan] = useState<SiteVisitReturnPlan>("Unknown");
   const [submittingVisit, setSubmittingVisit] = useState(false);
   const [progressVisit, setProgressVisit] = useState<SiteVisitRequest | null>(null);
@@ -187,6 +188,7 @@ function MyAttendanceRoute() {
     setVisitOptionsOpen(false);
     setVisitTimeAdjusted(false);
     setReturnPlan("Unknown");
+    setVisitOrigin(null);
     setVisitProjectId("");
     if (search.action) void navigate({ search: {}, replace: true });
   };
@@ -462,6 +464,10 @@ function MyAttendanceRoute() {
 
   const submitSiteVisit = async () => {
     if (submittingVisit) return;
+    if (!visitOrigin) {
+      toast.error("Choose whether you are leaving from home or the office.");
+      return;
+    }
     setSubmittingVisit(true);
     try {
       await attendanceService.requestSiteVisitAsync(
@@ -485,9 +491,7 @@ function MyAttendanceRoute() {
       setVisitDestination("");
       setVisitPurpose("");
       setRevision((value) => value + 1);
-      toast.success(
-        "Site visit recorded. HR and your supervisor have been notified; attendance awaits HR confirmation.",
-      );
+      toast.success("Quick visit recorded. Attendance updates after independent review.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Site visit could not be submitted.");
     } finally {
@@ -931,8 +935,12 @@ function MyAttendanceRoute() {
                                   </Button>
                                 </div>
                               )}
-                            {(visit.status === "Pending HR" || visit.status === "Approved") &&
-                            visit.date >= format(new Date(), "yyyy-MM-dd") ? (
+                            {canCancelSiteVisit(
+                              visit.status,
+                              visit.date,
+                              visit.startTime,
+                              officeTimezone,
+                            ) ? (
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -941,7 +949,11 @@ function MyAttendanceRoute() {
                                 Cancel visit
                               </Button>
                             ) : (
-                              <span className="text-xs text-muted-foreground">No action</span>
+                              <span className="text-xs text-muted-foreground">
+                                {visit.status === "Approved"
+                                  ? "Contact HR to correct"
+                                  : "No action"}
+                              </span>
                             )}
                           </TableCell>
                         </TableRow>
@@ -1151,7 +1163,7 @@ function MyAttendanceRoute() {
               <DialogTitle>Quick visit</DialogTitle>
               <DialogDescription>
                 Heading to a site, ministry or client? Choose the type, enter the destination and
-                go. HR and your supervisor are notified. Planned trips belong in Requests.
+                go. An authorised reviewer will confirm it. Planned trips belong in Requests.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3">
@@ -1199,6 +1211,9 @@ function MyAttendanceRoute() {
                     </Button>
                   ))}
                 </div>
+                {!visitOrigin && (
+                  <p className="text-xs text-muted-foreground">Choose where your duty starts.</p>
+                )}
               </fieldset>
               <p className="text-xs text-muted-foreground">
                 {visitTimeAdjusted ? `${visitDate} · ${visitStart}` : "Today · starting now"} ·{" "}
@@ -1329,7 +1344,12 @@ function MyAttendanceRoute() {
                 Cancel
               </Button>
               <Button
-                disabled={submittingVisit || !visitDate || visitDestination.trim().length < 3}
+                disabled={
+                  submittingVisit ||
+                  !visitOrigin ||
+                  !visitDate ||
+                  visitDestination.trim().length < 3
+                }
                 onClick={submitSiteVisit}
               >
                 <CalendarDays className="mr-2 h-4 w-4" /> Send to HR

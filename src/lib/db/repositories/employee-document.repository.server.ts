@@ -154,8 +154,8 @@ export async function decideEmployeeDocumentInDatabase(
     visibility?: "Public" | "Restricted";
   },
 ): Promise<void> {
-  if (actor.activeRole !== "HR" && actor.activeRole !== "Super Admin") {
-    throw new Error("Only HR or a Super Admin can review employee documents.");
+  if (actor.activeRole !== "HR") {
+    throw new Error("Only HR can review employee documents.");
   }
   if (decision === "reject" && (reason?.trim().length ?? 0) < 3) {
     throw new Error("Explain why the document is being rejected.");
@@ -834,7 +834,7 @@ export async function uploadEmployeeDocumentToDatabase(
             eq(users.organisationId, organisationId),
             eq(users.status, "Active"),
             isNull(users.archivedAt),
-            sql`${roles.code} IN ('HR','Super Admin')`,
+            eq(roles.code, "HR"),
             sql`${users.employeeId} <> ${input.employeeId}`,
           ),
         );
@@ -1121,7 +1121,7 @@ export async function replaceEmployeeDocumentInDatabase(
             eq(users.organisationId, organisationId),
             eq(users.status, "Active"),
             isNull(users.archivedAt),
-            sql`${roles.code} IN ('HR','Super Admin')`,
+            eq(roles.code, "HR"),
             sql`${users.employeeId} <> ${old.employeeId}`,
           ),
         );

@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createFileRoute, useLocation } from "@tanstack/react-router";
 import { CheckCircle, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { TravelService } from "@/lib/data/travel-service";
+import { focusedApprovalId } from "@/lib/data/approval-links";
 import type { TravelRequest } from "@/lib/data/travel-types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,9 @@ function TravelManagerApprovalsRoute() {
 }
 
 function TravelManagerApprovals() {
+  const location = useLocation();
+  const focusedRequestId = focusedApprovalId(location.hash);
+  const openedFocusedRequest = useRef<string | null>(null);
   const currentUser = useCurrentUser();
   const travelService = useMemo(() => new TravelService(), []);
   const employeeService = useMemo(() => new EmployeeService(), []);
@@ -75,6 +79,16 @@ function TravelManagerApprovals() {
             (e) => e.id === request.employeeId && e.lineManagerId === currentUser.employeeId,
           ))),
   );
+
+  useEffect(() => {
+    if (!focusedRequestId || openedFocusedRequest.current === focusedRequestId) return;
+    const request = pending.find((item) => item.id === focusedRequestId);
+    if (!request) return;
+    openedFocusedRequest.current = focusedRequestId;
+    setSelected(request);
+    setDecision("approve");
+    setNote("");
+  }, [focusedRequestId, pending]);
 
   const openDecision = (request: TravelRequest, next: "approve" | "reject") => {
     setSelected(request);
@@ -183,6 +197,15 @@ function TravelManagerApprovals() {
               their own compliance and budget reviews.
             </DialogDescription>
           </DialogHeader>
+          {selected && (
+            <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+              <p className="font-medium">{selected.destination}</p>
+              <p>
+                {selected.startDate} to {selected.endDate}
+              </p>
+              <p className="mt-2">{selected.purpose}</p>
+            </div>
+          )}
           <Textarea
             value={note}
             onChange={(event) => setNote(event.target.value)}

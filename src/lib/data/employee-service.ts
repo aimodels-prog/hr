@@ -1,5 +1,5 @@
 import { getApplicationDataServices } from "./application-data.ts";
-import { isCeoPosition, validateCeoSupervisor } from "./executive-reporting.ts";
+import { isSupervisorOptionalPosition, validateCeoSupervisor } from "./executive-reporting.ts";
 import {
   changedRecordFields,
   changeReason,
@@ -703,7 +703,11 @@ export class EmployeeService {
     }
 
     validateCeoSupervisor(data.position, data.lineManagerId);
-    if (!data.lineManagerId && allEmployees.length > 0 && !isCeoPosition(data.position)) {
+    if (
+      !data.lineManagerId &&
+      allEmployees.length > 0 &&
+      !isSupervisorOptionalPosition(data.position)
+    ) {
       throw new Error("A supervisor must be assigned before an employee record can be created.");
     }
     if (data.lineManagerId) {

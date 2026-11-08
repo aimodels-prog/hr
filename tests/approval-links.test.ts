@@ -5,6 +5,7 @@ import {
   approvalActionUrl,
   approvalTaskForNotification,
   focusedApprovalId,
+  leaveRequestHistoryUrl,
 } from "../src/lib/data/approval-links.ts";
 import type { AppTask } from "../src/lib/data/task-service.ts";
 
@@ -31,6 +32,14 @@ test("approval links focus the exact request without changing direct detail link
   assert.equal(
     approvalActionUrl({ actionUrl: "/staff/offers", sourceId: "offer-1" }),
     "/staff/offers#review=offer-1",
+  );
+});
+
+test("resolved leave notifications open the exact history for HR or the employee", () => {
+  assert.equal(leaveRequestHistoryUrl("leave-1", "HR"), "/staff/leave-admin#request=leave-1");
+  assert.equal(
+    leaveRequestHistoryUrl("leave-1", "Employee"),
+    "/staff/me/leave-balances#request=leave-1",
   );
 });
 

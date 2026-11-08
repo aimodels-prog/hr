@@ -151,13 +151,7 @@ async function notifyHr(
     .from(users)
     .innerJoin(userRoles, eq(userRoles.userId, users.id))
     .innerJoin(roles, eq(roles.id, userRoles.roleId))
-    .where(
-      and(
-        eq(users.organisationId, org),
-        eq(users.status, "Active"),
-        inArray(roles.code, ["HR", "Super Admin"]),
-      ),
-    );
+    .where(and(eq(users.organisationId, org), eq(users.status, "Active"), eq(roles.code, "HR")));
   for (const recipient of recipients)
     await tx
       .insert(notifications)
@@ -812,7 +806,8 @@ export async function decideTrainingRequestInDatabase(
   if (decision === "Reject" && comment.trim().length < 5)
     throw new Error("Record a reason for rejecting this request.");
   comment = comment.trim() || "Training request approved";
-  if (stage === "HR") requireHr(actor);
+  if (stage === "HR" && activeRole(actor) !== "HR")
+    throw new Error("Only HR can decide training requests.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
     const [request] = await tx
@@ -1543,7 +1538,7 @@ export async function decideTrainingRecordInDatabase(
   reason: string,
   actor: AuditActorContext,
 ) {
-  requireHr(actor);
+  if (activeRole(actor) !== "HR") throw new Error("Only HR can verify training certificates.");
   if (decision === "Reject" && reason.trim().length < 5)
     throw new Error("Record a reason for rejecting this certificate.");
   reason = reason.trim() || "Training certificate verified by HR";

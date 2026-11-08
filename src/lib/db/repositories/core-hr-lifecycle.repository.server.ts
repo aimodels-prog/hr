@@ -1210,8 +1210,8 @@ async function updateOnboardingTaskInTransaction(
     (row.task.ownerRole === actor.activeRole &&
       !["Employee", "Line Manager"].includes(row.task.ownerRole)) ||
     actor.activeRole === "Super Admin";
-  if (input.status === "Waived" && !MANAGER_ROLES.includes(actor.activeRole))
-    throw new Error("Only HR or a Super Admin can waive a task.");
+  if (input.status === "Waived" && actor.activeRole !== "HR")
+    throw new Error("Only HR can waive a task.");
   if (input.status !== "Waived" && !owns)
     throw new Error("This task is assigned to another person or responsibility.");
   if (input.status === "Waived" && (input.waiverReason?.trim().length ?? 0) < 5)
@@ -1671,7 +1671,7 @@ export async function saveOnboardingSelfServiceInDatabase(
           and(
             eq(users.organisationId, organisationId),
             eq(users.status, "Active"),
-            inArray(roles.code, ["HR", "Super Admin"]),
+            eq(roles.code, "HR"),
           ),
         );
       for (const reviewer of reviewers) {
@@ -1958,8 +1958,7 @@ export async function decideEmploymentDetailsInDatabase(
   },
   actor: AuditActorContext,
 ): Promise<void> {
-  if (!MANAGER_ROLES.includes(actor.activeRole))
-    throw new Error("Only HR or a Super Admin can confirm employment details.");
+  if (actor.activeRole !== "HR") throw new Error("Only HR can confirm employment details.");
   if (actor.employeeId === input.employeeId)
     throw new Error("You cannot confirm your own employment details.");
   if (input.decision === "Changes Requested" && input.note.trim().length < 3)
@@ -2599,8 +2598,8 @@ export async function updateOffboardingTaskInDatabase(
       (row.task.ownerRole === actor.activeRole &&
         !["Employee", "Line Manager"].includes(row.task.ownerRole)) ||
       actor.activeRole === "Super Admin";
-    if (input.status === "Waived" && !MANAGER_ROLES.includes(actor.activeRole))
-      throw new Error("Only HR or a Super Admin can waive a task.");
+    if (input.status === "Waived" && actor.activeRole !== "HR")
+      throw new Error("Only HR can waive a task.");
     if (input.status !== "Waived" && !owns)
       throw new Error("This task is assigned to another person or responsibility.");
     if (input.status === "Waived" && (input.waiverReason?.trim().length ?? 0) < 5)
@@ -2751,7 +2750,7 @@ export async function grantOffboardingClearanceInDatabase(
   clearance: "financial" | "legal",
   actor: AuditActorContext,
 ): Promise<void> {
-  const allowed = clearance === "financial" ? ["Accounts", "Super Admin"] : ["HR", "Super Admin"];
+  const allowed = clearance === "financial" ? ["Accounts"] : ["HR"];
   if (!allowed.includes(actor.activeRole))
     throw new Error(`Only ${allowed.join(" or ")} can grant this clearance.`);
   const db = getDatabaseClient();

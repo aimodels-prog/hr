@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 type Review = Awaited<ReturnType<typeof listAssignedOfferReviewsFn>>[number];
 
-export function AssignedOfferReviews() {
+export function AssignedOfferReviews({ focusedOfferId }: { focusedOfferId?: string | null }) {
   const user = useCurrentUser();
   const [rows, setRows] = useState<Review[]>([]);
   const [comments, setComments] = useState<Record<string, string>>({});
@@ -40,6 +40,16 @@ export function AssignedOfferReviews() {
       cancelled = true;
     };
   }, [id, workspaceEmail, activeRole, refresh]);
+  useEffect(() => {
+    if (!focusedOfferId || !rows.some((row) => row.id === focusedOfferId)) return;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(`approval-${focusedOfferId}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusedOfferId, rows]);
   async function decide(row: Review, decision: "approve" | "return") {
     setBusy(true);
     setError("");
@@ -82,7 +92,11 @@ export function AssignedOfferReviews() {
         Refresh
       </Button>
       {rows.map((row) => (
-        <article key={row.id} className="space-y-3 rounded-lg border p-4">
+        <article
+          key={row.id}
+          id={`approval-${row.id}`}
+          className={`space-y-3 rounded-lg border p-4 ${focusedOfferId === row.id ? "border-primary ring-2 ring-primary/20" : ""}`}
+        >
           <h3 className="font-semibold">
             {row.candidateName} — {row.position}
           </h3>

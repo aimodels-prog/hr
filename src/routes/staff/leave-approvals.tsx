@@ -54,8 +54,7 @@ function LeaveApprovalsContent() {
   const empService = useMemo(() => new EmployeeService(), []);
   const directoryEmployees = empService.getDirectoryEmployees(currentUser.getActorContext());
 
-  const canCompleteHrReview =
-    currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
+  const canCompleteHrReview = currentUser.activeRole === "HR";
   // Assuming anyone can be a manager if they have direct reports.
 
   const policies = leaveService.getPolicies();

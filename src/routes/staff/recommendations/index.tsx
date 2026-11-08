@@ -1,5 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -30,6 +30,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import type { CandidateRecommendation } from "@/lib/data/types";
 import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
+import { focusedApprovalId } from "@/lib/data/approval-links";
 
 export const Route = createFileRoute("/staff/recommendations/")({
   component: RecommendationsIndexWrapper,
@@ -47,6 +48,9 @@ function RecommendationsIndexWrapper() {
 }
 
 function RecommendationsIndex() {
+  const location = useLocation();
+  const focusedReferralId = focusedApprovalId(location.hash);
+  const openedFocusedReferral = useRef<string | null>(null);
   const currentUser = useCurrentUser();
   const [candidateService] = useState(() => new CandidateService());
   const [candidatePoolService] = useState(() => new CandidatePoolService());
@@ -104,6 +108,26 @@ function RecommendationsIndex() {
         .map((item) => [item.recommendationId!, item]),
     );
   }, [candidatePoolService, currentUser, refreshKey]);
+  useEffect(() => {
+    if (!focusedReferralId || openedFocusedReferral.current === focusedReferralId) return;
+    const recommendation = pendingReferrals.find((item) => item.id === focusedReferralId);
+    if (!recommendation) return;
+    openedFocusedReferral.current = focusedReferralId;
+    if (
+      recommendation.vacancyId &&
+      cvByRecommendationId.get(recommendation.id)?.processingStatus === "Ready"
+    ) {
+      setReviewing({ recommendation, decision: "Approve" });
+      setReviewReason("");
+    } else {
+      window.requestAnimationFrame(() =>
+        document.getElementById(`approval-${focusedReferralId}`)?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        }),
+      );
+    }
+  }, [cvByRecommendationId, focusedReferralId, pendingReferrals]);
   const vacancyById = useMemo(() => {
     void refreshKey;
     return new Map(
@@ -213,7 +237,8 @@ function RecommendationsIndex() {
                 return (
                   <div
                     key={recommendation.id}
-                    className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between"
+                    id={`approval-${recommendation.id}`}
+                    className={`flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between ${focusedReferralId === recommendation.id ? "bg-primary/5" : ""}`}
                   >
                     <div>
                       <Link
@@ -399,6 +424,15 @@ function RecommendationsIndex() {
                 : "The candidate and CV remain securely stored, but will not appear in active interview consideration."}
             </DialogDescription>
           </DialogHeader>
+          {reviewing && (
+            <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+              <p className="font-medium">
+                {candidateById.get(reviewing.recommendation.candidateId)?.firstName ?? "Candidate"}{" "}
+                {candidateById.get(reviewing.recommendation.candidateId)?.lastName ?? ""}
+              </p>
+              <p>{reviewing.recommendation.notes}</p>
+            </div>
+          )}
           <Textarea
             value={reviewReason}
             onChange={(event) => setReviewReason(event.target.value)}

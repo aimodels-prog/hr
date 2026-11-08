@@ -115,7 +115,8 @@ export async function listTasksForActorInDatabase(
         (l.created_at::date + 2)::text, NULL, 'Review request', '/staff/leave-approvals',
         'leave-request', l.id::text, l.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM leave_requests l JOIN employees e ON e.id=l.employee_id
-      WHERE l.organisation_id=${organisationId} AND l.archived_at IS NULL AND ${role}='Line Manager'
+      WHERE l.organisation_id=${organisationId} AND l.archived_at IS NULL
+        AND ${role} IN ('Line Manager','HR','Super Admin')
         AND e.line_manager_id=${employeeId}::uuid AND l.status IN ('Pending Line Manager','Amendment Pending Line Manager')
 
       UNION ALL
@@ -180,12 +181,43 @@ export async function listTasksForActorInDatabase(
 
       UNION ALL
       SELECT 'leave-hr-' || l.id, 'Leave', 'Confirm leave request',
-        coalesce(e.preferred_name,e.legal_name) || '''s supervisor completed the first review.', 'High',
+        CASE WHEN l.policy_snapshot->'noticeException' IS NOT NULL
+          THEN coalesce(e.preferred_name,e.legal_name) || '''s short-notice request needs your exception review.'
+          ELSE coalesce(e.preferred_name,e.legal_name) || '''s leave request needs your decision.' END, 'High',
         (l.updated_at::date + 2)::text, NULL, 'Review request', '/staff/leave-approvals',
         'leave-request', l.id::text, l.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM leave_requests l JOIN employees e ON e.id=l.employee_id
       WHERE l.organisation_id=${organisationId} AND l.archived_at IS NULL AND ${role} IN ('HR','Super Admin')
-        AND l.status IN ('Pending HR','Pending Super Admin','Amendment Pending HR')
+        AND (
+          l.status IN ('Amendment Pending HR','Cancellation Pending')
+          OR (l.status='Pending HR' AND (
+            (l.policy_snapshot->'specialRequest' IS NOT NULL AND ${role}='HR'
+              AND NOT l.chain_approvals @> '[{"role":"Country Manager","status":"Pending"}]'::jsonb
+              AND l.chain_approvals @> '[{"role":"HR","status":"Pending"}]'::jsonb)
+            OR (l.policy_snapshot->'noticeException' IS NOT NULL AND ${role}='HR'
+              AND l.chain_approvals @> '[{"role":"HR","status":"Pending"}]'::jsonb)
+            OR (l.policy_snapshot->'specialRequest' IS NULL
+              AND l.policy_snapshot->'noticeException' IS NULL)
+          ))
+        )
+
+      UNION ALL
+      SELECT 'leave-country-manager-' || l.id, 'Leave',
+        CASE WHEN l.policy_snapshot->'noticeException' IS NOT NULL
+          THEN 'Review short-notice exception' ELSE 'Review special leave' END,
+        coalesce(e.preferred_name,e.legal_name) || '''s leave request needs the Country Manager decision.', 'High',
+        (l.updated_at::date + 2)::text, NULL, 'Review request', '/staff/leave-approvals',
+        'leave-request', l.id::text, l.employee_id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM leave_requests l JOIN employees e ON e.id=l.employee_id
+      WHERE l.organisation_id=${organisationId} AND l.archived_at IS NULL
+        AND ${role} IN ('Line Manager','HR','Super Admin')
+        AND l.status='Pending HR'
+        AND l.chain_approvals @> '[{"role":"Country Manager","status":"Pending"}]'::jsonb
+        AND coalesce(
+          l.policy_snapshot->'specialRequest'->>'countryManagerEmployeeId',
+          l.policy_snapshot->'noticeException'->>'countryManagerEmployeeId'
+        )=${employeeId}
+        AND l.employee_id<>${employeeId}::uuid
 
       UNION ALL
       SELECT 'timesheet-hr-' || t.id, 'Timesheets', 'Approve reviewed timesheet',
@@ -206,11 +238,22 @@ export async function listTasksForActorInDatabase(
       UNION ALL
       SELECT 'site-visit-hr-' || v.id, 'Attendance', 'Review site visit request',
         coalesce(e.preferred_name,e.legal_name) || ' requested permission to visit ' || v.destination || '.', 'Normal',
-        v.date::text, NULL, 'Review request', '/staff/attendance', 'site-visit-request', v.id::text,
+        v.date::text, NULL, 'Review request', '/staff/attendance#section=site-visits&visit=' || v.id::text, 'site-visit-request', v.id::text,
         v.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM site_visit_requests v JOIN employees e ON e.id=v.employee_id
       WHERE v.organisation_id=${organisationId} AND v.archived_at IS NULL AND ${role} IN ('HR','Super Admin')
         AND (v.status='Pending HR' OR (v.status IN ('Approved','Completed') AND v.details->'extension'->>'status'='Pending'))
+
+      UNION ALL
+      SELECT 'time-away-hr-' || a.id, 'Attendance', 'Review time away',
+        coalesce(e.preferred_name,e.legal_name) || ' has time away awaiting an HR decision.', 'Normal',
+        a.date::text, NULL, 'Review time away',
+        '/staff/time-away?date=' || a.date::text || '&review=' || a.id::text,
+        'time-away', a.id::text, a.employee_id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM time_away a JOIN employees e ON e.id=a.employee_id
+      WHERE a.organisation_id=${organisationId} AND a.archived_at IS NULL AND ${role}='HR'
+        AND a.status='Pending HR' AND a.employee_id<>${employeeId}::uuid
+        AND a.created_by<>${actor.userId}::uuid
 
       UNION ALL
       SELECT 'overtime-hr-' || o.id, 'Overtime', 'Verify overtime claim',
@@ -320,17 +363,10 @@ export async function listTasksForActorInDatabase(
         AND r.status IN ('Moderation Pending','Acknowledged')
 
       UNION ALL
-      SELECT 'profile-review-' || p.id, 'Employee Records', 'Review profile update',
-        coalesce(e.preferred_name,e.legal_name) || ' requested changes to their personal details.', 'Normal',
-        (p.created_at::date + 3)::text, NULL, 'Review profile', '/staff/employees/' || p.employee_id,
-        'profile-change-request', p.id::text, p.employee_id::text, coalesce(e.preferred_name,e.legal_name)
-      FROM profile_change_requests p JOIN employees e ON e.id=p.employee_id
-      WHERE p.organisation_id=${organisationId} AND p.archived_at IS NULL AND ${role} IN ('HR','Super Admin') AND p.status='Pending'
-
-      UNION ALL
       SELECT 'document-verify-' || d.id, 'Documents', 'Verify employee document',
         'Review ' || coalesce(e.preferred_name,e.legal_name) || '''s employee document.', 'Normal',
-        (d.created_at::date + 3)::text, NULL, 'Review document', '/staff/employees/' || d.employee_id,
+        (d.created_at::date + 3)::text, NULL, 'Review document',
+        '/staff/employees/' || d.employee_id || '#section=documents&document=' || d.id,
         'employee-document', d.id::text, d.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM employee_documents d JOIN employees e ON e.id=d.employee_id
       WHERE d.organisation_id=${organisationId} AND d.archived_at IS NULL AND ${role} IN ('HR','Super Admin') AND d.status='Pending Verification'
@@ -410,6 +446,7 @@ export async function listTasksForActorInDatabase(
         WHEN 'training-request' THEN (SELECT record_version FROM training_requests v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
         WHEN 'employee-goal' THEN (SELECT record_version FROM employee_goals v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
         WHEN 'site-visit-request' THEN (SELECT record_version FROM site_visit_requests v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
+        WHEN 'time-away' THEN (SELECT record_version FROM time_away v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
         WHEN 'travel-request' THEN (SELECT record_version FROM travel_requests v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
         WHEN 'profile-change-request' THEN (SELECT record_version FROM profile_change_requests v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
         WHEN 'employee-document' THEN (SELECT record_version FROM employee_documents v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
@@ -448,7 +485,9 @@ export async function listTasksForActorInDatabase(
     High: 2,
     Critical: 3,
   };
-  return [...new Map(tasks.map((task) => [task.id, task])).values()].sort((a, b) => {
+  const roleScopedTasks =
+    role === "Super Admin" ? tasks.filter((task) => !isApprovalTask(task)) : tasks;
+  return [...new Map(roleScopedTasks.map((task) => [task.id, task])).values()].sort((a, b) => {
     const state = stateOrder[a.state] - stateOrder[b.state];
     if (state) return state;
     const priority = priorityOrder[b.priority] - priorityOrder[a.priority];

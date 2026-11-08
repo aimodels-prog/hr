@@ -1,6 +1,6 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useLocation, useNavigate } from "@tanstack/react-router";
 import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, CheckCircle2, FileText, Target, Users } from "lucide-react";
 import { toast } from "sonner";
 
@@ -34,6 +34,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { GoalService, type EmployeeGoal } from "@/lib/data/goal-service";
+import { focusedApprovalId } from "@/lib/data/approval-links";
 import { PerformanceService } from "@/lib/data/performance-service";
 
 export const Route = createFileRoute("/staff/performance/team")({
@@ -50,6 +51,8 @@ function TeamPerformanceRoute() {
 }
 
 function TeamPerformancePage() {
+  const location = useLocation();
+  const focusedGoalId = focusedApprovalId(location.hash);
   const employeeFilter = useEmployeeFilter();
   const currentUser = useCurrentUser();
   const navigate = useNavigate();
@@ -73,6 +76,16 @@ function TeamPerformancePage() {
   const allTeamGoals = goalService
     .getGoalsForTeam(context)
     .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
+  useEffect(() => {
+    if (!focusedGoalId || !pendingGoals.some((goal) => goal.id === focusedGoalId)) return;
+    const frame = window.requestAnimationFrame(() =>
+      document.getElementById(`approval-${focusedGoalId}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      }),
+    );
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusedGoalId, pendingGoals]);
   const refresh = () => setVersion((value) => value + 1);
   const employeeName = (id: string) =>
     employees.find((employee) => employee.id === id)?.preferredName ||
@@ -152,7 +165,11 @@ function TeamPerformancePage() {
         <TabsContent value="approvals" className="mt-6">
           <div className="grid gap-4 lg:grid-cols-2">
             {pendingGoals.map((goal) => (
-              <Card key={goal.id}>
+              <Card
+                key={goal.id}
+                id={`approval-${goal.id}`}
+                className={focusedGoalId === goal.id ? "border-primary ring-2 ring-primary/20" : ""}
+              >
                 <CardHeader>
                   <div className="flex items-start justify-between gap-3">
                     <div>

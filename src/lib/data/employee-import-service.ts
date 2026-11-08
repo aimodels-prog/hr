@@ -1,5 +1,5 @@
 import { SYSTEM_CONTEXT } from "./types.ts";
-import { isCeoPosition } from "./executive-reporting.ts";
+import { isCeoPosition, isSupervisorOptionalPosition } from "./executive-reporting.ts";
 import { parse as parseCsv } from "csv-parse/browser/esm/sync";
 import readXlsxFile from "read-excel-file/browser";
 import type { EmployeeService } from "./employee-service.ts";
@@ -515,7 +515,7 @@ export class EmployeeImportService {
         continue;
       }
       if (!managerNumber) {
-        if (batchHasExistingOrgAlready) {
+        if (batchHasExistingOrgAlready && !isSupervisorOptionalPosition(entry.row.position)) {
           entry.blockingErrors.push(
             "A manager's employee number is required (this organisation already has employees).",
           );

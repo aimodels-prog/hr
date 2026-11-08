@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useState, useMemo } from "react";
+import { createFileRoute, useLocation } from "@tanstack/react-router";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -30,10 +30,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { OvertimeService } from "@/lib/data/overtime-service";
 import { EmployeeService } from "@/lib/data/employee-service";
-import { useCurrentUser, RequireAnyPermission } from "@/lib/auth";
+import { useCurrentUser, RequireRole } from "@/lib/auth";
 import { AlertTriangle, CheckCircle, Paperclip, Plus, XCircle } from "lucide-react";
 import type { OvertimeClaim } from "@/lib/data/overtime-types";
 import { OvertimeOnBehalfDialog } from "@/components/overtime/overtime-on-behalf-dialog";
+import { focusedApprovalId } from "@/lib/data/approval-links";
 
 export const Route = createFileRoute("/staff/overtime-approvals")({
   component: OvertimeApprovalsRoute,
@@ -41,21 +42,22 @@ export const Route = createFileRoute("/staff/overtime-approvals")({
 
 function OvertimeApprovalsRoute() {
   return (
-    <RequireAnyPermission
-      permissions={["overtime:approve_direct_reports", "overtime:admin_all"]}
-      resourceName="Team Overtime Approvals"
-    >
+    <RequireRole roles={["Line Manager", "HR"]} resourceName="Team Overtime Approvals">
       <OvertimeApprovalsContent />
-    </RequireAnyPermission>
+    </RequireRole>
   );
 }
 
 function OvertimeApprovalsContent() {
   const currentUser = useCurrentUser();
+  const location = useLocation();
+  const focusedClaimId = focusedApprovalId(location.hash);
+  const openedFocusedClaim = useRef<string | null>(null);
   const otService = useMemo(() => new OvertimeService(), []);
   const empService = useMemo(() => new EmployeeService(), []);
   const actorContext = currentUser.getActorContext();
-  const canVerify = currentUser.can("overtime:admin_all");
+  const canVerify = currentUser.activeRole === "HR";
+  const [activeTab, setActiveTab] = useState(canVerify ? "hr" : "manager");
 
   const [claims, setClaims] = useState<OvertimeClaim[]>(() =>
     otService.getClaimsForDirectReports(actorContext),
@@ -73,10 +75,6 @@ function OvertimeApprovalsContent() {
   const [hrActionType, setHrActionType] = useState<"approve" | "reject">("approve");
   const [recordOpen, setRecordOpen] = useState(false);
 
-  if (!currentUser.employeeId) {
-    return <div>Employee profile required.</div>;
-  }
-
   const myDirectReports = allEmployees
     .filter((e) => e.lineManagerId === currentUser.employeeId)
     .map((e) => e.id);
@@ -86,11 +84,35 @@ function OvertimeApprovalsContent() {
       myDirectReports.includes(c.employeeId),
   );
   const pendingHr = claims.filter((c) => c.status === "Pending HR");
+  useEffect(() => {
+    if (!focusedClaimId || openedFocusedClaim.current === focusedClaimId) return;
+    const hr = canVerify ? pendingHr.find((claim) => claim.id === focusedClaimId) : undefined;
+    const manager = pendingManager.find((claim) => claim.id === focusedClaimId);
+    if (!hr && !manager) return;
+    openedFocusedClaim.current = focusedClaimId;
+    setActiveTab(hr ? "hr" : "manager");
+    if (hr) {
+      setHrSelectedClaim(hr);
+      setHrActionType("approve");
+      setHrNotes("");
+    } else {
+      window.requestAnimationFrame(() =>
+        document.getElementById(`approval-${focusedClaimId}`)?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        }),
+      );
+    }
+  }, [canVerify, focusedClaimId, pendingHr, pendingManager]);
   const recordableEmployees = allEmployees.filter((employee) =>
     canVerify
       ? !["Inactive", "Archived"].includes(employee.status)
       : myDirectReports.includes(employee.id),
   );
+
+  if (!currentUser.employeeId) {
+    return <div>Employee profile required.</div>;
+  }
 
   const viewEvidence = async (claimId: string) => {
     try {
@@ -172,7 +194,7 @@ function OvertimeApprovalsContent() {
         }
       />
 
-      <Tabs defaultValue="manager">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="manager">My Team ({pendingManager.length})</TabsTrigger>
           {canVerify && <TabsTrigger value="hr">HR Verification ({pendingHr.length})</TabsTrigger>}
@@ -196,7 +218,11 @@ function OvertimeApprovalsContent() {
                   {pendingManager.map((c) => {
                     const emp = allEmployees.find((e) => e.id === c.employeeId);
                     return (
-                      <TableRow key={c.id}>
+                      <TableRow
+                        key={c.id}
+                        id={`approval-${c.id}`}
+                        className={focusedClaimId === c.id ? "bg-primary/5" : ""}
+                      >
                         <TableCell className="font-medium">{emp?.preferredName}</TableCell>
                         <TableCell>{c.date}</TableCell>
                         <TableCell className="font-medium text-emerald-600">{c.hours}h</TableCell>

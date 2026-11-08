@@ -143,6 +143,7 @@ export async function listOfferManagersInDatabase(org: string, actor: AuditActor
 }
 
 export async function listAssignedOfferReviewsInDatabase(org: string, actor: AuditActorContext) {
+  if (actor.activeRole !== "Line Manager") return [];
   if (!actor.userId || !actor.employeeId) throw new Error("A verified employee is required.");
   const rows = await getDatabaseClient()
     .select({ offer: jobOffers, firstName: candidates.firstName, lastName: candidates.lastName })
@@ -221,6 +222,8 @@ export async function reviewAssignedOfferInDatabase(
   comment: string,
   actor: AuditActorContext,
 ) {
+  if (actor.activeRole !== "Line Manager")
+    throw new Error("Switch to your Line Manager role to review an assigned offer.");
   if (!actor.userId || !actor.employeeId) throw new Error("A verified employee is required.");
   const cleanReason = reason(comment);
   await getDatabaseClient().transaction(async (tx) => {

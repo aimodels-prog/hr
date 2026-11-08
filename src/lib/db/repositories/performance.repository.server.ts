@@ -965,7 +965,7 @@ export async function actOnPerformanceReviewInDatabase(
       });
     } else if (action.type === "moderate") {
       if (
-        !isHr(actor) ||
+        role(actor) !== "HR" ||
         review.status !== "Moderation Pending" ||
         action.comment.trim().length < 5
       )
@@ -1008,8 +1008,8 @@ export async function actOnPerformanceReviewInDatabase(
         employeeAcknowledgementComment: action.comment?.trim() || null,
       });
     } else if (action.type === "lock") {
-      if (!isHr(actor) || review.status !== "Acknowledged")
-        throw new Error("Only HR or Super Admin can finalise an acknowledged review.");
+      if (role(actor) !== "HR" || review.status !== "Acknowledged")
+        throw new Error("Only HR can finalise an acknowledged review.");
       Object.assign(updates, {
         status: "Locked",
         lockedAt: new Date().toISOString(),
@@ -1103,13 +1103,7 @@ export async function actOnPerformanceReviewInDatabase(
       .from(users)
       .innerJoin(userRoles, eq(userRoles.userId, users.id))
       .innerJoin(roles, eq(roles.id, userRoles.roleId))
-      .where(
-        and(
-          eq(users.organisationId, org),
-          eq(users.status, "Active"),
-          inArray(roles.code, ["HR", "Super Admin"]),
-        ),
-      );
+      .where(and(eq(users.organisationId, org), eq(users.status, "Active"), eq(roles.code, "HR")));
     const recipients =
       action.type === "self"
         ? managerUser

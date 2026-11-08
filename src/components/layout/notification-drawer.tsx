@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,10 +9,19 @@ import { getApplicationDataServices } from "@/lib/data/application-data";
 import { employeeDocumentLink } from "@/lib/data/document-links";
 import { getEmployeeDocumentsFn } from "@/lib/server-functions/core-hr-lifecycle.server";
 import { notificationServerActor } from "@/lib/data/notification-cache";
+import { newlyArrivedUnread } from "@/lib/data/notification-popup";
 import type { ActorContext, Notification } from "@/lib/data/types";
 import { formatDistanceToNow } from "date-fns";
 import { useNavigate } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { getApprovalInboxFn } from "@/lib/server-functions/request-tracking.server";
+import {
+  approvalActionUrl,
+  approvalTaskForNotification,
+  isApprovalNotification,
+  leaveRequestHistoryUrl,
+} from "@/lib/data/approval-links";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,9 +37,14 @@ export function NotificationDrawer() {
   const currentUser = useCurrentUser();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  const openRef = useRef(open);
   const [, setTicker] = useState(0); // force refresh after repository mutations
   const [isLoading, setIsLoading] = useState(true);
   const [confirmClear, setConfirmClear] = useState(false);
+
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
 
   useEffect(() => {
     const refresh = () => setTicker((value) => value + 1);
@@ -41,6 +55,14 @@ export function NotificationDrawer() {
   const { notifications: notifService } = getApplicationDataServices();
   const actorKey = JSON.stringify(currentUser.getActorContext());
   const actorContext = useMemo(() => JSON.parse(actorKey) as ActorContext, [actorKey]);
+  const approvalInbox = useQuery({
+    queryKey: ["approval-inbox", actorKey],
+    queryFn: async () =>
+      getApprovalInboxFn({ data: { actor: await notificationServerActor(actorContext) } }),
+    enabled: open,
+    staleTime: 15_000,
+    refetchInterval: open ? 30_000 : false,
+  });
   const notifications = notifService
     .listForContext(actorContext)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -49,20 +71,58 @@ export function NotificationDrawer() {
 
   useEffect(() => {
     let cancelled = false;
+    let refreshing = false;
+    let knownIds: Set<string> | null = null;
+    let hasLoaded = false;
+    let reportedInitialError = false;
     setIsLoading(true);
-    notifService
-      .hydrateCompatibilityCache(actorContext, () => !cancelled)
-      .catch((error: unknown) => {
-        if (!cancelled)
+    const refresh = async () => {
+      if (cancelled || refreshing || document.visibilityState === "hidden") return;
+      refreshing = true;
+      try {
+        const latest = await notifService.hydrateCompatibilityCache(actorContext, () => !cancelled);
+        if (cancelled) return;
+        const arrived = newlyArrivedUnread(latest, knownIds);
+        knownIds = new Set(latest.map((notification) => notification.id));
+        hasLoaded = true;
+        if (openRef.current) return;
+        if (arrived.length === 1) {
+          toast.info(arrived[0]!.title, {
+            description: arrived[0]!.message.slice(0, 180),
+            action: { label: "View", onClick: () => setOpen(true) },
+            duration: 8_000,
+          });
+        } else if (arrived.length > 1) {
+          toast.info(`${arrived.length} new notifications`, {
+            description: "Open your notifications to review the latest requests and updates.",
+            action: { label: "View", onClick: () => setOpen(true) },
+            duration: 8_000,
+          });
+        }
+      } catch (error) {
+        if (!cancelled && !hasLoaded && !reportedInitialError) {
+          reportedInitialError = true;
           toast.error(
             error instanceof Error ? error.message : "Notifications could not be loaded.",
           );
-      })
-      .finally(() => {
+        }
+      } finally {
+        refreshing = false;
         if (!cancelled) setIsLoading(false);
-      });
+      }
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    void refresh();
+    const interval = window.setInterval(refreshWhenVisible, 30_000);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [actorContext, notifService]);
 
@@ -110,9 +170,30 @@ export function NotificationDrawer() {
         toast.error(error instanceof Error ? error.message : "Notification could not be updated.");
       }
     }
-    setOpen(false);
-    if (notif.link?.path) {
+    if (notif.link) {
       let destination = notif.link.path;
+      let matchedApprovalTask = false;
+      if (isApprovalNotification(notif)) {
+        try {
+          const tasks = await getApprovalInboxFn({
+            data: { actor: await notificationServerActor(currentUser.getActorContext()) },
+          });
+          const task = approvalTaskForNotification(notif, tasks);
+          if (task) {
+            destination = approvalActionUrl(task);
+            matchedApprovalTask = true;
+          }
+        } catch {
+          // The original notification link remains available if the approval inbox cannot refresh.
+        }
+      }
+      if (
+        !matchedApprovalTask &&
+        notif.link.entityType === "leave-request" &&
+        notif.link.entityId
+      ) {
+        destination = leaveRequestHistoryUrl(notif.link.entityId, currentUser.activeRole);
+      }
       if (
         (["employee-document", "document_expiry"].includes(notif.link.entityType ?? "") ||
           notif.type === "document_expiry") &&
@@ -137,9 +218,17 @@ export function NotificationDrawer() {
           return;
         }
       }
+      if (!destination) return;
+      setOpen(false);
       const [path, hash = ""] = destination.split("#");
       navigate({ to: path!, hash });
     }
+  };
+
+  const openApproval = (url: string) => {
+    setOpen(false);
+    const [path, hash = ""] = url.split("#");
+    void navigate({ to: path!, hash });
   };
 
   return (
@@ -182,6 +271,42 @@ export function NotificationDrawer() {
         </SheetHeader>
         <ScrollArea className="flex-1">
           <div className="flex flex-col">
+            {approvalInbox.data && approvalInbox.data.length > 0 && (
+              <section className="border-b bg-primary/5 p-4" aria-label="Approvals waiting for you">
+                <h3 className="mb-3 text-sm font-semibold">
+                  Approvals waiting for you ({approvalInbox.data.length})
+                </h3>
+                <div className="space-y-2">
+                  {approvalInbox.data.slice(0, 5).map((task) => (
+                    <div key={task.id} className="rounded-lg border bg-card p-3">
+                      <p className="text-sm font-medium">{task.title}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {task.subjectName ?? task.description}
+                      </p>
+                      <Button
+                        size="sm"
+                        className="mt-2"
+                        onClick={() => openApproval(approvalActionUrl(task))}
+                      >
+                        Review request
+                      </Button>
+                    </div>
+                  ))}
+                  {approvalInbox.data.length > 5 && (
+                    <Button
+                      variant="link"
+                      size="sm"
+                      onClick={() => {
+                        setOpen(false);
+                        void navigate({ to: "/staff/requests", search: { view: "approvals" } });
+                      }}
+                    >
+                      See all approvals
+                    </Button>
+                  )}
+                </div>
+              </section>
+            )}
             {isLoading ? (
               <div className="p-8 text-center text-muted-foreground text-sm">
                 Loading notifications…
@@ -233,6 +358,11 @@ export function NotificationDrawer() {
                     </div>
                   </div>
                   <div className="text-sm text-muted-foreground">{notif.message}</div>
+                  {approvalTaskForNotification(notif, approvalInbox.data ?? []) && (
+                    <span className="mt-2 inline-block text-xs font-semibold text-primary">
+                      Open approval
+                    </span>
+                  )}
                   <div className="text-xs text-muted-foreground mt-2 flex justify-between">
                     <span>
                       {formatDistanceToNow(new Date(notif.createdAt), { addSuffix: true })}

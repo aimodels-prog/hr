@@ -25,7 +25,6 @@ import type {
   InterviewEvent,
   InterviewScorecard,
   NotificationPriority,
-  ProfileChangeRequest,
   Role,
   ActorContext,
 } from "./types.ts";
@@ -797,7 +796,7 @@ export class TaskService {
           priority: "Normal",
           dueDate: visit.date,
           actionLabel: "Review request",
-          actionUrl: "/staff/attendance",
+          actionUrl: `/staff/attendance#section=site-visits&visit=${visit.databaseId ?? visit.id}`,
           sourceType: "site-visit-request",
           sourceId: visit.id,
           subjectEmployeeId: visit.employeeId,
@@ -840,24 +839,6 @@ export class TaskService {
           actionLabel: "Review travel",
           actionUrl: "/staff/travel-hr-approvals",
           sourceType: "travel-request",
-          sourceId: request.id,
-          subjectEmployeeId: request.employeeId,
-          subjectName: employeeName(request.employeeId),
-        });
-      }
-    }
-    for (const request of storage.readCollection<ProfileChangeRequest>("profile_change_requests")) {
-      if (isActive(request) && request.status === "Pending") {
-        addTask({
-          id: `profile-review-${request.id}`,
-          module: "Employee Records",
-          title: "Review profile update",
-          description: `${employeeName(request.employeeId)} requested changes to their personal details.`,
-          priority: "Normal",
-          dueDate: addDays(request.createdAt.slice(0, 10), 3),
-          actionLabel: "Review profile",
-          actionUrl: `/staff/employees/${request.employeeId}`,
-          sourceType: "profile-change-request",
           sourceId: request.id,
           subjectEmployeeId: request.employeeId,
           subjectName: employeeName(request.employeeId),
@@ -1060,23 +1041,6 @@ export class TaskService {
           subjectName: employeeName(request.employeeId),
         });
       }
-    }
-    for (const request of storage.readCollection<ProfileChangeRequest>("profile_change_requests")) {
-      if (!isActive(request) || request.status !== "Pending") continue;
-      addTask({
-        id: `profile-review-${request.id}`,
-        module: "Employee Records",
-        title: "Review profile update",
-        description: `${employeeName(request.employeeId)} requested changes to their personal details.`,
-        priority: "Normal",
-        dueDate: addDays(request.createdAt.slice(0, 10), 3),
-        actionLabel: "Review profile",
-        actionUrl: `/staff/employees/${request.employeeId}`,
-        sourceType: "profile-change-request",
-        sourceId: request.id,
-        subjectEmployeeId: request.employeeId,
-        subjectName: employeeName(request.employeeId),
-      });
     }
     for (const period of storage.readCollection<PayrollPeriod>("payrollPeriods")) {
       const unresolved = period.exceptions.filter((exception) => !exception.acknowledged);

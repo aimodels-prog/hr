@@ -312,9 +312,20 @@ test("short-notice annual leave goes to Country Manager and HR before the line m
       .readCollection<{ title: string }>("notifications")
       .some((item) => item.title.includes("Short-notice leave exception")),
   );
+  const countryManager: ActorContext = {
+    actor: {
+      ...superAdmin.actor,
+      activeRole: "Line Manager",
+      roles: ["Employee", "Line Manager", "Super Admin"],
+    },
+  };
   assert.throws(() => service.approveRequest(request.id, manager), /pending special approver/);
-  assert.equal(service.approveRequest(request.id, superAdmin).status, "Pending HR");
-  assert.throws(() => service.approveRequest(request.id, superAdmin), /pending special approver/);
+  assert.throws(() => service.approveRequest(request.id, superAdmin), /Switch to your assigned/);
+  assert.equal(service.approveRequest(request.id, countryManager).status, "Pending HR");
+  assert.throws(
+    () => service.approveRequest(request.id, countryManager),
+    /pending special approver/,
+  );
   assert.equal(service.approveRequest(request.id, hr).status, "Pending Line Manager");
   assert.ok(service.getPendingRequestsForManager(manager).some((item) => item.id === request.id));
   assert.equal(service.approveRequest(request.id, manager).status, "Approved");
@@ -784,6 +795,26 @@ test("an HR manager receives one approval notification and suspended HR receives
     1,
   );
   assert.equal(request.status, "Pending Line Manager");
+});
+
+test("HR can review direct reports while using the HR view without a separate manager role", async () => {
+  const { service } = harness();
+  const policy = service.getPolicies().find((item) => item.type === "Annual")!;
+  const request = await service.submitLeaveRequest(
+    {
+      employeeId: "employee-omar",
+      policyId: policy.id,
+      startDate: "2027-04-01",
+      endDate: "2027-04-01",
+      reason: "Family commitment",
+      handoverContactId: "employee-tariq",
+    },
+    employee,
+  );
+  const hrManager: ActorContext = {
+    actor: { ...manager.actor, activeRole: "HR", roles: ["Employee", "HR"] },
+  };
+  assert.ok(service.getPendingRequestsForManager(hrManager).some((item) => item.id === request.id));
 });
 
 test("leave attachment access is restricted to the owner, their line manager, and HR - and is audited", async () => {

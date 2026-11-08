@@ -406,10 +406,11 @@ test("employee site visit persists to PostgreSQL and HR approval survives a role
   );
   await requestDialog.getByLabel("Site / Destination").fill(destination);
   await requestDialog.getByRole("button", { name: "Ministry visit", exact: true }).click();
+  await requestDialog.getByRole("button", { name: "Home", exact: true }).click();
   // No purpose essay is required: the selected visit type is saved as the purpose.
   await requestDialog.getByRole("button", { name: "Send to HR" }).click();
   await expect(requestDialog).toBeHidden();
-  await expect(page.getByText(/Site visit recorded. HR and your supervisor/)).toBeVisible();
+  await expect(page.getByText(/Quick visit recorded. Attendance updates/)).toBeVisible();
 
   await previewAs(page, "user-rana", "HR", "/staff/attendance");
   await page.getByRole("link", { name: /Site Visits/ }).click();
@@ -453,6 +454,8 @@ test("HR can open their own site visit from their employee dashboard on mobile",
   await dialog.getByRole("button", { name: "Ministry visit", exact: true }).click();
   await dialog.getByLabel("Site / Destination").fill("Ministry of Labour");
   await expect(dialog.getByLabel("Date", { exact: true })).toBeHidden();
+  await expect(dialog.getByRole("button", { name: "Send to HR" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "Office", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "Send to HR" })).toBeEnabled();
   await expect(dialog).toBeVisible();
   const bounds = await dialog.boundingBox();

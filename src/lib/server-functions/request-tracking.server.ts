@@ -44,6 +44,7 @@ export const getApprovalInboxFn = createServerFn({ method: "GET" })
   .validator((input) => z.object({ actor: Actor }).strict().parse(input))
   .handler(async ({ data }) => {
     const verified = await verify(data.actor);
+    if (verified.actor.activeRole === "Super Admin") return [];
     return (await listTasksForActorInDatabase(verified.organisationId, verified.actor)).filter(
       (task) =>
         isApprovalTask(task) &&

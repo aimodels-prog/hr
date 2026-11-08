@@ -128,6 +128,7 @@ export async function reviewEmployeeReferralInDatabase(
   actor: AuditActorContext,
 ): Promise<{ candidateId: string; interviewRecommendationId?: string }> {
   assertRecruiter(actor);
+  if (actor.activeRole !== "HR") throw new Error("Only HR can decide employee referrals.");
   if (input.decision === "Decline" && input.reason.trim().length < 5)
     throw new Error("Record a clear reason for declining the referral.");
   const reason = input.reason.trim() || "Referral approved by HR";

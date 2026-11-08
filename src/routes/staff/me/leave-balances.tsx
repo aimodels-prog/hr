@@ -1,5 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   CalendarDays,
@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { LeaveRequestDialog } from "@/components/leave/leave-request-dialog";
+import { LeaveApprovalHistory } from "@/components/leave/leave-approval-history";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -186,11 +187,16 @@ function TablePagination({
 
 function LeaveBalancesRoute() {
   const currentUser = useCurrentUser();
+  const location = useLocation();
   const leaveService = useMemo(() => new LeaveService(), []);
   const employeeId = currentUser.employeeId || "";
   const [, setRevision] = useState(0);
   const [isRequestOpen, setIsRequestOpen] = useState(false);
   const [requestPage, setRequestPage] = useState(1);
+  const [detailRequestId, setDetailRequestId] = useState<string | null>(null);
+  useEffect(() => {
+    setDetailRequestId(new URLSearchParams(location.hash.replace(/^#/, "")).get("request"));
+  }, [location.hash]);
   const [activityPage, setActivityPage] = useState(1);
   const [withdrawTarget, setWithdrawTarget] = useState<LeaveRequest | null>(null);
   const [cancelTarget, setCancelTarget] = useState<LeaveRequest | null>(null);
@@ -213,6 +219,7 @@ function LeaveBalancesRoute() {
   const requests = employeeId
     ? leaveService.getLeaveRequestsForEmployee(employeeId, actorContext).sort(newestLeaveFirst)
     : [];
+  const detailRequest = requests.find((request) => request.id === detailRequestId);
 
   const balanceByPolicy = new Map(balances.map((balance) => [balance.policyId, balance]));
   const policyById = new Map(allPolicies.map((policy) => [policy.id, policy]));
@@ -669,6 +676,13 @@ function LeaveBalancesRoute() {
                             {reason}
                           </TableCell>
                           <TableCell className="text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setDetailRequestId(request.id)}
+                            >
+                              Approval details
+                            </Button>
                             {canWithdraw && (
                               <Button
                                 variant="ghost"
@@ -801,6 +815,19 @@ function LeaveBalancesRoute() {
           onSuccess={refreshData}
         />
       )}
+
+      <Dialog
+        open={Boolean(detailRequest)}
+        onOpenChange={(open) => !open && setDetailRequestId(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Leave approval details</DialogTitle>
+            <DialogDescription>See each decision recorded for this request.</DialogDescription>
+          </DialogHeader>
+          {detailRequest && <LeaveApprovalHistory request={detailRequest} />}
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog
         open={!!withdrawTarget}

@@ -257,7 +257,23 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     "recruitment:score_interviews_assigned",
   ],
 
-  "Super Admin": ALL_PERMISSIONS,
+  // System administration is not an approval role. A person who also works in HR,
+  // Finance or as a line manager must switch to that assigned role to decide work.
+  "Super Admin": ALL_PERMISSIONS.filter(
+    (permission) =>
+      ![
+        "leave:approve_direct_reports",
+        "leave:final_approve",
+        "timesheet:approve_direct_reports",
+        "overtime:approve_direct_reports",
+        "attendance:approve_direct_reports",
+        "attendance:site_visit_approve",
+        "travel:manager_review",
+        "travel:hr_review",
+        "travel:finance_review",
+        "travel:final_close",
+      ].includes(permission),
+  ),
 };
 
 export interface CurrentUserContext {

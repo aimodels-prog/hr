@@ -207,7 +207,7 @@ export function DocumentsTab({
     .getDocuments(currentUser.getActorContext())
     .filter((document) => document.employeeId === employeeId);
 
-  const isHrOrAdmin = currentUser?.activeRole === "HR" || currentUser?.activeRole === "Super Admin";
+  const isHrOrAdmin = currentUser?.activeRole === "HR";
   const isSelf = currentUser?.employeeId === employeeId;
 
   // Compute status on the fly (Expiring within 30 days, Expired)

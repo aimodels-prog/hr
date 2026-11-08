@@ -131,7 +131,8 @@ function RequestCentre() {
   const user = useCurrentUser();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  const hr = ["HR", "Super Admin"].includes(user.activeRole);
+  const hr = user.activeRole === "HR";
+  const canViewOrganisation = ["HR", "Super Admin"].includes(user.activeRole);
   const view = search.view ?? (user.activeRole === "Employee" ? "my" : "approvals");
   const actor = {
     actorId: user.id,
@@ -164,7 +165,9 @@ function RequestCentre() {
         },
       }),
     enabled:
-      typeof window !== "undefined" && view !== "approvals" && (view !== "organisation" || hr),
+      typeof window !== "undefined" &&
+      view !== "approvals" &&
+      (view !== "organisation" || canViewOrganisation),
     refetchInterval: 60_000,
     staleTime: 15_000,
   });
@@ -204,7 +207,9 @@ function RequestCentre() {
           </p>
           <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">
             {view === "approvals"
-              ? "Approvals"
+              ? hr
+                ? "HR Approvals"
+                : "Approvals"
               : view === "organisation"
                 ? "Employee Requests"
                 : "My Requests"}
@@ -244,7 +249,7 @@ function RequestCentre() {
               ...(user.activeRole !== "Employee" || inbox.data?.length || view === "approvals"
                 ? [["approvals", `Waiting for me${inbox.data ? ` (${inbox.data.length})` : ""}`]]
                 : []),
-              ...(hr ? [["organisation", "All employee requests"]] : []),
+              ...(canViewOrganisation ? [["organisation", "All employee requests"]] : []),
               ["my", "My requests"],
             ] as Array<["my" | "approvals" | "organisation", string]>
           ).map(([value, label]) => (
@@ -254,7 +259,7 @@ function RequestCentre() {
           ))}
         </SectionNavigation>
         <div className="min-w-0 space-y-4">
-          {view === "organisation" && !hr ? (
+          {view === "organisation" && !canViewOrganisation ? (
             <p role="alert" className="rounded-xl border bg-card p-5 text-sm">
               Only HR can access the organisation tracker.
             </p>
@@ -279,7 +284,11 @@ function RequestCentre() {
                 <div
                   className={cn(
                     "grid gap-3",
-                    view === "approvals" ? "sm:grid-cols-2" : "sm:grid-cols-3",
+                    view === "approvals" && hr
+                      ? "sm:grid-cols-1"
+                      : view === "approvals"
+                        ? "sm:grid-cols-2"
+                        : "sm:grid-cols-3",
                   )}
                 >
                   <label className="min-w-0 text-xs font-medium text-muted-foreground">
@@ -304,37 +313,39 @@ function RequestCentre() {
                       />
                     </span>
                   </label>
-                  <label className="min-w-0 text-xs font-medium text-muted-foreground">
-                    Request type
-                    <select
-                      value={view === "approvals" ? approvalModule : module}
-                      onChange={(event) => {
-                        if (view === "approvals") setApprovalModule(event.target.value);
-                        else setModule(event.target.value as typeof module);
-                        setPage(1);
-                      }}
-                      className="mt-1.5 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/20"
-                    >
-                      {view === "approvals" ? (
-                        <>
-                          <option value="All">All types</option>
-                          {[...new Set((inbox.data ?? []).map((task) => task.module))]
-                            .sort()
-                            .map((name) => (
-                              <option key={name} value={name}>
-                                {name.replaceAll("-", " ")}
-                              </option>
-                            ))}
-                        </>
-                      ) : (
-                        ["All", ...REQUEST_MODULES].map((value) => (
-                          <option key={value} value={value}>
-                            {value === "All" ? "All types" : value}
-                          </option>
-                        ))
-                      )}
-                    </select>
-                  </label>
+                  {!(view === "approvals" && hr) && (
+                    <label className="min-w-0 text-xs font-medium text-muted-foreground">
+                      Request type
+                      <select
+                        value={view === "approvals" ? approvalModule : module}
+                        onChange={(event) => {
+                          if (view === "approvals") setApprovalModule(event.target.value);
+                          else setModule(event.target.value as typeof module);
+                          setPage(1);
+                        }}
+                        className="mt-1.5 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/20"
+                      >
+                        {view === "approvals" ? (
+                          <>
+                            <option value="All">All types</option>
+                            {[...new Set((inbox.data ?? []).map((task) => task.module))]
+                              .sort()
+                              .map((name) => (
+                                <option key={name} value={name}>
+                                  {name.replaceAll("-", " ")}
+                                </option>
+                              ))}
+                          </>
+                        ) : (
+                          ["All", ...REQUEST_MODULES].map((value) => (
+                            <option key={value} value={value}>
+                              {value === "All" ? "All types" : value}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    </label>
+                  )}
                   {view !== "approvals" && (
                     <label className="min-w-0 text-xs font-medium text-muted-foreground">
                       Status
@@ -356,6 +367,63 @@ function RequestCentre() {
                   )}
                 </div>
               </section>
+              {view === "approvals" && hr && (
+                <nav aria-label="HR approval types" className="flex gap-2 overflow-x-auto pb-1">
+                  {[
+                    "All",
+                    "Leave",
+                    "Documents",
+                    "Timesheets",
+                    "Attendance",
+                    "Overtime",
+                    "Travel",
+                    "Training",
+                    "Performance",
+                    "Recruitment",
+                    ...new Set(
+                      (inbox.data ?? [])
+                        .map((task) => task.module)
+                        .filter(
+                          (name) =>
+                            ![
+                              "Leave",
+                              "Documents",
+                              "Timesheets",
+                              "Attendance",
+                              "Overtime",
+                              "Travel",
+                              "Training",
+                              "Performance",
+                              "Recruitment",
+                            ].includes(name),
+                        )
+                        .sort(),
+                    ),
+                  ].map((name) => {
+                    const count =
+                      name === "All"
+                        ? (inbox.data ?? []).length
+                        : (inbox.data ?? []).filter((task) => task.module === name).length;
+                    return (
+                      <button
+                        key={name}
+                        type="button"
+                        aria-current={approvalModule === name ? "page" : undefined}
+                        onClick={() => setApprovalModule(name)}
+                        className={cn(
+                          "min-h-10 shrink-0 rounded-lg border px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          approvalModule === name
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground",
+                        )}
+                      >
+                        {name === "All" ? "All approvals" : name}{" "}
+                        <span className="ml-1 tabular-nums">{count}</span>
+                      </button>
+                    );
+                  })}
+                </nav>
+              )}
               {active.isPending && (
                 <p
                   role="status"

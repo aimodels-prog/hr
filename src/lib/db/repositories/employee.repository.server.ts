@@ -3,7 +3,10 @@ import {
   assertDirectProfileChanges,
   PROFILE_APPROVAL_RETIRED,
 } from "../../data/profile-edit-policy.ts";
-import { isCeoPosition, validateCeoSupervisor } from "../../data/executive-reporting.ts";
+import {
+  isSupervisorOptionalPosition,
+  validateCeoSupervisor,
+} from "../../data/executive-reporting.ts";
 import {
   changedRecordFields,
   changeReason,
@@ -500,8 +503,8 @@ export async function decideProfileChangeRequestInDatabase(
   reviewerNotes: string,
   actor: AuditActorContext,
 ): Promise<void> {
-  if (actor.activeRole !== "HR" && actor.activeRole !== "Super Admin") {
-    throw new Error("Only HR or a Super Admin can review profile changes.");
+  if (actor.activeRole !== "HR") {
+    throw new Error("Only HR can review profile changes.");
   }
   throw new Error(PROFILE_APPROVAL_RETIRED);
 }
@@ -1618,7 +1621,11 @@ export async function createEmployeeInDatabase(
       .where(and(eq(employees.organisationId, organisationId), ne(employees.status, "Archived")));
     const employeeCount = employeeCountRow?.count ?? 0;
     validateCeoSupervisor(input.position, input.lineManagerId);
-    if ((employeeCount ?? 0) > 0 && !input.lineManagerId && !isCeoPosition(input.position)) {
+    if (
+      (employeeCount ?? 0) > 0 &&
+      !input.lineManagerId &&
+      !isSupervisorOptionalPosition(input.position)
+    ) {
       throw new Error("A supervisor must be assigned before an employee record can be created.");
     }
     if (input.lineManagerId) {

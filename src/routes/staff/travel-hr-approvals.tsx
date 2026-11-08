@@ -1,6 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useLocation } from "@tanstack/react-router";
 import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -33,6 +33,7 @@ import { TravelService } from "@/lib/data/travel-service";
 import type { TravelRequest } from "@/lib/data/travel-types";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
+import { focusedApprovalId } from "@/lib/data/approval-links";
 import { CheckCircle, Paperclip, XCircle } from "lucide-react";
 
 export const Route = createFileRoute("/staff/travel-hr-approvals")({
@@ -49,6 +50,9 @@ function HrTravelApprovalsRoute() {
 }
 
 function HrTravelApprovalsContent() {
+  const location = useLocation();
+  const focusedRequestId = focusedApprovalId(location.hash);
+  const openedFocusedRequest = useRef<string | null>(null);
   const employeeFilter = useEmployeeFilter();
   const currentUser = useCurrentUser();
   const travelService = useMemo(() => new TravelService(), []);
@@ -88,6 +92,16 @@ function HrTravelApprovalsContent() {
   const processed = requests.filter(
     (r) => employeeFilter.matchesEmployee(r.employeeId) && r.hrApprovalStatus !== "Pending",
   );
+
+  useEffect(() => {
+    if (!focusedRequestId || openedFocusedRequest.current === focusedRequestId) return;
+    const request = pendingHr.find((item) => item.id === focusedRequestId);
+    if (!request) return;
+    openedFocusedRequest.current = focusedRequestId;
+    setSelectedReq(request);
+    setActionType("approve");
+    setNotes("");
+  }, [focusedRequestId, pendingHr]);
 
   const handleOpenAction = (req: TravelRequest, type: "approve" | "reject") => {
     setSelectedReq(req);

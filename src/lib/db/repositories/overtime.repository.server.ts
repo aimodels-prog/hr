@@ -347,7 +347,7 @@ export async function decideOvertimeClaimInDatabase(
     if (
       (manager &&
         (actor.activeRole !== "Line Manager" || actor.employeeId !== employee?.lineManagerId)) ||
-      (hr && actor.activeRole !== "HR" && actor.activeRole !== "Super Admin") ||
+      (hr && actor.activeRole !== "HR") ||
       (!manager && !hr)
     )
       throw new Error("You are not the assigned overtime approver.");
@@ -474,7 +474,7 @@ export async function decideOvertimeClaimInDatabase(
           and(
             eq(users.organisationId, organisationId),
             eq(users.status, "Active"),
-            inArray(roles.code, ["HR", "Super Admin"]),
+            eq(roles.code, "HR"),
           ),
         );
       for (const reviewer of hrUsers)
@@ -633,7 +633,7 @@ export async function confirmPlannedOvertimeInDatabase(
             and(
               eq(users.organisationId, organisationId),
               eq(users.status, "Active"),
-              inArray(roles.code, ["HR", "Super Admin"]),
+              eq(roles.code, "HR"),
             ),
           )
       ).map((row) => row.id);
@@ -1311,7 +1311,7 @@ export async function processOvertimeWorker(at = new Date()) {
             and(
               eq(users.organisationId, row.claim.organisationId),
               eq(users.status, "Active"),
-              inArray(roles.code, ["HR", "Super Admin"]),
+              eq(roles.code, "HR"),
             ),
           );
         for (const reviewer of reviewers) {

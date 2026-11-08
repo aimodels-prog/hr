@@ -44,6 +44,25 @@ export function siteVisitReturnLabel(details?: SiteVisitDetails): string {
   return details.returnPlan === "Unknown" ? "Return time not sure" : "Not returning today";
 }
 
+/** An unconfirmed visit has not changed attendance, so its owner may withdraw it. */
+export function canCancelSiteVisit(
+  status: string,
+  date: string,
+  startTime: string,
+  timeZone: string,
+  at = new Date(),
+): boolean {
+  if (status === "Pending HR") return true;
+  if (status !== "Approved") return false;
+  const now = siteVisitLocalNow(timeZone, at);
+  return `${date}T${startTime}` > `${now.date}T${now.time}`;
+}
+
+/** A daily attendance row cannot yet account for two independent visits. */
+export function blocksAnotherSiteVisit(status: string): boolean {
+  return !["Rejected", "Cancelled"].includes(status);
+}
+
 export function validateSiteVisitPlan(startTime: string, details: SiteVisitDetails): void {
   if (!details.returnPlan) return; // Existing scheduled visits retain their original contract.
   if (!["Time", "Unknown", "Not returning"].includes(details.returnPlan))

@@ -1135,6 +1135,8 @@ export async function approveLeaveRequestInDatabase(
       .limit(1);
     if (!employee || !policy) throw new Error("The employee or leave policy is unavailable.");
     const role = actor.activeRole;
+    if (role === "Super Admin")
+      throw new Error("Switch to your assigned HR or Line Manager role to decide leave.");
     const amendment =
       request.status === "Amendment Pending Line Manager" ||
       request.status === "Amendment Pending HR";
@@ -1190,12 +1192,7 @@ export async function approveLeaveRequestInDatabase(
         !specialHrStage) ||
       (specialStage && !pendingSpecialStep) ||
       (!specialStage && managerStage && !isManager) ||
-      (!specialStage &&
-        !specialCountryStage &&
-        !specialHrStage &&
-        hrStage &&
-        role !== "HR" &&
-        role !== "Super Admin") ||
+      (!specialStage && !specialCountryStage && !specialHrStage && hrStage && role !== "HR") ||
       (!specialStage && !managerStage && !hrStage)
     )
       throw new Error("You are not the assigned approver for this leave request.");
@@ -1653,10 +1650,7 @@ export async function approveLeaveRequestInDatabase(
             and(
               eq(users.organisationId, organisationId),
               eq(users.status, "Active"),
-              inArray(
-                roles.code,
-                specialRequest && specialCountryStage ? ["HR"] : ["HR", "Super Admin"],
-              ),
+              eq(roles.code, "HR"),
             ),
           )
       ).map((item) => ({ id: item.id, path: "/staff/leave-approvals" }));
@@ -2224,7 +2218,7 @@ export async function requestLeaveChangeInDatabase(
             and(
               eq(users.organisationId, organisationId),
               eq(users.status, "Active"),
-              inArray(roles.code, ["HR", "Super Admin"]),
+              eq(roles.code, "HR"),
             ),
           )
       ).map((item) => item.id);

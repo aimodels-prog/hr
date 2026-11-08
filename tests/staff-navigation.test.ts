@@ -28,7 +28,18 @@ for (const role of Object.keys(ROLE_PERMISSIONS) as Role[]) {
       assert.ok(urls.includes("/staff/me/timesheets"));
       assert.ok(urls.includes("/staff/interviews"), "Assigned interview work remains accessible");
     }
-    assert.equal(urls.filter((url) => url === "/staff/requests").length, 1);
+    assert.equal(
+      urls.filter(
+        (url) =>
+          url ===
+          (role === "HR"
+            ? "/staff/requests?view=approvals"
+            : role === "Super Admin"
+              ? "/staff/requests?view=organisation"
+              : "/staff/requests"),
+      ).length,
+      1,
+    );
   });
 }
 
@@ -38,8 +49,12 @@ test("HR pages have clear functional homes and no finance or system-settings esc
     groups.find((group) => group.items.some((item) => item.url === url))?.label;
   assert.equal(home("/staff/employees"), "Employees");
   assert.equal(home("/staff/leave-admin"), "Time & Leave");
-  assert.equal(home("/staff/requests"), "Home");
-  assert.equal(activeNavigationUrl(groups, "/staff/leave-approvals"), "/staff/requests");
+  assert.equal(home("/staff/requests?view=approvals"), "HR");
+  assert.equal(home("/staff/requests?view=organisation"), "HR");
+  assert.equal(
+    activeNavigationUrl(groups, "/staff/leave-approvals"),
+    "/staff/requests?view=approvals",
+  );
   assert.equal(home("/staff/offers"), "Recruitment");
   assert.equal(home("/staff/files"), "Documents");
   assert.equal(home("/staff/leave-policies"), "Settings");
@@ -83,7 +98,10 @@ test("active destination is unique for nested paths and approval shortcuts", () 
     activeNavigationUrl(navigation("Employee"), "/staff/me/attendance"),
     "/staff/me/attendance",
   );
-  assert.equal(activeNavigationUrl(groups, "/staff/attendance/corrections"), "/staff/requests");
+  assert.equal(
+    activeNavigationUrl(groups, "/staff/attendance/corrections"),
+    "/staff/requests?view=approvals",
+  );
   assert.equal(
     activeNavigationUrl(groups, "/staff/settings?section=departments"),
     "/staff/settings",

@@ -77,12 +77,31 @@ const adminCtx = createTestUserContext("Super Admin", "user-super-admin", "emplo
 const itCtx = createTestUserContext("IT", "user-it", "employee-it");
 
 test("role permissions enforce strict boundaries for every operational role", () => {
-  // 1. Super Admin has all permissions
+  // System administration does not grant operational approval authority.
   const adminPermissions = getRolePermissions("Super Admin");
-  assert.equal(adminPermissions.size, ALL_PERMISSIONS.length);
+  const approvalPermissions: Permission[] = [
+    "leave:approve_direct_reports",
+    "leave:final_approve",
+    "timesheet:approve_direct_reports",
+    "overtime:approve_direct_reports",
+    "attendance:approve_direct_reports",
+    "attendance:site_visit_approve",
+    "travel:manager_review",
+    "travel:hr_review",
+    "travel:finance_review",
+    "travel:final_close",
+  ];
+  assert.equal(adminPermissions.size, ALL_PERMISSIONS.length - approvalPermissions.length);
   for (const p of ALL_PERMISSIONS) {
-    assert.equal(can(p, adminCtx), true, `Super Admin must have permission: ${p}`);
+    assert.equal(
+      can(p, adminCtx),
+      !approvalPermissions.includes(p),
+      `Super Admin approval boundary for ${p}`,
+    );
   }
+  assert.equal(can("leave:final_approve", hrCtx), true);
+  assert.equal(can("travel:finance_review", accountsCtx), true);
+  assert.equal(can("leave:approve_direct_reports", managerCtx), true);
 
   // 2. HR cannot access payroll preparation
   assert.equal(can("payroll:view", hrCtx), false);

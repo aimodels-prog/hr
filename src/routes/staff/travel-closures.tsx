@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState, useMemo } from "react";
+import { createFileRoute, useLocation } from "@tanstack/react-router";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -32,6 +32,7 @@ import { calculateTravelVariancePercent, TravelService } from "@/lib/data/travel
 import type { ExpenseLine, TravelRequest } from "@/lib/data/travel-types";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
+import { focusedApprovalId } from "@/lib/data/approval-links";
 import { CheckCircle, Paperclip, XCircle } from "lucide-react";
 
 export const Route = createFileRoute("/staff/travel-closures")({
@@ -47,6 +48,9 @@ function TravelClosuresRoute() {
 }
 
 function TravelClosuresContent() {
+  const location = useLocation();
+  const focusedRequestId = focusedApprovalId(location.hash);
+  const openedFocusedRequest = useRef<string | null>(null);
   const currentUser = useCurrentUser();
   const travelService = useMemo(() => new TravelService(), []);
   const empService = useMemo(() => new EmployeeService(), []);
@@ -76,6 +80,16 @@ function TravelClosuresContent() {
       r.status === "Pending Super Admin Closure",
   );
   const closed = requests.filter((r) => r.status === "Closed");
+
+  useEffect(() => {
+    if (!focusedRequestId || openedFocusedRequest.current === focusedRequestId) return;
+    const request = pendingClosure.find((item) => item.id === focusedRequestId);
+    if (!request) return;
+    openedFocusedRequest.current = focusedRequestId;
+    setSelectedReq(request);
+    setActionType("approve");
+    setNotes("");
+  }, [focusedRequestId, pendingClosure]);
 
   const handleOpenAction = (req: TravelRequest, type: "approve" | "reject") => {
     setSelectedReq(req);

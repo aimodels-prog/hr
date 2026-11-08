@@ -1,7 +1,7 @@
 import { SYSTEM_CONTEXT } from "./types.ts";
 import { recordedAttendanceHours } from "./recorded-hours.ts";
 import type { SpreadsheetTable } from "./excel-export.ts";
-import { validateSiteVisitPlan } from "./site-visit.ts";
+import { blocksAnotherSiteVisit, canCancelSiteVisit, validateSiteVisitPlan } from "./site-visit.ts";
 import { getApplicationDataServices } from "./application-data.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { LeaveService } from "./leave-service.ts";
@@ -1764,17 +1764,18 @@ export class AttendanceService {
     }
     if (input.date < dateKey(this.now()))
       throw new Error("A site visit cannot be requested in the past.");
-    const overlapping = this.siteVisitRepo
+    const existingVisit = this.siteVisitRepo
       .list()
       .find(
         (visit) =>
           visit.employeeId === input.employeeId &&
           visit.date === input.date &&
-          !["Rejected", "Cancelled"].includes(visit.status) &&
-          localDateTime(visit.date, visit.startTime) < end &&
-          localDateTime(visit.date, visit.endTime) > start,
+          blocksAnotherSiteVisit(visit.status),
       );
-    if (overlapping) throw new Error("An active site visit already overlaps this time.");
+    if (existingVisit)
+      throw new Error(
+        "A quick visit is already recorded for this day. Ask HR to record any additional duty so attendance hours remain accurate.",
+      );
     const visit = this.siteVisitRepo.create(
       {
         ...input,
@@ -1789,7 +1790,7 @@ export class AttendanceService {
       "Site visit approval required",
       `${context.actor.displayName} requested a ${input.origin.toLowerCase()}-origin visit to ${input.destination}.`,
       `site-visit-hr-${visit.id}`,
-      "/staff/attendance",
+      `/staff/attendance#section=site-visits&visit=${visit.id}`,
       context,
     );
     return visit;
@@ -1851,8 +1852,9 @@ export class AttendanceService {
     if (!["Pending HR", "Approved"].includes(visit.status)) {
       throw new Error("This site visit can no longer be cancelled.");
     }
-    if (localDateTime(visit.date, visit.startTime) <= this.now()) {
-      throw new Error("A site visit cannot be cancelled after it starts. Contact HR.");
+    const timeZone = new SettingsService().getAppSettingsSync().timezone;
+    if (!canCancelSiteVisit(visit.status, visit.date, visit.startTime, timeZone, this.now())) {
+      throw new Error("An approved site visit cannot be cancelled after it starts. Contact HR.");
     }
     return this.siteVisitRepo.update(id, { status: "Cancelled" }, context);
   }

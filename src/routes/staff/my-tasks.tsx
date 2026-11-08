@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/select";
 import { useCurrentUser } from "@/lib/auth";
 import { TaskService, type AppTask, type TaskState } from "@/lib/data/task-service";
+import { approvalActionUrl } from "@/lib/data/approval-links";
 
 export const Route = createFileRoute("/staff/my-tasks")({
   component: MyTasksRoute,
@@ -274,7 +275,7 @@ function MyTasksRoute() {
                   className="w-full shrink-0 sm:w-auto"
                   variant={task.state === "Blocked" ? "outline" : "default"}
                   onClick={() => {
-                    const [path, hash = ""] = task.actionUrl.split("#");
+                    const [path, hash = ""] = approvalActionUrl(task).split("#");
                     return navigate({ to: path!, hash });
                   }}
                 >

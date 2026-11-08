@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -29,19 +29,34 @@ import {
 } from "@/lib/data/time-away";
 
 export const Route = createFileRoute("/staff/time-away")({
-  validateSearch: (search: Record<string, unknown>): { date?: string } => {
+  validateSearch: (search: Record<string, unknown>): { date?: string; review?: string } => {
     const result = timeAwayDate.safeParse(search["date"]);
-    return result.success ? { date: result.data } : {};
+    return {
+      ...(result.success ? { date: result.data } : {}),
+      ...(typeof search["review"] === "string" ? { review: search["review"] } : {}),
+    };
   },
   component: TimeAwayScope,
 });
 function TimeAwayScope() {
   const user = useCurrentUser();
-  const { date } = Route.useSearch();
-  return <TimeAwayPage key={`${user.id}:${user.activeRole}:${date}`} initialDate={date} />;
+  const { date, review } = Route.useSearch();
+  return (
+    <TimeAwayPage
+      key={`${user.id}:${user.activeRole}:${date}:${review}`}
+      initialDate={date}
+      initialReviewId={review}
+    />
+  );
 }
 type Row = Awaited<ReturnType<typeof listTimeAwayFn>>["rows"][number];
-function TimeAwayPage({ initialDate }: { initialDate: string | undefined }) {
+function TimeAwayPage({
+  initialDate,
+  initialReviewId,
+}: {
+  initialDate: string | undefined;
+  initialReviewId: string | undefined;
+}) {
   const user = useCurrentUser();
   const actor = {
     actorId: user.id,
@@ -57,6 +72,7 @@ function TimeAwayPage({ initialDate }: { initialDate: string | undefined }) {
     useState<(typeof TIME_AWAY_CATEGORIES)[number]>("Medical appointment");
   const [note, setNote] = useState("");
   const [review, setReview] = useState<Row | null>(null);
+  const openedReview = useRef(false);
   const [action, setAction] = useState<"Approve" | "Reject" | "Cancel">("Approve");
   const [treatment, setTreatment] = useState<(typeof TIME_AWAY_TREATMENTS)[number]>("Paid time");
   const [reviewNote, setReviewNote] = useState("");
@@ -66,6 +82,25 @@ function TimeAwayPage({ initialDate }: { initialDate: string | undefined }) {
     queryFn: () => listTimeAwayFn({ data: { actor, date } }),
     enabled: timeAwayDate.safeParse(date).success,
   });
+  useEffect(() => {
+    if (initialReviewId && query.data?.rows.some((row) => row.id === initialReviewId)) {
+      document.getElementById(`time-away-${initialReviewId}`)?.scrollIntoView({ block: "center" });
+    }
+    if (!initialReviewId || openedReview.current || !query.data?.canReview) return;
+    const row = query.data.rows.find(
+      (candidate) =>
+        candidate.id === initialReviewId &&
+        candidate.status === "Pending HR" &&
+        candidate.employeeId !== query.data.selfId &&
+        candidate.createdBy !== user.id,
+    );
+    if (!row) return;
+    openedReview.current = true;
+    setReview(row);
+    setAction("Approve");
+    setTreatment("Paid time");
+    setReviewNote("");
+  }, [initialReviewId, query.data, user.id]);
   const run = async (task: () => Promise<void>) => {
     if (busy) return;
     setBusy(true);
@@ -125,7 +160,11 @@ function TimeAwayPage({ initialDate }: { initialDate: string | undefined }) {
         </div>
       )}
       {query.data?.rows.map((row) => (
-        <article key={row.id} className="space-y-3 rounded-xl border bg-card p-4">
+        <article
+          key={row.id}
+          id={`time-away-${row.id}`}
+          className="space-y-3 rounded-xl border bg-card p-4"
+        >
           <div className="flex flex-wrap justify-between gap-2">
             <h2 className="font-semibold">{row.name}</h2>
             <span className="rounded-full bg-muted px-3 py-1 text-xs">{row.status}</span>

@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useLocation } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, Download, FileCheck2, XCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -7,6 +7,7 @@ import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { AttendanceService } from "@/lib/data/attendance-service";
 import type { AttendanceCorrection } from "@/lib/data/attendance-types";
 import { EmployeeService } from "@/lib/data/employee-service";
+import { focusedApprovalId } from "@/lib/data/approval-links";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -41,11 +42,15 @@ export const Route = createFileRoute("/staff/attendance/corrections")({
 
 function AttendanceCorrectionsRoute() {
   const currentUser = useCurrentUser();
+  const location = useLocation();
+  const focusedCorrectionId = focusedApprovalId(location.hash);
   const attendanceService = useMemo(() => new AttendanceService(), []);
   const employeeService = useMemo(() => new EmployeeService(), []);
   const [revision, setRevision] = useState(0);
   const [selected, setSelected] = useState<AttendanceCorrection | null>(null);
   const [reviewMode, setReviewMode] = useState<"manager" | "hr">("manager");
+  const [activeTab, setActiveTab] = useState("manager");
+  const openedFocusedCorrection = useRef<string | null>(null);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const decisionInFlight = useRef(false);
@@ -81,6 +86,34 @@ function AttendanceCorrectionsRoute() {
   const history = visibleCorrections
     .filter((item) => ["Approved", "Rejected"].includes(item.status))
     .slice(0, 30);
+
+  useEffect(() => {
+    if (!focusedCorrectionId || openedFocusedCorrection.current === focusedCorrectionId) return;
+    const available = attendanceService.getAllCorrections(actorContext);
+    const hr = canHrReview
+      ? available.find((item) => item.id === focusedCorrectionId && item.status === "Pending HR")
+      : undefined;
+    const manager = canManagerReview
+      ? (canHrReview
+          ? available
+          : attendanceService.getCorrectionsForDirectReports(actorContext)
+        ).find((item) => item.id === focusedCorrectionId && item.status === "Pending Manager")
+      : undefined;
+    const correction = hr ?? manager;
+    if (!correction) return;
+    openedFocusedCorrection.current = focusedCorrectionId;
+    setActiveTab(hr ? "hr" : "manager");
+    setReviewMode(hr ? "hr" : "manager");
+    setNotes("");
+    setSelected(correction);
+  }, [
+    actorContext,
+    attendanceService,
+    canHrReview,
+    canManagerReview,
+    focusedCorrectionId,
+    revision,
+  ]);
 
   const openReview = (correction: AttendanceCorrection, mode: "manager" | "hr") => {
     setSelected(correction);
@@ -233,8 +266,6 @@ function AttendanceCorrectionsRoute() {
     </Card>
   );
 
-  const defaultTab = canManagerReview ? "manager" : canHrReview ? "hr" : "history";
-
   return (
     <RequirePermission
       permission="attendance:approve_direct_reports"
@@ -245,7 +276,7 @@ function AttendanceCorrectionsRoute() {
           title="Attendance Corrections"
           description="Original punches remain immutable until the controlled approval flow is complete."
         />
-        <Tabs defaultValue={defaultTab}>
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
             {canManagerReview && (
               <TabsTrigger value="manager">

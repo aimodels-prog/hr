@@ -760,7 +760,10 @@ export class LeaveService {
   getPendingRequestsForManager(context: ActorContext): LeaveRequest[] {
     if (
       !context.actor.employeeId ||
-      (context.actor.activeRole !== "Line Manager" && !context.actor.roles.includes("Line Manager"))
+      (context.actor.activeRole !== "Line Manager" &&
+        context.actor.activeRole !== "HR" &&
+        context.actor.activeRole !== "Super Admin" &&
+        !context.actor.roles.includes("Line Manager"))
     ) {
       this.denyAccess(
         "Manager leave queue denied",
@@ -905,6 +908,8 @@ export class LeaveService {
   }
 
   approveRequest(requestId: string, context: ActorContext): LeaveRequest {
+    if (context.actor.activeRole === "Super Admin")
+      throw new Error("Switch to your assigned HR or Line Manager role to decide leave.");
     const req = this.requestRepo.getById(requestId);
     if (!req) throw new Error("Request not found");
 
@@ -998,7 +1003,7 @@ export class LeaveService {
     }
 
     if (req.status === "Pending HR" || req.status === "Pending Super Admin") {
-      if (context.actor.activeRole !== "HR" && context.actor.activeRole !== "Super Admin") {
+      if (context.actor.activeRole !== "HR") {
         this.denyAccess(
           "Final leave approval denied",
           req.id,
@@ -1029,7 +1034,7 @@ export class LeaveService {
     }
 
     if (req.status === "Cancellation Pending") {
-      if (context.actor.activeRole !== "HR" && context.actor.activeRole !== "Super Admin") {
+      if (context.actor.activeRole !== "HR") {
         this.denyAccess(
           "Leave cancellation approval denied",
           req.id,
@@ -1068,6 +1073,8 @@ export class LeaveService {
   }
 
   rejectRequest(requestId: string, reason: string, context: ActorContext): LeaveRequest {
+    if (context.actor.activeRole === "Super Admin")
+      throw new Error("Switch to your assigned HR or Line Manager role to decide leave.");
     const req = this.requestRepo.getById(requestId);
     if (!req) throw new Error("Request not found");
 
@@ -1117,7 +1124,7 @@ export class LeaveService {
       req.status === "Pending Super Admin" ||
       req.status === "Cancellation Pending"
     ) {
-      if (context.actor.activeRole !== "HR" && context.actor.activeRole !== "Super Admin") {
+      if (context.actor.activeRole !== "HR") {
         this.denyAccess(
           "Final leave decision denied",
           req.id,

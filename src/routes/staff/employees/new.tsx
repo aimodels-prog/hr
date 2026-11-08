@@ -1,5 +1,5 @@
 import { SafeForm } from "@/components/ui/safe-form";
-import { isCeoPosition } from "@/lib/data/executive-reporting";
+import { isCeoPosition, isSupervisorOptionalPosition } from "@/lib/data/executive-reporting";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useState, useMemo } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -74,7 +74,10 @@ const formSchema = z
     socialInsuranceNumber: z.string().optional(),
   })
   .superRefine((values, ctx) => {
-    if (isCeoPosition(values.position) ? !!values.lineManagerId : !values.lineManagerId) {
+    if (
+      (isCeoPosition(values.position) && !!values.lineManagerId) ||
+      (!isSupervisorOptionalPosition(values.position) && !values.lineManagerId)
+    ) {
       ctx.addIssue({
         code: "custom",
         path: ["lineManagerId"],
@@ -649,11 +652,13 @@ function NewEmployeeRoute() {
                       <FormLabel>
                         {isCeoPosition(form.watch("position"))
                           ? "Supervisor — not applicable for CEO"
-                          : "Supervisor *"}
+                          : isSupervisorOptionalPosition(form.watch("position"))
+                            ? "Supervisor (optional)"
+                            : "Supervisor *"}
                       </FormLabel>
                       <FormControl>
                         <SearchableSelect
-                          onValueChange={field.onChange}
+                          onValueChange={(value) => field.onChange(value === "none" ? "" : value)}
                           value={field.value as string}
                           placeholder={
                             isCeoPosition(form.watch("position"))
@@ -662,6 +667,10 @@ function NewEmployeeRoute() {
                           }
                           disabled={isCeoPosition(form.watch("position"))}
                           options={[
+                            ...(isSupervisorOptionalPosition(form.watch("position")) &&
+                            !isCeoPosition(form.watch("position"))
+                              ? [{ value: "none", label: "No supervisor" }]
+                              : []),
                             ...activeEmployees.map((d) => ({
                               value: d.id,
                               label: `${d.preferredName} · ${d.employeeNumber}`,

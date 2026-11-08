@@ -12,7 +12,7 @@ import {
 } from "../../data/time-away.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 
-const hr = (actor: AuditActorContext) => ["HR", "Super Admin"].includes(actor.activeRole);
+const hr = (actor: AuditActorContext) => actor.activeRole === "HR";
 function employeeScope(actor: AuditActorContext) {
   if (hr(actor)) return undefined;
   return or(
@@ -98,7 +98,7 @@ export async function recordTimeAway(org: string, raw: unknown, actor: AuditActo
         and(
           eq(users.organisationId, org),
           eq(users.status, "Active"),
-          inArray(roles.code, ["HR", "Super Admin"]),
+          eq(roles.code, "HR"),
           sql`${users.id} <> ${actor.userId}::uuid`,
           sql`${users.employeeId} IS DISTINCT FROM ${input.employeeId}::uuid`,
         ),
@@ -115,7 +115,7 @@ export async function recordTimeAway(org: string, raw: unknown, actor: AuditActo
           link: {
             entityType: "time-away",
             entityId: record.id,
-            path: `/staff/time-away?date=${input.date}`,
+            path: `/staff/time-away?date=${input.date}&review=${record.id}`,
           },
           deduplicationKey: `time-away:${record.id}:review`,
           createdBy: actor.userId!,
@@ -144,7 +144,7 @@ export async function recordTimeAway(org: string, raw: unknown, actor: AuditActo
           link: {
             entityType: "time-away",
             entityId: record.id,
-            path: `/staff/time-away?date=${input.date}`,
+            path: `/staff/time-away?date=${input.date}&review=${record.id}`,
           },
           deduplicationKey: `time-away:${record.id}:receipt`,
           createdBy: actor.userId!,

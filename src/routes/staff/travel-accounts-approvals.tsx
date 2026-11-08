@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState, useMemo } from "react";
+import { createFileRoute, useLocation } from "@tanstack/react-router";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -33,6 +33,7 @@ import type { TravelRequest } from "@/lib/data/travel-types";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { getMasterDataRepository, getProjectRepository } from "@/lib/data/master-data";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
+import { focusedApprovalId } from "@/lib/data/approval-links";
 import { CheckCircle, Paperclip, XCircle } from "lucide-react";
 
 export const Route = createFileRoute("/staff/travel-accounts-approvals")({
@@ -48,6 +49,9 @@ function AccountsTravelApprovalsRoute() {
 }
 
 function AccountsTravelApprovalsContent() {
+  const location = useLocation();
+  const focusedRequestId = focusedApprovalId(location.hash);
+  const openedFocusedRequest = useRef<string | null>(null);
   const currentUser = useCurrentUser();
   const travelService = useMemo(() => new TravelService(), []);
   const empService = useMemo(() => new EmployeeService(), []);
@@ -85,6 +89,16 @@ function AccountsTravelApprovalsContent() {
       r.status === "Pending HR and Accounts",
   );
   const processed = requests.filter((r) => r.accountsApprovalStatus !== "Pending");
+
+  useEffect(() => {
+    if (!focusedRequestId || openedFocusedRequest.current === focusedRequestId) return;
+    const request = pendingAccounts.find((item) => item.id === focusedRequestId);
+    if (!request) return;
+    openedFocusedRequest.current = focusedRequestId;
+    setSelectedReq(request);
+    setActionType("approve");
+    setNotes("");
+  }, [focusedRequestId, pendingAccounts]);
 
   const handleOpenAction = (req: TravelRequest, type: "approve" | "reject") => {
     setSelectedReq(req);

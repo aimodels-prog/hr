@@ -195,7 +195,7 @@ export function toTrackedRequest(row: RequestRow): TrackedRequest {
 /** Only decision work, not reminders to attend a course, prepare payroll or submit a form. */
 export function isApprovalTask(task: AppTask): boolean {
   return (
-    /^(leave-(manager|hr|country-manager)-|timesheet-(manager|hr)-|attendance-(manager|hr)-|overtime-(manager|hr)-|training-(manager|hr|verify)-|site-visit-hr-|travel-(manager|hr|accounts|close)-|performance-(manager|hr)-|document-verify-|offer-approval-|goal-manager-|referral-hr-)/.test(
+    /^(leave-(manager|hr|country-manager)-|timesheet-(manager|hr)-|attendance-(manager|hr)-|time-away-hr-|overtime-(manager|hr)-|training-(manager|hr|verify)-|site-visit-hr-|travel-(manager|hr|accounts|close)-|performance-(manager|hr)-|document-verify-|offer-approval-|goal-manager-|referral-hr-)/.test(
       task.id,
     ) ||
     (task.sourceType === "payroll-period" && task.title === "Approve payroll period")

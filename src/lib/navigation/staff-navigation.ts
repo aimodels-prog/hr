@@ -712,11 +712,41 @@ export function staffNavigation(role: Role, can: (permission: Permission) => boo
               ],
             },
           ]
-        : [inbox]),
+        : role === "HR"
+          ? []
+          : role === "Super Admin"
+            ? [
+                {
+                  ...inbox,
+                  title: "Employee requests",
+                  url: "/staff/requests?view=organisation",
+                  shortcuts: [],
+                },
+              ]
+            : [inbox]),
+    ],
+  };
+  const hrApprovals: NavGroup = {
+    label: "HR",
+    items: [
+      {
+        title: "HR Approvals",
+        url: "/staff/requests?view=approvals",
+        icon: ClipboardCheck,
+        keywords:
+          "approve approval leave document timesheet attendance overtime travel training decisions",
+        shortcuts: approvals,
+      },
+      {
+        title: "Employee Requests",
+        url: "/staff/requests?view=organisation",
+        icon: FileSearch,
+        keywords: "approval status history all employees",
+      },
     ],
   };
   const result = hr
-    ? [home, ...business]
+    ? [home, ...(role === "HR" ? [hrApprovals] : []), ...business]
     : role === "Employee"
       ? [
           home,

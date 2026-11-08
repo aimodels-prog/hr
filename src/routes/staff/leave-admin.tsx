@@ -1,11 +1,12 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useLocation } from "@tanstack/react-router";
+import { LeaveApprovalHistory } from "@/components/leave/leave-approval-history";
 import {
   leaveDisplayReason,
   leaveDisplayType,
   newestLeaveFirst,
 } from "@/lib/data/leave-presentation";
 import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -69,12 +70,17 @@ function LeaveAdminRoute() {
 }
 
 function LeaveAdminContent() {
+  const location = useLocation();
   const employeeFilter = useEmployeeFilter();
   const currentUser = useCurrentUser();
   const leaveService = useMemo(() => new LeaveService(), []);
   const empService = useMemo(() => new EmployeeService(), []);
 
   const [refreshKey, setRefreshKey] = useState(0);
+  const [detailRequestId, setDetailRequestId] = useState<string | null>(null);
+  useEffect(() => {
+    setDetailRequestId(new URLSearchParams(location.hash.replace(/^#/, "")).get("request"));
+  }, [location.hash]);
   const refresh = () => setRefreshKey((k) => k + 1);
 
   const employees = empService
@@ -88,6 +94,7 @@ function LeaveAdminContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [leaveService, refreshKey],
   );
+  const detailRequest = allRequests.find((request) => request.id === detailRequestId);
 
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [deptFilter, setDeptFilter] = useState<string>("all");
@@ -259,6 +266,7 @@ function LeaveAdminContent() {
                       <TableHead>Policy</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Notes</TableHead>
+                      <TableHead>Approval</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -342,12 +350,21 @@ function LeaveAdminContent() {
                               leaveDisplayReason(req.reason) || "—"
                             )}
                           </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setDetailRequestId(req.id)}
+                            >
+                              View steps
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       );
                     })}
                     {filteredRequests.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                           No requests match the current filters.
                         </TableCell>
                       </TableRow>
@@ -447,6 +464,19 @@ function LeaveAdminContent() {
           </TabsContent>
         </Tabs>
       </div>
+
+      <Dialog
+        open={Boolean(detailRequest)}
+        onOpenChange={(open) => !open && setDetailRequestId(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Leave approval details</DialogTitle>
+            <DialogDescription>See each decision recorded for this request.</DialogDescription>
+          </DialogHeader>
+          {detailRequest && <LeaveApprovalHistory request={detailRequest} />}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={isRolloverOpen} onOpenChange={setIsRolloverOpen}>
         <DialogContent>

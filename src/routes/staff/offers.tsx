@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
 import { Search, FileText } from "lucide-react";
 
@@ -25,6 +25,7 @@ import { CandidateService } from "@/lib/data/candidate-service";
 import { VacancyService } from "@/lib/data/vacancy-service";
 import type { JobOfferStatus } from "@/lib/data/types";
 import { AssignedOfferReviews } from "@/components/offers/assigned-offer-reviews";
+import { focusedApprovalId } from "@/lib/data/approval-links";
 
 export const Route = createFileRoute("/staff/offers")({
   component: OffersRoute,
@@ -44,9 +45,13 @@ const STATUS_ORDER: JobOfferStatus[] = [
 
 function OffersRoute() {
   const user = useCurrentUser();
+  const location = useLocation();
   return (
     <>
-      <AssignedOfferReviews key={`${user.id}-${user.activeRole}`} />
+      <AssignedOfferReviews
+        key={`${user.id}-${user.activeRole}`}
+        focusedOfferId={focusedApprovalId(location.hash)}
+      />
       {(user.activeRole === "HR" || user.activeRole === "Super Admin") && <HrOffers />}
     </>
   );

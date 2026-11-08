@@ -1,6 +1,6 @@
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { recordedAttendanceHours } from "@/lib/data/recorded-hours";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
 import {
   ATTENDANCE_LIST_FILTERS,
@@ -127,6 +127,7 @@ function AttendanceAdminRoute() {
 
 function AttendanceAdminContent() {
   const currentUser = useCurrentUser();
+  const location = useLocation();
   const attendanceService = useMemo(() => new AttendanceService(), []);
   const employeeService = useMemo(() => new EmployeeService(), []);
   const [revision, setRevision] = useState(0);
@@ -152,6 +153,8 @@ function AttendanceAdminContent() {
     useState<Extract<AttendanceSource, "Hardware Terminal" | "Manual Entry">>("Manual Entry");
   const [csvPreview, setCsvPreview] = useState<AttendanceImportPreview | null>(null);
   const [reviewVisit, setReviewVisit] = useState<SiteVisitRequest | null>(null);
+  const openedSectionLink = useRef("");
+  const openedVisitLink = useRef("");
   const [decisionNotes, setDecisionNotes] = useState("");
   const [caseDialog, setCaseDialog] = useState<AttendanceExceptionCase | null>(null);
   const [caseNotes, setCaseNotes] = useState("");
@@ -341,6 +344,23 @@ function AttendanceAdminContent() {
   const pendingSiteVisits = siteVisits.filter(
     (visit) => visit.status === "Pending HR" || visit.details?.extension?.status === "Pending",
   );
+  useEffect(() => {
+    const params = new URLSearchParams(location.hash.replace(/^#/, ""));
+    if (params.get("section") !== "site-visits") return;
+    if (openedSectionLink.current !== location.hash) {
+      openedSectionLink.current = location.hash;
+      setSection("site-visits");
+      return;
+    }
+    if (section !== "site-visits") return;
+    const id = params.get("visit");
+    if (!id || openedVisitLink.current === id) return;
+    const visit = pendingSiteVisits.find((item) => item.id === id || item.databaseId === id);
+    if (!visit || visit.employeeId === currentUser.employeeId) return;
+    openedVisitLink.current = id;
+    setDecisionNotes("");
+    setReviewVisit(visit);
+  }, [location.hash, section, pendingSiteVisits, currentUser.employeeId]);
   const exceptionCases = attendanceService
     .getExceptionCases(actorContext)
     .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
@@ -1398,8 +1418,10 @@ function AttendanceAdminContent() {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-right">
-                            {(visit.status === "Pending HR" ||
-                              visit.details?.extension?.status === "Pending") && (
+                            {currentUser.activeRole === "HR" &&
+                            (visit.status === "Pending HR" ||
+                              visit.details?.extension?.status === "Pending") &&
+                            visit.employeeId !== currentUser.employeeId ? (
                               <Button
                                 size="sm"
                                 onClick={() => {
@@ -1409,7 +1431,13 @@ function AttendanceAdminContent() {
                               >
                                 Review
                               </Button>
-                            )}
+                            ) : visit.employeeId === currentUser.employeeId &&
+                              (visit.status === "Pending HR" ||
+                                visit.details?.extension?.status === "Pending") ? (
+                              <span className="text-xs text-muted-foreground">
+                                Another reviewer required
+                              </span>
+                            ) : null}
                           </TableCell>
                         </TableRow>
                       );

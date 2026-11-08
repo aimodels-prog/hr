@@ -21,6 +21,7 @@ import { syncWorkingHours } from "./working-hours.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
 import {
+  canCancelSiteVisit,
   validateSiteVisitPlan,
   type SiteVisitDetails,
   type SiteVisitReturnPlan,
@@ -1194,7 +1195,7 @@ export async function requestAttendanceCorrectionInDatabase(
       FROM users u JOIN user_roles ur ON ur.user_id=u.id AND ur.organisation_id=u.organisation_id
       JOIN roles r ON r.id=ur.role_id
       WHERE u.organisation_id=${organisationId}::uuid AND u.status='Active' AND u.archived_at IS NULL
-        AND u.employee_id<>${actor.employeeId}::uuid AND r.code IN ('HR','Super Admin')
+        AND u.employee_id<>${actor.employeeId}::uuid AND r.code='HR'
       ON CONFLICT DO NOTHING`);
     await tx.insert(auditEvents).values({
       organisationId,
@@ -1257,7 +1258,7 @@ export async function decideAttendanceCorrectionInDatabase(
     if (
       (managerStage &&
         (actor.activeRole !== "Line Manager" || actor.employeeId !== employee?.lineManagerId)) ||
-      (hrStage && actor.activeRole !== "HR" && actor.activeRole !== "Super Admin") ||
+      (hrStage && actor.activeRole !== "HR") ||
       (!managerStage && !hrStage)
     )
       throw new Error("You are not the assigned correction approver.");
@@ -1640,7 +1641,7 @@ export async function requestSiteVisitInDatabase(
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${organisationId}:${input.employeeId}:${input.date}`}, 0))`,
     );
-    const [overlap] = await tx
+    const [existingVisit] = await tx
       .select({ id: siteVisitRequests.id })
       .from(siteVisitRequests)
       .where(
@@ -1648,12 +1649,14 @@ export async function requestSiteVisitInDatabase(
           eq(siteVisitRequests.organisationId, organisationId),
           eq(siteVisitRequests.employeeId, input.employeeId),
           eq(siteVisitRequests.date, input.date),
-          inArray(siteVisitRequests.status, ["Pending HR", "Approved"]),
-          sql`${siteVisitRequests.startTime} < ${attendanceEnd} AND ${siteVisitRequests.endTime} > ${input.startTime} AND (${siteVisitRequests.details}->>'finishedAt' IS NULL AND ${siteVisitRequests.details}->>'returnedAt' IS NULL)`,
+          inArray(siteVisitRequests.status, ["Pending HR", "Approved", "Completed"]),
         ),
       )
       .limit(1);
-    if (overlap) throw new Error("This site visit overlaps another pending or approved visit.");
+    if (existingVisit)
+      throw new Error(
+        "A quick visit is already recorded for this day. Ask HR to record any additional duty so attendance hours remain accurate.",
+      );
     await tx.insert(siteVisitRequests).values({
       id,
       organisationId,
@@ -1678,10 +1681,11 @@ export async function requestSiteVisitInDatabase(
         and(
           eq(users.organisationId, organisationId),
           eq(users.status, "Active"),
-          sql`EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ${users.id} AND ur.organisation_id = ${organisationId} AND r.code IN ('HR','Super Admin'))`,
+          sql`EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ${users.id} AND ur.organisation_id = ${organisationId} AND r.code='HR')`,
         ),
       );
-    for (const hr of hrUsers)
+    for (const hr of hrUsers) {
+      if (hr.id === actor.userId) continue;
       await tx
         .insert(notifications)
         .values({
@@ -1692,11 +1696,16 @@ export async function requestSiteVisitInDatabase(
           message: `${actor.displayName} requested a ${input.origin.toLowerCase()}-origin site visit to ${input.destination.trim()}.`,
           priority: "Normal",
           deduplicationKey: `site-visit-review-${id}`,
-          link: { entityType: "site-visit", entityId: id, path: "/staff/attendance" },
+          link: {
+            entityType: "site-visit",
+            entityId: id,
+            path: `/staff/attendance#section=site-visits&visit=${id}`,
+          },
           createdBy: actor.userId!,
           updatedBy: actor.userId!,
         } as typeof notifications.$inferInsert)
         .onConflictDoNothing();
+    }
     if (employee.lineManagerId) {
       const [manager] = await tx
         .select({ id: users.id })
@@ -1818,10 +1827,11 @@ export async function updateSiteVisitProgressInDatabase(
           and(
             eq(users.organisationId, organisationId),
             eq(users.status, "Active"),
-            sql`EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=${users.id} AND ur.organisation_id=${organisationId} AND r.code IN ('HR','Super Admin'))`,
+            sql`EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=${users.id} AND ur.organisation_id=${organisationId} AND r.code='HR')`,
           ),
         );
-      for (const reviewer of reviewers)
+      for (const reviewer of reviewers) {
+        if (reviewer.id === actor.userId) continue;
         await tx
           .insert(notifications)
           .values({
@@ -1832,11 +1842,16 @@ export async function updateSiteVisitProgressInDatabase(
             message: `${actor.displayName} requested duty until ${input.endTime}: ${input.reason!.trim()}. This does not approve overtime.`,
             priority: "Normal",
             deduplicationKey: `site-visit-extension-${visitId}-${at.toISOString()}`,
-            link: { entityType: "site-visit", entityId: visitId, path: "/staff/attendance" },
+            link: {
+              entityType: "site-visit",
+              entityId: visitId,
+              path: `/staff/attendance#section=site-visits&visit=${visitId}`,
+            },
             createdBy: actor.userId!,
             updatedBy: actor.userId!,
           } as typeof notifications.$inferInsert)
           .onConflictDoNothing();
+      }
     }
     await tx
       .update(siteVisitRequests)
@@ -1868,8 +1883,7 @@ export async function decideSiteVisitInDatabase(
   notes: string | undefined,
   actor: AuditActorContext,
 ): Promise<void> {
-  if (actor.activeRole !== "HR" && actor.activeRole !== "Super Admin")
-    throw new Error("Only HR or a Super Admin can review site visits.");
+  if (actor.activeRole !== "HR") throw new Error("Only HR can review site visits.");
   if (decision === "reject" && !notes?.trim())
     throw new Error("Explain why the site visit is rejected.");
   const db = getDatabaseClient();
@@ -1991,13 +2005,29 @@ export async function cancelSiteVisitInDatabase(
     if (!visit) throw new Error("Site visit request was not found.");
     if (visit.status !== "Pending HR" && visit.status !== "Approved")
       throw new Error("This site visit can no longer be cancelled.");
+    const [office] = await tx
+      .select({ timezone: locations.timezone })
+      .from(employees)
+      .leftJoin(
+        locations,
+        and(eq(locations.id, employees.locationId), eq(locations.organisationId, organisationId)),
+      )
+      .where(and(eq(employees.organisationId, organisationId), eq(employees.id, visit.employeeId)))
+      .limit(1);
     const [settings] = await tx
       .select({ timezone: appSettings.timezone })
       .from(appSettings)
       .where(eq(appSettings.organisationId, organisationId))
       .limit(1);
-    if (zonedDateTimeToUtc(visit.date, visit.startTime, settings?.timezone ?? "UTC") <= new Date())
-      throw new Error("A site visit cannot be cancelled after it starts. Contact HR.");
+    if (
+      !canCancelSiteVisit(
+        visit.status,
+        visit.date,
+        visit.startTime,
+        office?.timezone || settings?.timezone || "UTC",
+      )
+    )
+      throw new Error("An approved site visit cannot be cancelled after it starts. Contact HR.");
     await tx
       .update(siteVisitRequests)
       .set({

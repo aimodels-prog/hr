@@ -519,6 +519,22 @@ test(
         },
         actor(officeUserId, officeEmployeeId, "Office Visit Employee", "Employee"),
       );
+      await assert.rejects(
+        requestSiteVisitInDatabase(
+          organisationId,
+          {
+            employeeId: homeEmployeeId,
+            date: scheduledDate,
+            startTime: "11:00",
+            endTime: "12:00",
+            origin: "Home",
+            destination: "Second client site",
+            purpose: "Additional approved client duty",
+          },
+          actor(homeUserId, homeEmployeeId, "Home Visit Employee", "Employee"),
+        ),
+        /quick visit is already recorded/i,
+      );
       for (const visitId of [homeVisitId, officeVisitId]) {
         await decideSiteVisitInDatabase(
           organisationId,

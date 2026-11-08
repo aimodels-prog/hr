@@ -1,7 +1,7 @@
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useLocation } from "@tanstack/react-router";
 import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { BookOpen, CalendarDays, CheckCircle2, FileText, Plus, Search, Users } from "lucide-react";
 import { toast } from "sonner";
 
@@ -46,6 +46,7 @@ import { useCurrentUser } from "@/lib/auth";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { MasterDataService } from "@/lib/data/master-data";
 import { TrainingService } from "@/lib/data/training-service";
+import { focusedApprovalId } from "@/lib/data/approval-links";
 import { ROLE_VALUES } from "@/lib/data/types";
 import type {
   TrainingCourse,
@@ -98,14 +99,18 @@ const emptyCourse = (): CourseForm => ({
 });
 
 function StaffTrainingRoute() {
+  const location = useLocation();
+  const focusedTrainingId = focusedApprovalId(location.hash);
+  const openedFocusedTraining = useRef<string | null>(null);
   const employeeFilter = useEmployeeFilter();
   const currentUser = useCurrentUser();
   const context = currentUser.getActorContext();
-  const isHr = currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
+  const isHr = currentUser.activeRole === "HR";
   const service = useMemo(() => new TrainingService(), []);
   const employeeService = useMemo(() => new EmployeeService(), []);
   const masterDataService = useMemo(() => new MasterDataService(), []);
   const [version, setVersion] = useState(0);
+  const [activeTab, setActiveTab] = useState("requests");
   const [search, setSearch] = useState("");
   const [courseDialog, setCourseDialog] = useState(false);
   const [courseForm, setCourseForm] = useState<CourseForm>(emptyCourse);
@@ -201,6 +206,40 @@ function StaffTrainingRoute() {
   const pendingRequests = requests.filter((request) =>
     isHr ? request.status === "Pending HR" : request.status === "Pending Supervisor",
   );
+
+  useEffect(() => {
+    if (!focusedTrainingId || openedFocusedTraining.current === focusedTrainingId) return;
+    const request = pendingRequests.find((item) => item.id === focusedTrainingId);
+    if (request) {
+      openedFocusedTraining.current = focusedTrainingId;
+      setActiveTab("requests");
+      setDecision({ request, value: "Approve" });
+      setDecisionComment("");
+      return;
+    }
+    const record = filteredRecords.find(
+      (item) =>
+        item.id === focusedTrainingId &&
+        isHr &&
+        item.certificateFileId &&
+        !item.hrVerified &&
+        !item.rejectedAt,
+    );
+    if (!record) return;
+    openedFocusedTraining.current = focusedTrainingId;
+    setActiveTab("records");
+  }, [filteredRecords, focusedTrainingId, isHr, pendingRequests]);
+
+  useEffect(() => {
+    if (!focusedTrainingId || activeTab !== "records") return;
+    const frame = window.requestAnimationFrame(() =>
+      document.getElementById(`approval-${focusedTrainingId}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      }),
+    );
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeTab, focusedTrainingId]);
 
   const openCourse = (course?: TrainingCourse) => {
     setCourseForm(
@@ -337,7 +376,7 @@ function StaffTrainingRoute() {
           icon={<CalendarDays className="h-5 w-5" />}
         />
       </div>
-      <Tabs defaultValue="requests">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="h-auto w-full justify-start overflow-x-auto rounded-xl bg-muted/60 p-1">
           <TabsTrigger value="requests">Requests & assignments</TabsTrigger>
           <TabsTrigger value="plan">Training plan</TabsTrigger>
@@ -712,7 +751,11 @@ function StaffTrainingRoute() {
               </TableHeader>
               <TableBody>
                 {filteredRecords.map((record) => (
-                  <TableRow key={record.id}>
+                  <TableRow
+                    key={record.id}
+                    id={`approval-${record.id}`}
+                    className={focusedTrainingId === record.id ? "bg-primary/5" : ""}
+                  >
                     <TableCell className="font-medium">{employeeName(record.employeeId)}</TableCell>
                     <TableCell>{record.title}</TableCell>
                     <TableCell>{record.provider}</TableCell>
@@ -873,6 +916,13 @@ function StaffTrainingRoute() {
                 : "Approve this training request."}
             </DialogDescription>
           </DialogHeader>
+          {decision && (
+            <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+              <p className="font-medium">{employeeName(decision.request.employeeId)}</p>
+              <p>{courseName(decision.request.courseId)}</p>
+              <p className="mt-2">{decision.request.reason}</p>
+            </div>
+          )}
           <Textarea
             value={decisionComment}
             onChange={(event) => setDecisionComment(event.target.value)}

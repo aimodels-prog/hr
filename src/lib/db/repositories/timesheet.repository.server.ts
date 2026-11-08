@@ -409,7 +409,7 @@ export async function decideTimesheetInDatabase(
     if (
       (manager &&
         (actor.activeRole !== "Line Manager" || actor.employeeId !== employee?.lineManagerId)) ||
-      (hr && actor.activeRole !== "HR" && actor.activeRole !== "Super Admin") ||
+      (hr && actor.activeRole !== "HR") ||
       (!manager && !hr)
     )
       throw new Error("You are not the assigned timesheet approver.");
@@ -513,7 +513,7 @@ export async function decideTimesheetInDatabase(
           and(
             eq(users.organisationId, organisationId),
             eq(users.status, "Active"),
-            inArray(roles.code, ["HR", "Super Admin"]),
+            eq(roles.code, "HR"),
           ),
         );
       for (const hrUser of hrUsers)
