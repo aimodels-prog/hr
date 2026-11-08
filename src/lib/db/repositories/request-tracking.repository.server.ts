@@ -222,11 +222,16 @@ export async function listTrackedRequests(
           : [];
       if (source.table === "leave_requests") {
         directReview.push(sql`EXISTS (
-          SELECT 1 FROM jsonb_array_elements(coalesce(r.chain_approvals,'[]'::jsonb)) step
+          SELECT 1 FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(r.chain_approvals)='array' THEN r.chain_approvals ELSE '[]'::jsonb END
+          ) step
           WHERE step->>'approvedBy' = ${actorUserId} AND step->>'status' IN ('Approved','Declined')
         )`);
         directReview.push(sql`EXISTS (
-          SELECT 1 FROM jsonb_array_elements(coalesce(r.pending_amendment->'chainApprovals','[]'::jsonb)) step
+          SELECT 1 FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(r.pending_amendment->'chainApprovals')='array'
+              THEN r.pending_amendment->'chainApprovals' ELSE '[]'::jsonb END
+          ) step
           WHERE step->>'approvedBy' = ${actorUserId} AND step->>'status' IN ('Approved','Declined')
         )`);
       }
