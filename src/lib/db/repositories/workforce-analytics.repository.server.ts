@@ -14,7 +14,7 @@ import { candidateApplications, vacancies } from "../schema/recruitment.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 import {
   calculateAttendanceAnalytics,
-  attendanceToday,
+  attendanceTodayEmployeeIds,
   attendanceChartDateRange,
   employedOn,
   type WorkforceAnalytics,
@@ -61,6 +61,8 @@ export async function getWorkforceAnalytics(
     db
       .select({
         id: employees.id,
+        legalName: employees.legalName,
+        preferredName: employees.preferredName,
         startDate: employees.startDate,
         terminationDate: employees.terminationDate,
         status: employees.status,
@@ -292,20 +294,44 @@ export async function getWorkforceAnalytics(
     [...values]
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  const todayIds = attendanceTodayEmployeeIds({
+    date: today,
+    now: at,
+    people,
+    records: effectiveRecords,
+    leave: leave.filter(isAbsenceLeave),
+    pendingVisits,
+    tracking,
+  });
+  const currentPeople = people.filter((person) => employedOn(person, today));
+  const personSummary = (person: (typeof people)[number]) => ({
+    id: person.id,
+    name: person.preferredName || person.legalName,
+    department: person.department,
+    office: person.office,
+  });
+  const sortedPeople = (rows: typeof people) =>
+    rows.map(personSummary).sort((a, b) => a.name.localeCompare(b.name));
   return {
-    workforceHeadcount: people.filter((person) => employedOn(person, today)).length,
+    workforceHeadcount: currentPeople.length,
     attendanceTracked: individualId
       ? isAttendanceTracked(tracking, individualId, today)
       : Boolean(tracking),
-    today: attendanceToday({
+    today: {
       date: today,
-      now: at,
-      people,
-      records: effectiveRecords,
-      leave: leave.filter(isAbsenceLeave),
-      pendingVisits,
-      tracking,
-    }),
+      headcount: todayIds.current.size,
+      recorded: todayIds.recorded.size,
+      onLeave: todayIds.onLeave.size,
+    },
+    ...(scope === "hr" && !employeeId
+      ? {
+          dashboardPeople: {
+            current: sortedPeople(currentPeople),
+            recorded: sortedPeople(people.filter((person) => todayIds.recorded.has(person.id))),
+            onLeave: sortedPeople(people.filter((person) => todayIds.onLeave.has(person.id))),
+          },
+        }
+      : {}),
     priorities: await dashboardPriorities({
       organisationId,
       scope,

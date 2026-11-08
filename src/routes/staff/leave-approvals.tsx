@@ -1,15 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useLocation } from "@tanstack/react-router";
 import { useCallback, useEffect, useState, useMemo } from "react";
-import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,7 +9,7 @@ import {
   SectionNavigation as TabsList,
   SectionLink as TabsTrigger,
 } from "@/components/ui/page-sections";
-import { Check, X, AlertTriangle, Info, Paperclip } from "lucide-react";
+import { Check, X, AlertTriangle, Info, Paperclip, Search, CalendarDays } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -39,8 +30,9 @@ import {
 import { toast } from "sonner";
 import { LeaveService } from "@/lib/data/leave-service";
 import { EmployeeService } from "@/lib/data/employee-service";
-import type { LeaveRequest, LeavePolicy } from "@/lib/data/leave-types";
+import type { LeaveRequest } from "@/lib/data/leave-types";
 import { useCurrentUser, RequirePermission } from "@/lib/auth";
+import { focusedApprovalId } from "@/lib/data/approval-links";
 
 export const Route = createFileRoute("/staff/leave-approvals")({
   component: LeaveApprovalsRoute,
@@ -56,6 +48,8 @@ function LeaveApprovalsRoute() {
 
 function LeaveApprovalsContent() {
   const currentUser = useCurrentUser();
+  const location = useLocation();
+  const focusedRequestId = focusedApprovalId(location.hash);
   const leaveService = useMemo(() => new LeaveService(), []);
   const empService = useMemo(() => new EmployeeService(), []);
   const directoryEmployees = empService.getDirectoryEmployees(currentUser.getActorContext());
@@ -70,6 +64,8 @@ function LeaveApprovalsContent() {
   const [adminQueue, setAdminQueue] = useState<LeaveRequest[]>([]);
   const [specialQueue, setSpecialQueue] = useState<LeaveRequest[]>([]);
   const [selectedSection, setSelectedSection] = useState(canCompleteHrReview ? "admin" : "manager");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [decidingRequestId, setDecidingRequestId] = useState<string | null>(null);
 
   const [rejectDialog, setRejectDialog] = useState<{ open: boolean; request: LeaveRequest | null }>(
     { open: false, request: null },
@@ -110,7 +106,10 @@ function LeaveApprovalsContent() {
       }),
     );
     if (currentUser.employeeId) {
-      if (currentUser.roles.includes("Line Manager") || currentUser.activeRole === "Line Manager") {
+      if (
+        currentUser.roles.includes("Line Manager") ||
+        ["Line Manager", "HR", "Super Admin"].includes(currentUser.activeRole)
+      ) {
         setManagerQueue(leaveService.getPendingRequestsForManager(currentUser.getActorContext()));
       } else {
         setManagerQueue([]);
@@ -155,7 +154,29 @@ function LeaveApprovalsContent() {
     );
   }, [specialQueue.length, canCompleteHrReview]);
 
+  useEffect(() => {
+    if (!focusedRequestId) return;
+    if (specialQueue.some((request) => request.id === focusedRequestId))
+      setSelectedSection("special");
+    else if (adminQueue.some((request) => request.id === focusedRequestId))
+      setSelectedSection("admin");
+    else if (managerQueue.some((request) => request.id === focusedRequestId))
+      setSelectedSection("manager");
+  }, [adminQueue, focusedRequestId, managerQueue, specialQueue]);
+
+  useEffect(() => {
+    if (!focusedRequestId) return;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(`approval-${focusedRequestId}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusedRequestId, selectedSection, adminQueue, managerQueue, specialQueue]);
+
   const handleApprove = async (req: LeaveRequest) => {
+    if (decidingRequestId) return;
     if (
       req.policySnapshot.specialRequest &&
       req.status === "Pending HR" &&
@@ -169,6 +190,7 @@ function LeaveApprovalsContent() {
       setRemainingPay("");
       return;
     }
+    setDecidingRequestId(req.id);
     try {
       await leaveService.decideRequestAsync(
         req.id,
@@ -184,11 +206,14 @@ function LeaveApprovalsContent() {
       loadData();
     } catch (error: unknown) {
       toast.error(error instanceof Error ? error.message : "Failed to approve request");
+    } finally {
+      setDecidingRequestId(null);
     }
   };
 
   const handleSpecialFinalApproval = async () => {
-    if (!allocationRequest || !remainingPay) return;
+    if (!allocationRequest || !remainingPay || decidingRequestId) return;
+    setDecidingRequestId(allocationRequest.id);
     try {
       await leaveService.decideRequestAsync(
         allocationRequest.id,
@@ -202,11 +227,14 @@ function LeaveApprovalsContent() {
       loadData();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not approve special leave.");
+    } finally {
+      setDecidingRequestId(null);
     }
   };
 
   const handleReject = async () => {
-    if (!rejectDialog.request) return;
+    if (!rejectDialog.request || decidingRequestId) return;
+    setDecidingRequestId(rejectDialog.request.id);
     try {
       await leaveService.decideRequestAsync(
         rejectDialog.request.id,
@@ -220,6 +248,8 @@ function LeaveApprovalsContent() {
       loadData();
     } catch (error: unknown) {
       toast.error(error instanceof Error ? error.message : "Failed to reject request");
+    } finally {
+      setDecidingRequestId(null);
     }
   };
 
@@ -242,25 +272,52 @@ function LeaveApprovalsContent() {
   };
 
   const renderQueue = (requests: LeaveRequest[], isFinal: boolean) => {
-    if (requests.length === 0) {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    const visibleRequests = requests.filter((request) => {
+      if (!normalizedQuery) return true;
+      const employee = directoryEmployees.find((item) => item.id === request.employeeId);
+      const policy = policies.find((item) => item.id === request.policyId);
+      return [
+        employee?.preferredName,
+        request.requesterName,
+        policy?.name,
+        request.reason,
+        request.startDate,
+        request.endDate,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery);
+    });
+    if (visibleRequests.length === 0) {
       return (
-        <div className="text-center py-12 text-muted-foreground border rounded-md bg-muted/10">
-          <Check className="h-8 w-8 mx-auto text-muted-foreground/50 mb-3" />
-          <p>No pending approvals in this queue.</p>
+        <div className="rounded-2xl border bg-card px-5 py-14 text-center shadow-sm">
+          <Check className="mx-auto mb-3 size-9 text-emerald-600/70" aria-hidden="true" />
+          <p className="font-semibold">
+            {requests.length ? "No requests match your search" : "All caught up"}
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {requests.length
+              ? "Try another name, leave type or date."
+              : "There are no leave requests waiting in this queue."}
+          </p>
         </div>
       );
     }
 
     return (
-      <div className="space-y-4">
-        {[...requests]
+      <div className="space-y-3">
+        {[...visibleRequests]
           .sort(
             (left, right) =>
               Number(Boolean(right.policySnapshot.noticeException)) -
-              Number(Boolean(left.policySnapshot.noticeException)),
+                Number(Boolean(left.policySnapshot.noticeException)) ||
+              left.startDate.localeCompare(right.startDate),
           )
           .map((req) => {
             const emp = directoryEmployees.find((item) => item.id === req.employeeId);
+            const employeeName = emp?.preferredName ?? req.requesterName ?? "Employee";
             const policy = policies.find((p) => p.id === req.policyId);
             const reviewStartDate = req.pendingAmendment?.proposedStartDate ?? req.startDate;
             const reviewEndDate = req.pendingAmendment?.proposedEndDate ?? req.endDate;
@@ -277,20 +334,33 @@ function LeaveApprovalsContent() {
               .filter((overlapReq) => overlapReq.id !== req.id); // exclude self
 
             return (
-              <Card key={req.id}>
-                <CardHeader className="pb-2">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <CardTitle className="text-lg">
-                        {emp?.preferredName ?? req.requesterName ?? "Employee"}
-                      </CardTitle>
-                      <CardDescription>
-                        {policy?.name} &bull; {reviewDays} working days
-                      </CardDescription>
+              <Card
+                key={req.id}
+                id={`approval-${req.id}`}
+                className={`overflow-hidden shadow-sm transition-colors hover:border-primary/30 ${
+                  focusedRequestId === req.id ? "border-primary ring-2 ring-primary/20" : ""
+                }`}
+              >
+                <CardHeader className="border-b bg-muted/20 p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span
+                        className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary"
+                        aria-hidden="true"
+                      >
+                        {employeeName.slice(0, 1).toUpperCase()}
+                      </span>
+                      <div className="min-w-0">
+                        <CardTitle className="truncate text-base">{employeeName}</CardTitle>
+                        <CardDescription className="mt-1">
+                          {policy?.name ?? "Leave"} · {reviewDays}{" "}
+                          {reviewDays === 1 ? "day" : "days"}
+                        </CardDescription>
+                      </div>
                     </div>
                     <Badge
                       variant="outline"
-                      className="bg-amber-50 text-amber-700 border-amber-200"
+                      className="border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-800"
                     >
                       {req.status === "Pending HR" && req.policySnapshot.noticeException
                         ? "Special approvals"
@@ -298,7 +368,7 @@ function LeaveApprovalsContent() {
                     </Badge>
                   </div>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="p-5 pt-5">
                   {isSpecial && (
                     <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
                       <strong>Special leave - line manager, then Riccardo, then HR</strong>
@@ -329,9 +399,12 @@ function LeaveApprovalsContent() {
                       </p>
                     </div>
                   )}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                    <div className="space-y-2">
-                      <div className="grid grid-cols-[100px_1fr] gap-1">
+                  <div className="grid gap-5 text-sm lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)]">
+                    <div className="min-w-0 space-y-3">
+                      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        <CalendarDays className="size-4" aria-hidden="true" /> Request details
+                      </div>
+                      <div className="grid grid-cols-[85px_minmax(0,1fr)] gap-2">
                         <span className="text-muted-foreground">Dates:</span>
                         <span className="font-medium">
                           {new Date(reviewStartDate).toLocaleDateString()}
@@ -343,21 +416,23 @@ function LeaveApprovalsContent() {
                         </span>
                       </div>
                       {req.pendingAmendment && (
-                        <div className="grid grid-cols-[100px_1fr] gap-1">
+                        <div className="grid grid-cols-[85px_minmax(0,1fr)] gap-2">
                           <span className="text-muted-foreground">Current leave:</span>
                           <span>
                             {req.startDate} to {req.endDate} ({req.workingDaysRequested} days)
                           </span>
                         </div>
                       )}
-                      <div className="grid grid-cols-[100px_1fr] gap-1">
+                      <div className="grid grid-cols-[85px_minmax(0,1fr)] gap-2">
                         <span className="text-muted-foreground">
                           {req.pendingAmendment ? "Change reason:" : "Reason:"}
                         </span>
-                        <span>{req.pendingAmendment?.reason ?? req.reason}</span>
+                        <span className="whitespace-pre-wrap break-words">
+                          {req.pendingAmendment?.reason ?? req.reason}
+                        </span>
                       </div>
                       {req.handoverContactId && (
-                        <div className="grid grid-cols-[100px_1fr] gap-1">
+                        <div className="grid grid-cols-[85px_minmax(0,1fr)] gap-2">
                           <span className="text-muted-foreground">Handover:</span>
                           <span>
                             {directoryEmployees.find((item) => item.id === req.handoverContactId)
@@ -366,7 +441,7 @@ function LeaveApprovalsContent() {
                         </div>
                       )}
                       {req.attachmentFileId && (
-                        <div className="grid grid-cols-[100px_1fr] items-center gap-1">
+                        <div className="grid grid-cols-[85px_minmax(0,1fr)] items-center gap-2">
                           <span className="text-muted-foreground">Evidence:</span>
                           <Button
                             variant="link"
@@ -379,7 +454,10 @@ function LeaveApprovalsContent() {
                       )}
                     </div>
 
-                    <div className="space-y-3">
+                    <div className="min-w-0 space-y-3 border-t pt-4 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Your decision
+                      </p>
                       {overlaps.length > 0 && (
                         <div className="bg-amber-50 border border-amber-200 text-amber-800 p-2 rounded-md text-xs flex gap-2">
                           <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -421,19 +499,23 @@ function LeaveApprovalsContent() {
                         <Button
                           variant="outline"
                           className="text-destructive border-destructive/30 hover:bg-destructive hover:text-white"
+                          disabled={Boolean(decidingRequestId)}
                           onClick={() => setRejectDialog({ open: true, request: req })}
                         >
                           <X className="mr-2 h-4 w-4" /> Reject
                         </Button>
                         <Button
                           className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                          disabled={Boolean(decidingRequestId)}
                           onClick={() => handleApprove(req)}
                         >
                           <Check className="mr-2 h-4 w-4" />{" "}
-                          {(req.policySnapshot.noticeException || isSpecial) &&
-                          !req.pendingAmendment
-                            ? "Approve exception"
-                            : "Approve"}
+                          {decidingRequestId === req.id
+                            ? "Saving…"
+                            : (req.policySnapshot.noticeException || isSpecial) &&
+                                !req.pendingAmendment
+                              ? "Approve exception"
+                              : "Approve"}
                         </Button>
                       </div>
                     </div>
@@ -447,14 +529,39 @@ function LeaveApprovalsContent() {
   };
 
   return (
-    <div className="flex flex-col gap-6 max-w-[1000px] mx-auto pb-10">
-      <PageHeader
-        title="Leave Approvals"
-        description="Review and process pending time-off requests."
-      />
+    <main className="mx-auto max-w-[1280px] space-y-5 pb-10">
+      <header>
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">
+          Leave · Decisions
+        </p>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">Leave Approvals</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Review each request and make the next decision.
+        </p>
+      </header>
+
+      <div className="rounded-2xl border bg-card p-4 shadow-sm sm:p-5">
+        <label htmlFor="leave-approval-search" className="mb-2 block text-sm font-semibold">
+          Find a request
+        </label>
+        <div className="relative max-w-xl">
+          <Search
+            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <Input
+            id="leave-approval-search"
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search employee, leave type or date"
+            className="h-10 pl-9"
+          />
+        </div>
+      </div>
 
       <Tabs value={selectedSection} onValueChange={setSelectedSection} className="w-full">
-        <TabsList className="mb-4">
+        <TabsList>
           {specialQueue.length > 0 && (
             <TabsTrigger value="special" className="flex gap-2">
               Special approvals
@@ -484,13 +591,22 @@ function LeaveApprovalsContent() {
         </TabsList>
 
         {specialQueue.length > 0 && (
-          <TabsContent value="special">{renderQueue(specialQueue, false)}</TabsContent>
+          <TabsContent value="special" className="space-y-3">
+            <h2 className="text-base font-semibold">Special approvals</h2>
+            {renderQueue(specialQueue, false)}
+          </TabsContent>
         )}
 
-        <TabsContent value="manager">{renderQueue(managerQueue, false)}</TabsContent>
+        <TabsContent value="manager" className="space-y-3">
+          <h2 className="text-base font-semibold">My team</h2>
+          {renderQueue(managerQueue, false)}
+        </TabsContent>
 
         {canCompleteHrReview && (
-          <TabsContent value="admin">{renderQueue(adminQueue, true)}</TabsContent>
+          <TabsContent value="admin" className="space-y-3">
+            <h2 className="text-base font-semibold">HR confirmation</h2>
+            {renderQueue(adminQueue, true)}
+          </TabsContent>
         )}
       </Tabs>
 
@@ -651,6 +767,7 @@ function LeaveApprovalsContent() {
                     </Button>
                     <Button
                       disabled={
+                        Boolean(decidingRequestId) ||
                         !remainingPay ||
                         remaining < 0 ||
                         allocations.some(
@@ -666,7 +783,9 @@ function LeaveApprovalsContent() {
                       }
                       onClick={() => void handleSpecialFinalApproval()}
                     >
-                      Approve and notify Finance
+                      {decidingRequestId === allocationRequest.id
+                        ? "Saving…"
+                        : "Approve and notify Finance"}
                     </Button>
                   </DialogFooter>
                 </div>
@@ -706,13 +825,13 @@ function LeaveApprovalsContent() {
             <Button
               variant="destructive"
               onClick={handleReject}
-              disabled={rejectReason.trim().length < 3}
+              disabled={rejectReason.trim().length < 3 || Boolean(decidingRequestId)}
             >
-              Confirm Rejection
+              {decidingRequestId === rejectDialog.request?.id ? "Saving…" : "Confirm Rejection"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </main>
   );
 }

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CheckCircle2, Info, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, CheckCircle2, Info, type LucideIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
@@ -85,6 +85,7 @@ export function AttentionQueue({ items }: { items: AttentionItem[] }) {
 export type PulseMetric = {
   label: string;
   value: string;
+  onClick?: () => void;
   deltaDirection?: "up" | "down" | "flat";
   deltaText?: string;
   note?: string;
@@ -143,31 +144,58 @@ export function PulseStrip({
 
   return (
     <div className={cn("grid grid-cols-2 gap-3 sm:gap-4", desktopColumns)}>
-      {metrics.map((metric, index) => (
-        <div key={index} className="rounded-xl border border-border/70 bg-card p-5 sm:p-6">
-          <div className="flex items-center justify-between gap-1">
-            <p className="text-xs font-medium text-muted-foreground">{metric.label}</p>
-            {compact && metric.note && (
-              <DashboardInfo label={`About ${metric.label}`}>{metric.note}</DashboardInfo>
-            )}
-          </div>
-          <div className="mt-1 flex items-baseline gap-1.5">
-            <span className="text-2xl font-semibold tracking-tight tabular-nums">
-              {metric.value}
-            </span>
-            {metric.deltaDirection ? (
-              <span
-                className={cn("text-xs font-medium", deltaColorByDirection[metric.deltaDirection])}
-              >
-                {deltaArrowByDirection[metric.deltaDirection]} {metric.deltaText}
+      {metrics.map((metric, index) => {
+        const content = (
+          <>
+            <div className="flex items-center justify-between gap-1">
+              <p className="text-xs font-medium text-muted-foreground">{metric.label}</p>
+              {!metric.onClick && compact && metric.note ? (
+                <DashboardInfo label={`About ${metric.label}`}>{metric.note}</DashboardInfo>
+              ) : null}
+            </div>
+            <div className="mt-1 flex items-baseline gap-1.5">
+              <span className="text-2xl font-semibold tracking-tight tabular-nums">
+                {metric.value}
               </span>
+              {metric.deltaDirection ? (
+                <span
+                  className={cn(
+                    "text-xs font-medium",
+                    deltaColorByDirection[metric.deltaDirection],
+                  )}
+                >
+                  {deltaArrowByDirection[metric.deltaDirection]} {metric.deltaText}
+                </span>
+              ) : null}
+            </div>
+            {metric.note && !compact ? (
+              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{metric.note}</p>
             ) : null}
+            {metric.onClick && (
+              <span className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-primary">
+                {metric.label === "Awaiting decisions" ? "View approval queues" : "View people"}
+                <ArrowUpRight className="size-3.5" aria-hidden="true" />
+              </span>
+            )}
+          </>
+        );
+        return metric.onClick ? (
+          <button
+            key={index}
+            type="button"
+            onClick={metric.onClick}
+            aria-label={`View ${metric.label.toLowerCase()}: ${metric.value}`}
+            title={metric.note}
+            className="rounded-xl border border-border/70 bg-card p-5 text-left transition-colors hover:border-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-6"
+          >
+            {content}
+          </button>
+        ) : (
+          <div key={index} className="rounded-xl border border-border/70 bg-card p-5 sm:p-6">
+            {content}
           </div>
-          {metric.note && !compact ? (
-            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{metric.note}</p>
-          ) : null}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

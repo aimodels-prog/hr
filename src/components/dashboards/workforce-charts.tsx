@@ -22,6 +22,8 @@ import { useCurrentUser } from "@/lib/auth";
 import { getWorkforceAnalyticsFn } from "@/lib/server-functions/workforce-analytics.server";
 import { ChartContainer } from "@/components/ui/chart";
 import { Button } from "@/components/ui/button";
+import { WorkforceKpiDetails, type WorkforceKpi } from "./workforce-kpi-details";
+import { approvalDestination } from "@/lib/data/approval-destinations";
 import type { LeaveChartRow } from "@/lib/data/dashboard-priorities";
 import type { DashboardChartsProps } from "./dashboard-charts";
 
@@ -106,11 +108,13 @@ function CountChart({
   label,
   donut = false,
   centerLabel = "Employees",
+  rowHref,
 }: {
   data: { name: string; count: number }[];
   label: string;
   donut?: boolean;
   centerLabel?: string;
+  rowHref?: (name: string) => string;
 }) {
   if (!data.length)
     return (
@@ -232,7 +236,16 @@ function CountChart({
             {data.map((item) => (
               <tr key={item.name}>
                 <th scope="row" className="py-1 font-normal">
-                  {item.name}
+                  {rowHref ? (
+                    <Link
+                      to={rowHref(item.name)}
+                      className="inline-flex min-h-8 items-center text-primary underline-offset-2 hover:underline"
+                    >
+                      {item.name}
+                    </Link>
+                  ) : (
+                    item.name
+                  )}
                 </th>
                 <td>{item.count}</td>
               </tr>
@@ -348,6 +361,7 @@ export default function WorkforceCharts({
 }: DashboardChartsProps) {
   const user = useCurrentUser();
   const [distribution, setDistribution] = useState<"department" | "office">("department");
+  const [dashboardDetail, setDashboardDetail] = useState<WorkforceKpi | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const days: 7 | 30 = Number((location.search as { days?: number }).days) === 7 ? 7 : 30;
@@ -492,19 +506,23 @@ export default function WorkforceCharts({
                       label: "Current employees",
                       value: String(data.workforceHeadcount ?? data.today.headcount),
                       note: "Current workforce",
+                      onClick: () => setDashboardDetail("current"),
                     },
                     {
                       label: "Attendance recorded today",
                       value: String(data.today.recorded),
+                      onClick: () => setDashboardDetail("recorded"),
                       note: `${data.today.date} · Clock-in or approved duty`,
                     },
                     {
                       label: "On leave today",
                       value: String(data.today.onLeave),
                       note: "Approved full or partial leave",
+                      onClick: () => setDashboardDetail("leave"),
                     },
                     {
                       label: "Awaiting decisions",
+                      onClick: () => setDashboardDetail("approvals"),
                       value: String(
                         data.priorities.approvals.reduce((sum, item) => sum + item.count, 0),
                       ),
@@ -535,6 +553,14 @@ export default function WorkforceCharts({
                   ]
             }
           />
+          {scope === "hr" && !employeeId && dashboardDetail && (
+            <WorkforceKpiDetails
+              key={dashboardDetail}
+              kind={dashboardDetail}
+              data={data}
+              onClose={() => setDashboardDetail(null)}
+            />
+          )}
           {data.totals.review + data.totals.missing > 0 && (
             <div className="flex items-center gap-1 text-xs text-muted-foreground">
               <span>Attendance needs review</span>
@@ -695,6 +721,7 @@ export default function WorkforceCharts({
                   <CountChart
                     data={data.priorities.approvals}
                     label="Outstanding decisions by responsible role"
+                    rowHref={approvalDestination}
                   />
                   <nav
                     aria-label="Approval details"

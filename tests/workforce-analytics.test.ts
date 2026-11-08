@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   calculateAttendanceAnalytics,
   attendanceToday,
+  attendanceTodayEmployeeIds,
   completedDateRange,
   attendanceChartDateRange,
   type AnalyticsEmployee,
@@ -266,6 +267,28 @@ test("today counts unique recorded people, not everyone who is off leave", () =>
     attendanceToday({ ...input, pendingVisits: [{ employeeId: "a", date }] }).recorded,
     0,
   );
+});
+
+test("dashboard drill-down names can be drawn from the same attendance and leave sets as the totals", () => {
+  const date = "2026-09-14";
+  const input = {
+    date,
+    now: new Date(`${date}T12:00:00Z`),
+    people: ["a", "credit", "leave", "pending"].map((id) => ({ ...employee, id })),
+    records: [
+      { employeeId: "a", date, clockInAt: `${date}T06:00:00Z`, status: "Present" },
+      { employeeId: "credit", date, clockInAt: null, status: "Present", creditedHours: 8 },
+      { employeeId: "pending", date, clockInAt: `${date}T07:00:00Z`, status: "Present" },
+    ],
+    leave: [{ employeeId: "leave", startDate: date, endDate: date }],
+    pendingVisits: [{ employeeId: "pending", date }],
+  };
+  const ids = attendanceTodayEmployeeIds(input);
+  const totals = attendanceToday(input);
+  assert.deepEqual([...ids.recorded].sort(), ["a", "credit"]);
+  assert.deepEqual([...ids.onLeave], ["leave"]);
+  assert.equal(ids.recorded.size, totals.recorded);
+  assert.equal(ids.onLeave.size, totals.onLeave);
 });
 test("analytics excludes today and handles year boundaries", () => {
   assert.deepEqual(completedDateRange("2026-01-02", 3), ["2025-12-30", "2025-12-31", "2026-01-01"]);

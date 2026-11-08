@@ -20,6 +20,11 @@ export interface WorkforceAnalytics {
   workforceHeadcount?: number;
   attendanceTracked?: boolean;
   today: { date: string; headcount: number; recorded: number; onLeave: number };
+  dashboardPeople?: {
+    current: { id: string; name: string; department: string; office: string }[];
+    recorded: { id: string; name: string; department: string; office: string }[];
+    onLeave: { id: string; name: string; department: string; office: string }[];
+  };
   priorities: {
     leaveYear: number;
     leaveYearStart: string;
@@ -56,8 +61,7 @@ export function attendanceChartDateRange(today: string, count: number): string[]
   return [...completedDateRange(today, count - 1), today];
 }
 
-/** Today's snapshot is separate from completed-day trends; a missing punch is not absence. */
-export function attendanceToday(input: {
+type AttendanceTodayInput = {
   tracking?: AttendanceTrackingPolicy | null;
   date: string;
   now: Date;
@@ -71,7 +75,10 @@ export function attendanceToday(input: {
   }[];
   leave: { employeeId: string; startDate: string; endDate: string }[];
   pendingVisits: { employeeId: string; date: string }[];
-}) {
+};
+
+/** The dashboard counts and drill-down lists must use exactly the same eligibility rules. */
+export function attendanceTodayEmployeeIds(input: AttendanceTodayInput) {
   const recordedPeople = new Set(
     input.records
       .filter(
@@ -103,32 +110,40 @@ export function attendanceToday(input: {
       .filter((visit) => visit.date === input.date)
       .map((visit) => visit.employeeId),
   );
+  const recorded = new Set(
+    input.records
+      .filter(
+        (record) =>
+          record.date === input.date &&
+          current.has(record.employeeId) &&
+          recordedPeople.has(record.employeeId) &&
+          (record.creditedHours !== undefined || !pending.has(record.employeeId)),
+      )
+      .map((record) => record.employeeId),
+  );
+  const onLeave = new Set(
+    input.leave
+      .filter(
+        (request) =>
+          input.people.some(
+            (person) => person.id === request.employeeId && employedOn(person, input.date),
+          ) &&
+          request.startDate <= input.date &&
+          request.endDate >= input.date,
+      )
+      .map((request) => request.employeeId),
+  );
+  return { current, recorded, onLeave };
+}
+
+/** Today's snapshot is separate from completed-day trends; a missing punch is not absence. */
+export function attendanceToday(input: AttendanceTodayInput) {
+  const ids = attendanceTodayEmployeeIds(input);
   return {
     date: input.date,
-    headcount: current.size,
-    recorded: new Set(
-      input.records
-        .filter(
-          (record) =>
-            record.date === input.date &&
-            current.has(record.employeeId) &&
-            recordedPeople.has(record.employeeId) &&
-            (record.creditedHours !== undefined || !pending.has(record.employeeId)),
-        )
-        .map((record) => record.employeeId),
-    ).size,
-    onLeave: new Set(
-      input.leave
-        .filter(
-          (request) =>
-            input.people.some(
-              (person) => person.id === request.employeeId && employedOn(person, input.date),
-            ) &&
-            request.startDate <= input.date &&
-            request.endDate >= input.date,
-        )
-        .map((request) => request.employeeId),
-    ).size,
+    headcount: ids.current.size,
+    recorded: ids.recorded.size,
+    onLeave: ids.onLeave.size,
   };
 }
 
