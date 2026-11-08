@@ -119,7 +119,10 @@ test("public application progresses through shortlist, interview, offer and onbo
 
   await page.goto("/staff/vacancies");
   await page.getByText("Logistics Operations Lead", { exact: true }).click();
-  await page.getByRole("tab", { name: "CV analysis (optional)" }).click();
+  await page
+    .getByRole("navigation", { name: "Page sections" })
+    .getByRole("link", { name: "CV analysis (optional)" })
+    .click();
   await page.getByRole("button", { name: "Not suitable", exact: true }).first().click();
   await page
     .getByLabel("Private HR remark")
