@@ -80,12 +80,18 @@ import {
 import { AuditViewer } from "@/components/audit-viewer";
 import { DecisionPanel } from "@/components/offers/decision-panel";
 import { InterviewService } from "@/lib/data/interview-service";
+import {
+  interviewCalendarNeedsRetry,
+  isRealGoogleMeetUrl,
+} from "@/lib/data/interview-calendar-status";
 import { CandidatePreparationService } from "@/lib/data/candidate-preparation-service";
 import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
 import { PreliminaryScoreExplanation } from "@/components/recruitment/preliminary-score-explanation";
+import { applicationList } from "@/lib/recruitment/application-lists";
 import {
   setCandidateCvSuitabilityFn,
   selectCandidateForInterviewFn,
+  shortlistCandidateApplicationFn,
 } from "@/lib/server-functions/candidate.server";
 
 export const Route = createFileRoute("/staff/vacancies/$vacancyId")({
@@ -109,6 +115,7 @@ function VacancyDetailRoute() {
   const vacancy = vacancyService.getVacancyRepository().getById(vacancyId);
   if (!vacancy) throw notFound();
   const context = currentUser.getActorContext();
+  const canManageCandidates = currentUser.can("recruitment:manage_candidates");
   const initialScores = candidateService.getLatestScoresForVacancy(vacancy.id, context);
   const candidates = candidateService.getDetailedCandidates(context);
   const applications = candidateService
@@ -181,6 +188,9 @@ function VacancyDetailRoute() {
   const [applicationView, setApplicationView] = useState("all");
   const [applicationSort, setApplicationSort] = useState("newest");
   const [selectingCandidateId, setSelectingCandidateId] = useState<string | null>(null);
+  const [shortlistingCandidateId, setShortlistingCandidateId] = useState<string | null>(null);
+  const [pipelineView, setPipelineView] = useState<"all" | "shortlisted" | "interview">("all");
+  const [pipelineSearch, setPipelineSearch] = useState("");
 
   const serverActor = useMemo(
     () => ({
@@ -318,8 +328,39 @@ function VacancyDetailRoute() {
   });
   const interviewSelections = poolService
     .getAllInterviewRecommendations(context)
-    .filter((item) => item.vacancyId === vacancy.id && item.status !== "Ready for Assessment");
+    .filter(
+      (item) =>
+        item.vacancyId === vacancy.id &&
+        ["Ready to Schedule", "Interview Scheduled"].includes(item.status),
+    );
   const selectedInterviewIds = new Set(interviewSelections.map((item) => item.candidateId));
+  const applicationStage = (application: (typeof applications)[number]) =>
+    applicationList(
+      application.status,
+      interviewSelections
+        .filter(
+          (item) =>
+            item.applicationId === application.id || item.candidateId === application.candidateId,
+        )
+        .map((item) => item.status),
+    );
+  const shortlistedApplications = applications.filter(
+    (application) => applicationStage(application) === "shortlisted",
+  );
+  const interviewApplications = applications.filter(
+    (application) => applicationStage(application) === "interview",
+  );
+  const pipelineApplications = applications
+    .filter(
+      (application) => pipelineView === "all" || applicationStage(application) === pipelineView,
+    )
+    .filter((application) => {
+      const candidate = candidates.find((item) => item.id === application.candidateId);
+      return `${candidate?.firstName ?? ""} ${candidate?.lastName ?? ""} ${candidate?.email ?? ""}`
+        .toLowerCase()
+        .includes(pipelineSearch.trim().toLowerCase());
+    })
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   const applicationSources = [...new Set(applications.map((item) => item.source))].sort();
   const filteredApplications = applications
     .filter((application) => {
@@ -506,11 +547,30 @@ function VacancyDetailRoute() {
       });
       await candidateService.hydrateCompatibilityCache(context);
       refreshScreening();
+      setPipelineView("interview");
+      setActiveTab("applications");
       toast.success("Selected for interview. Schedule the interview from the candidate profile.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not select this candidate.");
     } finally {
       setSelectingCandidateId(null);
+    }
+  };
+
+  const shortlistApplication = async (candidateId: string) => {
+    setShortlistingCandidateId(candidateId);
+    try {
+      await shortlistCandidateApplicationFn({
+        data: { actor: serverActor, vacancyId: databaseVacancyId, candidateId },
+      });
+      await candidateService.hydrateCompatibilityCache(context);
+      refreshScreening();
+      setPipelineView("shortlisted");
+      toast.success("Candidate added to the shortlist. No invitation has been sent.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not shortlist this candidate.");
+    } finally {
+      setShortlistingCandidateId(null);
     }
   };
 
@@ -866,7 +926,7 @@ function VacancyDetailRoute() {
             <TabsTrigger value="description">Job Description</TabsTrigger>
             <TabsTrigger value="requirements">Requirements</TabsTrigger>
             <TabsTrigger value="applications">Applications ({vacancy.applicantCount})</TabsTrigger>
-            <TabsTrigger value="shortlist">Scoring & Shortlist</TabsTrigger>
+            <TabsTrigger value="shortlist">CV analysis (optional)</TabsTrigger>
             <TabsTrigger value="interviews">Interviews</TabsTrigger>
             <TabsTrigger value="decision">Hiring Decision</TabsTrigger>
             <TabsTrigger value="activity">Status History</TabsTrigger>
@@ -1008,21 +1068,85 @@ function VacancyDetailRoute() {
 
           <TabsContent value="applications" className="pt-4">
             <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle>Applications</CardTitle>
+              <CardHeader className="flex flex-row items-center justify-between gap-3">
+                <div>
+                  <CardTitle>Candidates for this role</CardTitle>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Review an application, shortlist it, then select it for interview. CV analysis
+                    is optional.
+                  </p>
+                </div>
                 <Button variant="outline" onClick={() => setActiveTab("shortlist")}>
-                  Filter and select for interview
+                  Optional CV analysis
                 </Button>
               </CardHeader>
               <CardContent className="space-y-3">
+                <nav aria-label="Candidate lists" className="grid gap-2 sm:grid-cols-3">
+                  {(
+                    [
+                      { value: "all", label: "All applications", count: applications.length },
+                      {
+                        value: "shortlisted",
+                        label: "Shortlisted",
+                        count: shortlistedApplications.length,
+                      },
+                      {
+                        value: "interview",
+                        label: "Selected for interview",
+                        count: interviewApplications.length,
+                      },
+                    ] as const
+                  ).map((item) => (
+                    <button
+                      key={item.value}
+                      type="button"
+                      aria-current={pipelineView === item.value ? "page" : undefined}
+                      onClick={() => setPipelineView(item.value)}
+                      className={`rounded-lg border p-3 text-left transition-colors hover:border-primary/60 ${pipelineView === item.value ? "border-primary bg-primary/5" : ""}`}
+                    >
+                      <span className="block text-sm font-medium">{item.label}</span>
+                      <span className="text-xl font-semibold tabular-nums">{item.count}</span>
+                    </button>
+                  ))}
+                </nav>
+                {applications.length > 8 && (
+                  <Input
+                    type="search"
+                    aria-label="Search candidates for this role"
+                    placeholder="Search name or email"
+                    value={pipelineSearch}
+                    onChange={(event) => setPipelineSearch(event.target.value)}
+                  />
+                )}
                 {applications.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     No applications have been submitted for this vacancy.
                   </p>
+                ) : pipelineApplications.length === 0 ? (
+                  <p className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
+                    {pipelineSearch
+                      ? "No candidates match this search."
+                      : pipelineView === "shortlisted"
+                        ? "No shortlisted candidates yet. Choose Shortlist from All applications."
+                        : "No candidates selected for interview yet."}
+                  </p>
                 ) : (
-                  applications.map((application) => {
+                  pipelineApplications.map((application) => {
                     const candidate = candidates.find(
                       (item) => item.id === application.candidateId,
+                    );
+                    const stage = applicationStage(application);
+                    const canProgress =
+                      canManageCandidates &&
+                      ["New", "On Hold", "Shortlisted"].includes(application.status) &&
+                      !candidate?.doNotContact &&
+                      !candidate?.mergedIntoId &&
+                      candidate?.stage !== "Archived" &&
+                      vacancy.status === "Open";
+                    const scheduled = interviewSelections.some(
+                      (item) =>
+                        item.candidateId === application.candidateId &&
+                        item.status === "Interview Scheduled",
                     );
                     return (
                       <div
@@ -1043,7 +1167,52 @@ function VacancyDetailRoute() {
                             {application.referenceId} · {application.source}
                           </p>
                         </div>
-                        <StatusBadge status={application.status} />
+                        <div className="flex flex-wrap items-center gap-2">
+                          {stage === "interview" ? (
+                            <Badge>
+                              {scheduled ? "Interview scheduled" : "Selected for interview"}
+                            </Badge>
+                          ) : (
+                            <StatusBadge status={application.status} />
+                          )}
+                          {stage === "review" && canProgress && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={
+                                shortlistingCandidateId !== null || selectingCandidateId !== null
+                              }
+                              onClick={() => void shortlistApplication(application.candidateId)}
+                            >
+                              {shortlistingCandidateId === application.candidateId
+                                ? "Shortlisting..."
+                                : "Shortlist"}
+                            </Button>
+                          )}
+                          {(stage === "review" || stage === "shortlisted") && canProgress && (
+                            <Button
+                              size="sm"
+                              disabled={
+                                selectingCandidateId !== null || shortlistingCandidateId !== null
+                              }
+                              onClick={() => void selectForInterview(application.candidateId)}
+                            >
+                              {selectingCandidateId === application.candidateId
+                                ? "Selecting..."
+                                : "Select for interview"}
+                            </Button>
+                          )}
+                          {stage === "interview" && (
+                            <Button asChild size="sm" variant="outline">
+                              <Link
+                                to="/staff/candidates/$candidateId"
+                                params={{ candidateId: application.candidateId }}
+                              >
+                                {scheduled ? "View interview" : "Schedule interview"}
+                              </Link>
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     );
                   })
@@ -1118,16 +1287,23 @@ function VacancyDetailRoute() {
                           </div>
                           <StatusBadge status={interview.status} />
                         </div>
-                        {interview.meetingJoinUrl && (
-                          <a
-                            href={interview.meetingJoinUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="mt-2 inline-block text-sm text-primary hover:underline"
-                          >
-                            Open meeting details
-                          </a>
+                        {interviewCalendarNeedsRetry(interview) && (
+                          <p className="mt-2 text-sm text-destructive">
+                            Google invitation pending. Retry from Interviews.
+                          </p>
                         )}
+                        {isRealGoogleMeetUrl(interview.meetingJoinUrl) &&
+                          !interviewCalendarNeedsRetry(interview) &&
+                          interview.status === "Scheduled" && (
+                            <a
+                              href={interview.meetingJoinUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-2 inline-block text-sm text-primary hover:underline"
+                            >
+                              Open meeting details
+                            </a>
+                          )}
                       </div>
                     );
                   })

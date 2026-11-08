@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -65,6 +65,15 @@ export function InterviewDialog({
     workingDays: number[];
   } | null>(null);
   const [location, setLocation] = useState("");
+  const [interviewFormat, setInterviewFormat] = useState<"Google Meet" | "In person">(
+    "Google Meet",
+  );
+  const [calendarConnection, setCalendarConnection] = useState<{
+    connected: boolean;
+    accountEmail: string;
+  } | null>(null);
+  const bookingRequestId = useRef<string | null>(null);
+  const bookingFingerprint = useRef<string | null>(null);
   const [notes, setNotes] = useState("");
   const [manualDate, setManualDate] = useState("");
   const [manualTime, setManualTime] = useState("");
@@ -104,6 +113,23 @@ export function InterviewDialog({
     return () => {
       active = false;
     };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    setCalendarConnection(null);
+    void fetch("/api/integrations/google-calendar", { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Calendar connection could not be checked.");
+        return response.json() as Promise<{ connected: boolean; accountEmail: string }>;
+      })
+      .then(setCalendarConnection)
+      .catch(() => {
+        if (!controller.signal.aborted)
+          setCalendarConnection({ connected: false, accountEmail: "" });
+      });
+    return () => controller.abort();
   }, [open]);
 
   // Anyone who might sit on this panel - not just HR/managers - so the scheduler can name a
@@ -177,22 +203,51 @@ export function InterviewDialog({
             );
       assertInterviewWorkingDay(slot, organisation.workingDays, organisation.timezone);
       setIsSaving(true);
-      await interviewService.createInterviewAsync(
+      const fingerprint = JSON.stringify({
+        candidateId,
+        selectedVacancyId,
+        stageName,
+        duration,
+        panelUserIds,
+        location: interviewFormat === "Google Meet" ? "Google Meet" : location,
+        interviewFormat,
+        notes,
+        slot,
+      });
+      if (bookingFingerprint.current !== fingerprint) {
+        bookingFingerprint.current = fingerprint;
+        bookingRequestId.current = crypto.randomUUID();
+      }
+      const requestId = bookingRequestId.current ?? crypto.randomUUID();
+      bookingRequestId.current = requestId;
+      const interview = await interviewService.createInterviewAsync(
         {
+          requestId,
           vacancyId: selectedVacancyId,
           candidateId,
           ...(templateId && templateId !== "none" ? { templateId } : {}),
           stageName,
           durationMinutes: Number(duration),
           panelUserIds,
-          location,
-          videoMethod: location,
+          location: interviewFormat === "Google Meet" ? "Google Meet" : location,
+          videoMethod: interviewFormat,
           notes,
           confirmedSlot: slot,
         },
         currentUser!.getActorContext(),
       );
-      toast.success("Interview scheduled. Share the time and location with the candidate.");
+      bookingRequestId.current = null;
+      bookingFingerprint.current = null;
+      if (interviewFormat === "Google Meet") {
+        if (interview.meetingJoinUrl)
+          toast.success(
+            "Google Meet created. Calendar invitations were sent to the candidate and panel.",
+          );
+        else
+          toast.warning(
+            "Interview saved, but Meet and invitations are pending. Retry from Interviews.",
+          );
+      } else toast.success("Interview scheduled. Share the time and location with the candidate.");
       onOpenChange(false);
       onSuccess?.();
     } catch (error) {
@@ -211,7 +266,8 @@ export function InterviewDialog({
             {candidateName
               ? `Set an interview time for ${candidateName}.`
               : "Set an interview time for this candidate."}{" "}
-            This does not send an invitation; share the confirmed details with the candidate.
+            Google Meet bookings send Calendar invitations to the candidate and panel once
+            confirmed.
           </DialogDescription>
         </DialogHeader>
 
@@ -298,13 +354,39 @@ export function InterviewDialog({
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Location or video link *</Label>
-            <Input
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="Office room or meeting link"
-            />
+            <Label>Interview format</Label>
+            <Select
+              value={interviewFormat}
+              onValueChange={(value) => setInterviewFormat(value as "Google Meet" | "In person")}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Google Meet">Google Meet · send invitations</SelectItem>
+                <SelectItem value="In person">In person</SelectItem>
+              </SelectContent>
+            </Select>
+            {interviewFormat === "Google Meet" && (
+              <p className="text-xs text-muted-foreground">
+                {calendarConnection?.connected
+                  ? `Invitations will come from ${calendarConnection.accountEmail}.`
+                  : calendarConnection
+                    ? "Connect the HR Google Calendar in Interviews before booking a Meet."
+                    : "Checking calendar connection…"}
+              </p>
+            )}
           </div>
+          {interviewFormat === "In person" && (
+            <div className="space-y-2">
+              <Label>Location *</Label>
+              <Input
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="Office or meeting room"
+              />
+            </div>
+          )}
           <div className="space-y-2">
             <Label>Timezone</Label>
             <Input value={organisation?.timezone ?? "Loading..."} readOnly />
@@ -472,12 +554,18 @@ export function InterviewDialog({
               !organisation ||
               !selectedVacancyId ||
               !stageName.trim() ||
-              !location.trim() ||
+              (interviewFormat === "Google Meet"
+                ? !calendarConnection?.connected
+                : !location.trim()) ||
               panelUserIds.length === 0 ||
               (selectedSlotIndex === -1 && (!manualDate || !manualTime || manualDateIsRestDay))
             }
           >
-            {isSaving ? "Scheduling..." : "Schedule Interview"}
+            {isSaving
+              ? "Scheduling..."
+              : interviewFormat === "Google Meet"
+                ? "Create Meet & send invites"
+                : "Schedule Interview"}
           </Button>
         </DialogFooter>
       </DialogContent>

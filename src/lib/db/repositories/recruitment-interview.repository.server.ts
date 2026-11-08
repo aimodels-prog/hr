@@ -308,6 +308,7 @@ export async function archiveInterviewTemplateInDatabase(
 export async function createInterviewInDatabase(
   organisationId: string,
   input: {
+    requestId?: string;
     candidateId: string;
     vacancyId?: string;
     templateId?: string;
@@ -342,6 +343,28 @@ export async function createInterviewInDatabase(
     throw new Error("A completed offline interview cannot be scheduled in the future.");
   const db = getDatabaseClient();
   return db.transaction(async (tx) => {
+    const id = input.requestId ?? randomUUID();
+    if (input.requestId) {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext(${`interview-create:${organisationId}:${id}`}))`,
+      );
+      const [existing] = await tx.select().from(interviews).where(eq(interviews.id, id)).limit(1);
+      if (existing) {
+        if (
+          existing.organisationId !== organisationId ||
+          existing.createdBy !== actor.userId ||
+          existing.candidateId !== input.candidateId ||
+          existing.vacancyId !== input.vacancyId ||
+          existing.videoMethod !== input.videoMethod ||
+          existing.source !== input.source ||
+          existing.stageName !== input.stageName.trim() ||
+          existing.durationMinutes !== input.durationMinutes ||
+          JSON.stringify(existing.confirmedSlot) !== JSON.stringify(input.confirmedSlot ?? null)
+        )
+          throw new Error("This interview request was already used for another booking.");
+        return id;
+      }
+    }
     const [candidateRows, templateRows] = await Promise.all([
       tx
         .select()
@@ -378,7 +401,6 @@ export async function createInterviewInDatabase(
       if (!vacancy) throw new Error("Vacancy not found.");
     }
     const panelUserIds = await assertPanelUsers(tx, organisationId, input.panelUserIds);
-    const id = randomUUID();
     let occurredAt: string | null = null;
     let confirmedSlot: InterviewSlot | null = null;
     let status: InterviewStatus = "Proposed";
@@ -614,6 +636,13 @@ export async function updateInterviewWorkflowInDatabase(
         throw new Error("This interview is not awaiting confirmation.");
       if (input.action === "reschedule" && interview.status !== "Scheduled")
         throw new Error("Only a scheduled interview can be rescheduled.");
+      const [settings] = await tx
+        .select({ timezone: appSettings.timezone, workingDays: appSettings.workingDays })
+        .from(appSettings)
+        .where(eq(appSettings.organisationId, organisationId))
+        .limit(1);
+      if (!settings) throw new Error("Organisation working days are not configured.");
+      assertInterviewWorkingDay(input.slot, settings.workingDays, settings.timezone);
       await assertNoPanelConflict(tx, organisationId, interview.id, panelUserIds, input.slot);
       confirmedSlot = input.slot;
       status = "Scheduled";
@@ -651,6 +680,12 @@ export async function updateInterviewWorkflowInDatabase(
       .set({
         status,
         confirmedSlot,
+        ...(interview.videoMethod === "Google Meet" &&
+        (input.action === "reschedule" ||
+          input.action === "candidate-accepted" ||
+          status === "Cancelled")
+          ? { calendarEventReference: "pending" }
+          : {}),
         candidateResponseStatus,
         history: nextHistory,
         updatedAt: new Date(),

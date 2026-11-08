@@ -207,6 +207,14 @@ export async function synchroniseCalendarInterview(accessToken: string, input: C
     if (!created.ok) throw new Error("Google Calendar creation is pending; retry safely.");
     event = Event.parse(await created.json());
   } else throw new Error("Google Calendar could not be read.");
+  // Google may create the event before its conference link is ready. Allow a short
+  // settling window so normal bookings finish without asking HR to retry.
+  for (let attempt = 0; attempt < 3 && !event.hangoutLink; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const ready = await fetch(`${base}/${id}`, { headers, signal: AbortSignal.timeout(20_000) });
+    if (!ready.ok) break;
+    event = Event.parse(await ready.json());
+  }
   if (!event.hangoutLink || new URL(event.hangoutLink).hostname !== "meet.google.com")
     throw new Error("Calendar event exists; Google Meet link is not ready yet. Retry safely.");
   return { id, cancelled: false, meetUrl: event.hangoutLink };

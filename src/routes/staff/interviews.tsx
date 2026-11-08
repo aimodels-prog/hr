@@ -24,6 +24,11 @@ import {
 } from "@/components/ui/table";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { InterviewService } from "@/lib/data/interview-service";
+import { interviewSlotFromLocalTime } from "@/lib/data/interview-scheduling";
+import {
+  interviewCalendarNeedsRetry,
+  isRealGoogleMeetUrl,
+} from "@/lib/data/interview-calendar-status";
 import { ScorecardService } from "@/lib/data/scorecard-service";
 import { CandidateService } from "@/lib/data/candidate-service";
 import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
@@ -108,6 +113,7 @@ function Interviews() {
   const [showAllMyInterviews, setShowAllMyInterviews] = useState(false);
   const [interviewSearch, setInterviewSearch] = useState("");
   const [interviewStatus, setInterviewStatus] = useState("active");
+  const [retryingCalendarId, setRetryingCalendarId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -305,7 +311,7 @@ function Interviews() {
       return;
     }
     try {
-      await interviewService.updateWorkflowAsync(
+      const updated = await interviewService.updateWorkflowAsync(
         statusChangeTarget.interview.id,
         {
           action: "change-status",
@@ -315,7 +321,11 @@ function Interviews() {
         },
         { ...getActorContext(), reason: statusChangeReason },
       );
-      toast.success(`Interview marked ${statusChangeTarget.status}`);
+      if (interviewCalendarNeedsRetry(updated))
+        toast.warning(
+          "Interview cancelled in VIA HR, but the Google invitation still needs cancellation. Retry below.",
+        );
+      else toast.success(`Interview marked ${statusChangeTarget.status}`);
       setStatusChangeTarget(null);
       refresh();
     } catch (error) {
@@ -325,28 +335,53 @@ function Interviews() {
 
   const confirmReschedule = async () => {
     if (!reschedulingInterview || !rescheduleStart) return;
-    const start = new Date(rescheduleStart);
-    const end = new Date(start.getTime() + reschedulingInterview.durationMinutes * 60_000);
     try {
-      await interviewService.updateWorkflowAsync(
+      const [date, time] = rescheduleStart.split("T");
+      const slot = interviewSlotFromLocalTime(
+        date ?? "",
+        time ?? "",
+        reschedulingInterview.durationMinutes,
+        reschedulingInterview.confirmedSlot?.timezone || "Asia/Muscat",
+      );
+      const updated = await interviewService.updateWorkflowAsync(
         reschedulingInterview.id,
         {
           action: "reschedule",
-          slot: {
-            startTime: start.toISOString(),
-            endTime: end.toISOString(),
-            timezone: reschedulingInterview.confirmedSlot?.timezone || "Asia/Dubai",
-          },
+          slot,
           reason: "Interview rescheduled by HR",
         },
         { ...getActorContext(), reason: "Interview rescheduled by HR" },
       );
-      toast.success("Interview rescheduled and invitation details updated");
+      if (interviewCalendarNeedsRetry(updated))
+        toast.warning(
+          "New time saved, but the Google invitation has not updated yet. Retry below.",
+        );
+      else toast.success("Interview rescheduled and invitation details updated");
       setReschedulingInterview(null);
       setRescheduleStart("");
       refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not reschedule interview");
+    }
+  };
+
+  const retryCalendar = async (interview: InterviewEvent) => {
+    setRetryingCalendarId(interview.id);
+    try {
+      const updated = await interviewService.retryCalendarAsync(interview.id, getActorContext());
+      if (interviewCalendarNeedsRetry(updated))
+        toast.warning("Google Meet is still being prepared. Please try again shortly.");
+      else
+        toast.success(
+          interview.status === "Cancelled"
+            ? "Google invitation cancelled."
+            : "Google Meet ready; invitations sent.",
+        );
+      refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Google Calendar could not be updated.");
+    } finally {
+      setRetryingCalendarId(null);
     }
   };
 
@@ -495,15 +530,29 @@ function Interviews() {
                           : "Not yet confirmed"}
                       </span>
                     </div>
-                    {interview.meetingJoinUrl && (
-                      <a
-                        href={interview.meetingJoinUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="block text-primary hover:underline"
+                    {isRealGoogleMeetUrl(interview.meetingJoinUrl) &&
+                      interview.status === "Scheduled" &&
+                      !interviewCalendarNeedsRetry(interview) && (
+                        <a
+                          href={interview.meetingJoinUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block text-primary hover:underline"
+                        >
+                          Open meeting
+                        </a>
+                      )}
+                    {canManage && interviewCalendarNeedsRetry(interview) && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={retryingCalendarId === interview.id}
+                        onClick={() => void retryCalendar(interview)}
                       >
-                        Open meeting
-                      </a>
+                        {retryingCalendarId === interview.id
+                          ? "Retrying…"
+                          : "Retry Google Calendar"}
+                      </Button>
                     )}
                     <div className="flex items-center gap-1.5">
                       <Users className="h-3.5 w-3.5" />
@@ -714,6 +763,11 @@ function Interviews() {
                             >
                               {interview.status}
                             </Badge>
+                            {interviewCalendarNeedsRetry(interview) && (
+                              <span className="mt-1 block text-xs text-destructive">
+                                Google invitation pending
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell>
                             {!interview.templateId ? (
@@ -741,6 +795,18 @@ function Interviews() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex flex-wrap justify-end gap-2">
+                              {canManage && interviewCalendarNeedsRetry(interview) && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={retryingCalendarId === interview.id}
+                                  onClick={() => void retryCalendar(interview)}
+                                >
+                                  {retryingCalendarId === interview.id
+                                    ? "Retrying…"
+                                    : "Retry Google Calendar"}
+                                </Button>
+                              )}
                               {canManage && interview.status === "Scheduled" && (
                                 <>
                                   <Button

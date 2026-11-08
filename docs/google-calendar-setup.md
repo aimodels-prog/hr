@@ -24,13 +24,17 @@ It always redirects to a clean interview URL. Errors do not log provider payload
 
 ## Acceptance still required
 
-Implementation checkpoint: the HR connection card, OAuth exchange, encrypted
-credential persistence and a retry-aware Calendar event adapter are implemented.
-The adapter is not yet invoked by the interview workflow or background worker.
-Do not describe this checkpoint as working invitation delivery. Durable sync
-jobs, per-interview sync status/retry UI, lifecycle wiring and browser acceptance
-must be completed before enabling delivery. HR should save interview edits before
-connecting; unsaved dialog state is not yet resumed automatically.
+The interview scheduler invokes the retry-aware Calendar event adapter for
+Google Meet bookings. It uses one stable Google event per interview and sends
+Calendar updates to candidate and panel attendees. Failed or uncertain syncs
+remain visible as pending in Interviews and HR can retry without creating a
+second event. Connecting alone does not send invitations. Google accepting an
+event is not proof that every invite reached an inbox or was accepted.
+
+Production acceptance is still required with the real Workspace account before
+relying on delivery: test create, reschedule, cancellation, revoked access,
+pending conference generation, duplicate submission and retry. Browser tests
+cannot prove delivery without a real Google connection.
 
 Test consent denial, wrong Google account, revoked access, expired VIA session,
 replayed state, cross-role denial and successful connection with a real Workspace

@@ -11,6 +11,10 @@ import {
   saveInterviewTemplateInDatabase,
   updateInterviewWorkflowInDatabase,
 } from "../db/repositories/recruitment-interview.repository.server.ts";
+import {
+  assertInterviewCalendarConnected,
+  synchroniseInterviewCalendarInDatabase,
+} from "../db/repositories/interview-calendar.repository.server.ts";
 import { resolveOrganisationIdForActor, verifyServerActorRole } from "../db/utils.server.ts";
 import { ROLE_VALUES } from "../data/types.ts";
 
@@ -98,6 +102,7 @@ export const createInterviewFn = createServerFn({ method: "POST" })
     z
       .object({
         actor: Actor,
+        requestId: z.string().uuid().optional(),
         candidateId: z.string().uuid(),
         vacancyId: z.string().uuid().optional(),
         templateId: z.string().uuid().optional(),
@@ -120,12 +125,23 @@ export const createInterviewFn = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const verified = await verifiedActor(data.actor);
+    if (data.videoMethod === "Google Meet")
+      await assertInterviewCalendarConnected(verified.organisationId);
     const { actor: _actor, ...input } = data;
-    return createInterviewInDatabase(
+    const id = await createInterviewInDatabase(
       verified.organisationId,
       JSON.parse(JSON.stringify(input)),
       verified.actor,
     );
+    if (data.videoMethod === "Google Meet" && data.confirmedSlot) {
+      try {
+        await synchroniseInterviewCalendarInDatabase(verified.organisationId, id);
+      } catch {
+        // The saved interview is recoverable through Retry Google Calendar; never claim invitations were sent.
+        console.warn("Interview Google Calendar booking is pending", { interviewId: id });
+      }
+    }
+    return id;
   });
 
 export const updateInterviewWorkflowFn = createServerFn({ method: "POST" })
@@ -167,6 +183,31 @@ export const updateInterviewWorkflowFn = createServerFn({ method: "POST" })
       JSON.parse(JSON.stringify(input)),
       verified.actor,
     );
+    if (
+      data.action === "reschedule" ||
+      data.action === "candidate-accepted" ||
+      (data.action === "change-status" && data.status === "Cancelled")
+    ) {
+      try {
+        await synchroniseInterviewCalendarInDatabase(verified.organisationId, data.interviewId);
+      } catch {
+        console.warn("Interview Google Calendar update is pending", {
+          interviewId: data.interviewId,
+        });
+      }
+    }
+  });
+
+export const retryInterviewCalendarFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z.object({ actor: Actor, interviewId: z.string().uuid() }).strict().parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await verifiedActor(data.actor);
+    if (verified.actor.activeRole !== "HR" && verified.actor.activeRole !== "Super Admin")
+      throw new Error("Only HR can retry interview invitations.");
+    await synchroniseInterviewCalendarInDatabase(verified.organisationId, data.interviewId);
+    return { ok: true };
   });
 
 const CriterionScore = z.object({

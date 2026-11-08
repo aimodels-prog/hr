@@ -115,7 +115,7 @@ export class InterviewService {
   }
 
   async createInterviewAsync(
-    payload: Partial<InterviewEvent>,
+    payload: Partial<InterviewEvent> & { requestId?: string },
     context: ActorContext,
   ): Promise<InterviewEvent> {
     if (!payload.candidateId || !payload.vacancyId)
@@ -126,6 +126,7 @@ export class InterviewService {
     const id = await createInterviewFn({
       data: {
         actor: this.serverActor(context),
+        ...(payload.requestId ? { requestId: payload.requestId } : {}),
         candidateId: payload.candidateId,
         vacancyId,
         ...(payload.templateId ? { templateId: payload.templateId } : {}),
@@ -142,6 +143,15 @@ export class InterviewService {
     });
     await this.refresh(context);
     return this.getInterviewById(id, context)!;
+  }
+
+  async retryCalendarAsync(interviewId: string, context: ActorContext): Promise<InterviewEvent> {
+    const { retryInterviewCalendarFn } = await import("../server-functions/interview.server.ts");
+    await retryInterviewCalendarFn({
+      data: { actor: this.serverActor(context), interviewId },
+    });
+    await this.refresh(context);
+    return this.getInterviewById(interviewId, context)!;
   }
 
   async createManualInterviewAsync(

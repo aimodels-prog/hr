@@ -65,6 +65,10 @@ import { CandidateService } from "@/lib/data/candidate-service";
 import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
 import { VacancyService } from "@/lib/data/vacancy-service";
 import { InterviewService } from "@/lib/data/interview-service";
+import {
+  interviewCalendarNeedsRetry,
+  isRealGoogleMeetUrl,
+} from "@/lib/data/interview-calendar-status";
 import { ScorecardService } from "@/lib/data/scorecard-service";
 import { OfferService } from "@/lib/data/offer-service";
 import { EmployeeService } from "@/lib/data/employee-service";
@@ -287,6 +291,7 @@ function CandidateProfile({
   const [candidateService] = useState(() => new CandidateService());
   const [candidatePoolService] = useState(() => new CandidatePoolService());
   const [interviewService] = useState(() => new InterviewService());
+  const [retryingInterviewId, setRetryingInterviewId] = useState<string | null>(null);
   const [scorecardService] = useState(() => new ScorecardService());
   const [offerService] = useState(() => new OfferService());
   const [empService] = useState(() => new EmployeeService());
@@ -1945,6 +1950,55 @@ function CandidateProfile({
                               <span className="font-medium">Location:</span>
                               <span className="text-muted-foreground">{interview.location}</span>
                             </div>
+                            {interviewCalendarNeedsRetry(interview) && (
+                              <div className="flex flex-wrap items-center gap-2 text-destructive">
+                                <span>Google invitation pending.</span>
+                                {currentUser.can("recruitment:manage_interviews") && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={retryingInterviewId === interview.id}
+                                    onClick={async () => {
+                                      setRetryingInterviewId(interview.id);
+                                      try {
+                                        await interviewService.retryCalendarAsync(
+                                          interview.id,
+                                          currentUser.getActorContext(),
+                                        );
+                                        toast.success(
+                                          "Google Calendar updated. Check the interview details.",
+                                        );
+                                        refresh();
+                                      } catch (error) {
+                                        toast.error(
+                                          error instanceof Error
+                                            ? error.message
+                                            : "Google Calendar could not be updated.",
+                                        );
+                                      } finally {
+                                        setRetryingInterviewId(null);
+                                      }
+                                    }}
+                                  >
+                                    {retryingInterviewId === interview.id
+                                      ? "Retrying…"
+                                      : "Retry Google Calendar"}
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                            {interview.status === "Scheduled" &&
+                              !interviewCalendarNeedsRetry(interview) &&
+                              isRealGoogleMeetUrl(interview.meetingJoinUrl) && (
+                                <a
+                                  href={interview.meetingJoinUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-block text-primary underline"
+                                >
+                                  Open Google Meet
+                                </a>
+                              )}
                             {interview.source === "Manual / Offline" && (
                               <div className="flex items-center gap-2">
                                 <span className="font-medium">Outcome:</span>

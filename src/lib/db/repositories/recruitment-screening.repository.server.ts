@@ -77,6 +77,94 @@ function unique(ids: string[]): string[] {
 
 const UNSUITABLE_PREFIX = "Not suitable: ";
 
+/** An HR shortlist is a separate, reviewable step; it does not schedule or invite anyone. */
+export async function shortlistCandidateApplicationInDatabase(
+  organisationId: string,
+  vacancyId: string,
+  candidateId: string,
+  actor: AuditActorContext,
+): Promise<void> {
+  recruiter(actor);
+  const actorUserId = actor.userId!;
+  await getDatabaseClient().transaction(async (tx) => {
+    const [vacancy] = await tx
+      .select({ id: vacancies.id, status: vacancies.status, archivedAt: vacancies.archivedAt })
+      .from(vacancies)
+      .where(and(eq(vacancies.organisationId, organisationId), eq(vacancies.id, vacancyId)))
+      .for("update")
+      .limit(1);
+    if (!vacancy || vacancy.archivedAt || vacancy.status !== "Open")
+      throw new Error("Select an open vacancy.");
+    const [application] = await tx
+      .select()
+      .from(candidateApplications)
+      .where(
+        and(
+          eq(candidateApplications.organisationId, organisationId),
+          eq(candidateApplications.vacancyId, vacancyId),
+          eq(candidateApplications.candidateId, candidateId),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!application || application.archivedAt) throw new Error("Application not found.");
+    if (application.status === "Shortlisted") return;
+    if (!["New", "On Hold"].includes(application.status))
+      throw new Error("This application cannot be shortlisted from its current stage.");
+    if (!application.consentGiven)
+      throw new Error("Candidate consent is required before shortlisting.");
+    const [candidate] = await tx
+      .select()
+      .from(candidates)
+      .where(and(eq(candidates.organisationId, organisationId), eq(candidates.id, candidateId)))
+      .for("update")
+      .limit(1);
+    if (
+      !candidate ||
+      candidate.archivedAt ||
+      candidate.mergedIntoId ||
+      candidate.stage === "Archived"
+    )
+      throw new Error("This candidate is not available for shortlisting.");
+    if (candidate.doNotContact) throw new Error("This candidate is marked Do Not Contact.");
+    await tx
+      .update(candidateApplications)
+      .set({
+        status: "Shortlisted",
+        updatedAt: new Date(),
+        updatedBy: actorUserId,
+        recordVersion: sql`${candidateApplications.recordVersion} + 1`,
+      })
+      .where(eq(candidateApplications.id, application.id));
+    if (!["Shortlisted", "Interview", "Offer", "Hired"].includes(candidate.stage))
+      await tx
+        .update(candidates)
+        .set({
+          stage: "Shortlisted",
+          updatedAt: new Date(),
+          updatedBy: actorUserId,
+          recordVersion: sql`${candidates.recordVersion} + 1`,
+        })
+        .where(eq(candidates.id, candidateId));
+    await tx.insert(auditEvents).values({
+      organisationId,
+      actorUserId,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [],
+      action: "shortlist",
+      module: "recruitment",
+      entityType: "candidate-application",
+      entityId: application.id,
+      beforeSummary: { status: application.status },
+      afterSummary: { status: "Shortlisted", interviewSelected: false },
+      reason: "HR shortlisted the application for this vacancy",
+      riskLevel: "Medium",
+    });
+  });
+}
+
 /** HR can progress an application to interview without CV extraction or AI scoring. */
 export async function selectCandidateForInterviewInDatabase(
   organisationId: string,

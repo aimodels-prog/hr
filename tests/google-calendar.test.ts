@@ -57,6 +57,45 @@ test("Cancellation of an absent event never creates an invitation", async (t) =>
   assert.equal(result.cancelled, true);
 });
 
+test("Rescheduling updates the same Meet and cancellation notifies attendees", async (t) => {
+  let stored: Record<string, unknown> | undefined;
+  let inserts = 0;
+  let updates = 0;
+  let cancellations = 0;
+  t.mock.method(globalThis, "fetch", async (url: string, options?: RequestInit) => {
+    if (options?.method === "POST") {
+      inserts++;
+      stored = JSON.parse(String(options.body)) as Record<string, unknown>;
+      return Response.json({ ...stored, hangoutLink: "https://meet.google.com/abc-defg-hij" });
+    }
+    if (options?.method === "PATCH") {
+      updates++;
+      assert.match(url, /sendUpdates=all/);
+      stored = { ...stored, ...(JSON.parse(String(options.body)) as Record<string, unknown>) };
+      return Response.json({ ...stored, hangoutLink: "https://meet.google.com/abc-defg-hij" });
+    }
+    if (options?.method === "DELETE") {
+      cancellations++;
+      assert.match(url, /sendUpdates=all/);
+      stored = undefined;
+      return new Response(null, { status: 204 });
+    }
+    return stored
+      ? Response.json({ ...stored, hangoutLink: "https://meet.google.com/abc-defg-hij" })
+      : new Response(null, { status: 404 });
+  });
+  await synchroniseCalendarInterview("test-access", interview);
+  await synchroniseCalendarInterview("test-access", {
+    ...interview,
+    startTime: "2026-10-02T10:00:00Z",
+    endTime: "2026-10-02T11:00:00Z",
+  });
+  await synchroniseCalendarInterview("test-access", { ...interview, cancelled: true });
+  assert.equal(inserts, 1);
+  assert.equal(updates, 1);
+  assert.equal(cancellations, 1);
+});
+
 test("Authorisation requests offline Calendar access without placing secrets in URL", async (t) => {
   const original = { ...process.env };
   t.after(() => {

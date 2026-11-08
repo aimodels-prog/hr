@@ -49,6 +49,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { CandidateService } from "@/lib/data/candidate-service";
+import { applicationList } from "@/lib/recruitment/application-lists";
 import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
 import { VacancyService } from "@/lib/data/vacancy-service";
 import { EmployeeService } from "@/lib/data/employee-service";
@@ -192,11 +193,41 @@ function CandidatesIndex() {
   const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [myCandidatesOnly, setMyCandidatesOnly] = useState(false);
   const [hideDoNotContact, setHideDoNotContact] = useState(false);
+  const interviewRecommendations = candidatePoolService.getAllInterviewRecommendations(
+    currentUser.getActorContext(),
+  );
+  const recommendationStatusesByApplication = new Map<string, string[]>();
+  for (const recommendation of interviewRecommendations) {
+    const statuses = recommendationStatusesByApplication.get(recommendation.applicationId) ?? [];
+    statuses.push(recommendation.status);
+    recommendationStatusesByApplication.set(recommendation.applicationId, statuses);
+  }
+  const listForApplication = (
+    application: (typeof candidatesWithApps)[number]["applications"][number],
+  ) =>
+    applicationList(
+      application.status,
+      recommendationStatusesByApplication.get(application.id) ?? [],
+    );
   const selectedForInterview = new Set(
-    candidatePoolService
-      .getAllInterviewRecommendations(currentUser.getActorContext())
-      .filter((record) => record.status === "Ready to Schedule")
-      .map((record) => record.candidateId),
+    candidatesWithApps
+      .filter((candidate) =>
+        candidate.applications.some(
+          (application) => listForApplication(application) === "interview",
+        ),
+      )
+      .map((candidate) => candidate.id),
+  );
+  const shortlistedCandidates = new Set(
+    candidatesWithApps
+      .filter(
+        (candidate) =>
+          candidate.applications.some(
+            (application) => listForApplication(application) === "shortlisted",
+          ) ||
+          (candidate.stage === "Shortlisted" && !selectedForInterview.has(candidate.id)),
+      )
+      .map((candidate) => candidate.id),
   );
 
   const [archiveTarget, setArchiveTarget] = useState<{ id: string; name: string } | null>(null);
@@ -241,7 +272,9 @@ function CandidatesIndex() {
       stageFilter === "all" ||
       (stageFilter === "selected-for-interview"
         ? selectedForInterview.has(candidate.id)
-        : candidate.stage === stageFilter);
+        : stageFilter === "Shortlisted"
+          ? shortlistedCandidates.has(candidate.id)
+          : candidate.stage === stageFilter);
     const matchesLocation = locationFilter === "all" || candidate.location === locationFilter;
     const matchesProject = projectFilter === "all" || candidate.projectId === projectFilter;
     const matchesSource = sourceFilter === "all" || candidate.source === sourceFilter;
@@ -372,6 +405,31 @@ function CandidatesIndex() {
           </Button>
         </div>
       </div>
+
+      <nav aria-label="Candidate lists" className="grid gap-2 sm:grid-cols-3">
+        {(
+          [
+            { value: "all", label: "All candidates", count: candidatesWithApps.length },
+            { value: "Shortlisted", label: "Shortlisted", count: shortlistedCandidates.size },
+            {
+              value: "selected-for-interview",
+              label: "Selected for interview",
+              count: selectedForInterview.size,
+            },
+          ] as const
+        ).map((item) => (
+          <button
+            key={item.value}
+            type="button"
+            aria-current={stageFilter === item.value ? "page" : undefined}
+            onClick={() => setStageFilter(item.value)}
+            className={`rounded-xl border bg-card p-4 text-left transition-colors hover:border-primary/60 ${stageFilter === item.value ? "border-primary bg-primary/5" : ""}`}
+          >
+            <span className="block text-sm font-medium">{item.label}</span>
+            <span className="mt-1 block text-2xl font-semibold tabular-nums">{item.count}</span>
+          </button>
+        ))}
+      </nav>
 
       <div className="flex flex-wrap gap-4 rounded-xl border bg-card p-4 shadow-sm">
         <div className="relative flex-1 min-w-[250px]">

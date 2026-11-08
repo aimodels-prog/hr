@@ -42,7 +42,8 @@ export async function saveCalendarOrganiserEmail(
     const previous = calendarEmailFromSettings(row.additionalSettings);
     if (previous === accountEmail) return accountEmail;
     const [linked] = await tx.execute(
-      sql`SELECT id FROM interviews WHERE organisation_id=${organisationId} AND calendar_event_reference IS NOT NULL LIMIT 1`,
+      sql`SELECT id FROM interviews WHERE organisation_id=${organisationId}
+        AND (calendar_event_reference IS NOT NULL OR (video_method='Google Meet' AND status='Scheduled')) LIMIT 1`,
     );
     if (linked)
       throw new Error(
