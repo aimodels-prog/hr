@@ -531,10 +531,24 @@ test(
         },
         actor,
       );
-      const interviewStart = new Date(
-        Date.UTC(2035, 0, 1, 6, 0) + Number.parseInt(unique, 16) * 60_000,
+      const [interviewCalendar] = await sql`
+        SELECT timezone, working_days FROM app_settings
+        WHERE organisation_id = ${vacancy.organisation_id}
+      `;
+      const interviewTimezone = String(interviewCalendar.timezone);
+      const interviewWorkingDays = interviewCalendar.working_days as number[];
+      const interviewBase =
+        Date.UTC(2035, 0, 1) + (Number.parseInt(unique, 16) % 3650) * 86_400_000;
+      const interviewDate = Array.from({ length: 14 }, (_, offset) =>
+        calendarDateInZone(new Date(interviewBase + offset * 86_400_000), interviewTimezone),
+      ).find((date) => isWorkingCalendarDate(date, interviewWorkingDays));
+      assert.ok(interviewDate);
+      const interviewSlot = interviewSlotFromLocalTime(
+        interviewDate,
+        "10:00",
+        60,
+        interviewTimezone,
       );
-      const interviewEnd = new Date(interviewStart.getTime() + 60 * 60_000);
       const interviewId = await createInterviewInDatabase(
         String(vacancy.organisation_id),
         {
@@ -548,13 +562,7 @@ test(
           location: "VIA Dubai office",
           videoMethod: "Google Meet (connection pending)",
           notes: "Database-backed interview lifecycle test.",
-          proposedSlots: [
-            {
-              startTime: interviewStart.toISOString(),
-              endTime: interviewEnd.toISOString(),
-              timezone: "Asia/Dubai",
-            },
-          ],
+          proposedSlots: [interviewSlot],
         },
         actor,
       );
@@ -563,11 +571,7 @@ test(
         {
           interviewId,
           action: "candidate-accepted",
-          slot: {
-            startTime: interviewStart.toISOString(),
-            endTime: interviewEnd.toISOString(),
-            timezone: "Asia/Dubai",
-          },
+          slot: interviewSlot,
           reason: "Candidate accepted the database test interview time",
         },
         actor,

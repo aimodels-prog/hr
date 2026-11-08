@@ -652,21 +652,31 @@ test(
       assert.equal(removedAudit.before_summary.projectedEvents.length, 2);
 
       // A current name must not be hidden by the first historical waiting punch.
+      const oldNameAt = new Date(yesterday);
+      oldNameAt.setUTCDate(oldNameAt.getUTCDate() - 365);
+      oldNameAt.setUTCHours(11, 38, 57, 0);
+      const currentNameAt = new Date(yesterday);
+      currentNameAt.setUTCDate(currentNameAt.getUTCDate() - 30);
+      currentNameAt.setUTCHours(4, 6, 20, 0);
       await ingestZktecoPunchBatch(organisationId, "front-door", {
         punches: [
           {
             externalEventId: "name-old",
             deviceUserId: "4",
             deviceUserName: "Stephen",
-            occurredAt: "2025-09-29T11:38:57Z",
+            occurredAt: oldNameAt.toISOString(),
           },
           {
             externalEventId: "name-new",
             deviceUserId: "4",
             deviceUserName: "Vahid",
-            occurredAt: "2026-10-07T04:06:20Z",
+            occurredAt: currentNameAt.toISOString(),
           },
-          { externalEventId: "name-blank", deviceUserId: "4", occurredAt: "2026-10-07T04:14:23Z" },
+          {
+            externalEventId: "name-blank",
+            deviceUserId: "4",
+            occurredAt: new Date(currentNameAt.getTime() + 8 * 60_000 + 3_000).toISOString(),
+          },
         ],
       });
       const renamed = await listAttendanceDeviceAdministration(organisationId, hrActor);
