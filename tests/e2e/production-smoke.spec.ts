@@ -330,9 +330,9 @@ test("production release smoke keeps employee dashboard concise on desktop and p
     page.getByTestId("primary-dashboard-charts").locator(":scope > section"),
   ).toHaveCount(2);
   await expect(page.getByText("Viewing: All employees", { exact: false })).toHaveCount(0);
-  await page.getByRole("button", { name: "About Expected hours", exact: true }).click();
+  await page.getByRole("button", { name: "About Expected attendance", exact: true }).click();
   await expect(
-    page.getByText("Completed days only, adjusted for leave", { exact: true }),
+    page.getByText("Completed days only; includes breaks where applicable", { exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await page.screenshot({ path: test.info().outputPath("employee-desktop.png"), fullPage: true });
