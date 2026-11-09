@@ -433,8 +433,9 @@ test(
         "Policy changes adjust the current entitlement year, not a different year's balance",
       );
       const exported = await exportLeaveRequestsCsvInDatabase(organisationId, {}, hrActor);
-      assert.equal(exported.rowCount, 1);
+      assert.equal(exported.rowCount, 2, "The export includes approved and declined requests");
       assert.match(exported.content, /Annual leave requested/);
+      assert.match(exported.content, /"Declined"/);
       const [storedRequest] = await sql`SELECT reason FROM leave_requests WHERE id = ${requestId}`;
       assert.equal(storedRequest?.reason, "Annual leave requested");
       const [exportAudit] = await sql`

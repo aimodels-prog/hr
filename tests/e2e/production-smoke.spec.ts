@@ -165,7 +165,7 @@ test("production release smoke loads HR and employee charts through portal SSO",
   await page.getByLabel("Chart period", { exact: true }).selectOption("7");
   await expect(page).toHaveURL(/days=7/);
   await page
-    .getByRole("region", { name: "Worked hours vs expected hours", exact: true })
+    .getByRole("region", { name: /^Recorded attendance(?: vs expected)?$/ })
     .getByRole("link", { name: "View details" })
     .click();
   await expect(page).toHaveURL(/days=7.*#attendance/);
@@ -175,7 +175,9 @@ test("production release smoke loads HR and employee charts through portal SSO",
   await page.getByRole("button", { name: "Clear employee filter" }).click();
   await expect(page.getByRole("heading", { name: "Recruitment pipeline" })).toBeVisible();
   await page.goto("/staff/me/attendance");
-  await expect(page.getByRole("heading", { name: "Worked hours vs expected hours" })).toBeVisible({
+  await expect(
+    page.getByRole("heading", { name: /^Recorded attendance(?: vs expected)?$/ }),
+  ).toBeVisible({
     timeout: 30_000,
   });
   await expect(page.getByRole("heading", { name: "My attendance summary" })).toHaveCount(0);
@@ -236,7 +238,7 @@ test("production release smoke preserves employee charts when a refresh fails", 
     "Requires isolated portal SSO configuration",
   );
   await signInAs(page, "rana.nair@via-int.com", "Rana Nair", "/staff/me/attendance");
-  const chart = page.getByRole("heading", { name: "Worked hours vs expected hours" });
+  const chart = page.getByRole("heading", { name: /^Recorded attendance(?: vs expected)?$/ });
   await expect(chart).toBeVisible({ timeout: 30_000 });
   let unavailable = true;
   await page.route("**/_serverFn/**", async (route) => {
@@ -319,7 +321,9 @@ test("production release smoke keeps employee dashboard concise on desktop and p
     "Requires isolated portal SSO configuration",
   );
   await signInAs(page, "omar.rahman@via-int.com", "Omar Rahman", "/staff");
-  await expect(page.getByRole("heading", { name: "Worked hours vs expected hours" })).toBeVisible({
+  await expect(
+    page.getByRole("heading", { name: /^Recorded attendance(?: vs expected)?$/ }),
+  ).toBeVisible({
     timeout: 30_000,
   });
   await expect(

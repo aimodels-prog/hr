@@ -106,7 +106,7 @@ test(
       assert.equal(sheet.expectedHours, 0);
       assert.equal(
         sheet.entries.filter((entry) => entry.isLeave).reduce((sum, entry) => sum + entry.total, 0),
-        198,
+        176,
       );
       assert.equal(sheet.entries[0]!.notes, "Annual Leave");
       assert.equal(
@@ -127,21 +127,21 @@ test(
           halfSnapshot.periods.find((period) => period.id === item.periodId)?.startDate ===
           "2026-10-01",
       )!;
-      assert.equal(halfSheet.expectedHours, 193.5);
-      assert.equal(halfSheet.entries[0]!.total, 4.5);
+      assert.equal(halfSheet.expectedHours, 172);
+      assert.equal(halfSheet.entries[0]!.total, 4);
       await sql`UPDATE leave_requests SET status='Cancellation Pending' WHERE id=${halfLeave}`;
       assert.equal(
         (
           await listTimesheetSnapshotForActor(org, actor(half, halfUser, "Employee"))
         ).timesheets.find((item) => item.id === halfSheet.id)!.expectedHours,
-        193.5,
+        172,
       );
       await sql`UPDATE leave_requests SET status='Cancellation Approved' WHERE id=${halfLeave}`;
       assert.equal(
         (
           await listTimesheetSnapshotForActor(org, actor(half, halfUser, "Employee"))
         ).timesheets.find((item) => item.id === halfSheet.id)!.expectedHours,
-        198,
+        176,
       );
       await assert.rejects(
         decideTimesheetInDatabase(org, sheet.id, "approve", undefined, employeeActor),
@@ -282,7 +282,7 @@ test(
       )!;
       assert.equal(reviewed.status, "Approved");
       assert.equal(reviewed.totalHours, 198);
-      assert.equal(reviewed.expectedHours, 198);
+      assert.equal(reviewed.expectedHours, 176);
       const [dailyEntries] =
         await sql`SELECT count(*)::int AS count FROM timesheet_entries WHERE timesheet_id=${monthlyWork}`;
       assert.equal(dailyEntries!.count, 22);

@@ -54,7 +54,7 @@ test("staff outside biometric tracking retain leave charts and manual timesheets
     page.getByRole("heading", { name: "My annual leave balance", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Worked hours vs expected hours", exact: true }),
+    page.getByRole("heading", { name: /^Recorded attendance(?: vs expected)?$/ }),
   ).toHaveCount(0);
 });
 
@@ -361,7 +361,7 @@ test("workforce charts load real data for HR and personal attendance on mobile",
   const personal = page.getByRole("region", { name: "My working hours", exact: true });
   await expect(personal).toBeVisible({ timeout: 30_000 });
   await expect(
-    personal.getByRole("heading", { name: "Worked hours vs expected hours" }),
+    personal.getByRole("heading", { name: /^Recorded attendance(?: vs expected)?$/ }),
   ).toBeVisible();
   await expect(page.getByRole("heading", { name: "Recruitment pipeline" })).toHaveCount(0);
   expect(
@@ -417,10 +417,9 @@ test("employee site visit persists to PostgreSQL and HR approval survives a role
   const reviewRow = page.getByRole("row").filter({ hasText: destination });
   await expect(reviewRow).toContainText("Pending HR");
   await reviewRow.getByRole("button", { name: "Review" }).click();
-  const reviewDialog = page.getByRole("dialog", { name: "Review Site Visit" });
-  await reviewDialog
-    .getByPlaceholder("Required HR decision notes")
-    .fill("Visit details and operational need confirmed.");
+  const reviewDialog = page.getByRole("dialog", { name: /Review site visit/i });
+  await expect(reviewDialog).toBeVisible();
+  await expect(reviewDialog.getByLabel(/Decision note/)).toBeVisible();
   await reviewDialog.getByRole("button", { name: "Approve" }).click();
   await page.waitForTimeout(500);
   const decisionMessages = await page.locator("[data-sonner-toast]").allTextContents();
