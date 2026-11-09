@@ -104,6 +104,7 @@ import { Route as StaffPayrollPeriodsPeriodIdRouteImport } from './routes/staff/
 import { Route as StaffPerformanceCyclesIndexRouteImport } from './routes/staff/performance/cycles/index'
 import { Route as StaffPerformanceCyclesNewRouteImport } from './routes/staff/performance/cycles/new'
 import { Route as StaffPerformanceReviewsReviewIdRouteImport } from './routes/staff/performance/reviews/$reviewId'
+import { Route as StaffRequestDetailModuleRequestIdRouteImport } from './routes/staff/request-detail/$module/$requestId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -597,6 +598,12 @@ const StaffPerformanceReviewsReviewIdRoute =
     path: '/reviews/$reviewId',
     getParentRoute: () => StaffPerformanceRoute,
   } as any)
+const StaffRequestDetailModuleRequestIdRoute =
+  StaffRequestDetailModuleRequestIdRouteImport.update({
+    id: '/request-detail/$module/$requestId',
+    path: '/request-detail/$module/$requestId',
+    getParentRoute: () => StaffRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -691,6 +698,7 @@ export interface FileRoutesByFullPath {
   '/staff/payroll/periods/$periodId': typeof StaffPayrollPeriodsPeriodIdRoute
   '/staff/performance/cycles/new': typeof StaffPerformanceCyclesNewRoute
   '/staff/performance/reviews/$reviewId': typeof StaffPerformanceReviewsReviewIdRoute
+  '/staff/request-detail/$module/$requestId': typeof StaffRequestDetailModuleRequestIdRoute
   '/staff/me/timesheets/': typeof StaffMeTimesheetsIndexRoute
   '/staff/payroll/periods/': typeof StaffPayrollPeriodsIndexRoute
   '/staff/performance/cycles/': typeof StaffPerformanceCyclesIndexRoute
@@ -779,6 +787,7 @@ export interface FileRoutesByTo {
   '/staff/payroll/periods/$periodId': typeof StaffPayrollPeriodsPeriodIdRoute
   '/staff/performance/cycles/new': typeof StaffPerformanceCyclesNewRoute
   '/staff/performance/reviews/$reviewId': typeof StaffPerformanceReviewsReviewIdRoute
+  '/staff/request-detail/$module/$requestId': typeof StaffRequestDetailModuleRequestIdRoute
   '/staff/me/timesheets': typeof StaffMeTimesheetsIndexRoute
   '/staff/payroll/periods': typeof StaffPayrollPeriodsIndexRoute
   '/staff/performance/cycles': typeof StaffPerformanceCyclesIndexRoute
@@ -877,6 +886,7 @@ export interface FileRoutesById {
   '/staff/payroll/periods/$periodId': typeof StaffPayrollPeriodsPeriodIdRoute
   '/staff/performance/cycles/new': typeof StaffPerformanceCyclesNewRoute
   '/staff/performance/reviews/$reviewId': typeof StaffPerformanceReviewsReviewIdRoute
+  '/staff/request-detail/$module/$requestId': typeof StaffRequestDetailModuleRequestIdRoute
   '/staff/me/timesheets/': typeof StaffMeTimesheetsIndexRoute
   '/staff/payroll/periods/': typeof StaffPayrollPeriodsIndexRoute
   '/staff/performance/cycles/': typeof StaffPerformanceCyclesIndexRoute
@@ -976,6 +986,7 @@ export interface FileRouteTypes {
     | '/staff/payroll/periods/$periodId'
     | '/staff/performance/cycles/new'
     | '/staff/performance/reviews/$reviewId'
+    | '/staff/request-detail/$module/$requestId'
     | '/staff/me/timesheets/'
     | '/staff/payroll/periods/'
     | '/staff/performance/cycles/'
@@ -1064,6 +1075,7 @@ export interface FileRouteTypes {
     | '/staff/payroll/periods/$periodId'
     | '/staff/performance/cycles/new'
     | '/staff/performance/reviews/$reviewId'
+    | '/staff/request-detail/$module/$requestId'
     | '/staff/me/timesheets'
     | '/staff/payroll/periods'
     | '/staff/performance/cycles'
@@ -1161,6 +1173,7 @@ export interface FileRouteTypes {
     | '/staff/payroll/periods/$periodId'
     | '/staff/performance/cycles/new'
     | '/staff/performance/reviews/$reviewId'
+    | '/staff/request-detail/$module/$requestId'
     | '/staff/me/timesheets/'
     | '/staff/payroll/periods/'
     | '/staff/performance/cycles/'
@@ -1845,6 +1858,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StaffPerformanceReviewsReviewIdRouteImport
       parentRoute: typeof StaffPerformanceRoute
     }
+    '/staff/request-detail/$module/$requestId': {
+      id: '/staff/request-detail/$module/$requestId'
+      path: '/request-detail/$module/$requestId'
+      fullPath: '/staff/request-detail/$module/$requestId'
+      preLoaderRoute: typeof StaffRequestDetailModuleRequestIdRouteImport
+      parentRoute: typeof StaffRoute
+    }
   }
 }
 
@@ -2062,6 +2082,7 @@ interface StaffRouteChildren {
   StaffTimesheetApprovalsIndexRoute: typeof StaffTimesheetApprovalsIndexRoute
   StaffVacanciesIndexRoute: typeof StaffVacanciesIndexRoute
   StaffMeTimesheetsPeriodIdRoute: typeof StaffMeTimesheetsPeriodIdRoute
+  StaffRequestDetailModuleRequestIdRoute: typeof StaffRequestDetailModuleRequestIdRoute
   StaffMeTimesheetsIndexRoute: typeof StaffMeTimesheetsIndexRoute
 }
 
@@ -2124,6 +2145,8 @@ const StaffRouteChildren: StaffRouteChildren = {
   StaffTimesheetApprovalsIndexRoute: StaffTimesheetApprovalsIndexRoute,
   StaffVacanciesIndexRoute: StaffVacanciesIndexRoute,
   StaffMeTimesheetsPeriodIdRoute: StaffMeTimesheetsPeriodIdRoute,
+  StaffRequestDetailModuleRequestIdRoute:
+    StaffRequestDetailModuleRequestIdRoute,
   StaffMeTimesheetsIndexRoute: StaffMeTimesheetsIndexRoute,
 }
 

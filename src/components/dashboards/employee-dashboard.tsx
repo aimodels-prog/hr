@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { Link } from "@tanstack/react-router";
 import { LiveAttendanceCard } from "./live-attendance-card";
 import { DashboardCharts } from "./dashboard-charts";
 import { StaffDataBoundary } from "@/components/layout/staff-data-boundary";
@@ -7,6 +8,9 @@ import { AlertTriangle, Briefcase, CheckCircle, FileText, Plane } from "lucide-r
 import { LeaveService } from "@/lib/data/leave-service";
 import { leaveDisplayType } from "@/lib/data/leave-presentation";
 import { TimesheetService } from "@/lib/data/timesheet-service";
+import { timesheetPeriodLabel } from "@/lib/data/timesheet-periods";
+import { organisationDate } from "@/lib/data/approved-leave";
+import { SettingsService } from "@/lib/data/settings-service";
 import { DocumentService } from "@/lib/data/document-service";
 import { OnboardingService } from "@/lib/data/onboarding-service";
 import { PerformanceService } from "@/lib/data/performance-service";
@@ -74,10 +78,55 @@ function EmployeeDashboardDetails({ employee, userId }: { employee: Employee; us
     .getTimesheetsForEmployee(employee.id, actorContext)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const overdueTs = employeeTimesheets.filter((t) => t.status === "Returned");
-  const latestTimesheet = employeeTimesheets[0] || null;
-  const latestTimesheetPeriod = latestTimesheet
-    ? tsService.getPeriods().find((period) => period.id === latestTimesheet.periodId)
+  const todayDate = organisationDate(
+    new Date(),
+    new SettingsService().getAppSettingsSync().timezone,
+  );
+  const currentPeriod = tsService
+    .getPeriods()
+    .find((period) => period.startDate <= todayDate && period.endDate >= todayDate);
+  const currentTimesheet = currentPeriod
+    ? employeeTimesheets.find((sheet) => sheet.periodId === currentPeriod.id)
+    : undefined;
+  const currentTimesheetSummary = currentPeriod
+    ? tsService.getPeriodSummary(employee.id, currentPeriod, currentTimesheet)
     : null;
+  const previousOpenPeriod = tsService
+    .getPeriods()
+    .filter(
+      (period) =>
+        period.status === "Open" &&
+        period.endDate < todayDate &&
+        (!employee.startDate || employee.startDate <= period.endDate),
+    )
+    .sort((a, b) => b.endDate.localeCompare(a.endDate))[0];
+  const previousTimesheet = previousOpenPeriod
+    ? employeeTimesheets.find((sheet) => sheet.periodId === previousOpenPeriod.id)
+    : undefined;
+  const previousNeedsReview = Boolean(
+    previousOpenPeriod &&
+    (!previousTimesheet || ["Draft", "Returned"].includes(previousTimesheet.status)),
+  );
+  const attendanceRecordDates = new Map<string, string>();
+  for (const record of attendanceService.getRecordsForEmployee(employee.id, actorContext)) {
+    attendanceRecordDates.set(record.id, record.date);
+    if (record.databaseId) attendanceRecordDates.set(record.databaseId, record.date);
+  }
+  const inCurrentPeriod = (date: string | undefined) =>
+    Boolean(
+      currentPeriod && date && date >= currentPeriod.startDate && date <= currentPeriod.endDate,
+    );
+  const pendingTimeReviews =
+    attendanceService
+      .getCorrectionsForEmployee(employee.id, actorContext)
+      .filter(
+        (item) =>
+          ["Pending Manager", "Pending HR"].includes(item.status) &&
+          inCurrentPeriod(attendanceRecordDates.get(item.attendanceRecordId)),
+      ).length +
+    attendanceService
+      .getSiteVisitsForEmployee(employee.id, actorContext)
+      .filter((item) => item.status === "Pending HR" && inCurrentPeriod(item.date)).length;
 
   // Documents (90-day window so both warning (31-90 days) and critical (<=30 days) tiers are reachable,
   // matching hr-dashboard.tsx's split instead of pre-filtering through the 30-day-only getExpiringDocuments())
@@ -203,6 +252,62 @@ function EmployeeDashboardDetails({ employee, userId }: { employee: Employee; us
 
   return (
     <div className="flex flex-col gap-4">
+      <DashboardPanel
+        title="My timesheet"
+        description={currentPeriod ? timesheetPeriodLabel(currentPeriod) : "Monthly work and leave"}
+        viewAllLabel="All months"
+        viewAllTo="/staff/me/timesheets"
+      >
+        <div className="space-y-3">
+          {currentPeriod && currentTimesheetSummary ? (
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+                <p>
+                  <span className="font-semibold">{currentTimesheetSummary.workedHours} h</span>{" "}
+                  worked
+                </p>
+                <p>
+                  <span className="font-semibold">{currentTimesheetSummary.paidLeaveHours} h</span>{" "}
+                  paid leave
+                </p>
+                <p>
+                  <span className="font-semibold">
+                    {currentTimesheetSummary.requiredWorkHours} h
+                  </span>{" "}
+                  required work
+                </p>
+                {pendingTimeReviews > 0 && (
+                  <p className="text-amber-700">
+                    {pendingTimeReviews} correction or visit review
+                    {pendingTimeReviews === 1 ? "" : "s"} pending
+                  </p>
+                )}
+              </div>
+              <Link
+                to="/staff/me/timesheets/$periodId"
+                params={{ periodId: currentPeriod.id }}
+                className="inline-flex shrink-0 items-center rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+              >
+                Open daily calendar
+              </Link>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              This month's timesheet has not been opened by HR yet.
+            </p>
+          )}
+          {previousNeedsReview && previousOpenPeriod && (
+            <Link
+              to="/staff/me/timesheets/$periodId"
+              params={{ periodId: previousOpenPeriod.id }}
+              className="block rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900 hover:underline"
+            >
+              {timesheetPeriodLabel(previousOpenPeriod)} needs your review ·{" "}
+              {previousTimesheet?.status ?? "Not started"}
+            </Link>
+          )}
+        </div>
+      </DashboardPanel>
       <details className="rounded-xl border bg-card p-4">
         <summary className="mb-3 cursor-pointer text-sm font-medium">My request reminders</summary>
         <AttentionQueue items={attentionItems} />

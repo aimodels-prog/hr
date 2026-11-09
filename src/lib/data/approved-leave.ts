@@ -16,7 +16,12 @@ export interface ApprovedLeaveDates {
   endDate: string;
   isHalfDay: boolean;
   status?: string;
-  policySnapshot?: { name?: string; type?: string } | null;
+  policySnapshot?: {
+    name?: string;
+    type?: string;
+    isPaid?: boolean;
+    specialRequest?: { unpaidByDate?: Array<{ date: string; days: number }> };
+  } | null;
 }
 
 /** Remote work and last-working-day markers record a work arrangement, not absence. */
@@ -108,22 +113,37 @@ export function timesheetAbsences(input: {
       if (!credited) continue;
       fraction += credited;
       const label = leaveDisplayType(leave);
-      const key = `automatic-leave-${label}`;
-      const entry = entries.get(key) ?? {
-        id: key,
-        projectId: "LEAVE",
-        costCentreId: "LEAVE",
-        activityCodeId: "LEAVE",
-        locationCodeId: "LEAVE",
-        hours: {},
-        total: 0,
-        isLeave: true,
-        notes: label,
-      };
-      const hours = input.dailyHours * credited;
-      entry.hours[date] = (entry.hours[date] ?? 0) + hours;
-      entry.total += hours;
-      entries.set(key, entry);
+      const specialUnpaid = leave.policySnapshot?.specialRequest?.unpaidByDate?.find(
+        (item) => item.date === date,
+      )?.days;
+      const unpaid = leave.policySnapshot?.specialRequest
+        ? Math.min(credited, Math.max(0, specialUnpaid ?? 0))
+        : leave.policySnapshot?.isPaid === false
+          ? credited
+          : 0;
+      for (const [part, isUnpaidLeave] of [
+        [credited - unpaid, false],
+        [unpaid, true],
+      ] as const) {
+        if (part <= 0) continue;
+        const key = `automatic-${isUnpaidLeave ? "unpaid-" : ""}leave-${label}`;
+        const entry = entries.get(key) ?? {
+          id: key,
+          projectId: "LEAVE",
+          costCentreId: "LEAVE",
+          activityCodeId: "LEAVE",
+          locationCodeId: "LEAVE",
+          hours: {},
+          total: 0,
+          isLeave: true,
+          isUnpaidLeave,
+          notes: isUnpaidLeave ? `${label} (unpaid)` : label,
+        };
+        const hours = input.dailyHours * part;
+        entry.hours[date] = (entry.hours[date] ?? 0) + hours;
+        entry.total += hours;
+        entries.set(key, entry);
+      }
     }
     expectedWorkHours += input.dailyHours * (1 - fraction);
   }

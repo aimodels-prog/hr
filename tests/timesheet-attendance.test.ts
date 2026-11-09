@@ -218,7 +218,7 @@ test("staff outside biometric tracking submit project hours without punch explan
   assert.equal(timesheets.approveTimesheet(saved.id, hr).status, "Approved");
 });
 
-test("stored punches remain visible when biometric tracking has not been configured", () => {
+test("complete punches supply work hours even without manual project allocation", () => {
   const { attendance, storage, timesheets, period } = harness();
   storage.writeCollection("attendanceTracking", []);
   addAttendance(attendance, "2026-08-17");
@@ -227,8 +227,8 @@ test("stored punches remain visible when biometric tracking has not been configu
   const blank = timesheets.reconcileAttendance(sheet);
   const day = blank.days.find((item) => item.date === "2026-08-17");
   assert.equal(day?.attendanceHours, 9);
-  assert.equal(day?.timesheetWorkHours, 0);
-  assert.equal(day?.status, "Missing Timesheet");
+  assert.equal(day?.timesheetWorkHours, 9);
+  assert.equal(day?.status, "Matched");
   assert.equal(day?.requiresExplanation, false);
   assert.equal(blank.unresolvedCount, 0, "optional attendance does not block a timesheet");
 
@@ -237,6 +237,76 @@ test("stored punches remain visible when biometric tracking has not been configu
     timesheets.reconcileAttendance(sheet).days.find((item) => item.date === "2026-08-17")?.status,
     "Matched",
   );
+});
+
+test("a complete month of punches can be submitted without duplicate project rows", () => {
+  const { attendance, timesheets, period } = harness();
+  for (const date of ["2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20", "2026-08-21"])
+    addAttendance(attendance, date);
+  const sheet = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
+  const summary = timesheets.getPeriodSummary("employee-omar", period, sheet);
+  assert.equal(summary.workedHours, 45);
+  assert.equal(summary.creditedHours, 45);
+  assert.equal(summary.requiredWorkHours, 45);
+  assert.equal(timesheets.submitTimesheet(sheet.id, employee).status, "Pending Manager");
+});
+
+test("paid leave credits nine hours while unpaid leave covers a day at zero credit", () => {
+  const { attendance, timesheets, period, storage } = harness();
+  storage.writeCollection("leave_requests", [
+    {
+      id: "paid-leave",
+      employeeId: "employee-omar",
+      startDate: "2026-08-17",
+      endDate: "2026-08-17",
+      isHalfDay: false,
+      status: "Approved",
+      policySnapshot: { name: "Annual Leave", isPaid: true },
+    },
+    {
+      id: "unpaid-leave",
+      employeeId: "employee-omar",
+      startDate: "2026-08-23",
+      endDate: "2026-08-23",
+      isHalfDay: false,
+      status: "Approved",
+      policySnapshot: { name: "Unpaid Leave", isPaid: false },
+    },
+  ]);
+  for (const date of ["2026-08-18", "2026-08-19", "2026-08-20"]) addAttendance(attendance, date);
+  const sheet = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
+  const summary = timesheets.getPeriodSummary("employee-omar", period, sheet);
+  assert.deepEqual(summary, {
+    workedHours: 27,
+    paidLeaveHours: 9,
+    unpaidLeaveHours: 9,
+    holidayHours: 0,
+    creditedHours: 36,
+    requiredWorkHours: 27,
+  });
+  assert.equal(timesheets.submitTimesheet(sheet.id, employee).status, "Pending Manager");
+});
+
+test("a half-day leave and full punch cannot credit more than one standard day", () => {
+  const { attendance, timesheets, period, storage } = harness();
+  storage.writeCollection("leave_requests", [
+    {
+      id: "half-day",
+      employeeId: "employee-omar",
+      startDate: "2026-08-17",
+      endDate: "2026-08-17",
+      isHalfDay: true,
+      status: "Approved",
+      policySnapshot: { name: "Annual Leave", isPaid: true },
+    },
+  ]);
+  addAttendance(attendance, "2026-08-17");
+  const sheet = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
+  const day = timesheets.reconcileAttendance(sheet).days.find((row) => row.date === "2026-08-17");
+  const summary = timesheets.getPeriodSummary("employee-omar", period, sheet);
+  assert.equal(day?.timesheetWorkHours, 4.5);
+  assert.equal(summary.paidLeaveHours, 4.5);
+  assert.equal(summary.creditedHours, 9);
 });
 
 test("matching project and attendance hours reconcile without an explanation", () => {

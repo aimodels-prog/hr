@@ -1,9 +1,12 @@
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useState, useMemo, useEffect } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { TimesheetDayNavigation } from "@/components/timesheets/day-navigation";
 import { timesheetPeriodLabel, isConfiguredTimesheetPeriod } from "@/lib/data/timesheet-periods";
-import { organisationDate } from "@/lib/data/approved-leave";
+import { isEffectiveLeave, organisationDate } from "@/lib/data/approved-leave";
+import { AttendanceService } from "@/lib/data/attendance-service";
+import { LeaveService } from "@/lib/data/leave-service";
+import { recordedAttendanceHours } from "@/lib/data/recorded-hours";
 import { SettingsService } from "@/lib/data/settings-service";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import {
@@ -56,11 +59,14 @@ function TimesheetEntryRoute() {
   const currentUser = useCurrentUser();
 
   const tsService = useMemo(() => new TimesheetService(), []);
+  const attendanceService = useMemo(() => new AttendanceService(), []);
+  const leaveService = useMemo(() => new LeaveService(), []);
 
   const [timesheet, setTimesheet] = useState<TimesheetWithEntries | null>(null);
   const [dayPage, setDayPage] = useState(0);
   const [isCertifyOpen, setIsCertifyOpen] = useState(false);
   const [isCopyConfirmOpen, setIsCopyConfirmOpen] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   const projects = getProjectRepository().list();
   const costCentres = getMasterDataRepository("costCentres").list();
@@ -69,6 +75,7 @@ function TimesheetEntryRoute() {
 
   useEffect(() => {
     if (currentUser?.employeeId && periodId) {
+      setSelectedDate(null);
       void tsService
         .getOrCreateTimesheetAsync(currentUser.employeeId, periodId, currentUser.getActorContext())
         .then((ts) => setTimesheet(JSON.parse(JSON.stringify(ts))))
@@ -226,8 +233,84 @@ function TimesheetEntryRoute() {
     });
   });
 
-  const diff = timesheet.totalHours - timesheet.expectedHours;
   const reconciliation = tsService.reconcileAttendance(timesheet);
+  const summary = tsService.getPeriodSummary(currentUser.employeeId!, period!, timesheet);
+  const diff = Number((summary.workedHours - summary.requiredWorkHours).toFixed(2));
+  const attendanceDays = new Map(reconciliation.days.map((day) => [day.date, day]));
+  const employeeRecords = attendanceService.getRecordsForEmployee(
+    currentUser.employeeId!,
+    currentUser.getActorContext(),
+  );
+  const corrections = attendanceService.getCorrectionsForEmployee(
+    currentUser.employeeId!,
+    currentUser.getActorContext(),
+  );
+  const visits = attendanceService.getSiteVisitsForEmployee(
+    currentUser.employeeId!,
+    currentUser.getActorContext(),
+  );
+  const leaveRequests = leaveService.getLeaveRequestsForEmployee(
+    currentUser.employeeId!,
+    currentUser.getActorContext(),
+  );
+  const todayDate = organisationDate(
+    new Date(),
+    new SettingsService().getAppSettingsSync().timezone,
+  );
+  const focusedDate =
+    selectedDate ??
+    (todayDate >= period!.startDate && todayDate <= period!.endDate
+      ? todayDate
+      : period!.startDate);
+  const focusedDay = attendanceDays.get(focusedDate);
+  const focusedLeave = timesheet.entries.filter(
+    (entry) => entry.isLeave && entry.hours[focusedDate],
+  );
+  const focusedHoliday = timesheet.entries.some(
+    (entry) => entry.isHoliday && entry.hours[focusedDate],
+  );
+  const focusedRecord = employeeRecords.find((record) => record.date === focusedDate);
+  const focusedCorrections = corrections.filter(
+    (correction) =>
+      correction.attendanceRecordId === focusedRecord?.id ||
+      correction.attendanceRecordId === focusedRecord?.databaseId,
+  );
+  const focusedVisits = visits.filter((visit) => visit.date === focusedDate);
+  const focusedLeaveRequests = leaveRequests.filter(
+    (request) => request.startDate <= focusedDate && request.endDate >= focusedDate,
+  );
+  const paidLeaveHours = (date: string) =>
+    timesheet.entries.reduce(
+      (sum, entry) => sum + (entry.isLeave && !entry.isUnpaidLeave ? (entry.hours[date] ?? 0) : 0),
+      0,
+    );
+  const holidayHours = (date: string) =>
+    timesheet.entries.reduce(
+      (sum, entry) => sum + (entry.isHoliday ? (entry.hours[date] ?? 0) : 0),
+      0,
+    );
+  const workingDays = new SettingsService().getAppSettingsSync().workingDays;
+  const shortDay = (date: string, worked = 0, leave = 0, holiday = 0) => {
+    if (date >= todayDate || (currentUser.currentEmployee?.startDate ?? "") > date) return false;
+    if (!workingDays.includes(parseISO(date).getDay())) return false;
+    return worked + 0.01 < Math.max(0, tsService.getRecordedDailyHours() - leave - holiday);
+  };
+  const focusedShort = shortDay(
+    focusedDate,
+    focusedDay?.timesheetWorkHours ?? 0,
+    focusedDay?.leaveHours ?? 0,
+    focusedDay?.holidayHours ?? 0,
+  );
+  const focusedPendingReview =
+    focusedVisits.some((visit) => visit.status === "Pending HR") ||
+    focusedCorrections.some((correction) =>
+      ["Pending Manager", "Pending HR"].includes(correction.status),
+    ) ||
+    focusedLeaveRequests.some(
+      (request) =>
+        !isEffectiveLeave(request) &&
+        !["Rejected", "Cancelled", "Declined"].includes(request.status),
+    );
   const hasAttendanceDifference = reconciliation.days.some((day) =>
     ["Variance", "Missing Attendance", "Missing Timesheet", "Incomplete Attendance"].includes(
       day.status,
@@ -272,20 +355,20 @@ function TimesheetEntryRoute() {
 
         <div className="flex gap-4 mb-2">
           <Card className="flex-1 bg-muted/30">
-            <CardContent className="p-4 flex items-center justify-between">
-              <div>
-                <div className="text-sm text-muted-foreground">Expected work</div>
-                <div className="text-2xl font-bold">{timesheet.expectedHours}</div>
+            <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
+              <div className="min-w-28">
+                <div className="text-sm text-muted-foreground">Required work</div>
+                <div className="text-2xl font-bold">{summary.requiredWorkHours} h</div>
               </div>
-              <div className="text-right">
+              <div className="min-w-28 text-right">
                 <div className="text-sm text-muted-foreground">Worked hours</div>
                 <div
-                  className={`text-2xl font-bold ${timesheet.totalHours < timesheet.expectedHours && isEditable ? "text-destructive" : ""}`}
+                  className={`text-2xl font-bold ${summary.workedHours < summary.requiredWorkHours && isEditable ? "text-destructive" : ""}`}
                 >
-                  {timesheet.totalHours}
+                  {summary.workedHours} h
                 </div>
               </div>
-              <div className="text-right">
+              <div className="min-w-28 text-right">
                 <div className="text-sm text-muted-foreground">Difference</div>
                 <div
                   className={`text-2xl font-bold ${diff > 0 ? "text-emerald-600" : diff < 0 ? "text-destructive" : "text-muted-foreground"}`}
@@ -294,19 +377,213 @@ function TimesheetEntryRoute() {
                 </div>
               </div>
               {timesheet.entries.some((entry) => entry.isLeave || entry.isHoliday) && (
-                <div className="text-right">
-                  <div className="text-sm text-muted-foreground">Leave / holiday</div>
+                <div className="min-w-28 text-right">
+                  <div className="text-sm text-muted-foreground">Paid leave / holiday</div>
                   <div className="text-2xl font-bold">
-                    {timesheet.entries
-                      .filter((entry) => entry.isLeave || entry.isHoliday)
-                      .reduce((sum, entry) => sum + entry.total, 0)}{" "}
-                    h
+                    {summary.paidLeaveHours + summary.holidayHours} h
                   </div>
+                  {summary.unpaidLeaveHours > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {summary.unpaidLeaveHours} h unpaid leave · 0 credit
+                    </p>
+                  )}
                 </div>
               )}
             </CardContent>
           </Card>
         </div>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Daily calendar</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Recorded work is filled from complete attendance. Paid leave adds credit; unpaid leave
+              does not.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-7 gap-1 text-center text-xs font-medium text-muted-foreground">
+              {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((name) => (
+                <div key={name} className="py-1">
+                  {name}
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-1">
+              {Array.from({ length: (allDays[0]!.getDay() + 6) % 7 }, (_, index) => (
+                <div key={`blank-${index}`} aria-hidden="true" />
+              ))}
+              {allDays.map((dayDate) => {
+                const date = format(dayDate, "yyyy-MM-dd");
+                const day = attendanceDays.get(date);
+                const paid = paidLeaveHours(date);
+                const unpaid = timesheet.entries.some(
+                  (entry) => entry.isUnpaidLeave && (entry.hours[date] ?? 0) > 0,
+                );
+                const leaveName = timesheet.entries.find(
+                  (entry) => entry.isLeave && (entry.hours[date] ?? 0) > 0,
+                )?.notes;
+                const pendingLeave = leaveRequests.some(
+                  (request) =>
+                    request.startDate <= date &&
+                    request.endDate >= date &&
+                    !isEffectiveLeave(request) &&
+                    !["Rejected", "Cancelled", "Declined"].includes(request.status),
+                );
+                const pendingVisit = visits.some(
+                  (visit) => visit.date === date && visit.status === "Pending HR",
+                );
+                const record = employeeRecords.find((item) => item.date === date);
+                const pendingCorrection = corrections.some(
+                  (correction) =>
+                    ["Pending Manager", "Pending HR"].includes(correction.status) &&
+                    (correction.attendanceRecordId === record?.id ||
+                      correction.attendanceRecordId === record?.databaseId),
+                );
+                const pending = pendingLeave || pendingVisit || pendingCorrection;
+                const issue =
+                  Boolean(day && !day.resolved) ||
+                  day?.status === "Incomplete Attendance" ||
+                  shortDay(
+                    date,
+                    day?.timesheetWorkHours ?? 0,
+                    day?.leaveHours ?? 0,
+                    day?.holidayHours ?? 0,
+                  );
+                const credit = Number(
+                  ((day?.timesheetWorkHours ?? 0) + paid + holidayHours(date)).toFixed(2),
+                );
+                return (
+                  <button
+                    key={date}
+                    type="button"
+                    aria-pressed={focusedDate === date}
+                    aria-label={`${date}: ${credit} credited hours${leaveName ? `, ${leaveName}` : ""}${pending ? ", approval pending" : ""}${issue ? ", needs review" : ""}`}
+                    onClick={() => setSelectedDate(date)}
+                    className={`min-h-20 rounded-lg border p-1.5 text-left transition-colors hover:border-primary sm:p-2 ${focusedDate === date ? "border-primary bg-primary/5" : "bg-card"} ${issue ? "border-amber-400" : ""}`}
+                  >
+                    <span className="block text-xs text-muted-foreground">
+                      {format(dayDate, "d")}
+                    </span>
+                    <span className="block text-sm font-semibold">{credit} h</span>
+                    <span className="block truncate text-[10px] text-muted-foreground sm:text-xs">
+                      {leaveName ??
+                        (holidayHours(date) > 0
+                          ? "Holiday"
+                          : unpaid
+                            ? "Unpaid leave"
+                            : (day?.attendanceStatus ?? "—"))}
+                    </span>
+                    {(pending || issue) && (
+                      <span className="mt-1 block text-[10px] font-medium text-amber-700">
+                        {pending ? "Pending" : "Review"}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="rounded-lg border bg-muted/20 p-4 text-sm">
+              <h3 className="font-semibold">
+                {format(parseISO(focusedDate), "EEEE, d MMMM yyyy")}
+              </h3>
+              <p className="mt-1 text-muted-foreground">
+                {focusedDay?.timesheetWorkHours ?? 0} h worked · {paidLeaveHours(focusedDate)} h
+                paid leave · {holidayHours(focusedDate)} h holiday
+                {focusedLeave.some((entry) => entry.isUnpaidLeave)
+                  ? " · Unpaid leave: 0 h credit"
+                  : ""}
+              </p>
+              {focusedRecord && (
+                <div className="mt-2">
+                  <p>
+                    Attendance: {focusedRecord.clockIn ?? "—"} to {focusedRecord.clockOut ?? "—"} ·{" "}
+                    {focusedRecord.source}
+                  </p>
+                  <p className="text-muted-foreground">
+                    {focusedRecord.officeExceptionLabel
+                      ? "Approved office credit"
+                      : "Recorded presence"}
+                    : {recordedAttendanceHours(focusedRecord)} h
+                    {recordedAttendanceHours(focusedRecord) > (focusedDay?.timesheetWorkHours ?? 0)
+                      ? " · Extra presence is not automatic overtime"
+                      : ""}
+                  </p>
+                </div>
+              )}
+              {(focusedShort || (focusedDay && !focusedDay.resolved)) && (
+                <p className="mt-2 text-amber-700">
+                  {focusedPendingReview
+                    ? "A request for this day is awaiting a decision. Open it below to see the next approver."
+                    : focusedShort
+                      ? "This day has fewer recorded hours than expected."
+                      : `This day needs review: ${focusedDay?.status}.`}
+                </p>
+              )}
+              {focusedShort && !focusedPendingReview && (
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  {attendanceService.isTrackingRequired(currentUser.employeeId!, focusedDate) ||
+                  focusedRecord ||
+                  focusedVisits.some((visit) =>
+                    ["Approved", "Completed", "Rejected"].includes(visit.status),
+                  ) ? (
+                    <Button asChild size="sm">
+                      <Link to="/staff/me/attendance" search={{ correct: focusedDate }}>
+                        Request an attendance correction
+                      </Link>
+                    </Button>
+                  ) : (
+                    <Button asChild size="sm" variant="outline">
+                      <a href="#manual-hours">Add manual work hours</a>
+                    </Button>
+                  )}
+                  {focusedRecord && (
+                    <span className="text-xs text-muted-foreground">
+                      If the punch is correct, explain the difference below.
+                    </span>
+                  )}
+                </div>
+              )}
+              {focusedHoliday && <p className="mt-2">Public holiday</p>}
+              {focusedLeaveRequests.map((request) => (
+                <p key={request.id} className="mt-2">
+                  <Link
+                    to="/staff/request-detail/$module/$requestId"
+                    params={{ module: "Leave", requestId: request.id }}
+                    className="font-medium text-primary underline"
+                  >
+                    {request.policySnapshot.name} · {request.status}
+                  </Link>
+                </p>
+              ))}
+              {focusedVisits.map((visit) => (
+                <p key={visit.id} className="mt-2">
+                  <Link
+                    to="/staff/request-detail/$module/$requestId"
+                    params={{ module: "Visits", requestId: visit.databaseId ?? visit.id }}
+                    className="font-medium text-primary underline"
+                  >
+                    Visit to {visit.destination} · {visit.status}
+                  </Link>
+                </p>
+              ))}
+              {focusedCorrections.map((correction) => (
+                <p key={correction.id} className="mt-2">
+                  <Link
+                    to="/staff/request-detail/$module/$requestId"
+                    params={{
+                      module: "Attendance corrections",
+                      requestId: correction.databaseId ?? correction.id,
+                    }}
+                    className="font-medium text-primary underline"
+                  >
+                    {correction.correctionType} · {correction.status}
+                  </Link>
+                </p>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader className="pb-3">
@@ -330,7 +607,7 @@ function TimesheetEntryRoute() {
                 <div className="text-xl font-semibold">{reconciliation.attendanceHours}</div>
               </div>
               <div className="rounded-lg border bg-muted/20 p-3">
-                <div className="text-xs text-muted-foreground">Project work hours</div>
+                <div className="text-xs text-muted-foreground">Work hours on timesheet</div>
                 <div className="text-xl font-semibold">{reconciliation.timesheetWorkHours}</div>
               </div>
               <div className="rounded-lg border bg-muted/20 p-3">
@@ -371,7 +648,7 @@ function TimesheetEntryRoute() {
                     <TableHead>Date</TableHead>
                     <TableHead>Attendance</TableHead>
                     <TableHead className="text-right">Attendance hours</TableHead>
-                    <TableHead className="text-right">Project hours</TableHead>
+                    <TableHead className="text-right">Timesheet work</TableHead>
                     <TableHead className="text-right">Difference</TableHead>
                     <TableHead>Result</TableHead>
                   </TableRow>
@@ -443,9 +720,15 @@ function TimesheetEntryRoute() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card id="manual-hours">
           <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between py-3">
-            <CardTitle className="text-base">Time Entries</CardTitle>
+            <div>
+              <CardTitle className="text-base">Project allocations or manual hours</CardTitle>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Complete attendance fills work hours automatically. Add rows only for work without a
+                punch or when a project allocation is needed.
+              </p>
+            </div>
             {isEditable && (
               <div className="flex flex-wrap gap-2">
                 <Button
@@ -584,7 +867,7 @@ function TimesheetEntryRoute() {
                           <TableCell key={dateStr} className="p-1 text-center">
                             {isReadonlyBlock ? (
                               <div className="text-sm font-medium text-muted-foreground">
-                                {val || "-"}
+                                {entry.isUnpaidLeave ? "0" : val || "-"}
                               </div>
                             ) : (
                               <Input
@@ -599,7 +882,9 @@ function TimesheetEntryRoute() {
                         );
                       })}
 
-                      <TableCell className="p-2 text-center font-bold">{entry.total}</TableCell>
+                      <TableCell className="p-2 text-center font-bold">
+                        {entry.isUnpaidLeave ? 0 : entry.total}
+                      </TableCell>
                       <TableCell className="p-2">
                         {isReadonlyBlock ? (
                           <span className="text-xs text-muted-foreground">{entry.notes}</span>

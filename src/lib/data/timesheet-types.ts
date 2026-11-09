@@ -98,6 +98,8 @@ export interface TimesheetEntry {
   total: number;
   notes?: string;
   isLeave?: boolean;
+  /** Covers an approved absence but contributes no paid/credited hours. */
+  isUnpaidLeave?: boolean;
   isHoliday?: boolean;
 }
 

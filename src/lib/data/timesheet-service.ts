@@ -27,6 +27,7 @@ import { EmployeeService } from "./employee-service.ts";
 import { SettingsService, syncWorkingHoursCompatibilityCache } from "./settings-service.ts";
 import { timesheetAbsences, organisationDate } from "./approved-leave.ts";
 import { isConfiguredTimesheetPeriod, timesheetPeriodsInRange } from "./timesheet-periods.ts";
+import { effectiveDailyWorkHours } from "./timesheet-work-hours.ts";
 
 const SETTINGS_COLLECTION = "timesheetSettings";
 
@@ -518,7 +519,16 @@ export class TimesheetService {
 
   getTimesheetsForEmployee(employeeId: string, context: ActorContext): TimesheetWithEntries[] {
     this.requireEmployeeRead(employeeId, context, "view this employee's timesheets");
-    return this.timesheetRepo.list().filter((t) => t.employeeId === employeeId);
+    return this.timesheetRepo
+      .list()
+      .filter((t) => t.employeeId === employeeId)
+      .map((sheet) => {
+        if (!["Draft", "Returned"].includes(sheet.status)) return sheet;
+        const period = this.periodRepo.getById(sheet.periodId);
+        if (!period) return sheet;
+        const current = this.withApprovedAbsences(sheet, period);
+        return { ...current, totalHours: this.reconcileAttendance(current).timesheetWorkHours };
+      });
   }
 
   /**
@@ -658,7 +668,7 @@ export class TimesheetService {
               record.clockOut ||
               record.officeExceptionLabel),
           ) ||
-          timesheet.entries.some((entry) => (entry.isLeave || entry.isHoliday) && entry.hours[date])
+          timesheet.entries.some((entry) => (entry.hours[date] ?? 0) > 0)
         );
       })
       .map((day) => {
@@ -668,14 +678,14 @@ export class TimesheetService {
           ? undefined
           : this.attendanceService.reconcileDailyStatus(timesheet.employeeId, date, SYSTEM_CONTEXT)
               ?.status;
-        let workHours = 0;
+        let manualHours = 0;
         let leaveHours = 0;
         let holidayHours = 0;
         for (const entry of timesheet.entries) {
           const hours = entry.hours[date] ?? 0;
           if (entry.isLeave) leaveHours += hours;
           else if (entry.isHoliday) holidayHours += hours;
-          else workHours += hours;
+          else manualHours += hours;
         }
         const fullAbsence = leaveHours + holidayHours >= this.getRecordedDailyHours(settings);
         const attendanceHours = ordinaryAttendanceHours(
@@ -691,6 +701,12 @@ export class TimesheetService {
         );
         const completeAttendance = Boolean(
           record?.officeExceptionLabel || (record?.clockIn && record?.clockOut),
+        );
+        const workHours = effectiveDailyWorkHours(
+          manualHours,
+          attendanceHours,
+          completeAttendance,
+          fullAbsence,
         );
         let status: DailyAttendanceReconciliation["status"] = "Matched";
         let requiresExplanation = false;
@@ -718,13 +734,6 @@ export class TimesheetService {
             status = "Variance";
         } else if (!record && workHours > 0) {
           status = "Missing Attendance";
-          requiresExplanation = true;
-        } else if (
-          completeAttendance &&
-          workHours === 0 &&
-          attendanceHours > settings.attendanceVarianceToleranceHours
-        ) {
-          status = "Missing Timesheet";
           requiresExplanation = true;
         } else if (
           Math.abs(workHours - attendanceHours) > settings.attendanceVarianceToleranceHours
@@ -773,10 +782,51 @@ export class TimesheetService {
       .find((t) => t.employeeId === employeeId && t.periodId === period.id);
     if (existing) return null;
 
+    const summary = this.getPeriodSummary(employeeId, period);
     return {
       status: "Not Started",
+      totalHours: summary.workedHours,
+      expectedHours: summary.requiredWorkHours,
+    };
+  }
+
+  /** Read-only daily source summary; paid leave is credit, never biometric work or overtime. */
+  getPeriodSummary(employeeId: string, period: TimesheetPeriod, timesheet?: TimesheetWithEntries) {
+    const absence = timesheet ? null : this.absences(employeeId, period);
+    const source: TimesheetWithEntries = timesheet ?? {
+      id: `preview-${period.id}`,
+      employeeId,
+      periodId: period.id,
+      status: "Draft",
+      expectedHours: absence!.expectedWorkHours,
       totalHours: 0,
-      expectedHours: this.absences(employeeId, period).expectedWorkHours,
+      entries: absence!.entries,
+      createdAt: "",
+      createdBy: "",
+      updatedAt: "",
+      updatedBy: "",
+      recordVersion: 0,
+    };
+    const workedHours = ["Approved", "Payroll Locked", "Corrected"].includes(source.status)
+      ? source.totalHours
+      : this.reconcileAttendance(source).timesheetWorkHours;
+    const sum = (predicate: (entry: TimesheetEntry) => boolean) =>
+      Number(
+        source.entries
+          .filter(predicate)
+          .reduce((total, entry) => total + entry.total, 0)
+          .toFixed(2),
+      );
+    const paidLeaveHours = sum((entry) => Boolean(entry.isLeave && !entry.isUnpaidLeave));
+    const unpaidLeaveHours = sum((entry) => Boolean(entry.isLeave && entry.isUnpaidLeave));
+    const holidayHours = sum((entry) => Boolean(entry.isHoliday));
+    return {
+      workedHours,
+      paidLeaveHours,
+      unpaidLeaveHours,
+      holidayHours,
+      creditedHours: Number((workedHours + paidLeaveHours + holidayHours).toFixed(2)),
+      requiredWorkHours: source.expectedHours,
     };
   }
 
@@ -941,10 +991,12 @@ export class TimesheetService {
         "You can save daily hours now and submit the monthly timesheet after the month ends.",
       );
     ts = this.withApprovedAbsences(ts, period);
-    if (isConfiguredTimesheetPeriod(period) && ts.totalHours < ts.expectedHours)
+    const effectiveWork = this.reconcileAttendance(ts).timesheetWorkHours;
+    if (isConfiguredTimesheetPeriod(period) && effectiveWork < ts.expectedHours)
       throw new Error(
-        `Log the remaining ${ts.expectedHours - ts.totalHours} expected hours before submitting.`,
+        `Review the remaining ${Number((ts.expectedHours - effectiveWork).toFixed(2))} expected hours before submitting.`,
       );
+    ts.totalHours = effectiveWork;
 
     // Validation: > 24h per day
     this.validateEntryHours(ts, period);
@@ -1196,6 +1248,7 @@ export class TimesheetService {
       ts.supervisorReviewedAt = new Date().toISOString();
       ts.supervisorReviewedBy = context.actor.userId;
       ts.attendanceReconciliationSnapshot = reconciliation;
+      ts.totalHours = reconciliation.timesheetWorkHours;
       const updated = this.timesheetRepo.update(ts.id, ts, {
         ...context,
         reason: "Supervisor reviewed the timesheet; HR final approval is required",
@@ -1222,6 +1275,7 @@ export class TimesheetService {
     ts.approvedAt = new Date().toISOString();
     ts.approvedBy = context.actor.userId;
     ts.attendanceReconciliationSnapshot = reconciliation;
+    ts.totalHours = reconciliation.timesheetWorkHours;
     const updated = this.timesheetRepo.update(ts.id, ts, {
       ...context,
       reason: "HR completed final timesheet approval",

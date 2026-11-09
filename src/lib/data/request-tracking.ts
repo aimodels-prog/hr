@@ -9,6 +9,7 @@ export const REQUEST_MODULES = [
   "Visits",
   "Travel",
   "Training",
+  "Training certificates",
   "Profile updates",
   "Documents",
   "Objectives",
@@ -16,6 +17,7 @@ export const REQUEST_MODULES = [
   "Applications",
   "Referrals",
   "Offers",
+  "Payroll",
 ] as const;
 export const REQUEST_GROUPS = [
   "All",
@@ -36,6 +38,7 @@ export const STATUS_GROUPS: Record<string, string[]> = {
     "Pre-authorised",
     "Pre-authorised - Awaiting Actual",
     "Valid",
+    "Verified",
     "Accepted",
     "Approved for Interview",
   ],
@@ -48,6 +51,7 @@ export const STATUS_GROUPS: Record<string, string[]> = {
     "Expired",
     "Hired",
     "Payroll Locked",
+    "Locked",
     "Replaced",
   ],
   Rejected: ["Rejected", "Declined", "Automatically Refused"],
@@ -61,13 +65,20 @@ export interface RequestEvent {
   label: string;
   at: string;
   comment?: string | undefined;
+  statusAfter?: string | undefined;
 }
 export interface RequestDecision {
+  actorId?: string | undefined;
   actorName: string;
   role: string;
-  outcome: "Approved" | "Rejected" | "Returned" | "Moderated" | "Locked" | "Closed";
+  outcome: "Approved" | "Rejected" | "Returned" | "Reopened" | "Moderated" | "Locked" | "Closed";
   at: string;
   comment?: string | undefined;
+  statusAfter?: string | undefined;
+}
+export interface RequestSubmission {
+  actorName: string;
+  at: string;
 }
 export interface TrackedRequest {
   id: string;
@@ -75,6 +86,10 @@ export interface TrackedRequest {
   title: string;
   employeeId: string | null;
   employeeName: string;
+  createdByName: string | null;
+  submittedByName: string | null;
+  details: Record<string, string | null>;
+  archivedAt: string | null;
   status: string;
   group: Exclude<RequestGroup, "All">;
   waitingFor: string;
@@ -91,6 +106,9 @@ export interface RequestRow {
   title: string;
   employee_id: string | null;
   employee_name: string | null;
+  created_by_name?: string | null;
+  details?: Record<string, string | null>;
+  archived_at?: string | null;
   manager_name: string | null;
   status: string;
   created_at: string;
@@ -104,15 +122,19 @@ export function toTrackedRequest(
   row: RequestRow,
   decisions: RequestDecision[] = [],
   reviewerNames: Record<string, string> = {},
+  submissions: RequestSubmission[] = [],
 ): TrackedRequest {
-  const group = requestGroup(row.status);
+  const archivedAt = row.archived_at ?? null;
+  const group = archivedAt ? "Closed" : requestGroup(row.status);
   const meta = row.metadata ?? {};
   const manager = row.manager_name
     ? `${row.manager_name} — Line Manager`
     : "Line Manager not assigned — HR must check";
   let waitingFor = "No approval pending";
   let nextStep = "Open the record for details.";
-  if (group === "Draft" || group === "Returned") {
+  if (archivedAt) {
+    nextStep = "Archived record. Its previous decisions remain available below.";
+  } else if (group === "Draft" || group === "Returned") {
     waitingFor = "Requester";
     nextStep = "Complete or correct the request, then submit it.";
   } else if (group === "Waiting") {
@@ -168,7 +190,12 @@ export function toTrackedRequest(
     nextStep = "Approved. No further decision is waiting.";
   }
 
-  const events: RequestEvent[] = [{ label: "Record created", at: row.created_at }];
+  const events: RequestEvent[] = [
+    {
+      label: row.created_by_name ? `Record created by ${row.created_by_name}` : "Record created",
+      at: row.created_at,
+    },
+  ];
   const nameFor = (key: string) => {
     const id = text(meta[key]);
     return id ? reviewerNames[id] : undefined;
@@ -182,7 +209,11 @@ export function toTrackedRequest(
         ...(commentKey && text(meta[commentKey]) ? { comment: text(meta[commentKey]) } : {}),
       });
   };
-  event("submittedAt", "Submitted");
+  if (submissions.length)
+    for (const submission of submissions)
+      if (Number.isFinite(Date.parse(submission.at)))
+        events.push({ label: `Submitted by ${submission.actorName}`, at: submission.at });
+  if (!submissions.length) event("submittedAt", "Submitted");
   if (decisions.length) {
     for (const decision of decisions) {
       if (!Number.isFinite(Date.parse(decision.at))) continue;
@@ -190,35 +221,59 @@ export function toTrackedRequest(
         label: `${decision.actorName} (${decision.role}) ${decision.outcome.toLowerCase()}`,
         at: decision.at,
         ...(decision.comment ? { comment: decision.comment } : {}),
+        ...(decision.statusAfter ? { statusAfter: decision.statusAfter } : {}),
       });
     }
-  } else {
-    event("managerAt", "Line Manager decision recorded", "managerComment", "managerBy");
-    event("hrAt", "HR decision recorded", "hrComment", "hrBy");
-    event("financeAt", "Finance decision recorded", undefined, "financeBy");
-    event("approvedAt", "Approval recorded", undefined, "approvedBy");
   }
+  const hasDecisionNear = (at: string | undefined, role?: string) =>
+    Boolean(
+      at &&
+      decisions.some(
+        (decision) =>
+          (!role || decision.role === role) &&
+          Math.abs(Date.parse(decision.at) - Date.parse(at)) < 60_000,
+      ),
+    );
+  if (!hasDecisionNear(text(meta["managerAt"]), "Line Manager"))
+    event("managerAt", "Line Manager decision recorded", "managerComment", "managerBy");
+  if (!hasDecisionNear(text(meta["hrAt"]), "HR"))
+    event("hrAt", "HR decision recorded", "hrComment", "hrBy");
+  if (!hasDecisionNear(text(meta["financeAt"]), "Accounts"))
+    event("financeAt", "Finance decision recorded", undefined, "financeBy");
+  if (!hasDecisionNear(text(meta["approvedAt"])))
+    event("approvedAt", "Approval recorded", undefined, "approvedBy");
   if (!decisions.some((decision) => decision.outcome === "Closed"))
     event("closedAt", "Completed", undefined, "closedBy");
-  const chain = meta["chain"];
-  if (!decisions.length && Array.isArray(chain))
-    for (const step of chain) {
-      if (!step || typeof step !== "object") continue;
-      const at = text(step.date);
-      const by = text(step.approvedBy);
-      if (at && Number.isFinite(Date.parse(at)) && ["Approved", "Declined"].includes(step.status))
-        events.push({
-          label: `${text(step.role) ?? "Reviewer"}: ${step.status}${by && reviewerNames[by] ? ` by ${reviewerNames[by]}` : ""}`,
-          at,
-        });
-    }
+  const chains = [meta["chain"], meta["amendmentChain"]].filter(Array.isArray);
+  for (const step of chains.flat()) {
+    if (!step || typeof step !== "object") continue;
+    const at = text(step.date);
+    const by = text(step.approvedBy);
+    const name = by ? reviewerNames[by] : undefined;
+    if (
+      at &&
+      Number.isFinite(Date.parse(at)) &&
+      ["Approved", "Declined"].includes(step.status) &&
+      !decisions.some(
+        (decision) =>
+          (decision.actorId && by
+            ? decision.actorId === by
+            : Boolean(name) && decision.actorName === name) &&
+          Math.abs(Date.parse(decision.at) - Date.parse(at)) < 60_000,
+      )
+    )
+      events.push({
+        label: `${text(step.role) ?? "Reviewer"}: ${step.status}${name ? ` by ${name}` : ""}`,
+        at,
+      });
+  }
   const latestDecisionByActor = new Map<string, RequestDecision>();
-  for (const decision of [...decisions].sort((a, b) => a.at.localeCompare(b.at)))
-    latestDecisionByActor.set(decision.actorName, decision);
+  for (const decision of [...decisions].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)))
+    latestDecisionByActor.set(decision.actorId ?? decision.actorName, decision);
   const approvedBy = [...latestDecisionByActor.values()]
     .filter((decision) => decision.outcome === "Approved")
     .map((decision) => decision.actorName);
-  if (Array.isArray(chain))
+  for (const chain of chains)
     for (const step of chain)
       if (step && typeof step === "object" && step.status === "Approved") {
         const name = reviewerNames[text(step.approvedBy) ?? ""];
@@ -227,7 +282,7 @@ export function toTrackedRequest(
   const approvedStage = (actorKey: string, atKey: string, statusKey?: string) => {
     const name = nameFor(actorKey);
     if (!name) return;
-    if (latestDecisionByActor.has(name)) return;
+    if ([...latestDecisionByActor.values()].some((decision) => decision.actorName === name)) return;
     if (statusKey && meta[statusKey] === "Approved") {
       approvedBy.push(name);
       return;
@@ -244,14 +299,23 @@ export function toTrackedRequest(
   approvedStage("hrBy", "hrAt", row.module === "Travel" ? "hr" : undefined);
   approvedStage("financeBy", "financeAt", row.module === "Travel" ? "finance" : undefined);
   if (group === "Approved") approvedStage("approvedBy", "approvedAt");
-  events.sort((a, b) => a.at.localeCompare(b.at));
+  events.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   return {
     id: row.id,
     module: row.module,
     title: row.title,
     employeeId: row.employee_id,
-    employeeName: row.employee_name || "External applicant",
-    status: row.status === "Pending Super Admin Closure" ? "Awaiting Finance closure" : row.status,
+    employeeName:
+      row.employee_name || (row.module === "Payroll" ? "Organisation" : "External applicant"),
+    createdByName: row.created_by_name ?? null,
+    submittedByName: submissions.at(-1)?.actorName ?? null,
+    details: row.details ?? {},
+    archivedAt,
+    status: archivedAt
+      ? `Archived (last status: ${row.status})`
+      : row.status === "Pending Super Admin Closure"
+        ? "Awaiting Finance closure"
+        : row.status,
     group,
     waitingFor,
     nextStep,

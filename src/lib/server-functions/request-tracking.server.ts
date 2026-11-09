@@ -40,6 +40,52 @@ export const getTrackedRequestsFn = createServerFn({ method: "GET" })
     const verified = await verify(data.actor);
     return listTrackedRequests(verified.organisationId, verified.actor, data);
   });
+
+export const getTrackedRequestDetailFn = createServerFn({ method: "GET" })
+  .validator((input) =>
+    z
+      .object({
+        actor: Actor,
+        module: z.enum(REQUEST_MODULES),
+        requestId: z.uuid(),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await verify(data.actor);
+    const common = {
+      page: 1,
+      module: data.module,
+      requestId: data.requestId,
+      includeDetails: true,
+    };
+    const scopes: Array<"my" | "reviewed" | "organisation"> = [
+      ...(verified.actor.employeeId ? (["my"] as const) : []),
+      ...(["HR", "Line Manager", "Accounts", "Travel Admin"].includes(
+        verified.actor.activeRole ?? "",
+      )
+        ? (["reviewed"] as const)
+        : []),
+      ...(["HR", "Super Admin"].includes(verified.actor.activeRole ?? "")
+        ? (["organisation"] as const)
+        : []),
+    ];
+    for (const scope of scopes) {
+      const result = await listTrackedRequests(verified.organisationId, verified.actor, {
+        ...common,
+        scope,
+      });
+      const request = result.rows[0];
+      if (request)
+        return {
+          request,
+          canOpenOriginal:
+            !request.archivedAt && (scope !== "reviewed" || verified.actor.activeRole === "HR"),
+        };
+    }
+    throw new Error("This request is not available to your account.");
+  });
 export const getApprovalInboxFn = createServerFn({ method: "GET" })
   .validator((input) => z.object({ actor: Actor }).strict().parse(input))
   .handler(async ({ data }) => {

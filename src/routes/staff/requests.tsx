@@ -55,11 +55,9 @@ const statusTone: Record<Exclude<RequestGroup, "All">, string> = {
 function TrackedRequestRow({
   row,
   view,
-  canOpen,
 }: {
   row: TrackedRequest;
   view: "my" | "organisation" | "reviewed";
-  canOpen: boolean;
 }) {
   const nextStep =
     view === "organisation" && ["Draft", "Returned"].includes(row.group)
@@ -120,13 +118,14 @@ function TrackedRequestRow({
             {row.waitingFor}
           </p>
         </div>
-        {canOpen && (
-          <Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
-            <Link to={row.actionUrl}>
-              Open request <ArrowRight aria-hidden="true" />
-            </Link>
-          </Button>
-        )}
+        <Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
+          <Link
+            to="/staff/request-detail/$module/$requestId"
+            params={{ module: row.module, requestId: row.id }}
+          >
+            View request <ArrowRight aria-hidden="true" />
+          </Link>
+        </Button>
       </div>
       <details className="group mt-3 border-t border-border/60 pt-2 lg:ml-[3.25rem]">
         <summary className="flex min-h-9 w-fit cursor-pointer list-none items-center gap-2 text-xs font-medium text-muted-foreground hover:text-primary [&::-webkit-details-marker]:hidden">
@@ -145,6 +144,11 @@ function TrackedRequestRow({
                 {date(event.at)}
               </time>
               {event.comment && <p className="mt-1 whitespace-pre-wrap">{event.comment}</p>}
+              {event.statusAfter && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Status after decision: {event.statusAfter}
+                </p>
+              )}
             </li>
           ))}
           <li className="text-sm font-medium">
@@ -152,7 +156,7 @@ function TrackedRequestRow({
           </li>
         </ol>
         <p className="mt-2 text-xs text-muted-foreground">
-          Older records may not show every step. Open the request for full details.
+          Older imported records may not include the original approver or decision date.
         </p>
       </details>
     </article>
@@ -386,7 +390,12 @@ function RequestCentre() {
                               ))}
                           </>
                         ) : (
-                          ["All", ...REQUEST_MODULES].map((value) => (
+                          [
+                            "All",
+                            ...REQUEST_MODULES.filter(
+                              (value) => value !== "Payroll" || user.activeRole === "Accounts",
+                            ),
+                          ].map((value) => (
                             <option key={value} value={value}>
                               {value === "All" ? "All types" : value}
                             </option>
@@ -585,12 +594,7 @@ function RequestCentre() {
                   ) : (
                     <>
                       {requestQuery.data?.rows.map((row) => (
-                        <TrackedRequestRow
-                          key={`${row.module}:${row.id}`}
-                          row={row}
-                          view={view}
-                          canOpen={view !== "reviewed" || hr}
-                        />
+                        <TrackedRequestRow key={`${row.module}:${row.id}`} row={row} view={view} />
                       ))}
                       {requestQuery.data && !requestQuery.data.total && (
                         <div className="px-5 py-12 text-center">

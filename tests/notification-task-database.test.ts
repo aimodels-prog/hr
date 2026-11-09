@@ -171,11 +171,30 @@ test(
       const reviewed = await listTrackedRequests(ids.org!, managerActor, {
         scope: "reviewed",
         page: 1,
+        includeDetails: true,
       });
       assert.equal(reviewed.total, 1);
       assert.equal(reviewed.rows[0]?.id, ids.request);
       assert.equal(reviewed.rows[0]?.waitingFor, "HR");
       assert.deepEqual(reviewed.rows[0]?.approvedBy, ["Task Manager"]);
+      assert.equal(reviewed.rows[0]?.createdByName, "Task Employee");
+      assert.equal(reviewed.rows[0]?.details["Reason"], "Updated reason");
+      assert.ok(
+        reviewed.rows[0]?.events.some((event) => event.comment === "Manager approved this leave"),
+      );
+      const exactDecision = await listTrackedRequests(ids.org!, managerActor, {
+        scope: "reviewed",
+        page: 1,
+        module: "Leave",
+        requestId: ids.request,
+      });
+      assert.equal(exactDecision.total, 1);
+      const wrongRole = await listTrackedRequests(
+        ids.org!,
+        { ...managerActor, activeRole: "Accounts" },
+        { scope: "reviewed", page: 1, module: "Leave", requestId: ids.request },
+      );
+      assert.equal(wrongRole.total, 0, "A Finance role cannot reopen a manager's leave decision");
       const employeeProgress = await listTrackedRequests(ids.org!, employeeActor, {
         scope: "my",
         page: 1,
@@ -248,6 +267,15 @@ test(
         hrEmails.some((n) => n.type === "approval.reminder"),
         "HR receives its approval reminders",
       );
+      await sql`UPDATE leave_requests SET archived_at=now() WHERE id=${ids.request}`;
+      const archivedHistory = await listTrackedRequests(ids.org!, employeeActor, {
+        scope: "my",
+        page: 1,
+        module: "Leave",
+        requestId: ids.request,
+      });
+      assert.equal(archivedHistory.total, 1);
+      assert.equal(archivedHistory.rows[0]?.group, "Closed");
     } finally {
       await sql`DELETE FROM google_calendar_connections WHERE organisation_id=${ids.org}`;
       await sql.end({ timeout: 5 });

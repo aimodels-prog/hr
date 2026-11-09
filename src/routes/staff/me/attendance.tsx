@@ -244,11 +244,12 @@ function MyAttendanceRoute() {
       .getCorrectionsForEmployee(employeeId, actorContext)
       .some(
         (item) =>
-          item.attendanceRecordId === record?.id &&
-          ["Pending Manager", "Pending HR", "Approved"].includes(item.status),
+          (item.attendanceRecordId === record?.id ||
+            item.attendanceRecordId === record?.databaseId) &&
+          ["Pending Manager", "Pending HR"].includes(item.status),
       );
     if (pending) {
-      toast.info("This date already has a correction recorded or awaiting review.");
+      toast.info("A correction for this date is already awaiting review.");
       return;
     }
     const policy = attendanceService.getPolicy();
@@ -316,7 +317,10 @@ function MyAttendanceRoute() {
   const monthPrefix = format(currentMonth, "yyyy-MM");
   const summary = attendanceService.getMonthlySummary(employeeId, monthPrefix, actorContext);
   const corrections = attendanceService.getCorrectionsForEmployee(employeeId, actorContext);
-  const correctionByRecord = new Map(corrections.map((item) => [item.attendanceRecordId, item]));
+  const correctionByRecord = new Map<string, (typeof corrections)[number]>();
+  for (const correction of corrections)
+    if (!correctionByRecord.has(correction.attendanceRecordId))
+      correctionByRecord.set(correction.attendanceRecordId, correction);
   const monthDays = eachDayOfInterval({
     start: startOfMonth(currentMonth),
     end: endOfMonth(currentMonth),
@@ -804,7 +808,8 @@ function MyAttendanceRoute() {
                           </TableCell>
                           <TableCell>{row.workMode ?? "—"}</TableCell>
                           <TableCell className="text-right">
-                            {correction ? (
+                            {correction &&
+                            ["Pending Manager", "Pending HR"].includes(correction.status) ? (
                               <Badge variant="secondary">{correction.status}</Badge>
                             ) : canCorrect ? (
                               <Button
@@ -812,8 +817,14 @@ function MyAttendanceRoute() {
                                 size="sm"
                                 onClick={() => openCorrection(row)}
                               >
-                                {row.virtual ? "Add worked time" : "Correct"}
+                                {correction
+                                  ? "Correct again"
+                                  : row.virtual
+                                    ? "Add worked time"
+                                    : "Correct"}
                               </Button>
+                            ) : correction ? (
+                              <Badge variant="secondary">{correction.status}</Badge>
                             ) : null}
                           </TableCell>
                         </TableRow>

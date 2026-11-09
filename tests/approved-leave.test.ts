@@ -84,3 +84,39 @@ test("timesheets fill leave and half days without converting them into work or d
     3.75,
   );
 });
+
+test("unpaid leave covers the day without creating paid leave credit", () => {
+  const result = timesheetAbsences({
+    dates: ["2026-10-08"],
+    workingDays: [4],
+    dailyHours: 9,
+    holidays: new Set(),
+    leave: [{ ...leave, policySnapshot: { name: "Unpaid Leave", isPaid: false } }],
+  });
+  assert.equal(result.expectedWorkHours, 0);
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0]?.total, 9);
+  assert.equal(result.entries[0]?.isUnpaidLeave, true);
+});
+
+test("HR special-leave pay choice splits a day into paid and unpaid credit", () => {
+  const result = timesheetAbsences({
+    dates: ["2026-10-08"],
+    workingDays: [4],
+    dailyHours: 9,
+    holidays: new Set(),
+    leave: [
+      {
+        ...leave,
+        policySnapshot: {
+          name: "Special Leave",
+          isPaid: true,
+          specialRequest: { unpaidByDate: [{ date: "2026-10-08", days: 0.5 }] },
+        },
+      },
+    ],
+  });
+  assert.equal(result.expectedWorkHours, 0);
+  assert.equal(result.entries.find((entry) => !entry.isUnpaidLeave)?.total, 4.5);
+  assert.equal(result.entries.find((entry) => entry.isUnpaidLeave)?.total, 4.5);
+});

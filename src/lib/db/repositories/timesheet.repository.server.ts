@@ -18,6 +18,7 @@ import { appSettings, organisations } from "../schema/organisation.ts";
 import { isAttendanceTracked, readAttendanceTracking } from "../../data/attendance-tracking.ts";
 import { ordinaryAttendanceHours } from "../../data/office-schedule.ts";
 import { recordedDailyHours, recordedAttendanceHours } from "../../data/recorded-hours.ts";
+import { effectiveDailyWorkHours } from "../../data/timesheet-work-hours.ts";
 import {
   isConfiguredTimesheetPeriod,
   timesheetPeriodsInRange,
@@ -310,15 +311,15 @@ export async function submitTimesheetInDatabase(
       submissionPeriod,
       Number(settings?.standardDailyHours ?? 8),
     );
-    if (Number(sheet.totalHours) < expected)
+    const snapshot = await buildTimesheetReconciliation(tx, organisationId, sheet);
+    if (snapshot.timesheetWorkHours < expected)
       throw new Error(
-        `Log the remaining ${expected - Number(sheet.totalHours)} expected hours before submitting.`,
+        `Review the remaining ${Number((expected - snapshot.timesheetWorkHours).toFixed(2))} expected hours before submitting.`,
       );
     await tx
       .update(timesheets)
-      .set({ expectedHours: String(expected) })
+      .set({ expectedHours: String(expected), totalHours: String(snapshot.timesheetWorkHours) })
       .where(eq(timesheets.id, sheet.id));
-    const snapshot = await buildTimesheetReconciliation(tx, organisationId, sheet);
     const unresolved = snapshot.days.filter((item) => !item.resolved);
     if (unresolved.length)
       throw new Error(
@@ -448,7 +449,7 @@ export async function decideTimesheetInDatabase(
       approvalPeriod,
       Number(settings?.standardDailyHours ?? 8),
     );
-    if (decision === "approve" && Number(sheet.totalHours) < absence.expectedWorkHours)
+    if (decision === "approve" && reconciliation.timesheetWorkHours < absence.expectedWorkHours)
       throw new Error("The required work hours have changed. Return the timesheet for correction.");
     const finalApproval = next === "Approved" || next === "Payroll Locked";
     const workEntries = Array.isArray(sheet.draftPayload)
@@ -473,6 +474,7 @@ export async function decideTimesheetInDatabase(
         managerNotes: notes?.trim(),
         attendanceReconciliationSnapshot: reconciliation,
         expectedHours: String(absence.expectedWorkHours),
+        totalHours: String(reconciliation.timesheetWorkHours),
         ...(finalApproval
           ? {
               draftPayload: [
@@ -1175,6 +1177,7 @@ async function buildTimesheetReconciliation(
       const record = recordByDate.get(date);
       return (
         isAttendanceTracked(tracking, sheet.employeeId, date) ||
+        workByDate.has(date) ||
         Boolean(record && (record.clockInAt || record.clockOutAt || record.officeExceptionLabel)) ||
         leaveByDate.has(date) ||
         holidayByDate.has(date)
@@ -1190,7 +1193,16 @@ async function buildTimesheetReconciliation(
         recordedAttendanceHours(record),
         nonWorking ? recordedDay : recordedDay - leaveHours,
       );
-      const timesheetWorkHours = workByDate.get(date) ?? 0;
+      const manualHours = workByDate.get(date) ?? 0;
+      const completeAttendance = Boolean(
+        record?.officeExceptionLabel || (record?.clockInAt && record?.clockOutAt),
+      );
+      const timesheetWorkHours = effectiveDailyWorkHours(
+        manualHours,
+        attendanceHours,
+        completeAttendance,
+        nonWorking,
+      );
       const varianceHours = Number((timesheetWorkHours - attendanceHours).toFixed(2));
       const incomplete = Boolean(
         record &&
