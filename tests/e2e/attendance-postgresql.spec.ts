@@ -42,7 +42,7 @@ test("morning email opens a one-time-field clock-out correction on a phone", asy
   }
 });
 
-test("staff outside biometric tracking retain leave charts and manual timesheets", async ({
+test("staff outside biometric tracking retain recorded-attendance and leave charts with manual timesheets", async ({
   page,
 }) => {
   await page.goto("/staff");
@@ -55,7 +55,7 @@ test("staff outside biometric tracking retain leave charts and manual timesheets
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: /^Recorded attendance(?: vs expected)?$/ }),
-  ).toHaveCount(0);
+  ).toBeVisible();
 });
 
 test("terminal refresh survives identity updates and recovers from a stalled request", async ({
@@ -426,6 +426,7 @@ test("employee site visit persists to PostgreSQL and HR approval survives a role
   if (decisionMessages.some((message) => /not|could|cannot|error|failed/i.test(message)))
     throw new Error(`Approval feedback: ${decisionMessages.join(" | ")}`);
   await expect(reviewDialog).toBeHidden();
+  await page.getByRole("button", { name: "All visits", exact: true }).click();
   await expect(reviewRow).toContainText("Approved");
 
   await previewAs(page, "user-omar", "Employee", "/staff/me/attendance");
