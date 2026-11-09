@@ -21,11 +21,10 @@ import { getMasterDataRepository, getProjectRepository } from "./master-data.ts"
 import type { ActorContext, User } from "./types.ts";
 import { LeaveService } from "./leave-service.ts";
 import { AttendanceService } from "./attendance-service.ts";
-import { ordinaryAttendanceHours } from "./office-schedule.ts";
-import { recordedDailyHours, recordedAttendanceHours } from "./recorded-hours.ts";
+import { recordedDailyHours, recordedWorkingHours } from "./recorded-hours.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { SettingsService, syncWorkingHoursCompatibilityCache } from "./settings-service.ts";
-import { timesheetAbsences, organisationDate } from "./approved-leave.ts";
+import { isApprovedRemoteWork, timesheetAbsences, organisationDate } from "./approved-leave.ts";
 import { isConfiguredTimesheetPeriod, timesheetPeriodsInRange } from "./timesheet-periods.ts";
 import { effectiveDailyWorkHours } from "./timesheet-work-hours.ts";
 
@@ -190,7 +189,7 @@ export class TimesheetService {
     if (typeof window === "undefined") return this.saveTimesheetDraft(timesheet, context);
     const { saveTimesheetDraftFn } = await import("../server-functions/timesheet.server.ts");
     const entries = timesheet.entries
-      .filter((entry) => !entry.isLeave && !entry.isHoliday)
+      .filter((entry) => !entry.isLeave && !entry.isHoliday && !entry.isRemoteWork)
       .map((entry) => ({
         id: entry.id,
         ...(entry.projectId ? { projectId: this.databaseId("projects", entry.projectId) } : {}),
@@ -307,7 +306,7 @@ export class TimesheetService {
       ),
     );
     const additions = previous.entries
-      .filter((entry) => !entry.isLeave && !entry.isHoliday)
+      .filter((entry) => !entry.isLeave && !entry.isHoliday && !entry.isRemoteWork)
       .filter(
         (entry) =>
           !keys.has(
@@ -641,6 +640,11 @@ export class TimesheetService {
   }
 
   reconcileAttendance(timesheet: TimesheetWithEntries): TimesheetAttendanceReconciliation {
+    if (
+      ["Approved", "Payroll Locked", "Corrected"].includes(timesheet.status) &&
+      timesheet.attendanceReconciliationSnapshot
+    )
+      return timesheet.attendanceReconciliationSnapshot;
     const period = this.periodRepo.getById(timesheet.periodId);
     if (!period) throw new Error("Timesheet period was not found.");
     const settings = this.getSettings();
@@ -651,6 +655,10 @@ export class TimesheetService {
         .map((record) => [record.date, record]),
     );
     const explanations = timesheet.attendanceDiscrepancyExplanations ?? {};
+    const workingDays = new SettingsService().getAppSettingsSync().workingDays;
+    const approvedRemoteWork = new LeaveService()
+      .getAllRequests(SYSTEM_CONTEXT)
+      .filter((request) => request.employeeId === timesheet.employeeId);
     const days: DailyAttendanceReconciliation[] = eachDayOfInterval({
       start: parseISO(period.startDate),
       end: parseISO(period.endDate),
@@ -660,6 +668,7 @@ export class TimesheetService {
         const record = attendanceByDate.get(date);
         return (
           this.attendanceService.isTrackingRequired(timesheet.employeeId, date) ||
+          approvedRemoteWork.some((request) => isApprovedRemoteWork(request, date)) ||
           Boolean(
             record &&
             (record.clockInAt ||
@@ -674,6 +683,9 @@ export class TimesheetService {
       .map((day) => {
         const date = format(day, "yyyy-MM-dd");
         const record = attendanceByDate.get(date);
+        const remoteWork = approvedRemoteWork.some((request) =>
+          isApprovedRemoteWork(request, date),
+        );
         const virtualStatus = record
           ? undefined
           : this.attendanceService.reconcileDailyStatus(timesheet.employeeId, date, SYSTEM_CONTEXT)
@@ -685,20 +697,20 @@ export class TimesheetService {
           const hours = entry.hours[date] ?? 0;
           if (entry.isLeave) leaveHours += hours;
           else if (entry.isHoliday) holidayHours += hours;
-          else manualHours += hours;
+          else if (!entry.isRemoteWork) manualHours += hours;
         }
-        const fullAbsence = leaveHours + holidayHours >= this.getRecordedDailyHours(settings);
-        const attendanceHours = ordinaryAttendanceHours(
-          recordedAttendanceHours(record),
-          fullAbsence
-            ? this.getRecordedDailyHours(settings)
-            : Math.max(0, this.getRecordedDailyHours(settings) - leaveHours - holidayHours),
-        );
-        const attendanceStatus = record?.status ?? virtualStatus ?? "No Record";
-        const trackingRequired = this.attendanceService.isTrackingRequired(
-          timesheet.employeeId,
-          date,
-        );
+        const fullAbsence = leaveHours + holidayHours >= settings.standardDailyHours;
+        // Office exceptions are policy credits. Ordinary punches are actual work
+        // and must stay visible even when they overlap an approved absence.
+        const policyCreditLimit = record?.officeExceptionLabel
+          ? Math.max(0, settings.standardDailyHours - leaveHours - holidayHours)
+          : undefined;
+        const attendanceHours = recordedWorkingHours(record, policyCreditLimit);
+        const attendanceStatus = remoteWork
+          ? "Remote Work"
+          : (record?.status ?? virtualStatus ?? "No Record");
+        const trackingRequired =
+          !remoteWork && this.attendanceService.isTrackingRequired(timesheet.employeeId, date);
         const completeAttendance = Boolean(
           record?.officeExceptionLabel || (record?.clockIn && record?.clockOut),
         );
@@ -708,6 +720,22 @@ export class TimesheetService {
           completeAttendance,
           fullAbsence,
         );
+        const projectGap =
+          manualHours > 0 && completeAttendance
+            ? Number((manualHours - attendanceHours).toFixed(2))
+            : 0;
+        const extraPresenceWithFullAllocation =
+          !leaveHours &&
+          !holidayHours &&
+          manualHours >= settings.standardDailyHours &&
+          attendanceHours > manualHours;
+        const projectVariance =
+          Math.abs(projectGap) > settings.attendanceVarianceToleranceHours &&
+          !extraPresenceWithFullAllocation;
+        const absenceWorkOverlap =
+          leaveHours + holidayHours > 0 &&
+          workHours + leaveHours + holidayHours >
+            settings.standardDailyHours + settings.attendanceVarianceToleranceHours;
         let status: DailyAttendanceReconciliation["status"] = "Matched";
         let requiresExplanation = false;
 
@@ -718,8 +746,18 @@ export class TimesheetService {
           status = "Variance";
           requiresExplanation = true;
         } else if (fullAbsence) status = holidayHours ? "Holiday" : "Leave";
-        else if (attendanceStatus === "Rest Day" && workHours === 0 && attendanceHours === 0)
+        else if (absenceWorkOverlap) {
+          status = "Variance";
+          requiresExplanation = true;
+        } else if (attendanceStatus === "Rest Day" && workHours === 0 && attendanceHours === 0)
           status = "Rest Day";
+        else if (remoteWork)
+          status =
+            workHours > 0
+              ? "Matched"
+              : workingDays.includes(day.getDay())
+                ? "Missing Timesheet"
+                : "Rest Day";
         else if ((record?.clockIn || record?.clockOut) && !completeAttendance) {
           status = "Incomplete Attendance";
           requiresExplanation = trackingRequired && workHours > 0;
@@ -728,16 +766,11 @@ export class TimesheetService {
           // Show the difference, but do not make optional attendance block approval.
           if (attendanceHours > settings.attendanceVarianceToleranceHours && workHours === 0)
             status = "Missing Timesheet";
-          else if (
-            Math.abs(workHours - attendanceHours) > settings.attendanceVarianceToleranceHours
-          )
-            status = "Variance";
+          else if (projectVariance) status = "Variance";
         } else if (!record && workHours > 0) {
           status = "Missing Attendance";
           requiresExplanation = true;
-        } else if (
-          Math.abs(workHours - attendanceHours) > settings.attendanceVarianceToleranceHours
-        ) {
+        } else if (projectVariance) {
           status = "Variance";
           requiresExplanation = true;
         }
@@ -747,9 +780,10 @@ export class TimesheetService {
           date,
           attendanceHours,
           timesheetWorkHours: workHours,
+          projectHours: manualHours,
           leaveHours,
           holidayHours,
-          varianceHours: Number((workHours - attendanceHours).toFixed(2)),
+          varianceHours: projectGap,
           attendanceStatus,
           status,
           requiresExplanation,
@@ -807,9 +841,10 @@ export class TimesheetService {
       updatedBy: "",
       recordVersion: 0,
     };
+    const reconciliation = this.reconcileAttendance(source);
     const workedHours = ["Approved", "Payroll Locked", "Corrected"].includes(source.status)
       ? source.totalHours
-      : this.reconcileAttendance(source).timesheetWorkHours;
+      : reconciliation.timesheetWorkHours;
     const sum = (predicate: (entry: TimesheetEntry) => boolean) =>
       Number(
         source.entries
@@ -820,12 +855,31 @@ export class TimesheetService {
     const paidLeaveHours = sum((entry) => Boolean(entry.isLeave && !entry.isUnpaidLeave));
     const unpaidLeaveHours = sum((entry) => Boolean(entry.isLeave && entry.isUnpaidLeave));
     const holidayHours = sum((entry) => Boolean(entry.isHoliday));
+    const dailyTarget = this.getSettings().standardDailyHours;
+    const creditedHours = reconciliation.days.length
+      ? Number(
+          reconciliation.days
+            .reduce((total, day) => {
+              const actual = day.timesheetWorkHours;
+              const absence =
+                Math.max(
+                  0,
+                  day.leaveHours -
+                    source.entries
+                      .filter((entry) => entry.isUnpaidLeave)
+                      .reduce((hours, entry) => hours + (entry.hours[day.date] ?? 0), 0),
+                ) + day.holidayHours;
+              return total + actual + Math.min(absence, Math.max(0, dailyTarget - actual));
+            }, 0)
+            .toFixed(2),
+        )
+      : Number((workedHours + paidLeaveHours + holidayHours).toFixed(2));
     return {
       workedHours,
       paidLeaveHours,
       unpaidLeaveHours,
       holidayHours,
-      creditedHours: Number((workedHours + paidLeaveHours + holidayHours).toFixed(2)),
+      creditedHours,
       requiredWorkHours: source.expectedHours,
     };
   }
@@ -851,7 +905,7 @@ export class TimesheetService {
     return timesheetAbsences({
       dates: dates.filter((date) => !employee?.startDate || date >= employee.startDate),
       workingDays: new SettingsService().getAppSettingsSync().workingDays,
-      dailyHours: this.getRecordedDailyHours(),
+      dailyHours: this.getSettings().standardDailyHours,
       holidays: new Set(
         dates.filter((date) =>
           holidays.some(
@@ -875,7 +929,9 @@ export class TimesheetService {
     if (!["Draft", "Returned", "Pending Manager", "Pending HR"].includes(sheet.status))
       return sheet;
     const absence = this.absences(sheet.employeeId, period);
-    const work = sheet.entries.filter((entry) => !entry.isLeave && !entry.isHoliday);
+    const work = sheet.entries.filter(
+      (entry) => !entry.isLeave && !entry.isHoliday && !entry.isRemoteWork,
+    );
     return {
       ...sheet,
       entries: [...work, ...absence.entries],
@@ -962,7 +1018,7 @@ export class TimesheetService {
       let eTotal = 0;
       Object.values(e.hours).forEach((v) => (eTotal += v || 0));
       e.total = eTotal;
-      if (!e.isLeave && !e.isHoliday) overallTotal += eTotal;
+      if (!e.isLeave && !e.isHoliday && !e.isRemoteWork) overallTotal += eTotal;
     });
     timesheet.totalHours = overallTotal;
 
@@ -1025,7 +1081,7 @@ export class TimesheetService {
     const allLocations = getMasterDataRepository("locations").list();
 
     for (const entry of ts.entries) {
-      if (!entry.isLeave && !entry.isHoliday) {
+      if (!entry.isLeave && !entry.isHoliday && !entry.isRemoteWork) {
         if (
           !entry.projectId ||
           !entry.costCentreId ||
@@ -1066,14 +1122,14 @@ export class TimesheetService {
     // The requirement says "Work on full-day approved leave" is an error.
     const settings = this.getSettings();
     for (const entry of ts.entries) {
-      if (!entry.isLeave && !entry.isHoliday) {
+      if (!entry.isLeave && !entry.isHoliday && !entry.isRemoteWork) {
         for (const [date, hrs] of Object.entries(entry.hours)) {
           if (hrs > 0) {
             // Check if there is full-day leave on this date
             const leaveHrs = ts.entries
               .filter((e) => e.isLeave || e.isHoliday)
               .reduce((sum, e) => sum + (e.hours[date] || 0), 0);
-            if (leaveHrs >= this.getRecordedDailyHours(settings)) {
+            if (leaveHrs >= settings.standardDailyHours) {
               throw new Error(
                 `Cannot log standard hours on ${date} as it is marked as full-day leave/holiday.`,
               );
@@ -1177,7 +1233,7 @@ export class TimesheetService {
 
     // Copy rows from previous (excluding its leave/holidays) but zero out the hours
     prevTs.entries.forEach((e) => {
-      if (!e.isLeave && !e.isHoliday) {
+      if (!e.isLeave && !e.isHoliday && !e.isRemoteWork) {
         newEntries.push({
           ...e,
           id: crypto.randomUUID(),
@@ -1325,7 +1381,7 @@ export class TimesheetService {
       // the correction against the new period's actual dates, the same way copyPreviousWeek
       // hands off rows between periods.
       const correctedEntries: TimesheetEntry[] = ts.entries
-        .filter((entry) => !entry.isLeave && !entry.isHoliday)
+        .filter((entry) => !entry.isLeave && !entry.isHoliday && !entry.isRemoteWork)
         .map((entry) => ({
           ...entry,
           id: crypto.randomUUID(),

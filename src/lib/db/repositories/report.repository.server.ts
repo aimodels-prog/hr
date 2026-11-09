@@ -166,7 +166,7 @@ const definitions: Record<ReportId, QueryDefinition> = {
   },
   leave_usage: {
     name: "Leave Usage & Upcoming Absence",
-    description: "Submitted leave by entitlement year, based on the request start date.",
+    description: "Submitted leave by entitlement year and recorded leave dates.",
     containsPersonalData: true,
     columns: [
       c("employee", "Employee"),

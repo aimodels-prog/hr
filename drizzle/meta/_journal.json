@@ -533,6 +533,27 @@
       "when": 1792089083956,
       "tag": "0075_shallow_bloodscream",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1794214326721,
+      "tag": "0076_typical_archangel",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1794214455761,
+      "tag": "0077_nosy_pestilence",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1794214898524,
+      "tag": "0078_graceful_millenium_guard",
+      "breakpoints": true
     }
   ]
 }

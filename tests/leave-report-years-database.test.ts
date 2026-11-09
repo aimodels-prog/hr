@@ -402,6 +402,33 @@ test(
           );
         },
       );
+      await t.test(
+        "usage reports omit a worked day removed from an approved leave range",
+        async () => {
+          const corrected = randomUUID();
+          await query`insert into leave_requests
+          (id,organisation_id,employee_id,policy_id,start_date,end_date,working_days_requested,
+           reason,status,policy_snapshot,created_by,updated_by)
+          values (${corrected},${org},${employee},${policy},'2026-10-01','2026-10-03',2,
+            'Approved leave with one worked day','Approved',
+            ${query.json({ name: "Annual Leave", workingDates: ["2026-10-01", "2026-10-03"] })},
+            ${author},${author})`;
+          const usage = await report("leave_usage", {
+            leaveYear: 2026,
+            dateFrom: "2026-10-01",
+            dateTo: "2026-10-03",
+          });
+          assert.deepEqual(
+            usage.rows
+              .filter((row) => row.requestId === corrected)
+              .map((row) => ({ startDate: row.startDate, endDate: row.endDate, days: row.days })),
+            [
+              { startDate: "2026-10-03", endDate: "2026-10-03", days: 1 },
+              { startDate: "2026-10-01", endDate: "2026-10-01", days: 1 },
+            ],
+          );
+        },
+      );
     } finally {
       t.mock.timers.reset();
       await query.end({ timeout: 5 });

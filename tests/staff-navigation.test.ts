@@ -49,6 +49,7 @@ test("HR pages have clear functional homes and no finance or system-settings esc
     groups.find((group) => group.items.some((item) => item.url === url))?.label;
   assert.equal(home("/staff/employees"), "Employees");
   assert.equal(home("/staff/leave-admin"), "Time & Leave");
+  assert.equal(home("/staff/attendance#section=site-visits"), "Time & Leave");
   assert.equal(home("/staff/requests?view=approvals"), "HR");
   assert.equal(home("/staff/requests?view=organisation"), "HR");
   assert.equal(home("/staff/requests?view=my"), "HR");
@@ -63,6 +64,11 @@ test("HR pages have clear functional homes and no finance or system-settings esc
   assert.equal(home("/staff/reports"), "Reports");
   assert.equal(home("/staff/settings"), "Settings");
   assert.equal(home("/staff/payroll/periods"), undefined);
+  assert.ok(
+    !navigation("Super Admin")
+      .flatMap((group) => group.items)
+      .some((item) => item.url === "/staff/attendance#section=site-visits"),
+  );
   assert.equal(home("/staff/time-away"), "Time & Leave");
   assert.ok(!groups.some((group) => group.label === "Administration"));
 });
@@ -103,6 +109,11 @@ test("active destination is unique for nested paths and approval shortcuts", () 
   assert.equal(
     activeNavigationUrl(groups, "/staff/attendance/corrections"),
     "/staff/requests?view=approvals",
+  );
+  assert.equal(activeNavigationUrl(groups, "/staff/attendance"), "/staff/attendance");
+  assert.equal(
+    activeNavigationUrl(groups, "/staff/attendance#section=site-visits&visit=123"),
+    "/staff/attendance#section=site-visits",
   );
   assert.equal(
     activeNavigationUrl(groups, "/staff/settings?section=departments"),

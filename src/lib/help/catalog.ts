@@ -33,4 +33,5 @@ export const helpRouteCoverage: Record<string, string> = {
   "/staff/org-chart": "directory",
   "/staff/candidates/contacts": "hr-candidate-pool",
   "/staff/document-expiry": "hr-documents",
+  "/staff/attendance#section=site-visits": "hr-corrections",
 };

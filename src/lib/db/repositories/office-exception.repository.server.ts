@@ -172,7 +172,7 @@ export async function officeCredits(
   const rows =
     await db.execute(sql`SELECT x.id, x.organisation_id, x.created_by, x.created_at, e.id AS employee_id, d.day::date::text AS date,
     CASE WHEN x.count_as_worked THEN x.kind ELSE 'Excused closure' END AS label,
-    round(x.daily_hours * greatest(0, 1-coalesce((SELECT sum(CASE WHEN l.is_half_day THEN 0.5 ELSE 1 END) FROM leave_requests l WHERE l.organisation_id=x.organisation_id AND l.employee_id=e.id AND l.archived_at IS NULL AND l.status IN ('Approved','Taken','Cancellation Pending') AND d.day::date BETWEEN l.start_date AND l.end_date),0)),2) AS hours
+    round(x.daily_hours * greatest(0, 1-coalesce((SELECT sum(CASE WHEN l.is_half_day THEN 0.5 ELSE 1 END) FROM leave_requests l WHERE l.organisation_id=x.organisation_id AND l.employee_id=e.id AND l.archived_at IS NULL AND l.status IN ('Approved','Taken','Cancellation Pending') AND d.day::date BETWEEN l.start_date AND l.end_date AND (jsonb_typeof(l.policy_snapshot->'workingDates') IS DISTINCT FROM 'array' OR l.policy_snapshot->'workingDates' ? to_char(d.day::date,'YYYY-MM-DD'))),0)),2) AS hours
     FROM office_exceptions x JOIN app_settings s ON s.organisation_id=x.organisation_id
     JOIN employees e ON e.organisation_id=x.organisation_id AND e.id=ANY(x.employee_ids)
     CROSS JOIN LATERAL generate_series(greatest(x.start_date,${start}::date),least(x.end_date,${end}::date), interval '1 day') d(day)
@@ -187,7 +187,7 @@ export async function officeCredits(
   const trips =
     await db.execute(sql`SELECT t.id,t.organisation_id,t.created_by,t.created_at,e.id AS employee_id,d.day::date::text AS date,
     'Official duty — ' || t.destination AS label,
-    round(least(24,coalesce(p.standard_daily_hours,s.standard_daily_hours)+coalesce(p.default_break_minutes,0)/60.0) * greatest(0,1-coalesce((SELECT sum(CASE WHEN l.is_half_day THEN 0.5 ELSE 1 END) FROM leave_requests l WHERE l.organisation_id=t.organisation_id AND l.employee_id=e.id AND l.archived_at IS NULL AND l.status IN ('Approved','Taken','Cancellation Pending') AND d.day::date BETWEEN l.start_date AND l.end_date),0)),2) AS hours
+    round(least(24,coalesce(p.standard_daily_hours,s.standard_daily_hours)+coalesce(p.default_break_minutes,0)/60.0) * greatest(0,1-coalesce((SELECT sum(CASE WHEN l.is_half_day THEN 0.5 ELSE 1 END) FROM leave_requests l WHERE l.organisation_id=t.organisation_id AND l.employee_id=e.id AND l.archived_at IS NULL AND l.status IN ('Approved','Taken','Cancellation Pending') AND d.day::date BETWEEN l.start_date AND l.end_date AND (jsonb_typeof(l.policy_snapshot->'workingDates') IS DISTINCT FROM 'array' OR l.policy_snapshot->'workingDates' ? to_char(d.day::date,'YYYY-MM-DD'))),0)),2) AS hours
     FROM travel_requests t JOIN app_settings s ON s.organisation_id=t.organisation_id
     LEFT JOIN attendance_policies p ON p.organisation_id=t.organisation_id
     JOIN employees e ON e.organisation_id=t.organisation_id AND (e.id=t.employee_id OR EXISTS(SELECT 1 FROM jsonb_array_elements(t.participants) participant WHERE participant->>'employeeId'=e.id::text AND participant->>'status'='Approved'))

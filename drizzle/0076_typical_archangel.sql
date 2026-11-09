@@ -1,0 +1,1 @@
+ALTER TABLE "leave_transactions" ALTER COLUMN "actor_user_id" DROP NOT NULL;

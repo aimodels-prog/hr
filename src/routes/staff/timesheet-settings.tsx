@@ -209,8 +209,8 @@ function TimesheetSettingsRoute() {
                   }
                 />
                 <p className="text-xs text-muted-foreground">
-                  Working hours only. Timesheets include the configured break on top of this. Shared
-                  with attendance and company settings.
+                  Required work hours per day, excluding the scheduled break. Attendance may show
+                  the full time on site, including that break. Shared with company settings.
                 </p>
               </div>
               <div className="space-y-2">

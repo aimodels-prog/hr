@@ -544,6 +544,20 @@ test(
           actor(hrUserId, hrEmployeeId, "HR Reviewer", "HR"),
         );
       }
+      const [visitDecisionNotice] = await sql`
+        SELECT message FROM notifications
+        WHERE recipient_user_id=${homeUserId}
+          AND link->>'entityId'=${homeVisitId}
+          AND title='Site visit approved'
+        ORDER BY created_at DESC LIMIT 1
+      `;
+      assert.match(visitDecisionNotice?.message ?? "", /Jebel Ali Port/);
+      assert.match(visitDecisionNotice?.message ?? "", new RegExp(scheduledDate));
+      assert.match(visitDecisionNotice?.message ?? "", /approved by HR Reviewer/i);
+      assert.match(
+        visitDecisionNotice?.message ?? "",
+        /HR note: Operational visit approved by HR/i,
+      );
       const workerResult = await processAttendanceScheduledWork(workerAt);
       assert.equal(workerResult.reminders, 0);
       assert.ok(workerResult.siteVisits >= 1);

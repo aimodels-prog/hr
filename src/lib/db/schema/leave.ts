@@ -19,6 +19,7 @@ import { mutableRecordColumns } from "./common.ts";
 import { fileMetadata } from "./documents.ts";
 import { employees, users } from "./employee.ts";
 import { organisations } from "./organisation.ts";
+import { attendanceRecords } from "./time.ts";
 
 export const sickLeaveBackdatePermissions = pgTable(
   "sick_leave_backdate_permissions",
@@ -195,9 +196,7 @@ export const leaveTransactions = pgTable(
     days: numeric("days", { precision: 8, scale: 2 }).notNull(),
     reason: text("reason").notNull(),
     referenceId: uuid("reference_id"),
-    actorUserId: uuid("actor_user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "restrict" }),
+    actorUserId: uuid("actor_user_id").references(() => users.id, { onDelete: "restrict" }),
   },
   (table) => [
     index("leave_transactions_org_employee_date_idx").on(
@@ -276,12 +275,58 @@ export const leaveRequests = pgTable(
     ),
     index("leave_requests_org_dates_idx").on(table.organisationId, table.startDate, table.endDate),
     check("leave_requests_date_order", sql`${table.endDate} >= ${table.startDate}`),
-    check("leave_requests_days_positive", sql`${table.workingDaysRequested} > 0`),
+    check(
+      "leave_requests_days_positive",
+      sql`${table.workingDaysRequested} > 0 OR (${table.workingDaysRequested} = 0 AND ${table.status} IN ('Cancellation Approved', 'Cancelled'))`,
+    ),
     check("leave_requests_reason_not_blank", sql`btrim(${table.reason}) <> ''`),
     check(
       "leave_requests_automatic_refusal_reason",
       sql`${table.status} <> 'Automatically Refused' OR btrim(coalesce(${table.refusalReason}, '')) <> ''`,
     ),
     check("leave_requests_record_version_positive", sql`${table.recordVersion} >= 1`),
+  ],
+);
+
+export const leaveAttendanceReviewStatus = pgEnum("leave_attendance_review_status", [
+  "Pending",
+  "Resolved",
+  "Kept",
+]);
+
+/** One durable HR review per approved-leave day that conflicts with office evidence. */
+export const leaveAttendanceOverlapReviews = pgTable(
+  "leave_attendance_overlap_reviews",
+  {
+    ...mutableRecordColumns,
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "restrict" }),
+    employeeId: uuid("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "restrict" }),
+    requestId: uuid("request_id")
+      .notNull()
+      .references(() => leaveRequests.id, { onDelete: "restrict" }),
+    attendanceRecordId: uuid("attendance_record_id")
+      .notNull()
+      .references(() => attendanceRecords.id, { onDelete: "restrict" }),
+    date: date("date", { mode: "string" }).notNull(),
+    observedWorkHours: numeric("observed_work_hours", { precision: 6, scale: 2 }).notNull(),
+    reason: text("reason").notNull(),
+    status: leaveAttendanceReviewStatus("status").notNull().default("Pending"),
+    decisionReason: text("decision_reason"),
+    decidedBy: uuid("decided_by").references(() => users.id, { onDelete: "restrict" }),
+    decidedAt: timestamp("decided_at", { withTimezone: true, mode: "string" }),
+  },
+  (table) => [
+    uniqueIndex("leave_attendance_reviews_request_date_unique").on(table.requestId, table.date),
+    index("leave_attendance_reviews_org_status_date_idx").on(
+      table.organisationId,
+      table.status,
+      table.date,
+    ),
+    check("leave_attendance_reviews_reason_not_blank", sql`btrim(${table.reason}) <> ''`),
+    check("leave_attendance_reviews_hours_non_negative", sql`${table.observedWorkHours} >= 0`),
   ],
 );

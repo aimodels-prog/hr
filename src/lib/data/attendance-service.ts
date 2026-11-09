@@ -1817,15 +1817,42 @@ export class AttendanceService {
     notes: string,
     context: ActorContext,
   ): SiteVisitRequest {
-    this.requireAdmin(context, "review site visits");
+    this.requireRole(context, ["HR"], "review site visits");
     const visit = this.siteVisitRepo.getById(id);
     if (!visit) throw new Error("Site visit request was not found.");
-    if (visit.status !== "Pending HR") throw new Error("Site visit is not awaiting HR review.");
-    if (notes.trim().length < 3) throw new Error("HR decision notes are required.");
+    const extensionReview =
+      visit.details?.extension?.status === "Pending" &&
+      ["Approved", "Completed"].includes(visit.status);
+    if (visit.status !== "Pending HR" && !extensionReview)
+      throw new Error("Site visit is not awaiting HR review.");
+    if (visit.employeeId === context.actor.employeeId)
+      throw new Error("You cannot approve your own site visit.");
+    if (!approve && !notes.trim()) throw new Error("Explain why the site visit is rejected.");
+    const pendingExtension = visit.details?.extension?.status === "Pending";
+    const details = pendingExtension
+      ? {
+          ...visit.details,
+          extension: {
+            ...visit.details!.extension!,
+            status: approve ? ("Approved" as const) : ("Rejected" as const),
+            reviewedAt: this.now().toISOString(),
+            reviewedBy: context.actor.userId,
+          },
+        }
+      : visit.details;
     const updated = this.siteVisitRepo.update(
       id,
       {
-        status: approve ? "Approved" : "Rejected",
+        status: extensionReview
+          ? approve
+            ? "Approved"
+            : visit.status
+          : approve
+            ? "Approved"
+            : "Rejected",
+        ...(pendingExtension
+          ? { details, ...(approve ? { endTime: details!.extension!.endTime } : {}) }
+          : {}),
         hrReviewedBy: context.actor.userId,
         hrReviewedAt: this.now().toISOString(),
         hrNotes: notes.trim(),
@@ -1834,11 +1861,17 @@ export class AttendanceService {
     );
     this.notifyEmployee(
       visit.employeeId,
-      approve ? "Site visit approved" : "Site visit rejected",
-      approve
-        ? `${visit.destination} is approved. ${visit.origin === "Home" ? "Attendance will clock in and out automatically at the approved times." : "Clock in at the office before leaving; the approved visit will close attendance at the scheduled end."}`
-        : `The request was rejected: ${notes.trim()}`,
-      `site-visit-${visit.id}-${updated.status}`,
+      extensionReview
+        ? `Site visit extension ${approve ? "approved" : "rejected"}`
+        : approve
+          ? "Site visit approved"
+          : "Site visit rejected",
+      extensionReview
+        ? `Your extension for ${visit.destination} was ${approve ? "approved" : "rejected"}.${notes.trim() ? ` ${notes.trim()}` : ""}`
+        : approve
+          ? `${visit.destination} is approved. ${visit.origin === "Home" ? "Attendance will clock in and out automatically at the approved times." : "Clock in at the office before leaving; the approved visit will close attendance at the scheduled end."}`
+          : `The request was rejected: ${notes.trim()}`,
+      `site-visit-${visit.id}-${extensionReview ? `extension-${visit.details!.extension!.requestedAt}-` : ""}${updated.status}`,
       "/staff/me/attendance",
       context,
     );

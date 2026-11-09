@@ -38,6 +38,8 @@ test(
         "employeeUser",
         "policy",
         "request",
+        "employeeVisit",
+        "ownVisit",
         "notification",
         "otherNotification",
       ].map((key) => [key, randomUUID()]),
@@ -266,6 +268,30 @@ test(
       assert.ok(
         hrEmails.some((n) => n.type === "approval.reminder"),
         "HR receives its approval reminders",
+      );
+      await sql`INSERT INTO site_visit_requests
+        (id,organisation_id,employee_id,date,start_time,end_time,origin,destination,purpose,status,requested_at,created_by,updated_by)
+        VALUES
+        (${ids.employeeVisit},${ids.org},${ids.employee},CURRENT_DATE+1,'09:00','12:00','Office','Client office','Project meeting','Pending HR',now(),${ids.employeeUser},${ids.employeeUser}),
+        (${ids.ownVisit},${ids.org},${ids.manager},CURRENT_DATE+1,'09:00','12:00','Office','Client office','Project meeting','Pending HR',now(),${ids.managerUser},${ids.managerUser})`;
+      const hrVisitTasks = await listTasksForActorInDatabase(ids.org!, {
+        ...managerActor,
+        activeRole: "HR",
+        roles: ["Employee", "Line Manager", "HR", "Super Admin"],
+      });
+      assert.ok(hrVisitTasks.some((task) => task.sourceId === ids.employeeVisit));
+      assert.ok(
+        !hrVisitTasks.some((task) => task.sourceId === ids.ownVisit),
+        "HR cannot review their own visit",
+      );
+      const adminVisitTasks = await listTasksForActorInDatabase(ids.org!, {
+        ...managerActor,
+        activeRole: "Super Admin",
+        roles: ["Employee", "Line Manager", "HR", "Super Admin"],
+      });
+      assert.ok(
+        !adminVisitTasks.some((task) => task.sourceType === "site-visit-request"),
+        "Super Admin access alone cannot review visits",
       );
       await sql`UPDATE leave_requests SET archived_at=now() WHERE id=${ids.request}`;
       const archivedHistory = await listTrackedRequests(ids.org!, employeeActor, {

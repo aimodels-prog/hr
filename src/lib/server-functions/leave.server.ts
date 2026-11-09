@@ -14,6 +14,12 @@ import {
   setEmployeeLeaveBalanceInDatabase,
   updateLeavePolicyInDatabase,
 } from "../db/repositories/leave.repository.server.ts";
+import {
+  listLeaveAttendanceOverlapReviewsInDatabase,
+  previewExistingApprovedLeaveOfficeOverlapsInDatabase,
+  resolveLeaveAttendanceOverlapReviewInDatabase,
+  stageExistingApprovedLeaveOfficeOverlapInDatabase,
+} from "../db/repositories/leave-attendance-reconciliation.repository.server.ts";
 import { resolveOrganisationIdForActor, verifyServerActorRole } from "../db/utils.server.ts";
 import { ROLE_VALUES } from "../data/types.ts";
 import { deleteObjectFile, saveObjectFile } from "../db/object-storage.server.ts";
@@ -41,6 +47,80 @@ export const getLeaveSnapshotFn = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     const verified = await verify(data.actor);
     return listLeaveSnapshotForActor(verified.organisationId, verified.actor);
+  });
+
+export const listLeaveAttendanceOverlapReviewsFn = createServerFn({ method: "POST" })
+  .validator((input) => z.object({ actor: Actor }).strict().parse(input))
+  .handler(async ({ data }) => {
+    const verified = await verify(data.actor);
+    if (verified.actor.activeRole !== "HR") throw new Error("HR access is required.");
+    return listLeaveAttendanceOverlapReviewsInDatabase(verified.organisationId, {
+      includeResolved: true,
+    });
+  });
+
+export const previewExistingApprovedLeaveOfficeOverlapsFn = createServerFn({ method: "POST" })
+  .validator((input) => z.object({ actor: Actor }).strict().parse(input))
+  .handler(async ({ data }) => {
+    const verified = await verify(data.actor);
+    if (verified.actor.activeRole !== "HR") throw new Error("HR access is required.");
+    return previewExistingApprovedLeaveOfficeOverlapsInDatabase(verified.organisationId);
+  });
+
+export const stageExistingApprovedLeaveOfficeOverlapFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: Actor,
+        requestId: z.string().uuid(),
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        attendanceRecordId: z.string().uuid(),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await verify(data.actor);
+    if (verified.actor.activeRole !== "HR") throw new Error("HR access is required.");
+    return stageExistingApprovedLeaveOfficeOverlapInDatabase(
+      verified.organisationId,
+      {
+        requestId: data.requestId,
+        date: data.date,
+        attendanceRecordId: data.attendanceRecordId,
+      },
+      verified.actor,
+    );
+  });
+
+export const resolveLeaveAttendanceOverlapReviewFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: Actor,
+        reviewId: z.string().uuid(),
+        decision: z.enum(["remove-leave", "keep-leave"]),
+        reason: z.string().trim().min(3).max(1000),
+        allocationPolicyId: z.string().uuid().optional(),
+        allocationLeaveYear: z.number().int().min(2000).max(2100).optional(),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await verify(data.actor);
+    if (verified.actor.activeRole !== "HR") throw new Error("HR access is required.");
+    return resolveLeaveAttendanceOverlapReviewInDatabase(
+      verified.organisationId,
+      {
+        reviewId: data.reviewId,
+        decision: data.decision,
+        reason: data.reason,
+        ...(data.allocationPolicyId ? { allocationPolicyId: data.allocationPolicyId } : {}),
+        ...(data.allocationLeaveYear ? { allocationLeaveYear: data.allocationLeaveYear } : {}),
+      },
+      verified.actor,
+    );
   });
 
 export const readLeaveAttachmentFn = createServerFn({ method: "GET" })

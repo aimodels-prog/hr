@@ -20,8 +20,80 @@ export interface ApprovedLeaveDates {
     name?: string;
     type?: string;
     isPaid?: boolean;
+    workingDates?: string[];
     specialRequest?: { unpaidByDate?: Array<{ date: string; days: number }> };
   } | null;
+}
+
+/** Count only dates explicitly approved in a snapshot when that list exists. */
+export function approvedLeaveSnapshotIncludesDate(snapshot: unknown, date: string): boolean {
+  const workingDates =
+    snapshot && typeof snapshot === "object" && "workingDates" in snapshot
+      ? snapshot.workingDates
+      : undefined;
+  return !Array.isArray(workingDates) || workingDates.includes(date);
+}
+
+export function approvedLeaveCoversDate(
+  leave: { startDate: string; endDate: string; policySnapshot?: unknown },
+  date: string,
+): boolean {
+  return (
+    leave.startDate <= date &&
+    leave.endDate >= date &&
+    approvedLeaveSnapshotIncludesDate(leave.policySnapshot, date)
+  );
+}
+
+/** An excluded day must not make a whole period look leave-covered. */
+export function approvedLeaveIntersectsRange(
+  leave: { startDate: string; endDate: string; policySnapshot?: unknown },
+  startDate: string,
+  endDate: string,
+): boolean {
+  if (leave.endDate < startDate || leave.startDate > endDate) return false;
+  const snapshot = leave.policySnapshot;
+  const workingDates =
+    snapshot && typeof snapshot === "object" && "workingDates" in snapshot
+      ? snapshot.workingDates
+      : undefined;
+  if (!Array.isArray(workingDates)) return true;
+  return workingDates.some(
+    (date) =>
+      typeof date === "string" &&
+      date >= startDate &&
+      date <= endDate &&
+      date >= leave.startDate &&
+      date <= leave.endDate,
+  );
+}
+
+/** Show only effective approved dates in leave reports, without implying an excluded day was leave. */
+export function approvedLeaveUsageSpans(
+  leave: ApprovedLeaveDates & { workingDaysRequested: number },
+) {
+  const workingDates = leave.policySnapshot?.workingDates;
+  if (!Array.isArray(workingDates)) {
+    return [
+      { startDate: leave.startDate, endDate: leave.endDate, days: leave.workingDaysRequested },
+    ];
+  }
+  const dates = [...new Set(workingDates)]
+    .filter((date) => date >= leave.startDate && date <= leave.endDate)
+    .sort();
+  const spans: Array<{ startDate: string; endDate: string; days: number }> = [];
+  for (const date of dates) {
+    const last = spans.at(-1);
+    const dayBefore = new Date(`${date}T12:00:00Z`);
+    dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
+    if (last && last.endDate === dayBefore.toISOString().slice(0, 10)) {
+      last.endDate = date;
+      last.days += leave.isHalfDay ? 0.5 : 1;
+    } else {
+      spans.push({ startDate: date, endDate: date, days: leave.isHalfDay ? 0.5 : 1 });
+    }
+  }
+  return spans;
 }
 
 /** Remote work and last-working-day markers record a work arrangement, not absence. */
@@ -43,8 +115,7 @@ export function isApprovedRemoteWork(leave: ApprovedLeaveDates, date: string): b
   return (
     isRemoteWorkMarker(leave) &&
     (!leave.status || isEffectiveLeave({ status: leave.status })) &&
-    leave.startDate <= date &&
-    leave.endDate >= date
+    approvedLeaveCoversDate(leave, date)
   );
 }
 
@@ -61,8 +132,7 @@ export function approvedLeaveFraction(leaves: readonly ApprovedLeaveDates[], dat
         (leave) =>
           isAbsenceLeave(leave) &&
           (!leave.status || isEffectiveLeave({ status: leave.status })) &&
-          leave.startDate <= date &&
-          leave.endDate >= date,
+          approvedLeaveCoversDate(leave, date),
       )
       .reduce((sum, leave) => sum + (leave.isHalfDay ? 0.5 : 1), 0),
   );
@@ -88,6 +158,22 @@ export function timesheetAbsences(input: {
   const entries = new Map<string, TimesheetEntry>();
   let expectedWorkHours = 0;
   for (const date of input.dates) {
+    if (input.leave.some((leave) => isApprovedRemoteWork(leave, date))) {
+      const key = "automatic-remote-work";
+      const entry = entries.get(key) ?? {
+        id: key,
+        projectId: "REMOTE_WORK",
+        costCentreId: "REMOTE_WORK",
+        activityCodeId: "REMOTE_WORK",
+        locationCodeId: "REMOTE_WORK",
+        hours: {},
+        total: 0,
+        isRemoteWork: true,
+        notes: "Remote work",
+      };
+      entry.hours[date] = 0;
+      entries.set(key, entry);
+    }
     if (!input.workingDays.includes(new Date(`${date}T12:00:00Z`).getUTCDay())) continue;
     if (input.holidays.has(date)) {
       const holiday = entries.get("automatic-holiday") ?? {

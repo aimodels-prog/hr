@@ -32,6 +32,8 @@ export interface DailyAttendanceReconciliation {
   date: string;
   attendanceHours: number;
   timesheetWorkHours: number;
+  /** Optional manual project allocation. Older approved snapshots may not have this field. */
+  projectHours?: number;
   leaveHours: number;
   holidayHours: number;
   varianceHours: number;
@@ -101,6 +103,8 @@ export interface TimesheetEntry {
   /** Covers an approved absence but contributes no paid/credited hours. */
   isUnpaidLeave?: boolean;
   isHoliday?: boolean;
+  /** Approved work arrangement shown on the calendar; it is not credited work or leave. */
+  isRemoteWork?: boolean;
 }
 
 // We will embed entries directly into the Timesheet record for simplicity in this prototype,

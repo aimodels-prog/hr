@@ -65,6 +65,34 @@ test("remote-work days require timesheet hours but not a biometric attendance pu
   assert.equal(day!.missing, 0);
 });
 
+test("a worked date excluded from an approved leave range is neither on leave nor remote", () => {
+  const date = "2026-09-14";
+  const snapshot = { workingDates: ["2026-09-13", "2026-09-15"] };
+  const leave = {
+    employeeId: "a",
+    startDate: "2026-09-13",
+    endDate: "2026-09-15",
+    isHalfDay: false,
+    policySnapshot: snapshot,
+  };
+  const [day] = calculateAttendanceAnalytics({ ...base, leave: [leave] });
+  assert.equal(day?.expected, 8);
+  assert.equal(day?.leaveDays, 0);
+  assert.equal(day?.missing, 1);
+  const today = attendanceToday({
+    date,
+    now: new Date(`${date}T12:00:00Z`),
+    people: [employee],
+    records: [],
+    leave: [leave],
+    pendingVisits: [],
+  });
+  assert.equal(today.onLeave, 0);
+  const [remoteDay] = calculateAttendanceAnalytics({ ...base, remoteWork: [leave] });
+  assert.equal(remoteDay?.expected, 8);
+  assert.equal(remoteDay?.missing, 1);
+});
+
 test("chart includes today with a fixed 7/30-day range across year boundaries", () => {
   assert.equal(attendanceChartDateRange("2026-10-06", 30).at(-1), "2026-10-06");
   assert.equal(attendanceChartDateRange("2026-10-06", 30).length, 30);

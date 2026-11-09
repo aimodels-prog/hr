@@ -202,7 +202,7 @@ test("Lock for Payroll: only HR can manually lock an Approved timesheet, and onl
   const { timesheets, attendance, period } = harness();
   addAttendance(attendance, period.startDate);
   const ts = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
-  fillEntry(ts, period.startDate, 9);
+  fillEntry(ts, period.startDate, 8);
   timesheets.saveTimesheetDraft(ts, employee);
   timesheets.submitTimesheet(ts.id, employee);
   timesheets.approveTimesheet(ts.id, manager);
@@ -221,7 +221,7 @@ test("a line manager cannot reopen an HR-approved or payroll-locked timesheet", 
   const { timesheets, attendance, period } = harness();
   addAttendance(attendance, period.startDate);
   const ts = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
-  fillEntry(ts, period.startDate, 9);
+  fillEntry(ts, period.startDate, 8);
   timesheets.saveTimesheetDraft(ts, employee);
   timesheets.submitTimesheet(ts.id, employee);
   timesheets.approveTimesheet(ts.id, manager);
@@ -239,7 +239,7 @@ test("reopening a Payroll Locked timesheet does not carry stale dated hours into
   const { timesheets, attendance, period, nextPeriod } = harness();
   addAttendance(attendance, period.startDate);
   const ts = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
-  fillEntry(ts, period.startDate, 9);
+  fillEntry(ts, period.startDate, 8);
   timesheets.saveTimesheetDraft(ts, employee);
   timesheets.submitTimesheet(ts.id, employee);
   timesheets.approveTimesheet(ts.id, manager);
@@ -268,7 +268,7 @@ test("Accounts can also reopen a payroll-locked timesheet", () => {
   const { timesheets, attendance, period } = harness();
   addAttendance(attendance, period.startDate);
   const ts = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
-  fillEntry(ts, period.startDate, 9);
+  fillEntry(ts, period.startDate, 8);
   timesheets.saveTimesheetDraft(ts, employee);
   timesheets.submitTimesheet(ts.id, employee);
   timesheets.approveTimesheet(ts.id, manager);
@@ -303,7 +303,7 @@ test("working days are computed from the organisation's configured working week,
   }
 
   const ts = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
-  assert.equal(ts.expectedHours, expectedWorkingDays * 9);
+  assert.equal(ts.expectedHours, expectedWorkingDays * timesheets.getSettings().standardDailyHours);
 });
 
 test("structured public-holiday dates prefill a holiday row", () => {
@@ -322,7 +322,7 @@ test("structured public-holiday dates prefill a holiday row", () => {
   const timesheet = timesheets.getOrCreateTimesheet("employee-mariam", period.id, accounts);
   assert.equal(
     timesheet.entries.find((entry) => entry.isHoliday)?.hours[period.startDate],
-    timesheets.getRecordedDailyHours(),
+    timesheets.getSettings().standardDailyHours,
   );
 });
 

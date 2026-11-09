@@ -30,6 +30,44 @@ export function recordedAttendanceHours(
     : 0;
 }
 
+/** Net work for timesheets; attendance itself continues to show elapsed presence.
+ * A limit is used only for office-policy credit, never for ordinary actual
+ * work: ten worked hours remain ten, without creating an overtime claim.
+ */
+export function recordedWorkingHours(
+  record:
+    | {
+        calculatedHours?: number | string | null | undefined;
+        creditedHours?: number | undefined;
+        breakMinutes?: number | undefined;
+        clockInAt?: string | Date | null | undefined;
+        clockOutAt?: string | Date | null | undefined;
+        clockIn?: string | undefined;
+        clockOut?: string | undefined;
+      }
+    | null
+    | undefined,
+  maximumHours?: number,
+): number {
+  if (
+    !record ||
+    (maximumHours !== undefined && (!Number.isFinite(maximumHours) || maximumHours < 0))
+  )
+    return 0;
+  // Stored calculated hours already exclude the actual break overlap. Official-duty
+  // credits can be a full presence day, so cap those to the configured workday.
+  const savedValue = record.creditedHours ?? record.calculatedHours;
+  const saved = savedValue == null ? Number.NaN : Number(savedValue);
+  const hours =
+    Number.isFinite(saved) && saved >= 0
+      ? saved
+      : Math.max(0, recordedAttendanceHours(record) - (record.breakMinutes ?? 0) / 60);
+  const dayHours = Math.min(24, hours);
+  return Number(
+    (maximumHours === undefined ? dayHours : Math.min(maximumHours, dayHours)).toFixed(2),
+  );
+}
+
 /** Standard work remains separate from the break; the displayed day includes both. */
 export function recordedDailyHours(workingHours: number, breakMinutes: number): number {
   if (

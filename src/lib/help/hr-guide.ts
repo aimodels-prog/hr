@@ -380,6 +380,7 @@ export const hrGuide = [
       "For a genuine correction, use the adjustment action and provide the required explanation. Have another authorised person handle your own adjustment.",
       "Before annual rollover, check the selected leave year and policy rules. Run the supported rollover action once and review the result.",
       "Review expiring carried-over leave and encourage employees to plan within the applicable deadline.",
+      "For office attendance on an approved leave day, open Office work on leave. The system corrects a clearly completed office day when it can verify the machine record and balance; short or unclear records and special leave need your decision. Review only the affected date, choose Count as work or Keep leave, and check the employee's balance and history. Reopen a submitted or closed timesheet before changing its leave day.",
     ],
     "Balances, requests and rollover follow the company’s configured leave-year start, not an assumed January start.",
     [
@@ -469,12 +470,13 @@ export const hrGuide = [
     "Review attendance corrections and quick visits",
     "Check actual work times without creating automatic overtime.",
     "/staff/attendance/corrections",
-    "forgot clock out yesterday missing correction site ministry visit home office hr approval",
+    "forgot clock out yesterday missing correction site ministry visit home office hr approval visit approvals pending review",
     [
       "Open Attendance Corrections and compare the proposed times with the original record and explanation.",
       "A request that only adds yesterday’s missing clock-out can come directly to HR. Full corrections still follow manager review.",
       "Approve or decline using the available decision action. If the underlying record changed, ask for a corrected request rather than overwriting new evidence.",
-      "Review quick visits in Attendance & Visits. Check origin, destination and the expected return or finish information before approving.",
+      "Open Visit Approvals from the HR sidebar or dashboard. Outstanding visits appear first, oldest to newest. Search for an employee or destination, then choose Review request.",
+      "Check the employee, origin, destination, purpose, times and any proposed extension. Approve when confirmed; add a reason when rejecting. A different HR colleague must review your own visit.",
     ],
     "Approved corrections update attendance through the controlled review process. Approved official-duty attendance follows the visit rules; neither creates an overtime claim.",
     [
@@ -524,7 +526,7 @@ export const hrGuide = [
     "Configuration changes apply to new periods and timesheets. Closing a period stops employee creation, editing and submission in that period.",
     [
       "For Head Office staff, review the employee’s attendance-to-timesheet choice in attendance setup; it is not automatic approval.",
-      "Flexible arrival times do not remove the daily working-hours requirement. Recorded attendance and timesheets include the configured break: eight working hours plus one break hour is a nine-hour recorded day. Extra presence does not create an overtime claim. Previously approved timesheets are not rewritten.",
+      "Flexible arrival times do not remove the daily working-hours requirement. Attendance can show the full time on site, including the scheduled break. Timesheets use the configured working hours without the break: for example, eight work hours plus one break hour is nine hours on site but an eight-hour timesheet target. Extra presence does not create an overtime claim. Previously approved timesheets are not rewritten.",
     ],
     "timesheet:admin_all",
   ),

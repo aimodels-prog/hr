@@ -1,0 +1,2 @@
+ALTER TABLE "leave_requests" DROP CONSTRAINT "leave_requests_days_positive";--> statement-breakpoint
+ALTER TABLE "leave_requests" ADD CONSTRAINT "leave_requests_days_positive" CHECK ("leave_requests"."working_days_requested" > 0 OR ("leave_requests"."working_days_requested" = 0 AND "leave_requests"."status" IN ('Cancellation Approved', 'Cancelled')));

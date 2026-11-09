@@ -12,7 +12,15 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { HistoricalLeaveCalendar } from "@/components/timesheets/historical-leave-calendar";
 import { TimesheetService } from "@/lib/data/timesheet-service";
+import { LeaveService } from "@/lib/data/leave-service";
+import { SettingsService } from "@/lib/data/settings-service";
+import { organisationDate } from "@/lib/data/approved-leave";
+import {
+  countTimesheetRemoteWorkDays,
+  meetsTimesheetWorkTarget,
+} from "@/lib/data/timesheet-day-display";
 import { isConfiguredTimesheetPeriod, timesheetPeriodLabel } from "@/lib/data/timesheet-periods";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 
@@ -23,16 +31,19 @@ export const Route = createFileRoute("/staff/me/timesheets/")({
 function TimesheetListRoute() {
   const currentUser = useCurrentUser();
   const tsService = useMemo(() => new TimesheetService(), []);
+  const leaveService = useMemo(() => new LeaveService(), []);
+  const settingsService = useMemo(() => new SettingsService(), []);
 
   if (!currentUser?.employeeId) {
     return <div>Employee profile required.</div>;
   }
 
   const settings = tsService.getSettings();
-  const existingTimesheets = tsService.getTimesheetsForEmployee(
-    currentUser.employeeId,
-    currentUser.getActorContext(),
-  );
+  const actor = currentUser.getActorContext();
+  const appSettings = settingsService.getAppSettingsSync();
+  const workingDays = appSettings.workingDays;
+  const leaveRequests = leaveService.getLeaveRequestsForEmployee(currentUser.employeeId, actor);
+  const existingTimesheets = tsService.getTimesheetsForEmployee(currentUser.employeeId, actor);
   const timesheetByPeriodId = new Map(existingTimesheets.map((ts) => [ts.periodId, ts]));
   const periods = tsService
     .getPeriods()
@@ -51,7 +62,7 @@ function TimesheetListRoute() {
       <div className="flex flex-col gap-6 max-w-[1000px] mx-auto pb-10">
         <PageHeader
           title="My Timesheets"
-          description="Review each day's work and leave. Submit once per month."
+          description="Review actual work and leave. Extra hours are shown, not treated as overtime. Submit once per month."
         />
 
         <Card>
@@ -61,7 +72,7 @@ function TimesheetListRoute() {
                 <TableRow>
                   <TableHead>Period</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Worked</TableHead>
+                  <TableHead>Total worked</TableHead>
                   <TableHead>Paid leave</TableHead>
                   <TableHead>Credited total</TableHead>
                   <TableHead>Required work</TableHead>
@@ -85,6 +96,17 @@ function TimesheetListRoute() {
                   const isUnder =
                     summary.workedHours < summary.requiredWorkHours &&
                     ["Draft", "Not Started", "Returned"].includes(ts.status);
+                  const workTargetMet = meetsTimesheetWorkTarget(
+                    summary.workedHours,
+                    summary.requiredWorkHours,
+                  );
+                  const remoteWorkDays = countTimesheetRemoteWorkDays({
+                    startDate: period.startDate,
+                    endDate: period.endDate,
+                    workingDays,
+                    leaveRequests,
+                    entries: "entries" in ts ? ts.entries : [],
+                  });
 
                   return (
                     <TableRow key={period.id}>
@@ -110,9 +132,22 @@ function TimesheetListRoute() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <span className={isUnder ? "text-destructive font-medium" : ""}>
+                        <span
+                          className={
+                            workTargetMet
+                              ? "font-semibold text-emerald-700 dark:text-emerald-300"
+                              : isUnder
+                                ? "text-destructive font-medium"
+                                : ""
+                          }
+                        >
                           {summary.workedHours} h
                         </span>
+                        {remoteWorkDays > 0 && (
+                          <span className="block text-xs text-muted-foreground">
+                            {remoteWorkDays} remote work {remoteWorkDays === 1 ? "day" : "days"}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell>
                         {summary.paidLeaveHours} h
@@ -160,6 +195,12 @@ function TimesheetListRoute() {
             </Table>
           </CardContent>
         </Card>
+        <HistoricalLeaveCalendar
+          leaveRequests={leaveRequests}
+          periods={periods}
+          workingDays={workingDays}
+          asOfDate={organisationDate(new Date(), appSettings.timezone)}
+        />
       </div>
     </RequirePermission>
   );

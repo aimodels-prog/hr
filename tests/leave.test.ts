@@ -7,7 +7,7 @@ import { LeaveService } from "../src/lib/data/leave-service.ts";
 import { SettingsService } from "../src/lib/data/settings-service.ts";
 import { siteVisitLocalNow } from "../src/lib/data/site-visit.ts";
 import { getLeaveEligibility, isOmaniNationality } from "../src/lib/data/leave-eligibility.ts";
-import type { LeavePolicy, LeaveTransaction } from "../src/lib/data/leave-types.ts";
+import type { LeavePolicy, LeaveRequest, LeaveTransaction } from "../src/lib/data/leave-types.ts";
 import { NotificationService } from "../src/lib/data/notification-service.ts";
 import { initializeSeedData } from "../src/lib/data/seed-service.ts";
 import { MemoryStorageDriver } from "../src/lib/data/storage-driver.ts";
@@ -462,6 +462,63 @@ test("only the assigned supervisor and HR can complete their approval stages", a
     ),
   );
   assert.ok(notifications.some((item) => item.title === "Team availability update"));
+});
+
+test("a restored workday is not still shown as approved future leave", () => {
+  const { service, storage } = harness();
+  const annual = service.getPolicies().find((policy) => policy.type === "Annual");
+  assert.ok(annual);
+  const employeeId = employee.actor.employeeId!;
+  const baseline = service.calculateBalance(employeeId, annual.id, hr);
+  const today = new Date().toISOString().slice(0, 10);
+  const requests = storage.readCollection<LeaveRequest>("leave_requests");
+  const request = requests.find(
+    (item) => item.employeeId === employeeId && item.policyId === annual.id,
+  );
+  assert.ok(request);
+  storage.writeCollection(
+    "leave_requests",
+    requests.map((item) =>
+      item.id === request.id
+        ? {
+            ...item,
+            startDate: today,
+            endDate: today,
+            status: "Cancellation Approved" as const,
+            workingDaysRequested: 0,
+            policySnapshot: { ...item.policySnapshot, workingDates: [] },
+          }
+        : item,
+    ),
+  );
+  const transactions = storage.readCollection<LeaveTransaction>("leave_transactions");
+  const record = {
+    id: "worked-leave-debit",
+    employeeId,
+    policyId: annual.id,
+    date: today,
+    days: -1,
+    referenceId: request.id,
+    actorUserId: hr.actor.userId,
+    reason: "Approved leave",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    createdBy: hr.actor.userId,
+    updatedBy: hr.actor.userId,
+  } as LeaveTransaction;
+  storage.writeCollection("leave_transactions", [
+    ...transactions,
+    { ...record, transactionType: "Approved Leave" },
+    {
+      ...record,
+      id: "worked-leave-restoration",
+      transactionType: "Cancellation Restoration",
+      days: 1,
+    },
+  ]);
+  const balance = service.calculateBalance(employeeId, annual.id, hr);
+  assert.equal(balance.approvedFuture, baseline.approvedFuture);
+  assert.equal(balance.available, baseline.available);
 });
 
 test("HR annual-entitlement changes update every eligible employee's current balance", () => {

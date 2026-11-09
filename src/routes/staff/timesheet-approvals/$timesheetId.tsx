@@ -3,6 +3,7 @@ import { useState, useMemo } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { TimesheetDayNavigation } from "@/components/timesheets/day-navigation";
 import { timesheetPeriodLabel } from "@/lib/data/timesheet-periods";
+import { formatSignedHours } from "@/lib/data/timesheet-day-display";
 import {
   Card,
   CardContent,
@@ -157,7 +158,7 @@ function TimesheetApprovalDetailRoute() {
   days.forEach((d) => (dailyTotals[format(d, "yyyy-MM-dd")] = 0));
 
   timesheet.entries.forEach((e) => {
-    if (e.isLeave || e.isHoliday) return;
+    if (e.isLeave || e.isHoliday || e.isRemoteWork) return;
     Object.entries(e.hours).forEach(([d, h]) => {
       if (dailyTotals[d] !== undefined) {
         dailyTotals[d] += h || 0;
@@ -167,6 +168,7 @@ function TimesheetApprovalDetailRoute() {
 
   const diff = timesheet.totalHours - timesheet.expectedHours;
   const reconciliation = tsService.reconcileAttendance(timesheet);
+  const hasProjectComparison = reconciliation.days.some((day) => (day.projectHours ?? 0) > 0);
 
   return (
     <div className="flex flex-col gap-4 max-w-[1400px] mx-auto pb-10">
@@ -227,21 +229,21 @@ function TimesheetApprovalDetailRoute() {
         </Card>
         <Card className="bg-muted/30">
           <CardContent className="p-4">
-            <div className="text-sm text-muted-foreground">Hours Difference</div>
+            <div className="text-sm text-muted-foreground">Worked vs required</div>
             <div
               className={`text-2xl font-bold ${diff > 0 ? "text-emerald-600" : diff < 0 ? "text-destructive" : "text-muted-foreground"}`}
             >
-              {diff > 0 ? `+${diff}` : diff}
+              {formatSignedHours(diff)}
             </div>
           </CardContent>
         </Card>
         <Card className="bg-muted/30">
           <CardContent className="p-4">
-            <div className="text-sm text-muted-foreground">Attendance Hours</div>
+            <div className="text-sm text-muted-foreground">Work hours from attendance</div>
             <div className="text-2xl font-bold">{reconciliation.attendanceHours}</div>
             <div className="text-xs text-muted-foreground mt-1">
               {reconciliation.unresolvedCount === 0
-                ? "Hours match"
+                ? "No unresolved review items"
                 : `${reconciliation.unresolvedCount} difference(s) need review`}
             </div>
           </CardContent>
@@ -257,8 +259,10 @@ function TimesheetApprovalDetailRoute() {
             Attendance and Project Hours
           </CardTitle>
           <CardDescription>
-            Physical attendance is compared daily with project hours. Approved leave and holidays
-            are shown separately and do not count as worked project time.
+            Work hours from attendance, excluding the scheduled break, are compared daily with
+            project hours.{" "}
+            {hasProjectComparison && "+ means more project hours; − means more attendance work. "}
+            Approved leave and holidays are shown separately.
           </CardDescription>
         </CardHeader>
         <CardContent className="overflow-x-auto p-0">
@@ -267,9 +271,12 @@ function TimesheetApprovalDetailRoute() {
               <TableRow>
                 <TableHead>Date</TableHead>
                 <TableHead>Attendance status</TableHead>
-                <TableHead className="text-right">Attendance</TableHead>
-                <TableHead className="text-right">Timesheet</TableHead>
-                <TableHead className="text-right">Difference</TableHead>
+                <TableHead className="text-right">Attendance work</TableHead>
+                <TableHead className="text-right">Total worked</TableHead>
+                <TableHead className="text-right">Project hours</TableHead>
+                <TableHead className="text-right">
+                  {hasProjectComparison ? "Project gap" : "Difference"}
+                </TableHead>
                 <TableHead>Result</TableHead>
                 <TableHead className="min-w-[260px]">Employee explanation</TableHead>
               </TableRow>
@@ -281,7 +288,12 @@ function TimesheetApprovalDetailRoute() {
                   <TableCell>{day.attendanceStatus}</TableCell>
                   <TableCell className="text-right">{day.attendanceHours}</TableCell>
                   <TableCell className="text-right">{day.timesheetWorkHours}</TableCell>
-                  <TableCell className="text-right">{day.varianceHours}</TableCell>
+                  <TableCell className="text-right">
+                    {(day.projectHours ?? 0) > 0 ? `${day.projectHours} h` : "—"}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {formatSignedHours(day.varianceHours)}
+                  </TableCell>
                   <TableCell>
                     <Badge variant={day.resolved ? "secondary" : "destructive"}>{day.status}</Badge>
                   </TableCell>
@@ -320,12 +332,17 @@ function TimesheetApprovalDetailRoute() {
             </TableHeader>
             <TableBody>
               {timesheet.entries.map((entry) => {
-                const isReadonlyBlock = entry.isLeave || entry.isHoliday;
+                const isReadonlyBlock = entry.isLeave || entry.isHoliday || entry.isRemoteWork;
                 return (
                   <TableRow key={entry.id} className={isReadonlyBlock ? "bg-muted/30" : ""}>
                     <TableCell className="p-2 font-medium">
                       {isReadonlyBlock
-                        ? entry.notes || (entry.isLeave ? "Approved leave" : "Public holiday")
+                        ? entry.notes ||
+                          (entry.isLeave
+                            ? "Approved leave"
+                            : entry.isRemoteWork
+                              ? "Remote work"
+                              : "Public holiday")
                         : entry.projectId}
                     </TableCell>
                     <TableCell className="p-2 text-muted-foreground">

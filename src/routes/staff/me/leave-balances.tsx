@@ -48,6 +48,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { LeaveService } from "@/lib/data/leave-service";
+import { organisationDate } from "@/lib/data/approved-leave";
+import { SettingsService } from "@/lib/data/settings-service";
+import { leaveDecisionSummary } from "@/lib/data/leave-decision-display";
 import {
   leaveDisplayReason,
   leaveDisplayType,
@@ -81,6 +84,15 @@ const HISTORY_PAGE_SIZE = 5;
 
 function formatDays(value: number): string {
   return new Intl.NumberFormat("en", { maximumFractionDigits: 1 }).format(value);
+}
+
+function nextEffectiveLeaveDate(request: LeaveRequest, today: string): string | null {
+  const workingDates = request.policySnapshot.workingDates;
+  if (Array.isArray(workingDates)) {
+    return workingDates.filter((date) => date >= today).sort()[0] ?? null;
+  }
+  if (request.endDate < today) return null;
+  return request.startDate < today ? today : request.startDate;
 }
 
 function formatDate(value: string): string {
@@ -228,12 +240,12 @@ function LeaveBalancesRoute() {
   const pendingRequests = requests.filter(
     (request) => request.status.startsWith("Pending") || request.status.startsWith("Amendment"),
   );
-  const nextApprovedRequest = requests
-    .filter(
-      (request) =>
-        request.status === "Approved" && new Date(request.startDate).getTime() >= Date.now(),
-    )
-    .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())[0];
+  const today = organisationDate(new Date(), new SettingsService().getAppSettingsSync().timezone);
+  const nextApproved = requests
+    .filter((request) => request.status === "Approved")
+    .map((request) => ({ request, date: nextEffectiveLeaveDate(request, today) }))
+    .filter((item): item is { request: LeaveRequest; date: string } => item.date !== null)
+    .sort((a, b) => a.date.localeCompare(b.date))[0];
   const usedPercentage = annualPolicy
     ? Math.min(
         100,
@@ -559,8 +571,8 @@ function LeaveBalancesRoute() {
             <div>
               <p className="text-sm text-muted-foreground">Next approved leave</p>
               <p className="text-base font-semibold">
-                {nextApprovedRequest
-                  ? `${formatDate(nextApprovedRequest.startDate)} · ${leaveDisplayType(nextApprovedRequest, policyById.get(nextApprovedRequest.policyId))}`
+                {nextApproved
+                  ? `${formatDate(nextApproved.date)} · ${leaveDisplayType(nextApproved.request, policyById.get(nextApproved.request.policyId))}`
                   : "Nothing scheduled"}
               </p>
             </div>
@@ -623,6 +635,10 @@ function LeaveBalancesRoute() {
                   <TableBody>
                     {visibleRequests.map((request) => {
                       const policy = policyById.get(request.policyId);
+                      const fullyReplacedByWork =
+                        request.status === "Cancellation Approved" &&
+                        Boolean(request.policySnapshot.officeWorkCorrections?.length) &&
+                        request.policySnapshot.workingDates?.length === 0;
                       const canWithdraw = request.status.startsWith("Pending");
                       const canCancel =
                         request.status === "Approved" &&
@@ -631,15 +647,17 @@ function LeaveBalancesRoute() {
                         request.status === "Approved" &&
                         request.startDate > new Date().toISOString().slice(0, 10);
                       const reason =
-                        request.status === "Automatically Refused"
-                          ? request.refusalReason
-                          : request.policySnapshot.noticeException && !request.pendingAmendment
-                            ? `Special request: ${request.policySnapshot.noticeException.reason}`
-                            : request.status === "Cancellation Pending"
-                              ? `Cancellation: ${request.cancellationReason}`
-                              : request.status.startsWith("Amendment") && request.pendingAmendment
-                                ? `Date change: ${request.pendingAmendment.proposedStartDate} to ${request.pendingAmendment.proposedEndDate}. ${request.pendingAmendment.reason}`
-                                : leaveDisplayReason(request.reason) || "—";
+                        request.status === "Declined"
+                          ? `Declined: ${request.refusalReason || "reason not recorded"}`
+                          : request.status === "Automatically Refused"
+                            ? request.refusalReason
+                            : request.policySnapshot.noticeException && !request.pendingAmendment
+                              ? `Special request: ${request.policySnapshot.noticeException.reason}`
+                              : request.status === "Cancellation Pending"
+                                ? `Cancellation: ${request.cancellationReason}`
+                                : request.status.startsWith("Amendment") && request.pendingAmendment
+                                  ? `Date change: ${request.pendingAmendment.proposedStartDate} to ${request.pendingAmendment.proposedEndDate}. ${request.pendingAmendment.reason}`
+                                  : leaveDisplayReason(request.reason) || "—";
                       return (
                         <TableRow key={request.id}>
                           <TableCell className="whitespace-nowrap">
@@ -661,16 +679,20 @@ function LeaveBalancesRoute() {
                           <TableCell className="text-right font-medium tabular-nums">
                             {formatDays(request.workingDaysRequested)}
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="min-w-52">
                             <Badge variant={requestVariant(request.status)}>
-                              {request.policySnapshot.noticeException &&
-                              request.status === "Pending HR"
-                                ? "Awaiting Riccardo and HR"
+                              {fullyReplacedByWork
+                                ? "Counted as work"
                                 : request.policySnapshot.noticeException &&
-                                    request.status === "Pending Line Manager"
-                                  ? "Awaiting line manager"
+                                    request.status === "Pending HR"
+                                  ? "Special approvals pending"
                                   : request.status}
                             </Badge>
+                            {leaveDecisionSummary(request) && (
+                              <span className="mt-1 block text-xs text-muted-foreground">
+                                {leaveDecisionSummary(request)}
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell className="max-w-64 truncate text-muted-foreground">
                             {reason}

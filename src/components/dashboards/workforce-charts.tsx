@@ -70,8 +70,8 @@ function Panel({
       style={{
         order:
           title === "Attendance trend" ||
-          title === "Worked hours vs expected hours" ||
-          title === "Recorded hours"
+          title === "Recorded attendance vs expected" ||
+          title === "Recorded attendance"
             ? 0
             : title === "Approvals waiting"
               ? 1
@@ -531,14 +531,14 @@ export default function WorkforceCharts({
                   ]
                 : [
                     {
-                      label: "Recorded hours",
+                      label: "Recorded attendance",
                       value: `${hours(data.totals.worked)} h`,
-                      note: "Completed days only; today is shown live in the chart",
+                      note: "Includes scheduled breaks where applicable; today is shown live",
                     },
                     {
-                      label: "Expected hours",
+                      label: "Expected attendance",
                       value: !hasExpectedHours ? "—" : `${hours(data.totals.expected)} h`,
-                      note: "Completed days only, adjusted for leave",
+                      note: "Completed days only; includes breaks where applicable",
                     },
                     {
                       label: "Annual leave remaining",
@@ -573,8 +573,10 @@ export default function WorkforceCharts({
           <div className="grid min-w-0 gap-5 xl:grid-cols-2" data-testid="primary-dashboard-charts">
             {(scope === "self" || employeeId) && (
               <Panel
-                title={!hasExpectedHours ? "Recorded hours" : "Worked hours vs expected hours"}
-                description="Past days show completed attendance. Today shows hours so far, including breaks, and refreshes every minute. Today is excluded from completed-day totals and shortfall checks."
+                title={
+                  !hasExpectedHours ? "Recorded attendance" : "Recorded attendance vs expected"
+                }
+                description="Attendance includes scheduled breaks where applicable; timesheets count working hours without them. Today shows hours so far and refreshes every minute. Today is excluded from completed-day totals and shortfall checks."
                 link={detail(
                   "attendance",
                   scope === "hr" ? "/staff/attendance" : "/staff/me/attendance",
@@ -584,7 +586,7 @@ export default function WorkforceCharts({
                   config={chartConfig}
                   className="h-64 w-full aspect-auto"
                   role="img"
-                  aria-label="Daily recorded hours compared with expected hours"
+                  aria-label="Daily recorded attendance compared with expected attendance"
                 >
                   <ComposedChart
                     data={data.days.map((day) => ({
@@ -611,7 +613,7 @@ export default function WorkforceCharts({
                     />
                     <Legend />
                     <Bar
-                      name="Recorded hours"
+                      name="Recorded attendance"
                       dataKey="worked"
                       fill={colors.worked}
                       radius={[3, 3, 0, 0]}
@@ -619,7 +621,7 @@ export default function WorkforceCharts({
                     />
                     {hasExpectedHours && (
                       <Line
-                        name="Expected hours"
+                        name="Expected attendance"
                         dataKey="expected"
                         stroke={colors.expected}
                         strokeWidth={2}
@@ -809,12 +811,12 @@ export default function WorkforceCharts({
               Daily figures and calculation notes
             </summary>
             <p className="my-3 text-muted-foreground">
-              Expected hours use the current policy ({hours(data.dailyHours)} h/day), working week,
-              holidays, service dates and approved leave. Open punches, pending corrections and
-              unconfirmed site visits do not count as completed hours. These charts are not payroll
-              deductions or overtime approval. Today shows live hours, including breaks, and is
-              excluded from completed-day totals and absence checks. HR totals count employee-days,
-              not unique employees.
+              Expected attendance uses the current policy ({hours(data.dailyHours)} h/day including
+              scheduled breaks where applicable), working week, holidays, service dates and approved
+              leave. Open punches, pending corrections and unconfirmed site visits do not count as
+              completed hours. These charts are not payroll deductions or overtime approval. Today
+              shows live hours, including breaks, and is excluded from completed-day totals and
+              absence checks. HR totals count employee-days, not unique employees.
             </p>
             <div className="overflow-x-auto">
               <table className="w-full text-left">
@@ -823,8 +825,8 @@ export default function WorkforceCharts({
                   <tr>
                     {[
                       "Date",
-                      "Recorded h",
-                      "Expected h",
+                      "Attendance h",
+                      "Expected attendance h",
                       "Recorded days",
                       "Pending review",
                       "No record",

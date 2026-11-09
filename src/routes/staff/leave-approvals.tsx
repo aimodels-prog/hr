@@ -352,6 +352,11 @@ function LeaveApprovalsContent() {
                           {policy?.name ?? "Leave"} · {reviewDays}{" "}
                           {reviewDays === 1 ? "day" : "days"}
                         </CardDescription>
+                        {req.lineManagerName && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Line manager: {req.lineManagerName}
+                          </p>
+                        )}
                       </div>
                     </div>
                     <Badge
@@ -381,14 +386,14 @@ function LeaveApprovalsContent() {
                     <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
                       <strong>
                         {req.status === "Pending Line Manager"
-                          ? "Special reviews complete — final line manager decision"
+                          ? `Special reviews complete — ${req.lineManagerName || "assigned manager"} decides next`
                           : "Short-notice exception — Country Manager and HR review first"}
                       </strong>
                       <p className="mt-1">
                         {req.policySnapshot.noticeException.actualDays} of{" "}
                         {req.policySnapshot.noticeException.requiredDays} required calendar days'
-                        notice. Riccardo and HR must both approve before the line manager can
-                        decide.
+                        notice. Riccardo and HR must both approve before{" "}
+                        {req.lineManagerName || "the assigned manager"} can decide.
                       </p>
                       <p className="mt-2 whitespace-pre-wrap">
                         {req.policySnapshot.noticeException.reason}

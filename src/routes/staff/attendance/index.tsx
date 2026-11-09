@@ -1,5 +1,6 @@
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { recordedAttendanceHours } from "@/lib/data/recorded-hours";
+import { siteVisitNeedsHrReview, siteVisitsForReview } from "@/lib/data/site-visit-review";
 import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
 import {
@@ -17,7 +18,7 @@ import { ExportMenu } from "@/components/ui/export-menu";
 import { downloadExcel, downloadCsvExport } from "@/lib/data/excel-export";
 import { VIA_OFFICE_SCHEDULE } from "@/lib/data/office-schedule";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import {
   CheckCircle2,
   Copy,
@@ -153,6 +154,9 @@ function AttendanceAdminContent() {
     useState<Extract<AttendanceSource, "Hardware Terminal" | "Manual Entry">>("Manual Entry");
   const [csvPreview, setCsvPreview] = useState<AttendanceImportPreview | null>(null);
   const [reviewVisit, setReviewVisit] = useState<SiteVisitRequest | null>(null);
+  const [visitFilter, setVisitFilter] = useState<"pending" | "all">("pending");
+  const [visitQuery, setVisitQuery] = useState("");
+  const [reviewSaving, setReviewSaving] = useState(false);
   const openedSectionLink = useRef("");
   const openedVisitLink = useRef("");
   const [decisionNotes, setDecisionNotes] = useState("");
@@ -341,9 +345,28 @@ function AttendanceAdminContent() {
   const siteVisits = attendanceService
     .getAllSiteVisits(actorContext)
     .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
-  const pendingSiteVisits = siteVisits.filter(
-    (visit) => visit.status === "Pending HR" || visit.details?.extension?.status === "Pending",
-  );
+  const pendingSiteVisits = siteVisitsForReview(siteVisits, "pending");
+  const canReviewSiteVisits = currentUser.activeRole === "HR";
+  const canSwitchToHr = !canReviewSiteVisits && currentUser.assignedRoles.includes("HR");
+  const visibleSiteVisits = siteVisitsForReview(siteVisits, visitFilter).filter((visit) => {
+    const query = visitQuery.trim().toLowerCase();
+    if (!query) return true;
+    const employee = employees.find((item) => item.id === visit.employeeId);
+    return [
+      employee?.preferredName,
+      employee?.legalName,
+      visit.destination,
+      visit.purpose,
+      visit.date,
+    ]
+      .filter(Boolean)
+      .some((value) => value!.toLowerCase().includes(query));
+  });
+  const visitEmptyMessage = visitQuery.trim()
+    ? "No visits match your search."
+    : visitFilter === "pending"
+      ? "No site visits need review. Choose All visits to see previous requests."
+      : "No site visits recorded.";
   useEffect(() => {
     const params = new URLSearchParams(location.hash.replace(/^#/, ""));
     if (params.get("section") !== "site-visits") return;
@@ -356,11 +379,11 @@ function AttendanceAdminContent() {
     const id = params.get("visit");
     if (!id || openedVisitLink.current === id) return;
     const visit = pendingSiteVisits.find((item) => item.id === id || item.databaseId === id);
-    if (!visit || visit.employeeId === currentUser.employeeId) return;
+    if (!visit || visit.employeeId === currentUser.employeeId || !canReviewSiteVisits) return;
     openedVisitLink.current = id;
     setDecisionNotes("");
     setReviewVisit(visit);
-  }, [location.hash, section, pendingSiteVisits, currentUser.employeeId]);
+  }, [location.hash, section, pendingSiteVisits, currentUser.employeeId, canReviewSiteVisits]);
   const exceptionCases = attendanceService
     .getExceptionCases(actorContext)
     .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
@@ -739,7 +762,8 @@ function AttendanceAdminContent() {
   };
 
   const decideVisit = async (approve: boolean) => {
-    if (!reviewVisit) return;
+    if (!reviewVisit || reviewSaving) return;
+    setReviewSaving(true);
     try {
       await attendanceService.reviewSiteVisitAsync(
         reviewVisit.id,
@@ -750,11 +774,68 @@ function AttendanceAdminContent() {
       setReviewVisit(null);
       setDecisionNotes("");
       setRevision((value) => value + 1);
-      toast.success(approve ? "Site visit approved." : "Site visit rejected.");
+      toast.success(
+        `${reviewVisit.details?.extension?.status === "Pending" ? "Visit extension" : "Site visit"} ${approve ? "approved" : "rejected"}.`,
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Decision could not be saved.");
+    } finally {
+      setReviewSaving(false);
     }
   };
+
+  const renderVisitAction = (visit: SiteVisitRequest) => {
+    if (!siteVisitNeedsHrReview(visit))
+      return <span className="text-xs text-muted-foreground">No decision needed</span>;
+    if (visit.employeeId === currentUser.employeeId)
+      return <span className="text-xs text-muted-foreground">Another HR reviewer required</span>;
+    if (canReviewSiteVisits)
+      return (
+        <Button
+          size="sm"
+          onClick={() => {
+            setReviewVisit(visit);
+            setDecisionNotes("");
+          }}
+        >
+          Review request
+        </Button>
+      );
+    if (canSwitchToHr)
+      return (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            currentUser.setActiveRole("HR");
+            setReviewVisit(visit);
+            setDecisionNotes("");
+          }}
+        >
+          Review as HR
+        </Button>
+      );
+    return <span className="text-xs text-muted-foreground">HR review only</span>;
+  };
+
+  const renderVisitStatus = (visit: SiteVisitRequest) => (
+    <Badge
+      variant={
+        visit.status === "Rejected"
+          ? "destructive"
+          : siteVisitNeedsHrReview(visit)
+            ? "outline"
+            : visit.status === "Approved" || visit.status === "Completed"
+              ? "default"
+              : "secondary"
+      }
+      className={
+        siteVisitNeedsHrReview(visit) ? "border-amber-300 bg-amber-50 text-amber-900" : undefined
+      }
+    >
+      {visit.details?.extension?.status === "Pending" ? "Extension pending HR" : visit.status}
+    </Badge>
+  );
 
   const assignCaseToMe = async (item: AttendanceExceptionCase) => {
     try {
@@ -1356,16 +1437,93 @@ function AttendanceAdminContent() {
         </TabsContent>
 
         <TabsContent value="site-visits" className="space-y-4">
-          <Alert>
-            <MapPin className="h-4 w-4" />
-            <AlertTitle>HR-controlled exception</AlertTitle>
-            <AlertDescription>
-              Only approved visits change attendance. Home-origin visits use scheduled automatic
-              punches; office-origin visits require a verified office clock-in.
-            </AlertDescription>
-          </Alert>
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border bg-card p-4">
+            <div>
+              <h2 className="text-lg font-semibold">Site visit approvals</h2>
+              <p className="text-sm text-muted-foreground">
+                {pendingSiteVisits.length === 0
+                  ? "No visits are waiting for HR."
+                  : `${pendingSiteVisits.length} visit${pendingSiteVisits.length === 1 ? "" : "s"} waiting for HR. ${visitFilter === "pending" ? "Oldest requests first." : "Pending requests first, then recent history."}`}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                className="w-full sm:w-56"
+                aria-label="Search site visits"
+                placeholder="Search employee or visit"
+                value={visitQuery}
+                onChange={(event) => setVisitQuery(event.target.value)}
+              />
+              <div className="flex gap-2" aria-label="Filter site visits">
+                <Button
+                  size="sm"
+                  variant={visitFilter === "pending" ? "default" : "outline"}
+                  aria-pressed={visitFilter === "pending"}
+                  onClick={() => setVisitFilter("pending")}
+                >
+                  Needs review ({pendingSiteVisits.length})
+                </Button>
+                <Button
+                  size="sm"
+                  variant={visitFilter === "all" ? "default" : "outline"}
+                  aria-pressed={visitFilter === "all"}
+                  onClick={() => setVisitFilter("all")}
+                >
+                  All visits
+                </Button>
+              </div>
+            </div>
+          </div>
+          {!canReviewSiteVisits && pendingSiteVisits.length > 0 && (
+            <Alert>
+              <AlertTitle>These requests need an HR decision</AlertTitle>
+              <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+                <span>
+                  {canSwitchToHr
+                    ? "Switch to your HR workspace to approve or reject them."
+                    : "Only a colleague with the HR role can approve or reject visits."}
+                </span>
+                {canSwitchToHr && (
+                  <Button size="sm" onClick={() => currentUser.setActiveRole("HR")}>
+                    Switch to HR
+                  </Button>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
           <Card className="overflow-hidden">
-            <div className="overflow-x-auto">
+            <div className="divide-y lg:hidden">
+              {visibleSiteVisits.length === 0 ? (
+                <p className="p-6 text-center text-sm text-muted-foreground">{visitEmptyMessage}</p>
+              ) : (
+                visibleSiteVisits.map((visit) => {
+                  const employee = employees.find((item) => item.id === visit.employeeId);
+                  return (
+                    <div key={visit.id} className="space-y-3 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="font-semibold">
+                            {employee?.preferredName ?? "Employee record unavailable"}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {format(parseISO(visit.date), "d MMM yyyy")} · {visit.startTime}–
+                            {visit.endTime}
+                          </p>
+                        </div>
+                        {renderVisitStatus(visit)}
+                      </div>
+                      <p className="text-sm">
+                        <span className="text-muted-foreground">{visit.origin} → </span>
+                        {visit.destination}
+                      </p>
+                      <p className="text-sm text-muted-foreground">{visit.purpose}</p>
+                      {renderVisitAction(visit)}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            <div className="hidden overflow-x-auto lg:block">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -1379,22 +1537,22 @@ function AttendanceAdminContent() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {siteVisits.length === 0 ? (
+                  {visibleSiteVisits.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={7} className="h-28 text-center text-muted-foreground">
-                        No site visits recorded.
+                        {visitEmptyMessage}
                       </TableCell>
                     </TableRow>
                   ) : (
-                    siteVisits.map((visit) => {
+                    visibleSiteVisits.map((visit) => {
                       const employee = employees.find((item) => item.id === visit.employeeId);
                       return (
                         <TableRow key={visit.id}>
                           <TableCell className="font-medium">
-                            {employee?.preferredName ?? visit.employeeId}
+                            {employee?.preferredName ?? "Employee record unavailable"}
                           </TableCell>
                           <TableCell>
-                            {visit.date}
+                            {format(parseISO(visit.date), "d MMM yyyy")}
                             <span className="block text-xs text-muted-foreground">
                               {visit.startTime}–{visit.endTime}
                             </span>
@@ -1404,41 +1562,8 @@ function AttendanceAdminContent() {
                           <TableCell className="max-w-72 truncate" title={visit.purpose}>
                             {visit.purpose}
                           </TableCell>
-                          <TableCell>
-                            <Badge
-                              variant={
-                                visit.status === "Rejected"
-                                  ? "destructive"
-                                  : visit.status === "Approved" || visit.status === "Completed"
-                                    ? "default"
-                                    : "secondary"
-                              }
-                            >
-                              {visit.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {currentUser.activeRole === "HR" &&
-                            (visit.status === "Pending HR" ||
-                              visit.details?.extension?.status === "Pending") &&
-                            visit.employeeId !== currentUser.employeeId ? (
-                              <Button
-                                size="sm"
-                                onClick={() => {
-                                  setReviewVisit(visit);
-                                  setDecisionNotes("");
-                                }}
-                              >
-                                Review
-                              </Button>
-                            ) : visit.employeeId === currentUser.employeeId &&
-                              (visit.status === "Pending HR" ||
-                                visit.details?.extension?.status === "Pending") ? (
-                              <span className="text-xs text-muted-foreground">
-                                Another reviewer required
-                              </span>
-                            ) : null}
-                          </TableCell>
+                          <TableCell>{renderVisitStatus(visit)}</TableCell>
+                          <TableCell className="text-right">{renderVisitAction(visit)}</TableCell>
                         </TableRow>
                       );
                     })
@@ -2331,18 +2456,30 @@ function AttendanceAdminContent() {
       <Dialog open={Boolean(reviewVisit)} onOpenChange={(open) => !open && setReviewVisit(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Review Site Visit</DialogTitle>
+            <DialogTitle>Review site visit</DialogTitle>
             <DialogDescription>
-              {reviewVisit?.origin === "Home"
-                ? "Approval will authorise automatic scheduled attendance from home."
-                : "The employee must clock in inside the office before leaving."}
+              {reviewVisit?.details?.extension?.status === "Pending"
+                ? "Check the reason and the proposed later finish before deciding. This does not approve overtime."
+                : reviewVisit?.origin === "Home"
+                  ? "Approval will authorise automatic scheduled attendance from home."
+                  : "The employee must clock in inside the office before leaving."}
             </DialogDescription>
           </DialogHeader>
           {reviewVisit && (
             <div className="rounded-lg border bg-muted/20 p-4 text-sm">
-              <p className="font-medium">{reviewVisit.destination}</p>
+              <p className="font-medium">
+                {employees.find((item) => item.id === reviewVisit.employeeId)?.preferredName ??
+                  "Employee"}
+                {reviewVisit.details?.extension?.status === "Pending"
+                  ? " · Visit extension"
+                  : " · Site visit"}
+              </p>
               <p>
-                {reviewVisit.date} · {reviewVisit.startTime}–{reviewVisit.endTime}
+                {format(parseISO(reviewVisit.date), "d MMM yyyy")} · {reviewVisit.startTime}–
+                {reviewVisit.endTime}
+              </p>
+              <p className="mt-2">
+                {reviewVisit.origin} → {reviewVisit.destination}
               </p>
               <p className="mt-2 text-muted-foreground">{reviewVisit.purpose}</p>
               {reviewVisit.details?.returnPlan && (
@@ -2367,20 +2504,26 @@ function AttendanceAdminContent() {
               )}
             </div>
           )}
-          <Textarea
-            value={decisionNotes}
-            onChange={(event) => setDecisionNotes(event.target.value)}
-            placeholder="Required HR decision notes"
-          />
+          <div className="space-y-2">
+            <label htmlFor="visit-decision-notes" className="text-sm font-medium">
+              Decision note <span className="text-muted-foreground">(required to reject)</span>
+            </label>
+            <Textarea
+              id="visit-decision-notes"
+              value={decisionNotes}
+              onChange={(event) => setDecisionNotes(event.target.value)}
+              placeholder="Add a reason if rejecting this request"
+            />
+          </div>
           <DialogFooter>
             <Button
               variant="destructive"
-              disabled={decisionNotes.trim().length < 3}
+              disabled={reviewSaving || decisionNotes.trim().length < 3}
               onClick={() => decideVisit(false)}
             >
               <XCircle className="mr-2 h-4 w-4" /> Reject
             </Button>
-            <Button disabled={decisionNotes.trim().length < 3} onClick={() => decideVisit(true)}>
+            <Button disabled={reviewSaving} onClick={() => decideVisit(true)}>
               <CheckCircle2 className="mr-2 h-4 w-4" /> Approve
             </Button>
           </DialogFooter>

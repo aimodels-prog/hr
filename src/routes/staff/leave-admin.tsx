@@ -5,6 +5,7 @@ import {
   leaveDisplayType,
   newestLeaveFirst,
 } from "@/lib/data/leave-presentation";
+import { leaveDecisionSummary } from "@/lib/data/leave-decision-display";
 import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
 import { useEffect, useState, useMemo } from "react";
 import { PageHeader } from "@/components/ui/page-header";
@@ -43,6 +44,7 @@ import { toast } from "sonner";
 import { ExportMenu } from "@/components/ui/export-menu";
 import { downloadCsvExport, type ExportFormat } from "@/lib/data/excel-export";
 import { LeaveBalanceRegister } from "@/components/leave/leave-balance-register";
+import { LeaveAttendanceReview } from "@/components/leave/leave-attendance-review";
 import { SickLeaveBackdateDialog } from "@/components/leave/sick-leave-backdate-dialog";
 import { WalletCards } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -209,6 +211,11 @@ function LeaveAdminContent() {
             <TabsTrigger value="calendar" className="flex gap-2">
               <CalendarIcon className="h-4 w-4" /> Team Calendar
             </TabsTrigger>
+            {currentUser.activeRole === "HR" && (
+              <TabsTrigger value="office-work" className="flex gap-2">
+                Office work on leave
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="balances" className="space-y-4">
@@ -272,12 +279,19 @@ function LeaveAdminContent() {
                   <TableBody>
                     {filteredRequests.map((req) => {
                       const emp = employees.find((e) => e.id === req.employeeId);
+                      const fullyReplacedByWork =
+                        req.status === "Cancellation Approved" &&
+                        Boolean(req.policySnapshot.officeWorkCorrections?.length) &&
+                        req.policySnapshot.workingDates?.length === 0;
 
                       return (
                         <TableRow key={req.id}>
                           <TableCell>
                             <div className="font-medium">{emp?.preferredName}</div>
                             <div className="text-xs text-muted-foreground">{emp?.department}</div>
+                            <div className="text-xs text-muted-foreground">
+                              Manager: {req.lineManagerName || "None assigned"}
+                            </div>
                           </TableCell>
                           <TableCell className="whitespace-nowrap">
                             {format(parseISO(req.startDate), "MMM d, yyyy")}
@@ -299,7 +313,7 @@ function LeaveAdminContent() {
                               </Badge>
                             )}
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="min-w-52">
                             <Badge
                               variant={
                                 req.status === "Approved"
@@ -317,13 +331,17 @@ function LeaveAdminContent() {
                                           : "secondary"
                               }
                             >
-                              {req.policySnapshot.noticeException && req.status === "Pending HR"
-                                ? "Awaiting Riccardo and HR"
-                                : req.policySnapshot.noticeException &&
-                                    req.status === "Pending Line Manager"
-                                  ? "Awaiting line manager"
+                              {fullyReplacedByWork
+                                ? "Counted as work"
+                                : req.policySnapshot.noticeException && req.status === "Pending HR"
+                                  ? "Special approvals pending"
                                   : req.status}
                             </Badge>
+                            {leaveDecisionSummary(req) && (
+                              <span className="mt-1 block text-xs text-muted-foreground">
+                                {leaveDecisionSummary(req)}
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell
                             className="text-xs max-w-[250px] truncate"
@@ -334,7 +352,11 @@ function LeaveAdminContent() {
                               leaveDisplayReason(req.reason)
                             }
                           >
-                            {req.status === "Automatically Refused" ? (
+                            {req.status === "Declined" ? (
+                              <span className="text-destructive">
+                                Decline reason: {req.refusalReason || "not recorded"}
+                              </span>
+                            ) : req.status === "Automatically Refused" ? (
                               <span className="text-destructive font-medium">
                                 Auto-Refused: Notice violation
                               </span>
@@ -356,7 +378,7 @@ function LeaveAdminContent() {
                               size="sm"
                               onClick={() => setDetailRequestId(req.id)}
                             >
-                              View steps
+                              Approval history
                             </Button>
                           </TableCell>
                         </TableRow>
@@ -442,6 +464,10 @@ function LeaveAdminContent() {
                         </div>
                         {daysInMonth.map((day) => {
                           const isLeave = empRequests.some((r) => {
+                            const approvedDates = r.policySnapshot.workingDates;
+                            if (Array.isArray(approvedDates)) {
+                              return approvedDates.includes(format(day, "yyyy-MM-dd"));
+                            }
                             const start = parseISO(r.startDate);
                             const end = parseISO(r.endDate);
                             return day >= start && day <= end;
@@ -462,6 +488,12 @@ function LeaveAdminContent() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          {currentUser.activeRole === "HR" && (
+            <TabsContent value="office-work">
+              <LeaveAttendanceReview onOpenRequest={setDetailRequestId} onChanged={refresh} />
+            </TabsContent>
+          )}
         </Tabs>
       </div>
 

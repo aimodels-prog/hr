@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { configureApplicationDataServices } from "../src/lib/data/application-data.ts";
 import { AttendanceService } from "../src/lib/data/attendance-service.ts";
+import type { SiteVisitRequest } from "../src/lib/data/attendance-types.ts";
 import { LeaveService } from "../src/lib/data/leave-service.ts";
 import type { LeaveRequest } from "../src/lib/data/leave-types.ts";
 import { AuditService } from "../src/lib/data/audit-service.ts";
@@ -354,6 +355,100 @@ test("requesting a correction with no evidence file cannot be downloaded", async
     () => service.getCorrectionEvidence(correction.id, employee),
     /no supporting evidence/,
   );
+});
+
+test("site visit decisions require an independent HR reviewer in local preview too", () => {
+  const { service } = harnessWithClock(() => new Date("2026-08-25T08:00:00"));
+  const employeeVisit = service.requestSiteVisit(
+    {
+      employeeId: "employee-omar",
+      date: "2026-08-25",
+      startTime: "10:00",
+      endTime: "14:00",
+      origin: "Office",
+      destination: "Client HQ",
+      purpose: "Project meeting at client office.",
+    },
+    employee,
+  );
+  const hrVisit = service.requestSiteVisit(
+    {
+      employeeId: "employee-rana",
+      date: "2026-08-25",
+      startTime: "10:00",
+      endTime: "14:00",
+      origin: "Office",
+      destination: "Client HQ",
+      purpose: "Project meeting at client office.",
+    },
+    hr,
+  );
+  const superAdmin = {
+    actor: {
+      ...hr.actor,
+      activeRole: "Super Admin" as const,
+      roles: ["Employee", "HR", "Super Admin"] as const,
+    },
+  };
+  assert.throws(
+    () => service.reviewSiteVisit(employeeVisit.id, true, "", superAdmin),
+    /active role/i,
+  );
+  assert.throws(() => service.reviewSiteVisit(hrVisit.id, true, "", hr), /own site visit/i);
+  assert.equal(service.reviewSiteVisit(employeeVisit.id, true, "", hr).status, "Approved");
+});
+
+test("local preview can approve or reject an extension without rewriting the original visit", () => {
+  const { service, storage } = harnessWithClock(() => new Date("2026-08-25T08:00:00"));
+  const makeVisit = (date: string) =>
+    service.requestSiteVisit(
+      {
+        employeeId: "employee-omar",
+        date,
+        startTime: "10:00",
+        endTime: "14:00",
+        origin: "Office",
+        destination: "Client HQ",
+        purpose: "Project meeting at client office.",
+        details: { returnPlan: "Unknown" },
+      },
+      employee,
+    );
+  const approving = makeVisit("2026-08-25");
+  const rejecting = makeVisit("2026-08-26");
+  service.reviewSiteVisit(approving.id, true, "", hr);
+  service.reviewSiteVisit(rejecting.id, true, "", hr);
+  storage.writeCollection(
+    "attendanceSiteVisits",
+    storage.readCollection<SiteVisitRequest>("attendanceSiteVisits").map((visit) => {
+      if (visit.id !== approving.id && visit.id !== rejecting.id) return visit;
+      return {
+        ...visit,
+        ...(visit.id === rejecting.id ? { status: "Completed" as const } : {}),
+        details: {
+          ...visit.details,
+          extension: {
+            endTime: "18:30",
+            reason: "Client requested additional inspection",
+            status: "Pending" as const,
+            requestedAt: "2026-08-25T12:00:00.000Z",
+          },
+        },
+      };
+    }),
+  );
+
+  const extended = service.reviewSiteVisit(approving.id, true, "", hr);
+  assert.equal(extended.status, "Approved");
+  assert.equal(extended.endTime, "18:30");
+  assert.equal(extended.details?.extension?.status, "Approved");
+  assert.equal(extended.details?.extension?.reviewedBy, hr.actor.userId);
+
+  const declined = service.reviewSiteVisit(rejecting.id, false, "Extension not justified", hr);
+  assert.equal(declined.status, "Completed");
+  assert.equal(declined.endTime, "17:00");
+  assert.equal(declined.details?.extension?.status, "Rejected");
+  assert.equal(declined.hrNotes, "Extension not justified");
 });
 
 test("an office-origin site visit that ends without a clock-in opens a persistent, ownable exception case - not just a notification", () => {

@@ -297,6 +297,7 @@ test(
       assert.equal(submitted?.policySnapshot.workingDates?.length, 4);
       assert.ok(!submitted?.policySnapshot.workingDates?.includes(isoDate(holiday)));
       assert.equal(submitted?.status, "Pending Line Manager");
+      assert.equal(submitted?.lineManagerName, "Manager");
       const submissionNotices = await sql`
         SELECT recipient_user_id, type, message, priority, link FROM notifications
         WHERE organisation_id = ${organisationId} AND link->>'entityId' = ${requestId}
@@ -328,6 +329,10 @@ test(
       await approveLeaveRequestInDatabase(organisationId, requestId, managerActor, "approve");
       snapshot = await listLeaveSnapshotForActor(organisationId, hrActor);
       assert.equal(snapshot.requests.find((item) => item.id === requestId)?.status, "Pending HR");
+      assert.equal(
+        snapshot.requests.find((item) => item.id === requestId)?.chainApprovals[0]?.approverName,
+        "Manager",
+      );
       const [hrApprovalNotice] = await sql`SELECT count(*)::int AS count FROM notifications
         WHERE recipient_user_id = ${hrUserId} AND type = 'leave_approval' AND link->>'entityId' = ${requestId}`;
       assert.equal(
@@ -347,6 +352,52 @@ test(
         WHERE recipient_user_id = ${colleagueUserId} AND type = 'leave_approved'
       `;
       assert.ok(Number(officeNotice?.count) >= 1);
+      const approvedForEmployee = (
+        await listLeaveSnapshotForActor(organisationId, employeeActor)
+      ).requests.find((item) => item.id === requestId);
+      assert.equal(approvedForEmployee?.chainApprovals[0]?.approverName, "Manager");
+      assert.equal(approvedForEmployee?.chainApprovals[1]?.approverName, "HR Reviewer");
+
+      const declinedDate = new Date(start);
+      declinedDate.setUTCDate(declinedDate.getUTCDate() + 14);
+      if (declinedDate.getUTCFullYear() !== start.getUTCFullYear()) {
+        declinedDate.setTime(start.getTime());
+        declinedDate.setUTCDate(declinedDate.getUTCDate() - 14);
+      }
+      const declinedRequestId = await createLeaveRequestInDatabase(
+        organisationId,
+        {
+          employeeId,
+          policyId: annualPolicyId,
+          startDate: isoDate(declinedDate),
+          endDate: isoDate(declinedDate),
+          reason: "Personal obligation",
+          handoverContactId: colleagueEmployeeId,
+        },
+        employeeActor,
+      );
+      await approveLeaveRequestInDatabase(
+        organisationId,
+        declinedRequestId,
+        managerActor,
+        "decline",
+        "Insufficient handover",
+      );
+      const declinedForEmployee = (
+        await listLeaveSnapshotForActor(organisationId, employeeActor)
+      ).requests.find((item) => item.id === declinedRequestId);
+      assert.equal(declinedForEmployee?.status, "Declined");
+      assert.equal(declinedForEmployee?.chainApprovals[0]?.approverName, "Manager");
+      assert.equal(declinedForEmployee?.refusalReason, "Insufficient handover");
+      const [declineNotice] = await sql`
+        SELECT type, message, link FROM notifications
+        WHERE organisation_id=${organisationId} AND recipient_user_id=${employeeUserId}
+          AND link->>'entityId'=${declinedRequestId} AND type='leave_declined'
+      `;
+      assert.equal(declineNotice?.type, "leave_declined");
+      assert.match(declineNotice?.message ?? "", /declined by Manager \(Line Manager\)/);
+      assert.match(declineNotice?.message ?? "", /Insufficient handover/);
+      assert.equal(declineNotice?.link.entityId, declinedRequestId);
       const [policy] =
         await sql`SELECT record_version FROM leave_policies WHERE id = ${annualPolicyId}`;
       await updateLeavePolicyInDatabase(

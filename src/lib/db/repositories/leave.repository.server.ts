@@ -6,6 +6,7 @@ import { sickLeaveBackdatePermissions } from "../schema/leave.ts";
 import { siteVisitLocalNow } from "../../data/site-visit.ts";
 import { leaveNoticeAssessment, validateLeaveNoticeException } from "../../data/leave-notice.ts";
 import { organisationLeaveYear } from "./leave-year.repository.server.ts";
+import { stageOfficeWorkOverlapsAfterLeaveApprovalInDatabase } from "./leave-attendance-reconciliation.repository.server.ts";
 import { leaveYearForDate } from "../../data/leave-year.ts";
 import { carryExpiryDateForYear, carryPosition } from "../../data/leave-carry.ts";
 import { leaveWorkingDates } from "../../data/leave-working-days.ts";
@@ -308,26 +309,98 @@ export async function listLeaveSnapshotForActor(
         ),
       ),
   ]);
-  const requestNames = new Map(
-    (
-      await db
-        .select({ id: employees.id, name: employees.preferredName })
+  const requestEmployeeIds = [...new Set(requestRows.map((row) => row.employeeId))];
+  const requestPeople = requestEmployeeIds.length
+    ? await db
+        .select({
+          id: employees.id,
+          name: employees.preferredName,
+          lineManagerId: employees.lineManagerId,
+        })
         .from(employees)
         .where(
           and(
             eq(employees.organisationId, organisationId),
-            inArray(employees.id, [...new Set(requestRows.map((row) => row.employeeId))]),
+            inArray(employees.id, requestEmployeeIds),
           ),
         )
-    ).map((item) => [item.id, item.name]),
+    : [];
+  const requestPeopleById = new Map(requestPeople.map((person) => [person.id, person]));
+  const managerIds = [
+    ...new Set(
+      requestPeople.map((person) => person.lineManagerId).filter((id): id is string => !!id),
+    ),
+  ];
+  const managerNames = new Map(
+    managerIds.length
+      ? (
+          await db
+            .select({ id: employees.id, name: employees.legalName })
+            .from(employees)
+            .where(
+              and(eq(employees.organisationId, organisationId), inArray(employees.id, managerIds)),
+            )
+        ).map((person) => [person.id, person.name])
+      : [],
   );
+  const decisionUserIds = new Set<string>();
+  const addDecisionUser = (id?: string) => {
+    if (id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+      decisionUserIds.add(id);
+  };
+  for (const row of requestRows) {
+    for (const step of (row.chainApprovals ?? []) as LeaveRequest["chainApprovals"])
+      addDecisionUser(step.approvedBy);
+    const amendment = row.pendingAmendment as LeaveRequest["pendingAmendment"];
+    for (const step of amendment?.chainApprovals ?? []) addDecisionUser(step.approvedBy);
+    for (const history of (row.amendmentHistory ?? []) as NonNullable<
+      LeaveRequest["amendmentHistory"]
+    >)
+      addDecisionUser(history.decidedBy);
+  }
+  const decisionPeople = decisionUserIds.size
+    ? await db
+        .select({
+          id: users.id,
+          displayName: users.displayName,
+          legalName: employees.legalName,
+          preferredName: employees.preferredName,
+        })
+        .from(users)
+        .innerJoin(employees, eq(employees.id, users.employeeId))
+        .where(
+          and(eq(users.organisationId, organisationId), inArray(users.id, [...decisionUserIds])),
+        )
+    : [];
+  const decisionNames = new Map(
+    decisionPeople.map((person) => [
+      person.id,
+      person.legalName?.trim() || person.preferredName?.trim() || person.displayName.trim(),
+    ]),
+  );
+  const nameApprovalSteps = (steps: LeaveRequest["chainApprovals"]) =>
+    steps.map((step) => ({
+      ...step,
+      ...(step.approvedBy && decisionNames.get(step.approvedBy)
+        ? { approverName: decisionNames.get(step.approvedBy)! }
+        : {}),
+    }));
   return {
     policies: policyRows.map(mapPolicy),
     requests: requestRows.map((row) => ({
       ...recordFields(row),
       employeeId: row.employeeId,
-      ...(requestNames.get(row.employeeId)
-        ? { requesterName: requestNames.get(row.employeeId)! }
+      ...(requestPeopleById.get(row.employeeId)?.name
+        ? { requesterName: requestPeopleById.get(row.employeeId)!.name }
+        : {}),
+      ...(!payrollReader &&
+      requestPeopleById.get(row.employeeId)?.lineManagerId &&
+      managerNames.get(requestPeopleById.get(row.employeeId)!.lineManagerId!)
+        ? {
+            lineManagerName: managerNames.get(
+              requestPeopleById.get(row.employeeId)!.lineManagerId!,
+            )!,
+          }
         : {}),
       policyId: row.policyId,
       startDate: row.startDate,
@@ -344,14 +417,32 @@ export async function listLeaveSnapshotForActor(
       ...(row.cancellationReason ? { cancellationReason: row.cancellationReason } : {}),
       ...(row.pendingAmendment
         ? {
-            pendingAmendment: row.pendingAmendment as NonNullable<LeaveRequest["pendingAmendment"]>,
+            pendingAmendment: {
+              ...(row.pendingAmendment as NonNullable<LeaveRequest["pendingAmendment"]>),
+              chainApprovals: payrollReader
+                ? (row.pendingAmendment as NonNullable<LeaveRequest["pendingAmendment"]>)
+                    .chainApprovals
+                : nameApprovalSteps(
+                    (row.pendingAmendment as NonNullable<LeaveRequest["pendingAmendment"]>)
+                      .chainApprovals,
+                  ),
+            },
           }
         : {}),
-      amendmentHistory: row.amendmentHistory as NonNullable<LeaveRequest["amendmentHistory"]>,
+      amendmentHistory: (
+        (row.amendmentHistory ?? []) as NonNullable<LeaveRequest["amendmentHistory"]>
+      ).map((history) => ({
+        ...history,
+        ...(!payrollReader && decisionNames.get(history.decidedBy)
+          ? { deciderName: decisionNames.get(history.decidedBy)! }
+          : {}),
+      })),
       ...((row.sickPayTiers as unknown[]).length
         ? { sickPayTiers: row.sickPayTiers as NonNullable<LeaveRequest["sickPayTiers"]> }
         : {}),
-      chainApprovals: row.chainApprovals as LeaveRequest["chainApprovals"],
+      chainApprovals: payrollReader
+        ? (row.chainApprovals as LeaveRequest["chainApprovals"])
+        : nameApprovalSteps(row.chainApprovals as LeaveRequest["chainApprovals"]),
       policySnapshot: payrollReader
         ? payrollSafeLeaveSnapshot(row.policySnapshot as LeaveRequest["policySnapshot"])
         : (row.policySnapshot as LeaveRequest["policySnapshot"]),
@@ -713,7 +804,12 @@ export async function createLeaveRequestInDatabase(
         );
     }
     const overlapping = await tx
-      .select({ id: leaveRequests.id })
+      .select({
+        id: leaveRequests.id,
+        startDate: leaveRequests.startDate,
+        endDate: leaveRequests.endDate,
+        policySnapshot: leaveRequests.policySnapshot,
+      })
       .from(leaveRequests)
       .where(
         and(
@@ -724,9 +820,19 @@ export async function createLeaveRequestInDatabase(
           sql`${leaveRequests.endDate} >= ${input.startDate}`,
           isNull(leaveRequests.archivedAt),
         ),
-      )
-      .limit(1);
-    if (overlapping.length) throw new Error("These dates overlap another active leave request.");
+      );
+    if (
+      overlapping.some((request) => {
+        const recorded = (request.policySnapshot as { workingDates?: unknown }).workingDates;
+        return workingDates.some(
+          (date) =>
+            request.startDate <= date &&
+            request.endDate >= date &&
+            (!Array.isArray(recorded) || recorded.includes(date)),
+        );
+      })
+    )
+      throw new Error("These dates overlap another active leave request.");
     const specialRequested = Boolean(input.specialRequestReason?.trim());
     if (policy.consumesBalance && !specialRequested) {
       if (policy.scope === "Once Per Service") {
@@ -1225,7 +1331,25 @@ export async function approveLeaveRequestInDatabase(
               ? step.role === "Line Manager"
               : step.role === "HR",
     );
-    if (currentStep) {
+    const [decisionMaker] = await tx
+      .select({
+        legalName: employees.legalName,
+        preferredName: employees.preferredName,
+        displayName: users.displayName,
+      })
+      .from(users)
+      .innerJoin(employees, eq(employees.id, users.employeeId))
+      .where(and(eq(users.organisationId, organisationId), eq(users.id, actorUserId)))
+      .limit(1);
+    const decisionMakerName =
+      decisionMaker?.legalName?.trim() ||
+      decisionMaker?.preferredName?.trim() ||
+      decisionMaker?.displayName?.trim() ||
+      "Approver";
+    const decisionMakerLabel = `${decisionMakerName} (${currentStep?.role ?? role})`;
+    // A cancellation is a new decision about an already-approved request. Preserve the
+    // original approval chain instead of rewriting the HR approval as a cancellation decision.
+    if (currentStep && !cancellation) {
       currentStep.status = decision === "approve" ? "Approved" : "Declined";
       currentStep.approvedBy = actorUserId;
       currentStep.date = new Date().toISOString();
@@ -1592,6 +1716,12 @@ export async function approveLeaveRequestInDatabase(
       })
       .where(and(eq(leaveRequests.id, requestId), eq(leaveRequests.status, request.status)));
 
+    if (nextStatus === "Approved" && decision === "approve") {
+      // Retrospective leave approvals must not conceal an office day recorded earlier.
+      // Stage for HR review rather than silently changing a just-approved balance.
+      await stageOfficeWorkOverlapsAfterLeaveApprovalInDatabase(tx, { organisationId, requestId });
+    }
+
     const employeeUsers = await tx
       .select({ id: users.id, employeeId: users.employeeId })
       .from(users)
@@ -1599,7 +1729,7 @@ export async function approveLeaveRequestInDatabase(
         and(
           eq(users.organisationId, organisationId),
           eq(users.status, "Active"),
-          nextStatus === "Approved"
+          nextStatus === "Approved" && decision === "approve"
             ? or(
                 eq(users.employeeId, request.employeeId),
                 eq(users.employeeId, request.handoverContactId ?? request.employeeId),
@@ -1655,7 +1785,7 @@ export async function approveLeaveRequestInDatabase(
           )
       ).map((item) => ({ id: item.id, path: "/staff/leave-approvals" }));
     }
-    if (nextStatus === "Approved") {
+    if (nextStatus === "Approved" && decision === "approve") {
       const officeUsers = await tx
         .select({ id: users.id })
         .from(users)
@@ -1677,20 +1807,24 @@ export async function approveLeaveRequestInDatabase(
           organisationId,
           recipientUserId: recipient.id,
           type:
-            nextStatus === "Approved"
-              ? "leave_approved"
-              : nextStatus === "Declined"
-                ? "leave_declined"
+            decision === "decline"
+              ? "leave_declined"
+              : nextStatus === "Approved"
+                ? "leave_approved"
                 : nextStatus === "Cancellation Approved"
                   ? "leave_cancelled"
                   : "leave_approval",
           title:
-            nextStatus === "Approved"
-              ? amendment
-                ? "Leave dates updated"
-                : "Approved leave"
-              : nextStatus === "Declined"
-                ? "Leave request declined"
+            decision === "decline"
+              ? cancellation
+                ? "Leave cancellation declined"
+                : amendment
+                  ? "Leave date change declined"
+                  : "Leave request declined"
+              : nextStatus === "Approved"
+                ? amendment
+                  ? "Leave dates updated"
+                  : "Approved leave"
                 : nextStatus === "Cancellation Approved"
                   ? "Leave cancellation approved"
                   : specialRequest && nextStatus === "Pending HR"
@@ -1703,17 +1837,20 @@ export async function approveLeaveRequestInDatabase(
                         ? "Short-notice leave exception awaiting HR confirmation"
                         : "Leave request awaiting HR confirmation",
           message:
-            nextStatus === "Approved"
-              ? `${employee.preferredName} will be away from ${request.startDate} to ${request.endDate}.`
-              : nextStatus === "Cancellation Approved"
-                ? `The approved leave from ${request.startDate} to ${request.endDate} has been cancelled.`
-                : nextStatus === "Declined"
-                  ? reason!.trim()
+            decision === "decline"
+              ? `${cancellation ? "Your leave cancellation" : amendment ? "Your leave date change" : `Your ${policy.name} leave request`} for ${request.startDate} to ${request.endDate} was declined by ${decisionMakerLabel}. Reason: ${reason!.trim()}`
+              : nextStatus === "Approved"
+                ? recipient.id ===
+                  employeeUsers.find((user) => user.employeeId === request.employeeId)?.id
+                  ? `Your ${policy.name} leave from ${request.startDate} to ${request.endDate} was approved by ${decisionMakerLabel}.`
+                  : `${employee.preferredName} will be away from ${request.startDate} to ${request.endDate}.`
+                : nextStatus === "Cancellation Approved"
+                  ? `The approved leave from ${request.startDate} to ${request.endDate} has been cancelled.`
                   : specialRequest && nextStatus === "Pending HR"
                     ? `${employee.preferredName}'s special leave from ${request.startDate} to ${request.endDate} needs your review. ${specialRequest.reason}`
                     : specialStage && nextStatus === "Pending Line Manager"
                       ? `${employee.preferredName}'s short-notice leave was approved by the Country Manager and HR. The line manager now makes the final decision. Reason: ${noticeException!.reason}.`
-                      : `${employee.preferredName}'s leave request has supervisor approval and now needs HR confirmation.${noticeException && !amendment ? ` Short-notice reason: ${noticeException.reason}.` : ""}`,
+                      : `${employee.preferredName}'s leave request was approved by ${decisionMakerLabel} and now needs HR confirmation.${noticeException && !amendment ? ` Short-notice reason: ${noticeException.reason}.` : ""}`,
           priority:
             nextStatus === "Pending HR" ||
             nextStatus === "Amendment Pending HR" ||
@@ -1721,7 +1858,7 @@ export async function approveLeaveRequestInDatabase(
               ? "High"
               : "Normal",
           status: "Unread",
-          deduplicationKey: `leave-${nextStatus}-${request.id}-${recipient.id}`,
+          deduplicationKey: `leave-decision-${request.id}-${recipient.id}-v${request.recordVersion + 1}`,
           link: { entityType: "leave-request", entityId: request.id, path: recipient.path },
           createdBy: actor.userId,
           updatedBy: actor.userId,
@@ -2162,7 +2299,12 @@ export async function requestLeaveChangeInDatabase(
       const proposedDays = proposedWorkingDates.length * (row.request.isHalfDay ? 0.5 : 1);
       if (proposedDays <= 0) throw new Error("The proposed dates contain no working days.");
       const overlap = await tx
-        .select({ id: leaveRequests.id })
+        .select({
+          id: leaveRequests.id,
+          startDate: leaveRequests.startDate,
+          endDate: leaveRequests.endDate,
+          policySnapshot: leaveRequests.policySnapshot,
+        })
         .from(leaveRequests)
         .where(
           and(
@@ -2173,9 +2315,19 @@ export async function requestLeaveChangeInDatabase(
             sql`${leaveRequests.endDate} >= ${action.startDate}`,
             isNull(leaveRequests.archivedAt),
           ),
-        )
-        .limit(1);
-      if (overlap.length) throw new Error("The proposed dates overlap another leave request.");
+        );
+      if (
+        overlap.some((request) => {
+          const recorded = (request.policySnapshot as { workingDates?: unknown }).workingDates;
+          return proposedWorkingDates.some(
+            (date) =>
+              request.startDate <= date &&
+              request.endDate >= date &&
+              (!Array.isArray(recorded) || recorded.includes(date)),
+          );
+        })
+      )
+        throw new Error("The proposed dates overlap another leave request.");
       status = "Amendment Pending Line Manager";
       await requireEmployeeSupervisor(tx, organisationId, row.request.employeeId);
       values = {

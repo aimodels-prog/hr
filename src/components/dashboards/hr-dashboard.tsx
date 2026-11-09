@@ -20,7 +20,13 @@ import { DocumentService } from "@/lib/data/document-service";
 import { OnboardingService } from "@/lib/data/onboarding-service";
 import { TimesheetService } from "@/lib/data/timesheet-service";
 import { LeaveService } from "@/lib/data/leave-service";
-import { isEffectiveLeave, organisationDate } from "@/lib/data/approved-leave";
+import {
+  approvedLeaveCoversDate,
+  approvedLeaveIntersectsRange,
+  isAbsenceLeave,
+  isEffectiveLeave,
+  organisationDate,
+} from "@/lib/data/approved-leave";
 import { SettingsService } from "@/lib/data/settings-service";
 import { leaveDisplayType } from "@/lib/data/leave-presentation";
 import { TravelService } from "@/lib/data/travel-service";
@@ -339,11 +345,11 @@ function OrganisationHrDashboardDetails() {
   weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
   const leaveWeekEnd = weekEnd.toISOString().slice(0, 10);
   const onLeaveThisWeek = allLeaveRequests
-    .filter(isEffectiveLeave)
-    .filter((r) => r.startDate <= leaveWeekEnd && r.endDate >= leaveToday)
+    .filter((request) => isEffectiveLeave(request) && isAbsenceLeave(request))
+    .filter((request) => approvedLeaveIntersectsRange(request, leaveToday, leaveWeekEnd))
     .sort((a, b) => a.startDate.localeCompare(b.startDate));
-  const onLeaveToday = onLeaveThisWeek.filter(
-    (request) => request.startDate <= leaveToday && request.endDate >= leaveToday,
+  const onLeaveToday = onLeaveThisWeek.filter((request) =>
+    approvedLeaveCoversDate(request, leaveToday),
   );
   const peopleOnLeaveToday = new Set(onLeaveToday.map((request) => request.employeeId)).size;
 
@@ -496,17 +502,7 @@ function OrganisationHrDashboardDetails() {
                         {leaveDisplayType(r)}
                       </p>
                     </div>
-                    <p className="shrink-0 text-xs text-muted-foreground">
-                      {new Date(r.startDate).toLocaleDateString(undefined, {
-                        month: "short",
-                        day: "numeric",
-                      })}
-                      {" - "}
-                      {new Date(r.endDate).toLocaleDateString(undefined, {
-                        month: "short",
-                        day: "numeric",
-                      })}
-                    </p>
+                    <p className="shrink-0 text-xs text-muted-foreground">Today</p>
                   </div>
                 ))}
               </div>

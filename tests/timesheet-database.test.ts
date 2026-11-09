@@ -134,7 +134,7 @@ test(
         const date = new Date(monday);
         date.setUTCDate(date.getUTCDate() + offset);
         const workDate = date.toISOString().slice(0, 10);
-        hours[workDate] = 9;
+        hours[workDate] = 8;
         if (offset === 0) {
           await saveOfficeException(
             organisationId,
@@ -173,8 +173,8 @@ test(
       await submitTimesheetInDatabase(organisationId, timesheetId, employeeActor);
       const [recordedTotals] =
         await sql`SELECT expected_hours,total_hours,attendance_reconciliation_snapshot FROM timesheets WHERE id=${timesheetId}`;
-      assert.equal(Number(recordedTotals!.expected_hours), 45);
-      assert.equal(Number(recordedTotals!.total_hours), 45);
+      assert.equal(Number(recordedTotals!.expected_hours), 40);
+      assert.equal(Number(recordedTotals!.total_hours), 40);
       const reconciliation = recordedTotals!.attendance_reconciliation_snapshot as {
         attendanceHours: number;
         days: Array<{ date: string; attendanceHours: number }>;
@@ -182,6 +182,11 @@ test(
       assert.ok(
         reconciliation.days.some((day) => day.attendanceHours > 0),
         "recorded attendance remains visible without a tracking policy",
+      );
+      assert.equal(
+        reconciliation.days.find((day) => day.date === startDate)?.attendanceHours,
+        8,
+        "the office exception stores a nine-hour presence day but credits eight work hours",
       );
       assert.ok(reconciliation.attendanceHours > 0);
       await assert.rejects(

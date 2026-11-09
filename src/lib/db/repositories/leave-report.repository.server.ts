@@ -119,7 +119,7 @@ export function queryLeaveUsage(org: string, years?: LeaveReportYears) {
   const year = yearForDate(sql`r.start_date`, years.startMonthDay);
   const dateYear = yearForDate(sql`wd.value::date`, years.startMonthDay);
   return getDatabaseClient().execute(sql`
-    select (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department,
+    select r.id::text as "requestId", (select name from locations where id=e.location_id) as "workLocation", e.legal_name as employee, d.name as department,
       btrim(regexp_replace(coalesce(nullif(btrim(r.policy_snapshot->>'name'), ''), p.name), '[[:space:]]+[—–-][[:space:]]+imported history[[:space:]]*$', '', 'i')) as "leaveType", usage.leave_year as "leaveYear",
       usage.start_date as "startDate", usage.end_date as "endDate",
       usage.days as days, r.status::text as status
@@ -131,13 +131,24 @@ export function queryLeaveUsage(org: string, years?: LeaveReportYears) {
       select ${year} as leave_year, r.start_date::text as start_date,
         r.end_date::text as end_date, r.working_days_requested::double precision as days
       where r.policy_snapshot->'specialRequest' is null
+        and jsonb_typeof(r.policy_snapshot->'workingDates') is distinct from 'array'
       union all
-      select ${dateYear} as leave_year, min(wd.value::date)::text as start_date,
-        max(wd.value::date)::text as end_date,
+      select grouped.leave_year, min(grouped.day)::text as start_date,
+        max(grouped.day)::text as end_date,
         count(*)::double precision * (case when r.is_half_day then 0.5 else 1 end) as days
-      from jsonb_array_elements_text(r.policy_snapshot->'workingDates') as wd(value)
-      where r.policy_snapshot->'specialRequest' is not null
-      group by 1
+      from (
+        select dated.leave_year, dated.day,
+          dated.day - row_number() over (partition by dated.leave_year order by dated.day)::integer as island
+        from (
+          select distinct wd.value::date as day, ${dateYear} as leave_year
+          from jsonb_array_elements_text(
+            case when jsonb_typeof(r.policy_snapshot->'workingDates')='array'
+              then r.policy_snapshot->'workingDates' else '[]'::jsonb end
+          ) as wd(value)
+          where wd.value::date between r.start_date and r.end_date
+        ) dated
+      ) grouped
+      group by grouped.leave_year, grouped.island
     ) usage
     where r.organisation_id=${org} and r.archived_at is null
       and ${years.selectedYear === "all" ? sql`true` : sql`usage.leave_year=${years.selectedYear}`}

@@ -11,6 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { LeaveService } from "@/lib/data/leave-service";
+import { leaveDecisionSummary } from "@/lib/data/leave-decision-display";
 import {
   leaveDisplayReason,
   leaveDisplayType,
@@ -18,6 +19,16 @@ import {
 } from "@/lib/data/leave-presentation";
 import { CalendarDays } from "lucide-react";
 import { useCurrentUser } from "@/lib/auth";
+import { organisationDate } from "@/lib/data/approved-leave";
+import { SettingsService } from "@/lib/data/settings-service";
+import type { LeaveRequest } from "@/lib/data/leave-types";
+
+function nextApprovedDate(request: LeaveRequest, today: string): string | null {
+  const dates = request.policySnapshot.workingDates;
+  if (Array.isArray(dates)) return dates.filter((date) => date >= today).sort()[0] ?? null;
+  if (request.endDate < today) return null;
+  return request.startDate < today ? today : request.startDate;
+}
 
 export function LeaveTab({ employeeId }: { employeeId: string }) {
   const leaveService = useMemo(() => new LeaveService(), []);
@@ -48,9 +59,12 @@ export function LeaveTab({ employeeId }: { employeeId: string }) {
     [currentUser, leaveService, employeeId],
   );
 
+  const today = organisationDate(new Date(), new SettingsService().getAppSettingsSync().timezone);
   const upcoming = requests
-    .filter((r) => r.status === "Approved" && new Date(r.startDate) >= new Date())
-    .sort((a, b) => -newestLeaveFirst(a, b));
+    .filter((request) => request.status === "Approved")
+    .map((request) => ({ request, nextDate: nextApprovedDate(request, today) }))
+    .filter((item): item is { request: LeaveRequest; nextDate: string } => item.nextDate !== null)
+    .sort((a, b) => a.nextDate.localeCompare(b.nextDate));
 
   const usedStatuses = new Set([
     "Approved",
@@ -70,7 +84,8 @@ export function LeaveTab({ employeeId }: { employeeId: string }) {
         {visibleBalances.map((b) => {
           const policy = policies.find((p) => p.id === b.policyId);
           const hasBeenUsed = requests.some(
-            (r) => r.policyId === b.policyId && usedStatuses.has(r.status),
+            (r) =>
+              r.policyId === b.policyId && usedStatuses.has(r.status) && r.workingDaysRequested > 0,
           );
 
           return (
@@ -160,15 +175,17 @@ export function LeaveTab({ employeeId }: { employeeId: string }) {
             </CardTitle>
           </CardHeader>
           <CardContent className="text-sm space-y-1">
-            {upcoming.map((r) => (
-              <div key={r.id}>
+            {upcoming.map(({ request, nextDate }) => (
+              <div key={request.id}>
                 {leaveDisplayType(
-                  r,
-                  policies.find((p) => p.id === r.policyId),
+                  request,
+                  policies.find((p) => p.id === request.policyId),
                 )}{" "}
-                &middot; {r.startDate} to {r.endDate} &middot; {r.workingDaysRequested}{" "}
-                {r.workingDaysRequested === 1 ? "day" : "days"}
-                {leaveDisplayReason(r.reason) && <> &middot; {leaveDisplayReason(r.reason)}</>}
+                &middot; Next approved date: {nextDate} &middot; {request.workingDaysRequested}{" "}
+                {request.workingDaysRequested === 1 ? "day" : "days"} on this request
+                {leaveDisplayReason(request.reason) && (
+                  <> &middot; {leaveDisplayReason(request.reason)}</>
+                )}
               </div>
             ))}
           </CardContent>
@@ -230,6 +247,11 @@ export function LeaveTab({ employeeId }: { employeeId: string }) {
                       >
                         {r.status}
                       </Badge>
+                      {leaveDecisionSummary(r) && (
+                        <span className="mt-1 block text-xs text-muted-foreground">
+                          {leaveDecisionSummary(r)}
+                        </span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))

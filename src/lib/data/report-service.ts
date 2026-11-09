@@ -2,6 +2,7 @@ import { SYSTEM_CONTEXT } from "./types.ts";
 import { recordedAttendanceHours } from "./recorded-hours.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { LeaveService } from "./leave-service.ts";
+import { approvedLeaveUsageSpans } from "./approved-leave.ts";
 import { leaveDisplayType } from "./leave-presentation.ts";
 import { TimesheetService } from "./timesheet-service.ts";
 import { RecruitmentService } from "./recruitment-service.ts";
@@ -570,7 +571,7 @@ export class ReportService {
         return {
           id: reportId,
           name: "Leave Usage & Upcoming Absence",
-          description: "Submitted leave, approval status and scheduled working days away.",
+          description: "Submitted leave, approval status and recorded leave dates.",
           containsPersonalData: true,
           columns: [
             { key: "employee", label: "Employee" },
@@ -581,20 +582,21 @@ export class ReportService {
             { key: "days", label: "Working Days", type: "number" },
             { key: "status", label: "Status" },
           ],
-          rows: requests.map((request) => {
+          rows: requests.flatMap((request) => {
             const employee = scopedEmployees.find((item) => item.id === request.employeeId);
-            return {
+            return approvedLeaveUsageSpans(request).map((span) => ({
+              requestId: request.id,
               employee: employeeName(request.employeeId),
               department: employee?.department ?? "Unknown",
               leaveType: leaveDisplayType(
                 request,
                 policies.find((policy) => policy.id === request.policyId),
               ),
-              startDate: request.startDate,
-              endDate: request.endDate,
-              days: request.workingDaysRequested,
+              startDate: span.startDate,
+              endDate: span.endDate,
+              days: span.days,
               status: request.status,
-            };
+            }));
           }),
         };
       }

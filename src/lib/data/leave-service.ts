@@ -19,7 +19,7 @@ import type {
   SickPayTierBreakdown,
   EmployeeLeaveEntitlementOverride,
 } from "./leave-types.ts";
-import { differenceInCalendarDays, parseISO, isValid } from "date-fns";
+import { differenceInCalendarDays, format, parseISO, isValid } from "date-fns";
 import { leaveWorkingDates } from "./leave-working-days.ts";
 import { NotificationService } from "./notification-service.ts";
 import { getMasterDataRepository } from "./master-data.ts";
@@ -116,7 +116,9 @@ export class LeaveService {
       snapshot.transactions.map((transaction) => ({
         ...transaction,
         employeeId: mapEmployee(transaction.employeeId),
-        actorUserId: userIdMap.get(transaction.actorUserId) ?? transaction.actorUserId,
+        actorUserId: transaction.actorUserId
+          ? (userIdMap.get(transaction.actorUserId) ?? transaction.actorUserId)
+          : null,
       })),
     );
     storage.writeCollection(
@@ -870,7 +872,12 @@ export class LeaveService {
       const rStart = parseISO(r.startDate);
       const rEnd = parseISO(r.endDate);
 
-      // Check for date overlap
+      // A day later corrected from leave to office work is no longer a team absence.
+      if (Array.isArray(r.policySnapshot.workingDates)) {
+        const first = format(start, "yyyy-MM-dd");
+        const last = format(end, "yyyy-MM-dd");
+        return r.policySnapshot.workingDates.some((day) => day >= first && day <= last);
+      }
       return start <= rEnd && end >= rStart;
     });
   }
@@ -1905,6 +1912,11 @@ export class LeaveService {
       }
     }
 
+    const proposedWorkingDates = this.calculateWorkingDates(
+      proposedStartDate,
+      proposedEndDate,
+      req.isHalfDay,
+    );
     const overlapping = this.requestRepo
       .list()
       .some(
@@ -1920,8 +1932,11 @@ export class LeaveService {
             "Amendment Pending Line Manager",
             "Amendment Pending HR",
           ].includes(other.status) &&
-          proposedStartDate <= other.endDate &&
-          proposedEndDate >= other.startDate,
+          proposedWorkingDates.some((date) =>
+            Array.isArray(other.policySnapshot.workingDates)
+              ? other.policySnapshot.workingDates.includes(date)
+              : date >= other.startDate && date <= other.endDate,
+          ),
       );
     if (overlapping) throw new Error("The proposed dates overlap another active leave request.");
 
@@ -1941,11 +1956,7 @@ export class LeaveService {
       proposedStartDate,
       proposedEndDate,
       proposedWorkingDays: workingDays,
-      proposedWorkingDates: this.calculateWorkingDates(
-        proposedStartDate,
-        proposedEndDate,
-        req.isHalfDay,
-      ),
+      proposedWorkingDates,
       reason: reason.trim(),
       requestedAt: new Date().toISOString(),
       requestedBy: context.actor.userId,
@@ -2063,8 +2074,18 @@ export class LeaveService {
             "Amendment Pending Line Manager",
             "Amendment Pending HR",
           ].includes(other.status) &&
-          amendment.proposedStartDate <= other.endDate &&
-          amendment.proposedEndDate >= other.startDate,
+          (
+            amendment.proposedWorkingDates ??
+            this.calculateWorkingDates(
+              amendment.proposedStartDate,
+              amendment.proposedEndDate,
+              req.isHalfDay,
+            )
+          ).some((date) =>
+            Array.isArray(other.policySnapshot.workingDates)
+              ? other.policySnapshot.workingDates.includes(date)
+              : date >= other.startDate && date <= other.endDate,
+          ),
       );
     if (nowOverlaps) {
       throw new Error(
@@ -2574,7 +2595,8 @@ export class LeaveService {
     let pending = 0;
 
     // Get all requests for this policy
-    const requests = this.getLeaveRequestsForEmployee(employeeId, context).filter(
+    const allRequests = this.getLeaveRequestsForEmployee(employeeId, context);
+    const requests = allRequests.filter(
       (request) =>
         request.policyId === policyId &&
         request.startDate >= leaveYearStartKey &&
@@ -2598,27 +2620,40 @@ export class LeaveService {
 
     today.setHours(0, 0, 0, 0);
 
+    const usageByReference = new Map<string, number>();
     for (const tx of txs) {
       if (tx.transactionType === "Entitlement") entitlement += tx.days;
       else if (tx.transactionType === "Carry-Forward") carriedForward += tx.days;
       else if (tx.transactionType === "Accrual") accrued += tx.days;
       else if (tx.transactionType === "Manual Adjustment") adjustments += tx.days;
-      else if (tx.transactionType === "Leave Amendment") adjustments += tx.days;
-      else if (tx.transactionType === "Cancellation Restoration")
-        adjustments += tx.days; // Acts as a positive adjustment
-      else if (tx.transactionType === "Approved Leave") {
+      else if (
+        tx.transactionType === "Approved Leave" ||
+        tx.transactionType === "Leave Amendment" ||
+        tx.transactionType === "Cancellation Restoration"
+      ) {
         if (tx.referenceId) {
-          const req = requests.find((r) => r.id === tx.referenceId);
-          if (req && req.status === "Taken") {
-            taken += Math.abs(tx.days);
-          } else {
-            approvedFuture += Math.abs(tx.days);
-          }
-        } else {
+          usageByReference.set(
+            tx.referenceId,
+            (usageByReference.get(tx.referenceId) ?? 0) + tx.days,
+          );
+        } else if (tx.transactionType === "Approved Leave") {
           taken += Math.abs(tx.days);
+        } else {
+          adjustments += tx.days;
         }
       } else if (tx.transactionType === "Expiry") {
         adjustments += tx.days;
+      }
+    }
+    for (const [referenceId, netDays] of usageByReference) {
+      if (netDays >= 0) {
+        adjustments += netDays;
+        continue;
+      }
+      if (allRequests.find((request) => request.id === referenceId)?.status === "Taken") {
+        taken += -netDays;
+      } else {
+        approvedFuture += -netDays;
       }
     }
 

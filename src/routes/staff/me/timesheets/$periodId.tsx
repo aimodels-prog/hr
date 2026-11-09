@@ -3,9 +3,23 @@ import { useState, useMemo, useEffect } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { TimesheetDayNavigation } from "@/components/timesheets/day-navigation";
 import { timesheetPeriodLabel, isConfiguredTimesheetPeriod } from "@/lib/data/timesheet-periods";
-import { isEffectiveLeave, organisationDate } from "@/lib/data/approved-leave";
+import {
+  formatSignedHours,
+  isTimesheetWeekend,
+  meetsTimesheetDailyTarget,
+  meetsTimesheetWorkTarget,
+  timesheetCalendarDayLabel,
+} from "@/lib/data/timesheet-day-display";
+import {
+  approvedLeaveCoversDate,
+  isApprovedRemoteWork,
+  isAbsenceLeave,
+  isEffectiveLeave,
+  organisationDate,
+} from "@/lib/data/approved-leave";
 import { AttendanceService } from "@/lib/data/attendance-service";
 import { LeaveService } from "@/lib/data/leave-service";
+import { leaveDisplayType } from "@/lib/data/leave-presentation";
 import { recordedAttendanceHours } from "@/lib/data/recorded-hours";
 import { SettingsService } from "@/lib/data/settings-service";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -121,7 +135,7 @@ function TimesheetEntryRoute() {
       ...timesheet,
       entries,
       totalHours: entries
-        .filter((e) => !e.isLeave && !e.isHoliday)
+        .filter((e) => !e.isLeave && !e.isHoliday && !e.isRemoteWork)
         .reduce((sum, e) => sum + e.total, 0),
     });
   };
@@ -157,7 +171,7 @@ function TimesheetEntryRoute() {
         return e;
       });
       const totalHours = entries
-        .filter((e) => !e.isLeave && !e.isHoliday)
+        .filter((e) => !e.isLeave && !e.isHoliday && !e.isRemoteWork)
         .reduce((sum, e) => sum + e.total, 0);
       return { ...prev, entries, totalHours };
     });
@@ -212,7 +226,9 @@ function TimesheetEntryRoute() {
   };
 
   const handleCopyPrev = () => {
-    const hasEnteredRows = timesheet.entries.some((entry) => !entry.isLeave && !entry.isHoliday);
+    const hasEnteredRows = timesheet.entries.some(
+      (entry) => !entry.isLeave && !entry.isHoliday && !entry.isRemoteWork,
+    );
     if (hasEnteredRows) {
       setIsCopyConfirmOpen(true);
       return;
@@ -225,7 +241,7 @@ function TimesheetEntryRoute() {
   days.forEach((d) => (dailyTotals[format(d, "yyyy-MM-dd")] = 0));
 
   timesheet.entries.forEach((e) => {
-    if (e.isLeave || e.isHoliday) return;
+    if (e.isLeave || e.isHoliday || e.isRemoteWork) return;
     Object.entries(e.hours).forEach(([d, h]) => {
       if (dailyTotals[d] !== undefined) {
         dailyTotals[d] += h || 0;
@@ -234,8 +250,13 @@ function TimesheetEntryRoute() {
   });
 
   const reconciliation = tsService.reconcileAttendance(timesheet);
+  const hasProjectComparison = reconciliation.days.some((day) => (day.projectHours ?? 0) > 0);
   const summary = tsService.getPeriodSummary(currentUser.employeeId!, period!, timesheet);
   const diff = Number((summary.workedHours - summary.requiredWorkHours).toFixed(2));
+  const periodWorkTargetMet = meetsTimesheetWorkTarget(
+    summary.workedHours,
+    summary.requiredWorkHours,
+  );
   const attendanceDays = new Map(reconciliation.days.map((day) => [day.date, day]));
   const employeeRecords = attendanceService.getRecordsForEmployee(
     currentUser.employeeId!,
@@ -263,9 +284,19 @@ function TimesheetEntryRoute() {
       ? todayDate
       : period!.startDate);
   const focusedDay = attendanceDays.get(focusedDate);
+  const focusedProjectHours =
+    focusedDay?.projectHours && focusedDay.projectHours > 0 ? focusedDay.projectHours : undefined;
+  const focusedProjectGap =
+    focusedProjectHours === undefined
+      ? null
+      : Number((focusedProjectHours - (focusedDay?.timesheetWorkHours ?? 0)).toFixed(2));
   const focusedLeave = timesheet.entries.filter(
     (entry) => entry.isLeave && entry.hours[focusedDate],
   );
+  const focusedRemoteWork =
+    timesheet.entries.some(
+      (entry) => entry.isRemoteWork && Object.hasOwn(entry.hours, focusedDate),
+    ) || leaveRequests.some((request) => isApprovedRemoteWork(request, focusedDate));
   const focusedHoliday = timesheet.entries.some(
     (entry) => entry.isHoliday && entry.hours[focusedDate],
   );
@@ -276,8 +307,8 @@ function TimesheetEntryRoute() {
       correction.attendanceRecordId === focusedRecord?.databaseId,
   );
   const focusedVisits = visits.filter((visit) => visit.date === focusedDate);
-  const focusedLeaveRequests = leaveRequests.filter(
-    (request) => request.startDate <= focusedDate && request.endDate >= focusedDate,
+  const focusedLeaveRequests = leaveRequests.filter((request) =>
+    approvedLeaveCoversDate(request, focusedDate),
   );
   const paidLeaveHours = (date: string) =>
     timesheet.entries.reduce(
@@ -290,10 +321,12 @@ function TimesheetEntryRoute() {
       0,
     );
   const workingDays = new SettingsService().getAppSettingsSync().workingDays;
+  const dailyWorkTarget = tsService.getSettings().standardDailyHours;
+  const focusedWeekend = isTimesheetWeekend(parseISO(focusedDate), workingDays);
   const shortDay = (date: string, worked = 0, leave = 0, holiday = 0) => {
     if (date >= todayDate || (currentUser.currentEmployee?.startDate ?? "") > date) return false;
     if (!workingDays.includes(parseISO(date).getDay())) return false;
-    return worked + 0.01 < Math.max(0, tsService.getRecordedDailyHours() - leave - holiday);
+    return worked + 0.01 < Math.max(0, dailyWorkTarget - leave - holiday);
   };
   const focusedShort = shortDay(
     focusedDate,
@@ -361,20 +394,25 @@ function TimesheetEntryRoute() {
                 <div className="text-2xl font-bold">{summary.requiredWorkHours} h</div>
               </div>
               <div className="min-w-28 text-right">
-                <div className="text-sm text-muted-foreground">Worked hours</div>
+                <div className="text-sm text-muted-foreground">Total hours worked</div>
                 <div
-                  className={`text-2xl font-bold ${summary.workedHours < summary.requiredWorkHours && isEditable ? "text-destructive" : ""}`}
+                  className={`text-2xl font-bold ${periodWorkTargetMet ? "text-emerald-700 dark:text-emerald-300" : summary.workedHours < summary.requiredWorkHours && isEditable ? "text-destructive" : ""}`}
                 >
                   {summary.workedHours} h
                 </div>
               </div>
               <div className="min-w-28 text-right">
-                <div className="text-sm text-muted-foreground">Difference</div>
+                <div className="text-sm text-muted-foreground">Worked vs required</div>
                 <div
-                  className={`text-2xl font-bold ${diff > 0 ? "text-emerald-600" : diff < 0 ? "text-destructive" : "text-muted-foreground"}`}
+                  className={`text-2xl font-bold ${diff >= 0 && summary.requiredWorkHours > 0 ? "text-emerald-700 dark:text-emerald-300" : diff < 0 ? "text-destructive" : "text-muted-foreground"}`}
                 >
-                  {diff > 0 ? `+${diff}` : diff}
+                  {formatSignedHours(diff)}
                 </div>
+                {diff > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Extra hours are not overtime approval.
+                  </p>
+                )}
               </div>
               {timesheet.entries.some((entry) => entry.isLeave || entry.isHoliday) && (
                 <div className="min-w-28 text-right">
@@ -397,8 +435,9 @@ function TimesheetEntryRoute() {
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Daily calendar</CardTitle>
             <p className="text-sm text-muted-foreground">
-              Recorded work is filled from complete attendance. Paid leave adds credit; unpaid leave
-              does not.
+              Complete attendance can fill work hours automatically. The scheduled break is not
+              timesheet work. Green means the daily hours target is met; approval and overtime are
+              separate. Paid leave adds credit; unpaid leave does not.
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -416,17 +455,27 @@ function TimesheetEntryRoute() {
               {allDays.map((dayDate) => {
                 const date = format(dayDate, "yyyy-MM-dd");
                 const day = attendanceDays.get(date);
+                const weekend = isTimesheetWeekend(dayDate, workingDays);
                 const paid = paidLeaveHours(date);
                 const unpaid = timesheet.entries.some(
                   (entry) => entry.isUnpaidLeave && (entry.hours[date] ?? 0) > 0,
                 );
-                const leaveName = timesheet.entries.find(
-                  (entry) => entry.isLeave && (entry.hours[date] ?? 0) > 0,
-                )?.notes;
+                const approvedLeave = leaveRequests.find(
+                  (request) =>
+                    isEffectiveLeave(request) &&
+                    isAbsenceLeave(request) &&
+                    approvedLeaveCoversDate(request, date),
+                );
+                const leaveName =
+                  timesheet.entries.find((entry) => entry.isLeave && (entry.hours[date] ?? 0) > 0)
+                    ?.notes ?? (approvedLeave ? leaveDisplayType(approvedLeave) : undefined);
+                const remoteWork =
+                  timesheet.entries.some(
+                    (entry) => entry.isRemoteWork && Object.hasOwn(entry.hours, date),
+                  ) || leaveRequests.some((request) => isApprovedRemoteWork(request, date));
                 const pendingLeave = leaveRequests.some(
                   (request) =>
-                    request.startDate <= date &&
-                    request.endDate >= date &&
+                    approvedLeaveCoversDate(request, date) &&
                     !isEffectiveLeave(request) &&
                     !["Rejected", "Cancelled", "Declined"].includes(request.status),
                 );
@@ -450,29 +499,46 @@ function TimesheetEntryRoute() {
                     day?.leaveHours ?? 0,
                     day?.holidayHours ?? 0,
                   );
+                const worked = day?.timesheetWorkHours ?? 0;
                 const credit = Number(
-                  ((day?.timesheetWorkHours ?? 0) + paid + holidayHours(date)).toFixed(2),
+                  (
+                    worked +
+                    Math.min(paid + holidayHours(date), Math.max(0, dailyWorkTarget - worked))
+                  ).toFixed(2),
                 );
+                const targetMet = meetsTimesheetDailyTarget({
+                  workedHours: worked,
+                  paidLeaveHours: paid,
+                  holidayHours: holidayHours(date),
+                  targetHours: dailyWorkTarget,
+                  workingDay: !weekend,
+                });
+                const dayLabel = timesheetCalendarDayLabel({
+                  weekend,
+                  leaveName,
+                  holiday: holidayHours(date) > 0,
+                  unpaid,
+                  remoteWork,
+                  attendanceStatus: day?.attendanceStatus,
+                });
                 return (
                   <button
                     key={date}
                     type="button"
                     aria-pressed={focusedDate === date}
-                    aria-label={`${date}: ${credit} credited hours${leaveName ? `, ${leaveName}` : ""}${pending ? ", approval pending" : ""}${issue ? ", needs review" : ""}`}
+                    aria-label={`${date}: ${worked} hours worked, ${credit} hours credited, ${dayLabel}${targetMet ? ", daily hours target met" : ""}${pending ? ", approval pending" : ""}${issue ? ", needs review" : ""}`}
                     onClick={() => setSelectedDate(date)}
-                    className={`min-h-20 rounded-lg border p-1.5 text-left transition-colors hover:border-primary sm:p-2 ${focusedDate === date ? "border-primary bg-primary/5" : "bg-card"} ${issue ? "border-amber-400" : ""}`}
+                    className={`min-h-20 rounded-lg border p-1.5 text-left transition-colors hover:border-primary sm:p-2 ${targetMet ? "bg-emerald-50 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-100" : weekend ? "bg-muted/30" : "bg-card"} ${focusedDate === date ? "ring-2 ring-primary" : ""} ${issue ? "border-amber-400" : targetMet ? "border-emerald-300 dark:border-emerald-800" : ""}`}
                   >
                     <span className="block text-xs text-muted-foreground">
                       {format(dayDate, "d")}
                     </span>
                     <span className="block text-sm font-semibold">{credit} h</span>
+                    {worked > 0 && paid + holidayHours(date) > 0 && (
+                      <span className="block text-[10px]">{worked} h worked</span>
+                    )}
                     <span className="block truncate text-[10px] text-muted-foreground sm:text-xs">
-                      {leaveName ??
-                        (holidayHours(date) > 0
-                          ? "Holiday"
-                          : unpaid
-                            ? "Unpaid leave"
-                            : (day?.attendanceStatus ?? "—"))}
+                      {dayLabel}
                     </span>
                     {(pending || issue) && (
                       <span className="mt-1 block text-[10px] font-medium text-amber-700">
@@ -484,8 +550,9 @@ function TimesheetEntryRoute() {
               })}
             </div>
             <div className="rounded-lg border bg-muted/20 p-4 text-sm">
-              <h3 className="font-semibold">
+              <h3 className="flex flex-wrap items-center gap-2 font-semibold">
                 {format(parseISO(focusedDate), "EEEE, d MMMM yyyy")}
+                {focusedWeekend && <Badge variant="outline">Weekend</Badge>}
               </h3>
               <p className="mt-1 text-muted-foreground">
                 {focusedDay?.timesheetWorkHours ?? 0} h worked · {paidLeaveHours(focusedDate)} h
@@ -494,6 +561,20 @@ function TimesheetEntryRoute() {
                   ? " · Unpaid leave: 0 h credit"
                   : ""}
               </p>
+              {focusedProjectHours !== undefined && (
+                <p className="mt-1 text-muted-foreground">
+                  {focusedProjectHours} h entered against projects
+                  {focusedProjectGap !== null && Math.abs(focusedProjectGap) >= 0.01 && (
+                    <span>
+                      {" "}
+                      · {Math.abs(focusedProjectGap)} h{" "}
+                      {focusedProjectGap > 0
+                        ? "more project time entered than total worked"
+                        : "more total work than allocated project time"}
+                    </span>
+                  )}
+                </p>
+              )}
               {focusedRecord && (
                 <div className="mt-2">
                   <p>
@@ -504,7 +585,7 @@ function TimesheetEntryRoute() {
                     {focusedRecord.officeExceptionLabel
                       ? "Approved office credit"
                       : "Recorded presence"}
-                    : {recordedAttendanceHours(focusedRecord)} h
+                    : {recordedAttendanceHours(focusedRecord)} h before break deduction
                     {recordedAttendanceHours(focusedRecord) > (focusedDay?.timesheetWorkHours ?? 0)
                       ? " · Extra presence is not automatic overtime"
                       : ""}
@@ -545,6 +626,9 @@ function TimesheetEntryRoute() {
                 </div>
               )}
               {focusedHoliday && <p className="mt-2">Public holiday</p>}
+              {focusedRemoteWork && (
+                <p className="mt-2">Remote Work approved. Actual working hours remain separate.</p>
+              )}
               {focusedLeaveRequests.map((request) => (
                 <p key={request.id} className="mt-2">
                   <Link
@@ -552,7 +636,7 @@ function TimesheetEntryRoute() {
                     params={{ module: "Leave", requestId: request.id }}
                     className="font-medium text-primary underline"
                   >
-                    {request.policySnapshot.name} · {request.status}
+                    {leaveDisplayType(request)} · {request.status}
                   </Link>
                 </p>
               ))}
@@ -603,16 +687,27 @@ function TimesheetEntryRoute() {
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg border bg-muted/20 p-3">
-                <div className="text-xs text-muted-foreground">Attendance hours</div>
+                <div className="text-xs text-muted-foreground">
+                  Work hours from attendance (break excluded)
+                </div>
                 <div className="text-xl font-semibold">{reconciliation.attendanceHours}</div>
               </div>
               <div className="rounded-lg border bg-muted/20 p-3">
-                <div className="text-xs text-muted-foreground">Work hours on timesheet</div>
+                <div className="text-xs text-muted-foreground">Total work hours</div>
                 <div className="text-xl font-semibold">{reconciliation.timesheetWorkHours}</div>
               </div>
               <div className="rounded-lg border bg-muted/20 p-3">
-                <div className="text-xs text-muted-foreground">Difference</div>
-                <div className="text-xl font-semibold">{reconciliation.varianceHours}</div>
+                <div className="text-xs text-muted-foreground">
+                  {hasProjectComparison ? "Project minus attendance" : "Recorded difference"}
+                </div>
+                <div className="text-xl font-semibold">
+                  {formatSignedHours(reconciliation.varianceHours)}
+                </div>
+                {hasProjectComparison && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    + means more project hours; − means more attendance work.
+                  </p>
+                )}
               </div>
             </div>
 
@@ -636,8 +731,11 @@ function TimesheetEntryRoute() {
 
             {reconciliation.unresolvedCount === 0 && hasAttendanceDifference && (
               <p className="text-sm text-amber-800">
-                Recorded attendance and timesheet hours differ. Check the dates below. A recorded
-                punch is shown even when biometric attendance was not required that day.
+                {hasProjectComparison
+                  ? "Project hours and recorded work differ."
+                  : "Recorded attendance and timesheet hours differ."}{" "}
+                Check the dates below. A recorded punch is shown even when biometric attendance was
+                not required that day.
               </p>
             )}
 
@@ -647,16 +745,19 @@ function TimesheetEntryRoute() {
                   <TableRow>
                     <TableHead>Date</TableHead>
                     <TableHead>Attendance</TableHead>
-                    <TableHead className="text-right">Attendance hours</TableHead>
+                    <TableHead className="text-right">Attendance work hours</TableHead>
                     <TableHead className="text-right">Timesheet work</TableHead>
-                    <TableHead className="text-right">Difference</TableHead>
+                    <TableHead className="text-right">Project hours</TableHead>
+                    <TableHead className="text-right">
+                      {hasProjectComparison ? "Project gap" : "Difference"}
+                    </TableHead>
                     <TableHead>Result</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {reconciliation.days.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center text-muted-foreground">
+                      <TableCell colSpan={7} className="text-center text-muted-foreground">
                         No attendance dates to compare.
                       </TableCell>
                     </TableRow>
@@ -670,7 +771,12 @@ function TimesheetEntryRoute() {
                       <TableCell>{day.attendanceStatus}</TableCell>
                       <TableCell className="text-right">{day.attendanceHours}</TableCell>
                       <TableCell className="text-right">{day.timesheetWorkHours}</TableCell>
-                      <TableCell className="text-right">{day.varianceHours}</TableCell>
+                      <TableCell className="text-right">
+                        {(day.projectHours ?? 0) > 0 ? `${day.projectHours} h` : "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatSignedHours(day.varianceHours)}
+                      </TableCell>
                       <TableCell>
                         <Badge
                           variant={
@@ -755,12 +861,19 @@ function TimesheetEntryRoute() {
                   <TableHead className="w-[150px]">Cost Centre</TableHead>
                   <TableHead className="w-[150px]">Activity</TableHead>
                   <TableHead className="w-[150px]">Location</TableHead>
-                  {days.map((d) => (
-                    <TableHead key={d.toISOString()} className="w-[80px] text-center px-1">
-                      <div className="text-xs font-normal">{format(d, "EEE")}</div>
-                      <div>{format(d, "dd")}</div>
-                    </TableHead>
-                  ))}
+                  {days.map((d) => {
+                    const weekend = isTimesheetWeekend(d, workingDays);
+                    return (
+                      <TableHead
+                        key={d.toISOString()}
+                        className={`w-[80px] px-1 text-center ${weekend ? "bg-muted/60" : ""}`}
+                      >
+                        <div className="text-xs font-normal">{format(d, "EEE")}</div>
+                        <div>{format(d, "dd")}</div>
+                        {weekend && <div className="text-[10px] font-medium">Weekend</div>}
+                      </TableHead>
+                    );
+                  })}
                   <TableHead className="w-[80px] text-center">Total</TableHead>
                   <TableHead className="w-[200px]">Notes</TableHead>
                   <TableHead className="w-[50px]"></TableHead>
@@ -768,14 +881,19 @@ function TimesheetEntryRoute() {
               </TableHeader>
               <TableBody>
                 {timesheet.entries.map((entry) => {
-                  const isReadonlyBlock = entry.isLeave || entry.isHoliday;
+                  const isReadonlyBlock = entry.isLeave || entry.isHoliday || entry.isRemoteWork;
 
                   return (
                     <TableRow key={entry.id} className={isReadonlyBlock ? "bg-muted/30" : ""}>
                       <TableCell className="p-2">
                         {isReadonlyBlock ? (
                           <span className="text-sm font-semibold text-muted-foreground">
-                            {entry.notes || (entry.isLeave ? "Approved leave" : "Public holiday")}
+                            {entry.notes ||
+                              (entry.isLeave
+                                ? "Approved leave"
+                                : entry.isRemoteWork
+                                  ? "Remote work"
+                                  : "Public holiday")}
                           </span>
                         ) : (
                           <Select
@@ -867,7 +985,13 @@ function TimesheetEntryRoute() {
                           <TableCell key={dateStr} className="p-1 text-center">
                             {isReadonlyBlock ? (
                               <div className="text-sm font-medium text-muted-foreground">
-                                {entry.isUnpaidLeave ? "0" : val || "-"}
+                                {entry.isRemoteWork
+                                  ? Object.hasOwn(entry.hours, dateStr)
+                                    ? "Remote"
+                                    : "—"
+                                  : entry.isUnpaidLeave
+                                    ? "0"
+                                    : val || "-"}
                               </div>
                             ) : (
                               <Input

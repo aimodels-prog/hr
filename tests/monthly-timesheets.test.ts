@@ -14,6 +14,8 @@ import { AuditService } from "../src/lib/data/audit-service.ts";
 import { NotificationService } from "../src/lib/data/notification-service.ts";
 import { initializeSeedData } from "../src/lib/data/seed-service.ts";
 import { TimesheetService } from "../src/lib/data/timesheet-service.ts";
+import { AttendanceService } from "../src/lib/data/attendance-service.ts";
+import { recordedAttendanceHours } from "../src/lib/data/recorded-hours.ts";
 import type { ActorContext, Employee } from "../src/lib/data/types.ts";
 import type { TimesheetPeriod, TimesheetWithEntries } from "../src/lib/data/timesheet-types.ts";
 
@@ -108,7 +110,48 @@ test("new employees are only expected to record hours from their joining date", 
     service.getPeriods()[0]!.id,
     employee,
   );
-  assert.equal(sheet.expectedHours, 18);
+  assert.equal(sheet.expectedHours, 16);
+});
+
+test("a monthly timesheet accepts eight net hours, not eight elapsed hours across lunch", () => {
+  const { storage, service } = harness();
+  storage.writeCollection(
+    "employees",
+    storage
+      .readCollection<Employee>("employees")
+      .map((person) =>
+        person.id === "employee-omar" ? { ...person, startDate: "2026-09-29" } : person,
+      ),
+  );
+  const attendance = new AttendanceService();
+  for (const [date, clockOut] of [
+    ["2026-09-29", "17:30"],
+    ["2026-09-30", "16:30"],
+  ] as const) {
+    const record = attendance.saveRecord(
+      {
+        employeeId: "employee-omar",
+        date,
+        clockIn: "08:30",
+        clockOut,
+        breakMinutes: 60,
+        source: "Manual Entry",
+        status: "Present",
+        calculatedHours: 0,
+        isLate: false,
+        isEarlyDeparture: false,
+      },
+      hr,
+    );
+    assert.equal(recordedAttendanceHours(record), clockOut === "17:30" ? 9 : 8);
+  }
+  service.generatePeriods("2026-09-01", "2026-09-30", hr);
+  const period = service.getPeriods()[0]!;
+  const sheet = service.getOrCreateTimesheet("employee-omar", period.id, employee);
+  const summary = service.getPeriodSummary("employee-omar", period, sheet);
+  assert.equal(summary.requiredWorkHours, 16);
+  assert.equal(summary.workedHours, 15);
+  assert.throws(() => service.submitTimesheet(sheet.id, employee), /remaining 1 expected hour/);
 });
 
 test("daily hours are saved inside one monthly sheet and the same sheet goes through manager then HR", () => {
@@ -120,7 +163,8 @@ test("daily hours are saved inside one monthly sheet and the same sheet goes thr
   const hours: Record<string, number> = {};
   for (let day = 1; day <= 30; day++) {
     const date = `2026-09-${String(day).padStart(2, "0")}`;
-    if (workingDays.includes(new Date(`${date}T12:00:00Z`).getUTCDay())) hours[date] = 9;
+    if (workingDays.includes(new Date(`${date}T12:00:00Z`).getUTCDay()))
+      hours[date] = service.getSettings().standardDailyHours;
   }
   sheet.entries.push({
     id: crypto.randomUUID(),

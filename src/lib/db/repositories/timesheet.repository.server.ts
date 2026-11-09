@@ -16,8 +16,7 @@ import {
 import { employees, roles, userRoles, users } from "../schema/employee.ts";
 import { appSettings, organisations } from "../schema/organisation.ts";
 import { isAttendanceTracked, readAttendanceTracking } from "../../data/attendance-tracking.ts";
-import { ordinaryAttendanceHours } from "../../data/office-schedule.ts";
-import { recordedDailyHours, recordedAttendanceHours } from "../../data/recorded-hours.ts";
+import { recordedWorkingHours } from "../../data/recorded-hours.ts";
 import { effectiveDailyWorkHours } from "../../data/timesheet-work-hours.ts";
 import {
   isConfiguredTimesheetPeriod,
@@ -25,6 +24,7 @@ import {
   timesheetPeriodDates,
 } from "../../data/timesheet-periods.ts";
 import {
+  approvedLeaveIntersectsRange,
   EFFECTIVE_LEAVE_STATUSES,
   organisationDate,
   timesheetAbsences,
@@ -454,7 +454,8 @@ export async function decideTimesheetInDatabase(
     const finalApproval = next === "Approved" || next === "Payroll Locked";
     const workEntries = Array.isArray(sheet.draftPayload)
       ? sheet.draftPayload.filter(
-          (entry: { isLeave?: boolean; isHoliday?: boolean }) => !entry.isLeave && !entry.isHoliday,
+          (entry: { isLeave?: boolean; isHoliday?: boolean; isRemoteWork?: boolean }) =>
+            !entry.isLeave && !entry.isHoliday && !entry.isRemoteWork,
         )
       : (await tx.select().from(timesheetEntries).where(eq(timesheetEntries.timesheetId, sheet.id)))
           .filter((entry) => !entry.isLeave && !entry.isHoliday)
@@ -719,9 +720,8 @@ export async function listTimesheetSnapshotForActor(
       dates: dateRange(period.startDate, period.endDate).filter(
         (date) => !person?.startDate || date >= person.startDate,
       ),
-      dailyHours: recordedDailyHours(
-        Number(settingsRow?.standardDailyHours ?? organisationSettings[0]?.standardDailyHours ?? 8),
-        breakPolicy?.minutes ?? 60,
+      dailyHours: Number(
+        settingsRow?.standardDailyHours ?? organisationSettings[0]?.standardDailyHours ?? 8,
       ),
       workingDays: organisationSettings[0]?.workingDays ?? [1, 2, 3, 4, 5],
       holidays: new Set(
@@ -795,6 +795,7 @@ export async function listTimesheetSnapshotForActor(
                 notes?: string;
                 isLeave?: boolean;
                 isHoliday?: boolean;
+                isRemoteWork?: boolean;
               }>
             ).map((entry) => ({
               ...entry,
@@ -816,8 +817,12 @@ export async function listTimesheetSnapshotForActor(
               ...(entry.notes ? { notes: entry.notes } : {}),
               isLeave: entry.isLeave,
               isHoliday: entry.isHoliday,
+              isRemoteWork: false,
             }))
-        ).filter((entry) => !calendars.get(item.id) || (!entry.isLeave && !entry.isHoliday)),
+        ).filter(
+          (entry) =>
+            !calendars.get(item.id) || (!entry.isLeave && !entry.isHoliday && !entry.isRemoteWork),
+        ),
         ...(calendars.get(item.id)?.entries ?? []),
       ],
     })),
@@ -1007,17 +1012,6 @@ export async function generateTimesheetPeriodsInDatabase(
   });
 }
 
-// Read the single, persisted break policy instead of changing the working-hours setting.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function recordedDayForOrganisation(tx: any, organisationId: string, workingHours: number) {
-  const [policy] = await tx
-    .select({ minutes: attendancePolicies.defaultBreakMinutes })
-    .from(attendancePolicies)
-    .where(eq(attendancePolicies.organisationId, organisationId))
-    .limit(1);
-  return recordedDailyHours(workingHours, policy?.minutes ?? 60);
-}
-
 async function absencesForPeriod(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tx: any,
@@ -1026,7 +1020,6 @@ async function absencesForPeriod(
   period: { startDate: string; endDate: string },
   dailyHours: number,
 ) {
-  dailyHours = await recordedDayForOrganisation(tx, organisationId, dailyHours);
   const [orgSettings] = await tx
     .select()
     .from(appSettings)
@@ -1133,11 +1126,7 @@ async function buildTimesheetReconciliation(
   for (const entry of entries)
     if (!entry.isLeave && !entry.isHoliday)
       workByDate.set(entry.workDate, (workByDate.get(entry.workDate) ?? 0) + Number(entry.hours));
-  const recordedDay = await recordedDayForOrganisation(
-    tx,
-    organisationId,
-    Number(settings?.standardDailyHours ?? 8),
-  );
+  const standardDay = Number(settings?.standardDailyHours ?? 8);
   const recordByDate = new Map(
     applyOfficeCredits(
       records,
@@ -1146,7 +1135,7 @@ async function buildTimesheetReconciliation(
   );
   const explanations = (sheet.attendanceDiscrepancyExplanations ?? {}) as Record<string, string>;
   const [trackingSettings] = await tx
-    .select({ additional: appSettings.additionalSettings })
+    .select({ additional: appSettings.additionalSettings, workingDays: appSettings.workingDays })
     .from(appSettings)
     .where(eq(appSettings.organisationId, organisationId))
     .limit(1);
@@ -1160,8 +1149,13 @@ async function buildTimesheetReconciliation(
   );
   const leaveByDate = new Map<string, number>();
   const holidayByDate = new Map<string, number>();
+  const remoteWorkDates = new Set<string>();
   for (const entry of absence.entries)
     for (const [date, hours] of Object.entries(entry.hours)) {
+      if (entry.isRemoteWork) {
+        remoteWorkDates.add(date);
+        continue;
+      }
       const target = entry.isLeave ? leaveByDate : holidayByDate;
       target.set(date, (target.get(date) ?? 0) + hours);
     }
@@ -1171,6 +1165,7 @@ async function buildTimesheetReconciliation(
       ...recordByDate.keys(),
       ...leaveByDate.keys(),
       ...holidayByDate.keys(),
+      ...remoteWorkDates,
     ]),
   ]
     .filter((date) => {
@@ -1180,7 +1175,8 @@ async function buildTimesheetReconciliation(
         workByDate.has(date) ||
         Boolean(record && (record.clockInAt || record.clockOutAt || record.officeExceptionLabel)) ||
         leaveByDate.has(date) ||
-        holidayByDate.has(date)
+        holidayByDate.has(date) ||
+        remoteWorkDates.has(date)
       );
     })
     .sort()
@@ -1188,11 +1184,12 @@ async function buildTimesheetReconciliation(
       const record = recordByDate.get(date);
       const leaveHours = leaveByDate.get(date) ?? 0;
       const holidayHours = holidayByDate.get(date) ?? 0;
-      const nonWorking = leaveHours + holidayHours >= recordedDay;
-      const attendanceHours = ordinaryAttendanceHours(
-        recordedAttendanceHours(record),
-        nonWorking ? recordedDay : recordedDay - leaveHours,
-      );
+      const nonWorking = leaveHours + holidayHours >= standardDay;
+      const policyCreditLimit =
+        leaveHours + holidayHours > 0 || record?.officeExceptionLabel
+          ? Math.max(0, standardDay - leaveHours - holidayHours)
+          : undefined;
+      const attendanceHours = recordedWorkingHours(record, policyCreditLimit);
       const manualHours = workByDate.get(date) ?? 0;
       const completeAttendance = Boolean(
         record?.officeExceptionLabel || (record?.clockInAt && record?.clockOutAt),
@@ -1203,43 +1200,60 @@ async function buildTimesheetReconciliation(
         completeAttendance,
         nonWorking,
       );
-      const varianceHours = Number((timesheetWorkHours - attendanceHours).toFixed(2));
+      const varianceHours =
+        manualHours > 0 && completeAttendance
+          ? Number((manualHours - attendanceHours).toFixed(2))
+          : 0;
+      const extraPresenceWithFullAllocation =
+        !leaveHours && !holidayHours && manualHours >= standardDay && attendanceHours > manualHours;
+      const projectVariance =
+        Math.abs(varianceHours) > toleranceHours && !extraPresenceWithFullAllocation;
       const incomplete = Boolean(
         record &&
         !record.officeExceptionLabel &&
         (record.clockInAt || record.clockOutAt) &&
         (!record.clockInAt || !record.clockOutAt),
       );
-      const tracked = isAttendanceTracked(tracking, sheet.employeeId, date);
+      const remoteWork = remoteWorkDates.has(date);
+      const tracked = !remoteWork && isAttendanceTracked(tracking, sheet.employeeId, date);
       const requiresExplanation =
-        (tracked &&
-          !nonWorking &&
-          (!record || incomplete || Math.abs(varianceHours) > toleranceHours)) ||
+        (tracked && !nonWorking && (!record || incomplete || projectVariance)) ||
         (nonWorking && (timesheetWorkHours > 0 || attendanceHours > 0 || incomplete));
       const explanation = explanations[date]?.trim();
-      const status =
-        nonWorking && !requiresExplanation
-          ? holidayHours
+      const status = nonWorking
+        ? requiresExplanation
+          ? "Variance"
+          : holidayHours
             ? "Holiday"
             : "Leave"
+        : remoteWork
+          ? timesheetWorkHours > 0
+            ? "Matched"
+            : (trackingSettings?.workingDays ?? [1, 2, 3, 4, 5]).includes(
+                  new Date(`${date}T12:00:00Z`).getUTCDay(),
+                )
+              ? "Missing Timesheet"
+              : "Rest Day"
           : incomplete
             ? "Incomplete Attendance"
             : !record
               ? "Missing Attendance"
               : !nonWorking && timesheetWorkHours === 0 && attendanceHours > toleranceHours
                 ? "Missing Timesheet"
-                : Math.abs(varianceHours) > toleranceHours
+                : projectVariance
                   ? "Variance"
                   : "Matched";
       return {
         date,
         attendanceHours,
         timesheetWorkHours,
+        projectHours: manualHours,
         leaveHours,
         holidayHours,
         varianceHours,
-        attendanceStatus:
-          nonWorking && !record?.clockInAt && !record?.clockOutAt
+        attendanceStatus: remoteWork
+          ? "Remote Work"
+          : nonWorking && !record?.clockInAt && !record?.clockOutAt
             ? holidayHours
               ? "Holiday"
               : "On Leave"
@@ -1873,6 +1887,7 @@ export async function processTimesheetWorker(at = new Date()) {
           employeeId: leaveRequests.employeeId,
           startDate: leaveRequests.startDate,
           endDate: leaveRequests.endDate,
+          policySnapshot: leaveRequests.policySnapshot,
         })
         .from(leaveRequests)
         .where(
@@ -1892,13 +1907,16 @@ export async function processTimesheetWorker(at = new Date()) {
       );
       requiredPeriods.set(currentPeriod.startDate, currentPeriod);
       for (const leave of leaveRanges) {
+        if (!approvedLeaveIntersectsRange(leave, earliestKey, todayKey)) continue;
         for (const period of timesheetPeriodsInRange(
           leave.startDate < earliestKey ? earliestKey : leave.startDate,
           leave.endDate > todayKey ? todayKey : leave.endDate,
           settings.periodFrequency,
           settings.weeklyPeriodStartDay,
-        ))
+        )) {
+          if (!approvedLeaveIntersectsRange(leave, period.startDate, period.endDate)) continue;
           requiredPeriods.set(period.startDate, period);
+        }
       }
       for (const period of requiredPeriods.values()) {
         await tx
@@ -2036,8 +2054,7 @@ export async function processTimesheetWorker(at = new Date()) {
             leaveRanges.some(
               (leave) =>
                 leave.employeeId === employee.id &&
-                leave.startDate <= period.endDate &&
-                leave.endDate >= period.startDate,
+                approvedLeaveIntersectsRange(leave, period.startDate, period.endDate),
             )
           ) {
             const absence = await absencesForPeriod(

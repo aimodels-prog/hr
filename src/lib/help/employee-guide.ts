@@ -195,6 +195,7 @@ export const employeeGuide = [
       "A special request goes to your line manager, then Riccardo, then HR. HR chooses which available leave balances to use and whether any remaining days are paid or unpaid. Finance is notified after HR approves.",
       "Wait for the final decision before treating your leave as approved.",
       "Once approved, your covered days show as leave automatically. You do not need to clock in or enter work hours for full leave days. Half-day leave leaves the other half for work.",
+      "If you came to the office on an approved leave day and completed your machine sign-in and sign-out, that date can be counted as work instead. Check your leave history and balance afterward. HR reviews short or unclear machine records and leave with special pay or balance rules.",
     ],
     "The request goes through the required reviews. HR is notified as well as the relevant manager; a notification alone is not approval.",
     [
@@ -252,10 +253,10 @@ export const employeeGuide = [
       "Open My Attendance to check that today’s clock-in appears. Allow the office connection to send the record.",
       "Clock out when you finish work, then check the recorded times and hours.",
       "If you thumb twice soon after arriving, the repeat is kept as a machine record but does not sign you out. The last valid thumb before local midnight is your sign-out; if there is no later valid thumb, the sign-out remains missing for review.",
-      "If HR records a company activity, training, approved remote work or an excused closure, your attendance shows that label with credited hours. You do not need to invent clock times. Allocate those hours in your timesheet as usual and submit it for approval. Ask HR if the covered day is incorrect.",
+      "If HR records a company activity, training, approved remote work or an excused closure, your attendance shows the correct label. Do not invent clock times. Remote work still needs your actual work hours in the timesheet; an approved remote day is not automatic worked time. Ask HR if the covered day is incorrect.",
       "If a time is missing or wrong, open that day and request a correction instead of creating another clock-in.",
     ],
-    "VIA allows flexible working hours. HR sets the daily working hours and scheduled break. With eight working hours and a one-hour lunch, an 8:30 am arrival normally means a 5:30 pm finish. Attendance totals and timesheet hours include the break: 8:30 am to 5:30 pm is recorded as nine hours. Extra time in the office is not automatically approved overtime.",
+    "VIA allows flexible working hours. HR sets the daily working hours and scheduled break. For example, with eight working hours and a one-hour lunch, an 8:30 am arrival normally means a 5:30 pm finish. Attendance can show nine hours on site, including lunch; the timesheet target is eight working hours, excluding lunch. Extra time in the office is not automatically approved overtime.",
     [
       "Coming earlier does not remove your required working hours. For example, 7:30 am–4:30 pm includes the usual lunch hour.",
       "Extra time in the office is not automatically overtime. Overtime needs a separate approved request.",

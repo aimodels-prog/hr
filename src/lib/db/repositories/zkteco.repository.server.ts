@@ -4,7 +4,10 @@ import {
   flexibleOfficeSchedule,
   VIA_OFFICE_SCHEDULE,
 } from "../../data/office-schedule.ts";
-import { effectiveTerminalPunchTimes } from "../../data/terminal-punches.ts";
+import {
+  effectiveTerminalPunchTimes,
+  officeLeaveReturnEvidence,
+} from "../../data/terminal-punches.ts";
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
@@ -29,6 +32,7 @@ import {
   timesheetPeriods,
 } from "../schema/time.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
+import { reconcileApprovedLeaveForOfficeWorkDayInDatabase } from "./leave-attendance-reconciliation.repository.server.ts";
 
 type Transaction = Parameters<Parameters<ViaHrDatabase["transaction"]>[0]>[0];
 
@@ -250,7 +254,11 @@ async function projectDailyAttendance(
     .where(eq(attendancePolicies.organisationId, input.organisationId))
     .limit(1);
   const priorEvents = await tx
-    .select({ occurredAt: attendancePunchEvents.occurredAt })
+    .select({
+      occurredAt: attendancePunchEvents.occurredAt,
+      source: attendancePunchEvents.source,
+      deviceStatus: attendancePunchEvents.deviceStatus,
+    })
     .from(attendancePunchEvents)
     .where(
       and(
@@ -262,12 +270,21 @@ async function projectDailyAttendance(
     )
     .orderBy(asc(attendancePunchEvents.occurredAt));
   const eventDateMarker = eventDate;
-  const allEvents = [...priorEvents.map((item) => new Date(item.occurredAt)), eventDateMarker].sort(
-    (a, b) => a.getTime() - b.getTime(),
-  );
+  const allEvidence = [
+    ...priorEvents.map((item) => ({
+      at: new Date(item.occurredAt),
+      source: item.source,
+      deviceStatus: item.deviceStatus,
+    })),
+    { at: eventDateMarker, source: "Hardware Terminal", deviceStatus: input.status ?? null },
+  ].sort((a, b) => a.at.getTime() - b.at.getTime());
+  const allEvents = allEvidence.map((item) => item.at);
   const effectiveEvents = effectiveTerminalPunchTimes(
     allEvents,
     policy?.punchDeduplicationMinutes ?? 15,
+  );
+  const effectiveEvidence = effectiveEvents.map((at) =>
+    allEvidence.find((item) => item.at === at)!,
   );
   const effectiveIndex = effectiveEvents.indexOf(eventDateMarker);
   let direction =
@@ -458,6 +475,39 @@ async function projectDailyAttendance(
         : "Punch retained as evidence; an HR-entered or automated record was not overwritten.",
     })
     .where(eq(attendanceDevicePunches.id, input.rawPunchId));
+  if (
+    automaticProjection &&
+    !["Correction Pending", "Corrected"].includes(existing?.status ?? "")
+  ) {
+    const [projected] = await tx
+      .select({
+        clockInAt: attendanceRecords.clockInAt,
+        clockOutAt: attendanceRecords.clockOutAt,
+        workMode: attendanceRecords.workMode,
+        calculatedHours: attendanceRecords.calculatedHours,
+      })
+      .from(attendanceRecords)
+      .where(eq(attendanceRecords.id, recordId))
+      .limit(1);
+    const evidence = officeLeaveReturnEvidence({
+      clockInAt: projected?.clockInAt,
+      clockOutAt: projected?.clockOutAt,
+      workMode: projected?.workMode,
+      activeSiteVisit: Boolean(siteVisit),
+      effectiveEvents: effectiveEvidence,
+    });
+    if (projected && evidence.completeOfficeDay) {
+      await reconcileApprovedLeaveForOfficeWorkDayInDatabase(tx, {
+        organisationId: input.organisationId,
+        employeeId: input.employeeId,
+        date,
+        attendanceRecordId: recordId,
+        observedWorkHours: Number(projected.calculatedHours),
+        expectedWorkHours: Number(policy?.standardDailyHours ?? 8),
+        explicitOut: evidence.explicitOut,
+      });
+    }
+  }
   return recordId;
 }
 

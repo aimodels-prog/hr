@@ -5,6 +5,7 @@ import {
   EFFECTIVE_LEAVE_STATUSES,
   isAbsenceLeave,
   isRemoteWorkMarker,
+  approvedLeaveSnapshotIncludesDate,
 } from "../../data/approved-leave.ts";
 import { leaveDisplayType } from "../../data/leave-presentation.ts";
 import {
@@ -18,6 +19,7 @@ import { isAttendanceTracked, readAttendanceTracking } from "../../data/attendan
 import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
 import { enqueueMissingClockoutReminders } from "./missing-clockout.repository.server.ts";
 import { syncWorkingHours } from "./working-hours.repository.server.ts";
+import { reconcileApprovedLeaveForOfficeWorkDayInDatabase } from "./leave-attendance-reconciliation.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
 import {
@@ -799,7 +801,12 @@ export async function captureAttendancePunchInDatabase(
           ),
         );
       if (
-        leave.filter(isAbsenceLeave).reduce((sum, item) => sum + (item.isHalfDay ? 0.5 : 1), 0) >= 1
+        leave
+          .filter(
+            (item) =>
+              isAbsenceLeave(item) && approvedLeaveSnapshotIncludesDate(item.policySnapshot, date),
+          )
+          .reduce((sum, item) => sum + (item.isHalfDay ? 0.5 : 1), 0) >= 1
       )
         throw new Error(
           "You are on approved leave today. Ask HR to update the leave if you have returned early.",
@@ -1035,7 +1042,11 @@ export async function requestAttendanceCorrectionInDatabase(
       if (holiday) throw new Error("Public holidays cannot be changed through a punch correction.");
       if (
         approvedLeave
-          .filter(isAbsenceLeave)
+          .filter(
+            (leave) =>
+              isAbsenceLeave(leave) &&
+              approvedLeaveSnapshotIncludesDate(leave.policySnapshot, input.date!),
+          )
           .reduce((sum, leave) => sum + (leave.isHalfDay ? 0.5 : 1), 0) >= 1
       )
         throw new Error("Approved leave days cannot be changed through a punch correction.");
@@ -1432,6 +1443,32 @@ export async function decideAttendanceCorrectionInDatabase(
           recordVersion: sql`${attendanceCorrections.recordVersion} + 1`,
         })
         .where(eq(attendanceCorrections.id, correctionId));
+      if (
+        correction.correctionType === "Missed Sign-out" &&
+        correction.originalClockIn &&
+        !correction.originalClockOut &&
+        clockOutAt &&
+        record.workMode === "Office" &&
+        ["Hardware Terminal", "Multiple Sources"].includes(record.source)
+      ) {
+        const [completed] = await tx
+          .select({ calculatedHours: attendanceRecords.calculatedHours })
+          .from(attendanceRecords)
+          .where(eq(attendanceRecords.id, record.id))
+          .limit(1);
+        if (completed) {
+          await reconcileApprovedLeaveForOfficeWorkDayInDatabase(tx, {
+            organisationId,
+            employeeId: correction.employeeId,
+            date: record.date,
+            attendanceRecordId: record.id,
+            observedWorkHours: Number(completed.calculatedHours),
+            expectedWorkHours: Number(policy?.standardDailyHours ?? 8),
+            explicitOut: false,
+            hrApprovedCorrection: true,
+          });
+        }
+      }
     }
     await tx.insert(auditEvents).values({
       organisationId,
@@ -1951,9 +1988,7 @@ export async function decideSiteVisitInDatabase(
           recipientUserId: employeeUser.id,
           type: "attendance.site_visit",
           title: `Site visit${extensionReview ? " extension" : ""} ${decision === "approve" ? "approved" : "declined"}`,
-          message:
-            notes?.trim() ||
-            `Your site visit to ${visit.destination} was ${decision === "approve" ? "approved" : "declined"}.`,
+          message: `Your site visit${extensionReview ? " extension" : ""} to ${visit.destination} on ${visit.date} was ${decision === "approve" ? "approved" : "declined"} by ${actor.displayName}.${notes?.trim() ? ` HR note: ${notes.trim()}` : ""}`,
           priority: decision === "reject" ? "High" : "Normal",
           deduplicationKey: `site-visit-${visitId}-${decision}${extensionReview ? `-extension-${visit.recordVersion}` : ""}`,
           link: { entityType: "site-visit", entityId: visitId, path: "/staff/me/attendance" },
@@ -2255,8 +2290,11 @@ export async function getMyLiveAttendance(organisationId: string, actor: AuditAc
     if (span < 0) span += 1440;
     targetMinutes = Math.max(0, span);
   }
-  const absenceLeave = approvedLeave.filter(isAbsenceLeave);
-  const remoteWorkApproved = approvedLeave.some(isRemoteWorkMarker);
+  const coveredLeave = approvedLeave.filter((leave) =>
+    approvedLeaveSnapshotIncludesDate(leave.policySnapshot, date),
+  );
+  const absenceLeave = coveredLeave.filter(isAbsenceLeave);
+  const remoteWorkApproved = coveredLeave.some(isRemoteWorkMarker);
   const leaveFraction = Math.min(
     1,
     absenceLeave.reduce((sum, leave) => sum + (leave.isHalfDay ? 0.5 : 1), 0),

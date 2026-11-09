@@ -110,7 +110,7 @@ export interface LeaveTransaction extends BaseRecord {
   days: number; // positive for adding balance, negative for taking leave
   reason: string;
   referenceId?: string; // ID of the leave request if applicable
-  actorUserId: RecordId;
+  actorUserId: RecordId | null;
 }
 
 /** An employee-specific statutory/event allowance approved by HR. */
@@ -164,6 +164,8 @@ export interface LeaveAmendmentRequest {
   chainApprovals: Array<{
     role: string;
     approvedBy?: RecordId;
+    /** Resolved by the server for viewers permitted to see this request. */
+    approverName?: string;
     date?: string;
     status: "Pending" | "Approved" | "Declined";
   }>;
@@ -179,6 +181,8 @@ export interface LeaveAmendmentHistory {
   reason: string;
   decidedAt: string;
   decidedBy: RecordId;
+  /** Resolved by the server for viewers permitted to see this request. */
+  deciderName?: string;
   outcome: "Approved" | "Declined";
   decisionReason?: string;
 }
@@ -187,6 +191,8 @@ export interface LeaveRequest extends BaseRecord {
   employeeId: RecordId;
   /** Display name supplied only with a request the viewer may already access. */
   requesterName?: string;
+  /** Current assigned supervisor, resolved by the server for this visible request. */
+  lineManagerName?: string;
   policyId: RecordId;
   startDate: string;
   endDate: string;
@@ -198,7 +204,7 @@ export interface LeaveRequest extends BaseRecord {
   /** Kept for older imported records; new requests store evidence in IndexedDB by file ID. */
   attachmentUrl?: string;
   status: LeaveRequestStatus;
-  refusalReason?: string; // used if Automatically Refused
+  refusalReason?: string; // human decline or automatic refusal
   cancellationReason?: string;
   pendingAmendment?: LeaveAmendmentRequest;
   amendmentHistory?: LeaveAmendmentHistory[];
@@ -210,12 +216,23 @@ export interface LeaveRequest extends BaseRecord {
   chainApprovals: Array<{
     role: string;
     approvedBy?: RecordId;
+    /** Resolved by the server for viewers permitted to see this request. */
+    approverName?: string;
     date?: string;
     status: "Pending" | "Approved" | "Declined";
   }>;
   policySnapshot: {
     /** Dates used to calculate the approved total; unchanged by later calendar edits. */
     workingDates?: string[];
+    /** Audited office-attendance evidence for an approved leave day subsequently removed. */
+    officeWorkCorrections?: Array<{
+      date: string;
+      attendanceRecordId: string;
+      correctedAt: string;
+      restoredDays: number;
+      decisionSource: "Biometric" | "HR";
+      reason?: string;
+    }>;
     payTiers?: SickPayTier[];
     noticeException?: {
       requiredDays: number;

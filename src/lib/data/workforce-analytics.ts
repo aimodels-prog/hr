@@ -1,4 +1,5 @@
 import { isAttendanceTracked, type AttendanceTrackingPolicy } from "./attendance-tracking.ts";
+import { approvedLeaveCoversDate } from "./approved-leave.ts";
 export interface AnalyticsEmployee {
   id: string;
   startDate: string;
@@ -73,7 +74,7 @@ type AttendanceTodayInput = {
     status: string;
     creditedHours?: number;
   }[];
-  leave: { employeeId: string; startDate: string; endDate: string }[];
+  leave: { employeeId: string; startDate: string; endDate: string; policySnapshot?: unknown }[];
   pendingVisits: { employeeId: string; date: string }[];
 };
 
@@ -127,9 +128,7 @@ export function attendanceTodayEmployeeIds(input: AttendanceTodayInput) {
         (request) =>
           input.people.some(
             (person) => person.id === request.employeeId && employedOn(person, input.date),
-          ) &&
-          request.startDate <= input.date &&
-          request.endDate >= input.date,
+          ) && approvedLeaveCoversDate(request, input.date),
       )
       .map((request) => request.employeeId),
   );
@@ -165,8 +164,19 @@ export function calculateAttendanceAnalytics(input: {
   workingDays: number[];
   dailyHours: number;
   holidays: { date: string; locationId: string | null }[];
-  leave: { employeeId: string; startDate: string; endDate: string; isHalfDay: boolean }[];
-  remoteWork?: { employeeId: string; startDate: string; endDate: string }[];
+  leave: {
+    employeeId: string;
+    startDate: string;
+    endDate: string;
+    isHalfDay: boolean;
+    policySnapshot?: unknown;
+  }[];
+  remoteWork?: {
+    employeeId: string;
+    startDate: string;
+    endDate: string;
+    policySnapshot?: unknown;
+  }[];
   records: {
     employeeId: string;
     date: string;
@@ -209,10 +219,7 @@ export function calculateAttendanceAnalytics(input: {
       const tracked =
         input.tracking === undefined || isAttendanceTracked(input.tracking, employee.id, date);
       const remoteWork = input.remoteWork?.some(
-        (request) =>
-          request.employeeId === employee.id &&
-          request.startDate <= date &&
-          request.endDate >= date,
+        (request) => request.employeeId === employee.id && approvedLeaveCoversDate(request, date),
       );
       const scheduled =
         tracked &&
@@ -223,7 +230,7 @@ export function calculateAttendanceAnalytics(input: {
       const leaveFraction = Math.min(
         1,
         (leaveByEmployee.get(employee.id) ?? [])
-          .filter((leave) => leave.startDate <= date && leave.endDate >= date)
+          .filter((leave) => approvedLeaveCoversDate(leave, date))
           .reduce((sum, leave) => sum + (leave.isHalfDay ? 0.5 : 1), 0),
       );
       const expected = scheduled ? input.dailyHours * (1 - leaveFraction) : 0;

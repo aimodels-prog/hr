@@ -16,12 +16,17 @@ import { OnboardingService } from "@/lib/data/onboarding-service";
 import { PerformanceService } from "@/lib/data/performance-service";
 import { AttendanceService } from "@/lib/data/attendance-service";
 import { OvertimeService } from "@/lib/data/overtime-service";
+import {
+  approvedLeaveCoversDate,
+  approvedLeaveIntersectsRange,
+  isAbsenceLeave,
+  isEffectiveLeave,
+  organisationDate,
+} from "@/lib/data/approved-leave";
+import { SettingsService } from "@/lib/data/settings-service";
 import type { Employee } from "@/lib/data/types";
 import { useCurrentUser } from "@/lib/auth";
-import {
-  isCurrentWorkforceMember,
-  isDateRangeActiveOn,
-} from "@/components/dashboards/dashboard-data";
+import { isCurrentWorkforceMember } from "@/components/dashboards/dashboard-data";
 import {
   AttentionQueue,
   PulseStrip,
@@ -52,6 +57,7 @@ export function ManagerDashboard({ employee, userId }: { employee: Employee; use
 
 function ManagerDashboardDetails({ employee, userId }: { employee: Employee; userId: string }) {
   const currentUser = useCurrentUser();
+  const now = new Date();
   const empService = useMemo(() => new EmployeeService(), []);
   const leaveService = useMemo(() => new LeaveService(), []);
   const tsService = useMemo(() => new TimesheetService(), []);
@@ -72,18 +78,20 @@ function ManagerDashboardDetails({ employee, userId }: { employee: Employee; use
   const pendingLeave = allLeaveRequests.filter(
     (r) => r.status === "Pending Line Manager" && teamIds.has(r.employeeId),
   );
-  const now = new Date();
-  const weekEnd = new Date(now);
-  weekEnd.setDate(weekEnd.getDate() + 6);
+  const today = organisationDate(now, new SettingsService().getAppSettingsSync().timezone);
+  const weekEnd = new Date(`${today}T12:00:00Z`);
+  weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+  const weekEndDate = weekEnd.toISOString().slice(0, 10);
   const activeLeave = allLeaveRequests.filter(
     (r) =>
-      r.status === "Approved" &&
+      isEffectiveLeave(r) &&
+      isAbsenceLeave(r) &&
       teamIds.has(r.employeeId) &&
-      isDateRangeActiveOn(r.startDate, r.endDate, now),
+      approvedLeaveCoversDate(r, today),
   );
   const teamOutThisWeek = allLeaveRequests
-    .filter((r) => teamIds.has(r.employeeId) && (r.status === "Approved" || r.status === "Taken"))
-    .filter((r) => new Date(r.startDate) <= weekEnd && new Date(r.endDate) >= now)
+    .filter((r) => teamIds.has(r.employeeId) && isEffectiveLeave(r) && isAbsenceLeave(r))
+    .filter((r) => approvedLeaveIntersectsRange(r, today, weekEndDate))
     .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
 
   // Timesheets
@@ -247,7 +255,12 @@ function ManagerDashboardDetails({ employee, userId }: { employee: Employee; use
                       </p>
                     </div>
                     <span className="shrink-0 text-xs text-muted-foreground">
-                      {formatDate(req.startDate)} to {formatDate(req.endDate)}
+                      Next approved day:{" "}
+                      {formatDate(
+                        req.policySnapshot.workingDates
+                          ?.filter((date) => date >= today && date <= weekEndDate)
+                          .sort()[0] ?? (req.startDate < today ? today : req.startDate),
+                      )}
                     </span>
                   </div>
                 );

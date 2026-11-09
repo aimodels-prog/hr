@@ -8,6 +8,7 @@ import {
   FolderOpen,
   CalendarDays,
   Clock,
+  MapPin,
   Plane,
   DoorOpen,
   TrendingUp,
@@ -240,6 +241,14 @@ const navigation: NavGroup[] = [
         keywords: "biometric fingerprint clock terminal site visit working hours",
         icon: Clock,
         requiredPermission: "attendance:manage_all",
+      },
+      {
+        title: "Visit Approvals",
+        url: "/staff/attendance#section=site-visits",
+        keywords: "quick visit ministry site official duty requests approve reject",
+        icon: MapPin,
+        requiredPermission: "attendance:site_visit_approve",
+        requiredRoles: ["HR"],
       },
       {
         title: "Employee Timesheets",
@@ -831,7 +840,7 @@ export function searchNavigation(groups: NavGroup[], query: string): NavGroup[] 
     .filter((group) => group.items.length);
 }
 
-/** Longest path wins; explicit query actions beat their parent page. */
+/** Longest path wins; explicit query and section links beat their parent page. */
 export function activeNavigationUrl(groups: NavGroup[], href: string): string | undefined {
   const location = new URL(href, "https://navigation.local");
   const matches = (url: string, allowDescendant: boolean) => {
@@ -841,7 +850,10 @@ export function activeNavigationUrl(groups: NavGroup[], href: string): string | 
         (allowDescendant &&
           target.pathname !== "/staff" &&
           location.pathname.startsWith(target.pathname + "/"))) &&
-      [...target.searchParams].every(([key, value]) => location.searchParams.get(key) === value)
+      [...target.searchParams].every(([key, value]) => location.searchParams.get(key) === value) &&
+      [...new URLSearchParams(target.hash.slice(1))].every(
+        ([key, value]) => new URLSearchParams(location.hash.slice(1)).get(key) === value,
+      )
     );
   };
   return groups

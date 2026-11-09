@@ -20,7 +20,6 @@ import { OvertimeService } from "@/lib/data/overtime-service";
 import { TrainingService } from "@/lib/data/training-service";
 import type { Employee } from "@/lib/data/types";
 import { useCurrentUser } from "@/lib/auth";
-import { sortByStartDate } from "@/components/dashboards/dashboard-data";
 import {
   AttentionQueue,
   DashboardPanel,
@@ -61,11 +60,6 @@ function EmployeeDashboardDetails({ employee, userId }: { employee: Employee; us
         .find((p) => p.id === b.policyId)
         ?.name.includes("Annual"),
     )?.available || 0;
-  const upcomingLeave = sortByStartDate(
-    leaveService
-      .getLeaveRequestsForEmployee(employee.id, actorContext)
-      .filter((r) => r.status === "Approved" && new Date(r.startDate) > new Date()),
-  );
   const leaveRequests = leaveService
     .getLeaveRequestsForEmployee(employee.id, actorContext)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));

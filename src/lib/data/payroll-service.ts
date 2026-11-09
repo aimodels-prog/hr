@@ -15,6 +15,7 @@ import { OvertimeService } from "./overtime-service.ts";
 import { TravelService } from "./travel-service.ts";
 import { LeaveService } from "./leave-service.ts";
 import { payrollLeaveDaysInPeriod } from "./leave-working-days.ts";
+import { approvedLeaveCoversDate } from "./approved-leave.ts";
 import { specialUnpaidDaysInPeriod } from "./special-leave.ts";
 import { sickLeavePayrollReductions } from "./sick-leave-payroll.ts";
 import { SettingsService } from "./settings-service.ts";
@@ -494,7 +495,9 @@ export class PayrollService {
             sum +
             (r.policySnapshot.specialRequest
               ? specialUnpaidDaysInPeriod(
-                  r.policySnapshot.specialRequest.unpaidByDate ?? [],
+                  (r.policySnapshot.specialRequest.unpaidByDate ?? []).filter((entry) =>
+                    approvedLeaveCoversDate(r, entry.date),
+                  ),
                   period.startDate,
                   period.endDate,
                 )
