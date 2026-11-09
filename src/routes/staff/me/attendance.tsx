@@ -808,24 +808,25 @@ function MyAttendanceRoute() {
                           </TableCell>
                           <TableCell>{row.workMode ?? "—"}</TableCell>
                           <TableCell className="text-right">
-                            {correction &&
-                            ["Pending Manager", "Pending HR"].includes(correction.status) ? (
-                              <Badge variant="secondary">{correction.status}</Badge>
-                            ) : canCorrect ? (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => openCorrection(row)}
-                              >
-                                {correction
-                                  ? "Correct again"
-                                  : row.virtual
-                                    ? "Add worked time"
-                                    : "Correct"}
-                              </Button>
-                            ) : correction ? (
-                              <Badge variant="secondary">{correction.status}</Badge>
-                            ) : null}
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                              {correction && <Badge variant="secondary">{correction.status}</Badge>}
+                              {canCorrect &&
+                                !["Pending Manager", "Pending HR"].includes(
+                                  correction?.status ?? "",
+                                ) && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => openCorrection(row)}
+                                  >
+                                    {correction
+                                      ? "Correct again"
+                                      : row.virtual
+                                        ? "Add worked time"
+                                        : "Correct"}
+                                  </Button>
+                                )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       );

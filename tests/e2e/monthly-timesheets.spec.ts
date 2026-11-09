@@ -38,7 +38,9 @@ test("employee monthly entry stays one sheet across date windows, including on a
     await page.goto("/staff/me/timesheets");
     const row = page.getByRole("row").filter({ hasText: label });
     await expect(row).toBeVisible({ timeout: 30000 });
-    await expect(page.getByText("Record daily hours. Submit once per month.")).toBeVisible();
+    await expect(
+      page.getByText("Review each day's work and leave. Submit once per month."),
+    ).toBeVisible();
     await row.getByRole("link").click();
     await expect(page.getByRole("heading", { name: "Timesheet Entry", exact: true })).toBeVisible({
       timeout: 30000,
