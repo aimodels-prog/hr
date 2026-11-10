@@ -35,6 +35,29 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   const completedStart = dateAfter(-16);
   const completedEnd = dateAfter(-14);
   const expenseDate = dateAfter(-15);
+  // Browser retries retain the database from the first attempt. Keep their attendance,
+  // timesheet and overtime records in a separate month to avoid duplicate-day writes.
+  const workMonth = new Date(Date.UTC(2026, 5 + test.info().retry, 1));
+  const workMonthIndex = workMonth.getUTCMonth();
+  const firstWednesday = 1 + ((3 - workMonth.getUTCDay() + 7) % 7);
+  const workAttendanceDay = new Date(Date.UTC(2026, workMonthIndex, firstWednesday));
+  const workOvertimeDay = new Date(Date.UTC(2026, workMonthIndex, firstWednesday + 1));
+  const workPeriodStart = workMonth.toISOString().slice(0, 10);
+  const workPeriodEnd = new Date(Date.UTC(2026, workMonthIndex + 1, 0)).toISOString().slice(0, 10);
+  const workAttendanceDate = workAttendanceDay.toISOString().slice(0, 10);
+  const workOvertimeDate = workOvertimeDay.toISOString().slice(0, 10);
+  const workMonthLabel = new Intl.DateTimeFormat("en", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(workMonth);
+  const workAttendanceLabel = `${String(firstWednesday).padStart(2, "0")} ${new Intl.DateTimeFormat(
+    "en",
+    {
+      month: "short",
+      timeZone: "UTC",
+    },
+  ).format(workAttendanceDay)}`;
   const labels = {
     leave: `E2E family appointment ${suffix}`,
     correction: `E2E missed punch correction ${suffix}`,
@@ -47,7 +70,16 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   await expect(page.getByText("VIA HR System").first()).toBeVisible();
 
   const records = await page.evaluate(
-    async ({ labels, leaveDate, travelStart, travelEnd }) => {
+    async ({
+      labels,
+      leaveDate,
+      travelStart,
+      travelEnd,
+      workAttendanceDate,
+      workOvertimeDate,
+      workPeriodStart,
+      workPeriodEnd,
+    }) => {
       const { initializeApplicationData } = await import("/src/lib/data/application-data.ts");
       const { LeaveService } = await import("/src/lib/data/leave-service.ts");
       const { AttendanceService } = await import("/src/lib/data/attendance-service.ts");
@@ -104,7 +136,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
       const attendance = await attendanceService.saveRecordAsync(
         {
           employeeId: "employee-omar",
-          date: "2026-06-03",
+          date: workAttendanceDate,
           expectedClockIn: "09:00",
           expectedClockOut: "18:00",
           clockIn: "09:30",
@@ -131,10 +163,10 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
 
       const timesheetService = new TimesheetService(attendanceService);
       await timesheetService.hydrateCompatibilityCache(hr);
-      await timesheetService.generatePeriodsAsync("2026-06-01", "2026-06-30", hr);
+      await timesheetService.generatePeriodsAsync(workPeriodStart, workPeriodEnd, hr);
       const period = timesheetService
         .getPeriods()
-        .find((item) => item.startDate === "2026-06-01" && item.endDate === "2026-06-30");
+        .find((item) => item.startDate === workPeriodStart && item.endDate === workPeriodEnd);
       if (!period) throw new Error("The browser test timesheet period was not generated.");
       const timesheet = await timesheetService.getOrCreateTimesheetAsync(
         "employee-omar",
@@ -181,7 +213,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
         {
           employeeId: "employee-omar",
           requestKind: "Emergency Retrospective",
-          date: "2026-06-04",
+          date: workOvertimeDate,
           hours: 2,
           reason: labels.overtime,
           emergencyReason: "Urgent shipment release could not be predicted before the work began.",
@@ -222,7 +254,16 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
         travelDatabaseId: travel.databaseId ?? travel.id,
       };
     },
-    { labels, leaveDate, travelStart, travelEnd },
+    {
+      labels,
+      leaveDate,
+      travelStart,
+      travelEnd,
+      workAttendanceDate,
+      workOvertimeDate,
+      workPeriodStart,
+      workPeriodEnd,
+    },
   );
 
   // Supervisor decisions: the employee's actual reporting line is checked by every service.
@@ -420,28 +461,31 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   // Final records persist and are visible to their employee after role changes and reloads.
   await previewAs(page, "user-omar", "Employee", "/staff/me/leave-balances");
   await page.getByRole("tab", { name: /Request history/i }).click();
-  await expect(page.getByText(labels.leave)).toBeVisible();
-  await expect(page.getByText("Approved", { exact: true }).first()).toBeVisible();
+  const approvedLeaveRow = page.getByRole("row").filter({ hasText: labels.leave });
+  await expect(approvedLeaveRow).toBeVisible();
+  await expect(approvedLeaveRow.getByText("Approved", { exact: true })).toBeVisible();
 
   await page.goto("/staff/me/attendance");
-  // Attendance opens on the current month, not always September 2026.
-  const monthsSinceJune = await page.evaluate(() => {
+  // Attendance opens on the current month, not the test record's month.
+  const monthsSinceWorkMonth = await page.evaluate((periodStart) => {
     const now = new Date();
-    return (now.getFullYear() - 2026) * 12 + now.getMonth() - 5;
-  });
-  expect(monthsSinceJune).toBeGreaterThanOrEqual(0);
-  for (let month = 0; month < monthsSinceJune; month++) {
+    const period = new Date(`${periodStart}T12:00:00`);
+    return (now.getFullYear() - period.getFullYear()) * 12 + now.getMonth() - period.getMonth();
+  }, workPeriodStart);
+  expect(monthsSinceWorkMonth).toBeGreaterThanOrEqual(0);
+  for (let month = 0; month < monthsSinceWorkMonth; month++) {
     await page.getByRole("button", { name: "Previous" }).click();
   }
-  await expect(page.getByRole("heading", { name: "June 2026", exact: true })).toBeVisible();
-  const correctedAttendanceRow = page.getByRole("row").filter({ hasText: "03 Jun" });
+  await expect(page.getByRole("heading", { name: workMonthLabel, exact: true })).toBeVisible();
+  const correctedAttendanceRow = page.getByRole("row").filter({ hasText: workAttendanceLabel });
   await expect(correctedAttendanceRow).toContainText("Present");
   await expect(correctedAttendanceRow).toContainText("09:00");
   await expect(correctedAttendanceRow).toContainText("18:00");
   await expect(correctedAttendanceRow).toContainText("Approved");
   await page.goto("/staff/me/overtime");
-  await expect(page.getByText(labels.overtime)).toBeVisible();
-  await expect(page.getByText("Approved", { exact: true }).first()).toBeVisible();
+  const approvedOvertimeRow = page.getByRole("row").filter({ hasText: labels.overtime });
+  await expect(approvedOvertimeRow).toBeVisible();
+  await expect(approvedOvertimeRow.getByText("Approved", { exact: true })).toBeVisible();
   await page.goto(`/staff/travel/${records.travelId}`);
   await expect(page.getByText("Closed", { exact: true }).first()).toBeVisible();
 

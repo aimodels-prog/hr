@@ -207,7 +207,7 @@ test(
               },
               employee,
             ),
-            /Line Manager approval access/,
+            /Line Manager or HR approval access/,
           );
           assert.equal(
             (await query`SELECT id FROM attendance_corrections WHERE organisation_id=${org}`)
@@ -217,6 +217,11 @@ test(
           assert.deepEqual(await roleCodes(finance.userId), ["Accounts", "Employee"]);
           // Re-saving the current, HR-authorised assignment repairs legacy access too.
           await setManager(finance.employeeId);
+          assert.deepEqual(await roleCodes(finance.userId), [
+            "Accounts",
+            "Employee",
+            "Line Manager",
+          ]);
         },
       );
 

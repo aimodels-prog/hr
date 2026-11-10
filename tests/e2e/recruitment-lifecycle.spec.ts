@@ -6,6 +6,12 @@ test("public application progresses through shortlist, interview, offer and onbo
 }) => {
   test.setTimeout(180_000);
   const unique = Date.now().toString();
+  const candidateLastName = `Candidate${unique
+    .slice(-6)
+    .split("")
+    .map((digit) => "ABCDEFGHIJ"[Number(digit)])
+    .join("")}`;
+  const candidateName = `Browser ${candidateLastName}`;
   const candidateEmail = `browser.candidate.${unique}@example.com`;
   await page.goto("/jobs/log-ops-lead");
   await expect(page.getByRole("heading", { name: "Apply for this position" })).toBeVisible({
@@ -14,7 +20,7 @@ test("public application progresses through shortlist, interview, offer and onbo
 
   const fields = {
     firstName: "Browser",
-    lastName: "Candidate",
+    lastName: candidateLastName,
     email: candidateEmail,
     phone: `+97150${unique.slice(-7)}`,
     location: "Dubai",
@@ -35,7 +41,7 @@ test("public application progresses through shortlist, interview, offer and onbo
     name: "Browser-Candidate.pdf",
     mimeType: "application/pdf",
     buffer: textPdf(
-      "Browser Candidate. 8 years of experience in logistics, CargoWise and supply chain leadership in Dubai. Managed customs clearance, freight operations, transport planning and regional teams. Education: Bachelor of Business Administration. Skills: logistics, supply chain, customs clearance, leadership, CargoWise. Languages: English.",
+      `${candidateName}. 8 years of experience in logistics, CargoWise and supply chain leadership in Dubai. Managed customs clearance, freight operations, transport planning and regional teams. Education: Bachelor of Business Administration. Skills: logistics, supply chain, customs clearance, leadership, CargoWise. Languages: English.`,
     ),
   });
   await page.getByRole("checkbox").click();
@@ -44,7 +50,8 @@ test("public application progresses through shortlist, interview, offer and onbo
   await expect(page.getByText(/^APP-\d{2}-/)).toBeVisible();
 
   await page.goto("/staff/candidates");
-  await expect(page.getByRole("link", { name: "Browser Candidate", exact: true })).toBeVisible();
+  await page.getByPlaceholder("Search by name, email, title...").fill(candidateEmail);
+  await expect(page.getByRole("link", { name: candidateName, exact: true })).toBeVisible();
   await expect
     .poll(
       async () =>
@@ -123,6 +130,7 @@ test("public application progresses through shortlist, interview, offer and onbo
     .getByRole("navigation", { name: "Page sections" })
     .getByRole("link", { name: "CV analysis (optional)" })
     .click();
+  await page.getByRole("textbox", { name: "Search CVs by name" }).fill(candidateName);
   await page.getByRole("button", { name: "Not suitable", exact: true }).first().click();
   await page
     .getByLabel("Private HR remark")
@@ -151,7 +159,7 @@ test("public application progresses through shortlist, interview, offer and onbo
   await page.getByRole("button", { name: "Finalize & Update Stages" }).click();
   await expect(page.getByText("Shortlist Finalized")).toBeVisible();
 
-  await page.getByText("Browser Candidate", { exact: true }).last().click();
+  await page.goto(`/staff/candidates/${intake.candidate.id}`);
   await expect(page.getByText("Canonical Details")).toBeVisible();
   await page.getByRole("link", { name: /^Applications \(/ }).click();
   await expect(page.getByText("Submitted answers")).toBeVisible();
@@ -344,7 +352,7 @@ test("public application progresses through shortlist, interview, offer and onbo
     completion.approvalManagerId,
   );
   await page.goto("/staff/offers");
-  const assignedOffer = page.locator("article").filter({ hasText: "Browser Candidate" });
+  const assignedOffer = page.locator("article").filter({ hasText: candidateName });
   await expect(assignedOffer).toBeVisible();
   await assignedOffer.getByRole("textbox").fill("Reviewed and approved the proposed offer terms.");
   await assignedOffer.getByRole("button", { name: "Approve offer", exact: true }).click();
@@ -391,10 +399,11 @@ test("public application progresses through shortlist, interview, offer and onbo
     { offerId: completion.offerId, email: candidateEmail },
   );
   await page.reload();
-  await page.getByRole("link", { name: "Offers", exact: true }).click();
-  await expect(page.getByText("Browser Candidate", { exact: true })).toBeVisible();
-  await expect(page.getByText("Accepted", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Offers", exact: true })).toBeVisible();
+  const acceptedOffer = page.getByRole("row").filter({ hasText: candidateName });
+  await expect(acceptedOffer).toBeVisible();
+  await expect(acceptedOffer.getByText("Accepted", { exact: true })).toBeVisible();
   // Core HR navigation is collapsed while working in Recruitment.
   await page.goto("/staff/employees");
-  await expect(page.getByText("Browser Candidate", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(candidateName, { exact: true }).first()).toBeVisible();
 });
