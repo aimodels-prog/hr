@@ -23,12 +23,15 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   page,
 }) => {
   test.setTimeout(120_000);
+  // A failed browser attempt may have persisted the request before Playwright retries.
+  // Use a fresh date on retry so the overlap guard remains meaningful.
+  const retryOffset = test.info().retry * 7;
   const suffix = Date.now().toString().slice(-6);
   const dateAfter = (days: number) =>
     new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
-  const leaveDate = dateAfter(21);
-  const travelStart = dateAfter(14);
-  const travelEnd = dateAfter(16);
+  const leaveDate = dateAfter(21 + retryOffset);
+  const travelStart = dateAfter(14 + retryOffset);
+  const travelEnd = dateAfter(16 + retryOffset);
   const completedStart = dateAfter(-16);
   const completedEnd = dateAfter(-14);
   const expenseDate = dateAfter(-15);
@@ -235,11 +238,11 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   await previewAs(page, "user-layla", "Line Manager", "/staff/attendance/corrections");
   const correctionRow = page.getByRole("row").filter({ hasText: labels.correction });
   await correctionRow.getByRole("button", { name: "Review" }).click();
-  const managerCorrectionDialog = page.getByRole("dialog", { name: "Manager Review" });
+  const managerCorrectionDialog = page.getByRole("dialog", { name: "Team correction" });
   await managerCorrectionDialog
     .getByPlaceholder("Required decision notes")
     .fill("Punch checked with the employee and endorsed.");
-  await managerCorrectionDialog.getByRole("button", { name: "Endorse to HR" }).click();
+  await managerCorrectionDialog.getByRole("button", { name: "Send to HR" }).click();
   await expect(managerCorrectionDialog).toBeHidden();
 
   await previewAs(page, "user-layla", "Line Manager", "/staff/overtime-approvals");
@@ -271,7 +274,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
 
   // HR completes the second-stage people and time approvals.
   await previewAs(page, "user-rana", "HR", "/staff/leave-approvals");
-  await page.getByRole("link", { name: /HR Confirmation/ }).click();
+  await expect(page.getByRole("region", { name: "HR confirmation" })).toBeVisible();
   const finalLeaveCard = page
     .getByText(labels.leave)
     .locator("xpath=ancestor::div[.//button[normalize-space()='Approve']][1]");
@@ -282,7 +285,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   await page.getByRole("link", { name: /HR Finalisation/ }).click();
   const finalCorrectionRow = page.getByRole("row").filter({ hasText: labels.correction });
   await finalCorrectionRow.getByRole("button", { name: "Review" }).click();
-  const hrCorrectionDialog = page.getByRole("dialog", { name: "HR Final Decision" });
+  const hrCorrectionDialog = page.getByRole("dialog", { name: "HR final decision" });
   await hrCorrectionDialog
     .getByPlaceholder("Required decision notes")
     .fill("Correction evidence and supervisor endorsement reviewed.");

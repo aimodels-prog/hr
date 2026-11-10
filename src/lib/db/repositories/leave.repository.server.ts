@@ -1469,7 +1469,8 @@ export async function approveLeaveRequestInDatabase(
       request.status === "Pending HR" &&
       Boolean(noticeException) &&
       (request.chainApprovals as LeaveRequest["chainApprovals"]).some(
-        (step) => step.role === "Country Manager" && step.status === "Pending",
+        (step) =>
+          (step.role === "Country Manager" || step.role === "HR") && step.status === "Pending",
       );
     const managerStage =
       request.status === "Pending Line Manager" ||

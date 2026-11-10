@@ -376,6 +376,22 @@ test(
       await sql`INSERT INTO hr_independent_review_assignments
         (organisation_id,module,request_id,requester_employee_id,reviewer_employee_id,stage,created_by,updated_by)
         VALUES (${ids.org},'Leave',${ids.request},${ids.employee},${ids.manager},'HR',${ids.managerUser},${ids.managerUser})`;
+      const beforeHrStage = await listTasksForActorInDatabase(ids.org!, {
+        ...managerActor,
+        activeRole: "Employee",
+        roles: ["Employee"],
+      });
+      assert.equal(
+        beforeHrStage.some((task) => task.id === `independent-hr-review-Leave-${ids.request}`),
+        false,
+        "The named HR reviewer must not receive the task before the HR stage begins",
+      );
+      await sql`UPDATE leave_requests SET status='Pending HR',
+        chain_approvals=${sql.json([
+          { role: "Line Manager", status: "Approved", approvedBy: ids.managerUser },
+          { role: "HR", status: "Pending" },
+        ])}
+        WHERE id=${ids.request}`;
       const independentTasks = await listTasksForActorInDatabase(ids.org!, {
         ...managerActor,
         activeRole: "Employee",

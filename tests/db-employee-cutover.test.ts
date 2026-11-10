@@ -386,7 +386,7 @@ test(
       assert.equal(cv.requirementSnapshot?.name, "Updated CV");
       await assert.rejects(
         decideEmployeeDocumentInDatabase(organisationId, documentId, "verify", undefined, actor),
-        /Only HR/,
+        /Only the assigned independent reviewer or HR can review this document/,
       );
       await decideEmployeeDocumentInDatabase(
         organisationId,

@@ -44,7 +44,7 @@ test("public application progresses through shortlist, interview, offer and onbo
   await expect(page.getByText(/^APP-\d{2}-/)).toBeVisible();
 
   await page.goto("/staff/candidates");
-  await expect(page.getByText("Browser Candidate", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "Browser Candidate", exact: true })).toBeVisible();
   await expect
     .poll(
       async () =>

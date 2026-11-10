@@ -5,6 +5,7 @@ import { test } from "node:test";
 import postgres from "postgres";
 import { officeCredits } from "../src/lib/db/repositories/office-exception.repository.server.ts";
 import { listTasksForActorInDatabase } from "../src/lib/db/repositories/task.repository.server.ts";
+import { getApprovalRoutingSettingsInDatabase } from "../src/lib/db/repositories/approval-routing.repository.server.ts";
 
 import {
   assignTravelReimbursementsToPayrollInDatabase,
@@ -827,12 +828,32 @@ test(
       >`SELECT status FROM travel_requests WHERE id=${sharedExecutiveTripId}`;
       assert.equal(sharedExecutiveApproved?.status, "Pre-authorised");
 
-      const reviewerPolicy = JSON.stringify({
+      const reviewerPolicy = {
         hrOwnRequestReviewerEmployeeId: ids.managerEmployee,
         managerlessExecutiveTravelReviewerRole: "Accounts",
         managerlessExecutiveTravelNotifyHr: true,
-      });
-      await sql`UPDATE app_settings SET additional_settings=jsonb_set(coalesce(additional_settings,'{}'::jsonb),'{approvalRouting}',${reviewerPolicy}::jsonb,true) WHERE organisation_id=${ids.organisation}`;
+      };
+      const updatedSettings = await sql<{ organisation_id: string }[]>`
+        UPDATE app_settings
+        SET additional_settings = jsonb_set(
+          coalesce(additional_settings, '{}'::jsonb),
+          '{approvalRouting}',
+          ${sql.json(reviewerPolicy)}::jsonb,
+          true
+        )
+        WHERE organisation_id = ${ids.organisation}
+        RETURNING organisation_id
+      `;
+      assert.deepEqual(
+        updatedSettings.map((row) => row.organisation_id),
+        [ids.organisation],
+      );
+      const [storedRouting] = await sql<
+        { reviewer_employee_id: string | null }[]
+      >`SELECT additional_settings->'approvalRouting'->>'hrOwnRequestReviewerEmployeeId' AS reviewer_employee_id FROM app_settings WHERE organisation_id=${ids.organisation}`;
+      assert.equal(storedRouting?.reviewer_employee_id, ids.managerEmployee);
+      const effectiveRouting = await getApprovalRoutingSettingsInDatabase(ids.organisation!);
+      assert.equal(effectiveRouting.hrOwnRequestReviewerEmployeeId, ids.managerEmployee);
       const hrOwnTripId = await createTravelRequestInDatabase(
         ids.organisation!,
         {

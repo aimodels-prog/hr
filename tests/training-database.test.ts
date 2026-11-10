@@ -427,7 +427,7 @@ test(
             "Certificate verified",
             employeeActor,
           ),
-        /Only HR/i,
+        /Only the assigned independent reviewer or HR can verify this certificate/i,
       );
       await assert.rejects(
         decideTrainingRecordInDatabase(ids.org!, manualRecordId, "Reject", "", hrActor),

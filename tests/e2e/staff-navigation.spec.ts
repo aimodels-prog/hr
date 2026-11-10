@@ -34,9 +34,13 @@ test("HR navigation is grouped, searchable and has one home for each page", asyn
   await expect(nav.getByRole("link", { name: "HR Approvals", exact: true })).toBeVisible();
   await expect(nav.getByRole("button", { name: "My Work", exact: true })).toHaveCount(0);
   await nav.getByRole("button", { name: "Recruitment", exact: true }).click();
-  await expect(nav.getByRole("link", { name: "Offers", exact: true })).toHaveCount(1);
+  await expect(nav.getByRole("link", { name: "Candidate Pool", exact: true })).toBeVisible();
+  await expect(nav.getByRole("link", { name: "Offers", exact: true })).toHaveCount(0);
   await expect(nav.getByRole("link", { name: "Offer approvals", exact: true })).toHaveCount(0);
-  await page.getByRole("textbox", { name: "Search menu" }).fill("visa");
+  const search = page.getByRole("textbox", { name: "Search menu" });
+  await search.fill("offers");
+  await expect(nav.getByRole("link", { name: "Offers", exact: true })).toBeVisible();
+  await search.fill("visa");
   await expect(nav.getByRole("link", { name: "Document Expiry", exact: true })).toBeVisible();
   await nav.getByRole("link", { name: "Document Expiry", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Search menu" })).toHaveValue("");

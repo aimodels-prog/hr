@@ -157,7 +157,7 @@ test("employee dashboard charts load before a delayed training snapshot", async 
       true,
     );
     release();
-    await expect(page.getByRole("heading", { name: "Needs attention", exact: true })).toBeVisible({
+    await expect(page.getByText("My request reminders", { exact: true })).toBeVisible({
       timeout: 10000,
     });
   } finally {

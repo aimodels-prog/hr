@@ -10,7 +10,8 @@ test("shared-trip colleague search works on a phone", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/staff/travel/new");
   await page
-    .getByText("Add colleagues travelling with you", { exact: true })
+    .locator("summary")
+    .filter({ hasText: "Add colleagues travelling with you" })
     .click({ timeout: 45000 });
   await expect(page.getByRole("searchbox", { name: "Search colleagues" })).toBeVisible();
   await page.getByRole("searchbox", { name: "Search colleagues" }).fill("Rana");

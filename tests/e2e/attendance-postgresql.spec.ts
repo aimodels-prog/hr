@@ -98,7 +98,6 @@ test("HR work areas consistently expose section menus instead of tab rows", asyn
     "/staff/leave-admin",
     "/staff/onboarding",
     "/staff/training",
-    "/staff/leave-approvals",
     "/staff/attendance/corrections",
     "/staff/overtime-approvals",
     "/staff/document-expiry",
@@ -113,6 +112,10 @@ test("HR work areas consistently expose section menus instead of tab rows", asyn
     await expect(last).toHaveAttribute("aria-current", "page");
     await expect(page.locator("[data-section-content]").first()).toBeVisible();
   }
+
+  await previewAs(page, "user-rana", "HR", "/staff/leave-approvals");
+  await expect(page.getByRole("heading", { name: "Leave Approvals", exact: true })).toBeVisible();
+  await expect(page.getByRole("tablist")).toHaveCount(0);
 });
 
 test("HR page sections work as side navigation on desktop and a menu on phones", async ({

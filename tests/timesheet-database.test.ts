@@ -221,7 +221,7 @@ test(
           AND entity_type = 'timesheet'
           AND entity_id = ${timesheetId}
           AND action = 'approve'
-        ORDER BY created_at
+        ORDER BY occurred_at
       `;
       assert.equal(decisionAudits.length, 2, "manager and HR each preserve their own review");
       for (const audit of decisionAudits) {

@@ -595,6 +595,22 @@ test(
         "Pending HR",
       );
       await approveLeaveRequestInDatabase(organisationId, specialId, hrActor, "approve");
+      const [exceptionBeforeManager] = await sql`
+        SELECT status, chain_approvals FROM leave_requests WHERE id=${specialId}
+      `;
+      assert.equal(exceptionBeforeManager.status, "Pending Line Manager");
+      assert.deepEqual(
+        exceptionBeforeManager.chain_approvals.map((step: { role: string; status: string }) => [
+          step.role,
+          step.status,
+        ]),
+        [
+          ["Country Manager", "Approved"],
+          ["HR", "Approved"],
+          ["Line Manager", "Pending"],
+        ],
+        "the exception reviewers finish before the supervisor decides",
+      );
       assert.equal(
         (await listLeaveSnapshotForActor(organisationId, managerActor)).requests.find(
           (item) => item.id === specialId,
