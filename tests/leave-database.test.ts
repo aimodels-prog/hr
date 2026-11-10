@@ -948,7 +948,8 @@ test(
       );
       await approveLeaveRequestInDatabase(organisationId, standInRequest, hrActor, "approve");
       const [standInAmended] = await sql`
-        SELECT status, start_date, pending_amendment FROM leave_requests WHERE id=${standInRequest}
+        SELECT status, start_date::text AS start_date, pending_amendment
+        FROM leave_requests WHERE id=${standInRequest}
       `;
       assert.equal(standInAmended.status, "Approved");
       assert.equal(standInAmended.start_date, isoDate(standInNewDay));
@@ -1052,7 +1053,8 @@ test(
       ]);
       await approveLeaveRequestInDatabase(organisationId, ceoRequestId, hrActor, "approve");
       const [executiveAmended] = await sql`
-        SELECT status,start_date,pending_amendment FROM leave_requests WHERE id=${ceoRequestId}
+        SELECT status,start_date::text AS start_date,pending_amendment
+        FROM leave_requests WHERE id=${ceoRequestId}
       `;
       assert.equal(executiveAmended.status, "Approved");
       assert.equal(executiveAmended.start_date, isoDate(movedExecutiveDay));

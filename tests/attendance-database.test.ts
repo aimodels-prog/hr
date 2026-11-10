@@ -136,6 +136,9 @@ test(
       await sql`INSERT INTO user_roles (organisation_id,user_id,role_id,assigned_by,reason)
         SELECT ${organisationId},${managerUserId},id,${hrUserId},'Assigned test supervisor'
         FROM roles WHERE code='Line Manager' ON CONFLICT DO NOTHING`;
+      await sql`INSERT INTO user_roles (organisation_id,user_id,role_id,assigned_by,reason)
+        SELECT ${organisationId},${hrUserId},id,${hrUserId},'HR stand-in reviewer'
+        FROM roles WHERE code='HR' ON CONFLICT DO NOTHING`;
       await saveAttendancePolicyInDatabase(
         organisationId,
         {
@@ -405,6 +408,59 @@ test(
         // This organisation explicitly configured zero break minutes.
         ["Approved", "Corrected", 8, false, false],
       );
+
+      // HR may stand in for a missing supervisor without a separate Line Manager role.
+      // The employee still cannot approve their own correction.
+      const standInDate = "2026-09-03";
+      const standInRecordId = randomUUID();
+      await sql`INSERT INTO attendance_records (
+        id,organisation_id,employee_id,date,clock_in_at,clock_out_at,break_minutes,
+        source,status,calculated_hours,created_by,updated_by
+      ) VALUES (
+        ${standInRecordId},${organisationId},${employeeId},${standInDate},
+        ${`${standInDate}T08:30:00.000Z`},${`${standInDate}T16:00:00.000Z`},0,
+        'Web','Present',7.5,${employeeUserId},${employeeUserId}
+      )`;
+      await sql`UPDATE employees SET line_manager_id=${hrEmployeeId} WHERE id=${employeeId}`;
+      const standInCorrectionId = await requestAttendanceCorrectionInDatabase(
+        organisationId,
+        {
+          attendanceRecordId: standInRecordId,
+          proposedClockIn: `${standInDate}T08:00:00.000Z`,
+          proposedClockOut: `${standInDate}T16:00:00.000Z`,
+          explanation: "The earlier office punch was missed.",
+        },
+        employeeActor,
+      );
+      await assert.rejects(
+        decideAttendanceCorrectionInDatabase(
+          organisationId,
+          standInCorrectionId,
+          "approve",
+          "Self decision",
+          actor(employeeUserId, employeeId, "Employee", "HR"),
+          1,
+        ),
+        /assigned correction approver|own attendance correction/,
+      );
+      await decideAttendanceCorrectionInDatabase(
+        organisationId,
+        standInCorrectionId,
+        "approve",
+        "HR reviewed the original punch.",
+        actor(hrUserId, hrEmployeeId, "HR Reviewer", "HR"),
+        1,
+      );
+      const [standInCorrection] = await sql`
+        SELECT status,manager_reviewed_by,hr_reviewed_by FROM attendance_corrections
+        WHERE id=${standInCorrectionId}
+      `;
+      assert.equal(standInCorrection?.status, "Approved");
+      assert.equal(standInCorrection?.manager_reviewed_by, hrUserId);
+      assert.equal(standInCorrection?.hr_reviewed_by, hrUserId);
+      await sql`DELETE FROM attendance_corrections WHERE id=${standInCorrectionId}`;
+      await sql`DELETE FROM attendance_records WHERE id=${standInRecordId}`;
+      await sql`UPDATE employees SET line_manager_id=${managerEmployeeId} WHERE id=${employeeId}`;
 
       const missingDay = new Date();
       do missingDay.setUTCDate(missingDay.getUTCDate() - 1);

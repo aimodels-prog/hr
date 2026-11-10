@@ -808,7 +808,7 @@ export async function createLeaveRequestInDatabase(
     if (!executiveHrOnly && !independentReviewer) {
       if (!employee.lineManagerId || employee.lineManagerId === employee.id)
         throw new Error("Ask HR to assign a valid supervisor before requesting leave.");
-      await requireEmployeeSupervisor(tx, organisationId, employee.id);
+      await requireEmployeeSupervisor(tx, organisationId, employee.id, true);
     }
     if (input.handoverContactId) {
       const [handover] = await tx
@@ -2599,7 +2599,7 @@ export async function requestLeaveChangeInDatabase(
           ? "Amendment Pending HR"
           : "Amendment Pending Line Manager";
       if (!executiveHrOnly && !independentReviewer)
-        await requireEmployeeSupervisor(tx, organisationId, row.request.employeeId);
+        await requireEmployeeSupervisor(tx, organisationId, row.request.employeeId, true);
       values = {
         status,
         pendingAmendment: {

@@ -97,6 +97,9 @@ test(
           SELECT ${organisationId},${userId},id,${hrUserId},'Assigned test supervisor'
           FROM roles WHERE code='Line Manager' ON CONFLICT DO NOTHING`;
       }
+      await sql`INSERT INTO user_roles (organisation_id,user_id,role_id,assigned_by,reason)
+        SELECT ${organisationId},${hrUserId},id,${hrUserId},'HR stand-in reviewer'
+        FROM roles WHERE code='HR' ON CONFLICT DO NOTHING`;
       const employeeActor = actor(employeeUserId, employeeId, "Employee");
       const managerActor = actor(managerUserId, managerEmployeeId, "Line Manager");
       const otherManagerActor = actor(otherManagerUserId, otherManagerEmployeeId, "Line Manager");

@@ -67,7 +67,7 @@ test(
         [ids.manager, ids.managerUser, "TASK-MGR", "Task Manager", null],
         [ids.employee, ids.employeeUser, "TASK-EMP", "Task Employee", ids.manager],
       ]) {
-        await sql`INSERT INTO employees (id,organisation_id,employee_number,legal_name,preferred_name,work_email,department_id,position_id,location_id,employment_type_id,line_manager_id,status,start_date,created_by,updated_by) VALUES (${employee},${ids.org},${number},${name},${`${number!.toLowerCase()}@viahr.test`},${`${number!.toLowerCase()}@viahr.test`},${ids.department},${ids.position},${ids.location},${ids.employmentType},${manager},'Active','2025-01-01',${ids.managerUser},${ids.managerUser})`;
+        await sql`INSERT INTO employees (id,organisation_id,employee_number,legal_name,preferred_name,work_email,department_id,position_id,location_id,employment_type_id,line_manager_id,status,start_date,created_by,updated_by) VALUES (${employee},${ids.org},${number},${name},${name},${`${number!.toLowerCase()}@viahr.test`},${ids.department},${ids.position},${ids.location},${ids.employmentType},${manager},'Active','2025-01-01',${ids.managerUser},${ids.managerUser})`;
         await sql`INSERT INTO users (id,organisation_id,employee_id,display_name,workspace_email,status,created_by,updated_by) VALUES (${user},${ids.org},${employee},${name},${`${number!.toLowerCase()}@viahr.test`},'Active',${ids.managerUser},${ids.managerUser})`;
       }
       const roleRows = await sql<

@@ -299,7 +299,8 @@ export async function submitTimesheetInDatabase(
       );
     if (employee.employmentConfirmationStatus !== "Confirmed")
       throw new Error("HR must confirm your employment details before you can submit a timesheet.");
-    if (!independentReviewer) await requireEmployeeSupervisor(tx, organisationId, sheet.employeeId);
+    if (!independentReviewer)
+      await requireEmployeeSupervisor(tx, organisationId, sheet.employeeId, true);
     const [settings] = await tx
       .select()
       .from(timesheetSettings)
@@ -2267,6 +2268,7 @@ export async function processTimesheetWorker(at = new Date()) {
                   tx,
                   organisation.organisationId,
                   employee.id,
+                  true,
                 );
               } catch {
                 /* HR must assign an authorised supervisor; no automatic permission grants. */

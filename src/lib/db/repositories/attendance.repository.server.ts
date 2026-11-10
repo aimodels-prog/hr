@@ -1004,7 +1004,7 @@ export async function requestAttendanceCorrectionInDatabase(
         throw new Error("Employees can request corrections only for their own attendance.");
       // A completely missing record is still a full punch correction, not the HR-only shortcut.
       if (!independentReviewer && !managerlessExecutive)
-        await requireEmployeeSupervisor(tx, organisationId, actor.employeeId!);
+        await requireEmployeeSupervisor(tx, organisationId, actor.employeeId!, true);
       const [[employee], [settings], [policy]] = await Promise.all([
         tx
           .select({
@@ -1164,7 +1164,7 @@ export async function requestAttendanceCorrectionInDatabase(
         input.proposedClockIn === zonedParts(new Date(record.clockInAt), timezone).time ||
         input.proposedClockIn === record.clockInAt);
     if (!clockOutOnly && !independentReviewer && !managerlessExecutive)
-      await requireEmployeeSupervisor(tx, organisationId, actor.employeeId!);
+      await requireEmployeeSupervisor(tx, organisationId, actor.employeeId!, true);
     let executiveAttendanceReviewer: { employeeId: string; userId: string } | null = null;
     if (managerlessExecutive && !independentReviewer && !clockOutOnly) {
       const reviewerEmployeeId = (await getApprovalRoutingSettingsInDatabase(organisationId, tx))

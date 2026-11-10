@@ -115,6 +115,7 @@ export async function requireEmployeeSupervisor(
   tx: Tx,
   organisationId: string,
   employeeId: string,
+  allowHrStandIn = false,
 ) {
   const [employee] = await tx
     .select({ supervisorId: employees.lineManagerId })
@@ -141,11 +142,16 @@ export async function requireEmployeeSupervisor(
       and(
         eq(userRoles.organisationId, organisationId),
         eq(userRoles.userId, account.userId),
-        eq(roles.code, "Line Manager"),
+        inArray(roles.code, allowHrStandIn ? ["Line Manager", "HR"] : ["Line Manager"]),
       ),
     )
     .limit(1);
-  if (!access) throw new Error(unavailable);
+  if (!access)
+    throw new Error(
+      allowHrStandIn
+        ? "Ask HR to assign an active supervisor with Line Manager or HR approval access."
+        : unavailable,
+    );
   return account;
 }
 
