@@ -30,6 +30,16 @@ export const Route = createFileRoute("/staff/timesheet-approvals/")({
 });
 
 function TimesheetApprovalsRoute() {
+  const currentUser = useCurrentUser();
+  const hasIndependentReview = new TimesheetService()
+    .getTimesheetsForContext(currentUser.getActorContext())
+    .some(
+      (sheet) =>
+        sheet.independentReviewerEmployeeId === currentUser.employeeId &&
+        sheet.status === "Pending HR",
+    );
+  if (hasIndependentReview && currentUser.activeRole !== "Super Admin")
+    return <TimesheetApprovalsContent />;
   return (
     <RequireAnyPermission
       permissions={["timesheet:approve_direct_reports", "timesheet:finance_view"]}
@@ -55,18 +65,27 @@ function TimesheetApprovalsContent() {
     return <div>Employee profile required.</div>;
   }
 
-  const allEmployees = empService.getEmployees(currentUser.getActorContext());
-  const isHrReviewer = currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
+  const allEmployees = empService.getDirectoryEmployees(currentUser.getActorContext());
+  const settings = tsService.getSettings();
+  const timesheets = tsService.getTimesheetsForContext(currentUser.getActorContext());
+  const isHrReviewer = currentUser.activeRole === "HR";
   const isFinanceViewer = currentUser.activeRole === "Accounts";
+  const isAdminViewer = currentUser.activeRole === "Super Admin";
   const visibleEmployees = allEmployees.filter(
     (employee) =>
       employee.status !== "Inactive" &&
       employee.status !== "Archived" &&
-      (isHrReviewer || isFinanceViewer || employee.lineManagerId === currentUser.employeeId),
+      (isHrReviewer ||
+        isFinanceViewer ||
+        isAdminViewer ||
+        timesheets.some(
+          (sheet) =>
+            sheet.employeeId === employee.id &&
+            sheet.independentReviewerEmployeeId === currentUser.employeeId,
+        ) ||
+        employee.lineManagerId === currentUser.employeeId),
   );
 
-  const settings = tsService.getSettings();
-  const timesheets = tsService.getTimesheetsForContext(currentUser.getActorContext());
   const currentPeriodTimesheets = timesheets.filter((t) => t.periodId === selectedPeriodId);
   const selectedPeriod = periods.find((p) => p.id === selectedPeriodId);
 
@@ -118,13 +137,15 @@ function TimesheetApprovalsContent() {
   return (
     <div className="flex flex-col gap-6 max-w-[1200px] mx-auto pb-10">
       <PageHeader
-        title={isFinanceViewer ? "Timesheet Register" : "Timesheet Approvals"}
+        title={isFinanceViewer || isAdminViewer ? "Timesheet Register" : "Timesheet Approvals"}
         description={
-          isFinanceViewer
-            ? "View submitted and approved timesheets for payroll preparation."
-            : isHrReviewer
-              ? "Give final approval to every supervisor-reviewed timesheet before payroll."
-              : "Review timesheets submitted by employees who report directly to you."
+          isAdminViewer
+            ? "View timesheet status without making approval decisions."
+            : isFinanceViewer
+              ? "View submitted and approved timesheets for payroll preparation."
+              : isHrReviewer
+                ? "Review timesheets waiting for HR. If you are the assigned supervisor, decide once."
+                : "Review timesheets submitted by employees who report directly to you."
         }
       />
 
@@ -220,7 +241,13 @@ function TimesheetApprovalsContent() {
                             (!isHrReviewer &&
                               !isFinanceViewer &&
                               row.status === "Pending Manager") ||
-                            (isHrReviewer && row.status === "Pending HR")
+                            (isHrReviewer &&
+                              (row.status === "Pending HR" ||
+                                (row.status === "Pending Manager" &&
+                                  row.emp.lineManagerId === currentUser.employeeId &&
+                                  row.emp.id !== currentUser.employeeId))) ||
+                            (row.ts?.independentReviewerEmployeeId === currentUser.employeeId &&
+                              row.status === "Pending HR")
                               ? "default"
                               : "outline"
                           }
@@ -229,7 +256,13 @@ function TimesheetApprovalsContent() {
                           {(!isHrReviewer &&
                             !isFinanceViewer &&
                             row.status === "Pending Manager") ||
-                          (isHrReviewer && row.status === "Pending HR")
+                          (isHrReviewer &&
+                            (row.status === "Pending HR" ||
+                              (row.status === "Pending Manager" &&
+                                row.emp.lineManagerId === currentUser.employeeId &&
+                                row.emp.id !== currentUser.employeeId))) ||
+                          (row.ts?.independentReviewerEmployeeId === currentUser.employeeId &&
+                            row.status === "Pending HR")
                             ? "Review"
                             : "View"}
                         </Button>

@@ -5,8 +5,13 @@ import type {
   TravelRequest,
   TravelRequestStatus,
   TravelApprovalState,
+  TravelApprovalRoute,
   ExpenseLine,
 } from "./travel-types.ts";
+import { travelApprovalComplete } from "./travel-types.ts";
+import { isSupervisorOptionalPosition } from "./executive-reporting.ts";
+import { parseApprovalRoutingSettings } from "./approval-routing-settings.ts";
+import { SettingsService } from "./settings-service.ts";
 import { SYSTEM_CONTEXT, type ActorContext } from "./types.ts";
 import { getProjectRepository, getMasterDataRepository } from "./master-data.ts";
 import { NotificationService } from "./notification-service.ts";
@@ -152,9 +157,8 @@ export class TravelService {
     }
   }
 
-  // The review stages are independent checkpoints held by different roles - the supervisor
-  // confirms business need, HR reviews policy/dates, and Accounts reviews budget and settlement - and none
-  // of them may be exercised by the traveller reviewing their own request.
+  // Standard trips have supervisor, HR and Finance checkpoints. Managerless
+  // executive trips use the configured independent reviewer instead.
   private requireReviewerRole(
     req: { employeeId: string },
     context: ActorContext,
@@ -244,7 +248,10 @@ export class TravelService {
     const isSelf =
       context.actor.employeeId === req.employeeId ||
       req.participants?.some((p) => p.employeeId === context.actor.employeeId);
-    if (!isSelf && !this.isReviewerRole(context)) {
+    const assignedReviewer =
+      req.approvalRoute?.kind === "HR Own Travel" &&
+      req.approvalRoute.reviewerEmployeeId === context.actor.employeeId;
+    if (!isSelf && !assignedReviewer && !this.isReviewerRole(context)) {
       this.deny(
         "view this travel request",
         id,
@@ -276,7 +283,10 @@ export class TravelService {
     if (!req) throw new Error("Request not found");
     if (!req.evidenceFileId) throw new Error("This request has no supporting evidence.");
     const isSelf = context.actor.employeeId === req.employeeId;
-    if (!isSelf && !this.isReviewerRole(context)) {
+    const assignedReviewer =
+      req.approvalRoute?.kind === "HR Own Travel" &&
+      req.approvalRoute.reviewerEmployeeId === context.actor.employeeId;
+    if (!isSelf && !assignedReviewer && !this.isReviewerRole(context)) {
       this.deny(
         "view this request's evidence",
         requestId,
@@ -514,11 +524,49 @@ export class TravelService {
       throw new Error("Estimated costs cannot be negative and must be valid amounts.");
     }
 
+    const employee = new EmployeeService().getById(data.employeeId, SYSTEM_CONTEXT);
+    if (!employee || !["Active", "Probation", "Notice"].includes(employee.status))
+      throw new Error("An active employee profile is required.");
+    const managerlessExecutive =
+      !employee.lineManagerId && isSupervisorOptionalPosition(employee.position);
+    const hrOwnTravel = !managerlessExecutive && context.actor.roles.includes("HR");
+    if (!employee.lineManagerId && !managerlessExecutive && !hrOwnTravel)
+      throw new Error("Ask HR to assign your supervisor before requesting business travel.");
+    const configuredRouting = parseApprovalRoutingSettings(
+      new SettingsService().getAppSettingsSync().approvalRouting,
+    );
+    const approvalRoute: TravelApprovalRoute = managerlessExecutive
+      ? {
+          kind: "Managerless Executive",
+          reviewerRole: configuredRouting.managerlessExecutiveTravelReviewerRole,
+          notifyHr: configuredRouting.managerlessExecutiveTravelNotifyHr,
+        }
+      : hrOwnTravel
+        ? {
+            kind: "HR Own Travel",
+            reviewerEmployeeId: configuredRouting.hrOwnRequestReviewerEmployeeId ?? "",
+          }
+        : { kind: "Standard" };
+    if (approvalRoute.kind === "HR Own Travel") {
+      if (!approvalRoute.reviewerEmployeeId)
+        throw new Error(
+          "Ask HR to choose an independent reviewer for HR staff requests in Company Setup.",
+        );
+      if (approvalRoute.reviewerEmployeeId === employee.id)
+        throw new Error("You cannot review your own travel request.");
+      const reviewerName = new EmployeeService().getById(
+        approvalRoute.reviewerEmployeeId,
+        SYSTEM_CONTEXT,
+      )?.preferredName;
+      if (reviewerName) approvalRoute.reviewerName = reviewerName;
+    }
+
     const payload: Omit<
       TravelRequest,
       "id" | "createdAt" | "createdBy" | "updatedAt" | "updatedBy" | "recordVersion"
     > = {
       employeeId: data.employeeId!,
+      approvalRoute,
       purpose: data.purpose.trim(),
       destination: data.destination.trim(),
       startDate: data.startDate,
@@ -534,9 +582,20 @@ export class TravelService {
       ...(data.notes !== undefined ? { notes: data.notes } : {}),
       ...(data.evidenceFileId !== undefined ? { evidenceFileId: data.evidenceFileId } : {}),
 
-      managerApprovalStatus: "Pending",
-      hrApprovalStatus: "Pending",
-      accountsApprovalStatus: "Pending",
+      managerApprovalStatus: managerlessExecutive ? "Not Required" : "Pending",
+      hrApprovalStatus:
+        approvalRoute.kind === "HR Own Travel" ||
+        (managerlessExecutive &&
+          approvalRoute.kind === "Managerless Executive" &&
+          approvalRoute.reviewerRole !== "HR")
+          ? "Not Required"
+          : "Pending",
+      accountsApprovalStatus:
+        managerlessExecutive &&
+        approvalRoute.kind === "Managerless Executive" &&
+        approvalRoute.reviewerRole !== "Accounts"
+          ? "Not Required"
+          : "Pending",
       status: "Pending HR and Accounts",
     };
 
@@ -551,9 +610,10 @@ export class TravelService {
     if (!req) throw new Error("Not found");
     this.requireSelfOrHr(req, context, "withdraw this travel request", id);
 
-    if (req.hrApprovalStatus !== "Pending" || req.accountsApprovalStatus !== "Pending") {
-      throw new Error("Cannot withdraw request after an approval process has started.");
-    }
+    if (!["Pending HR and Accounts", "Pre-authorised"].includes(req.status))
+      throw new Error("This trip can no longer be cancelled.");
+    if (req.bookings?.some((booking) => booking.status === "Confirmed"))
+      throw new Error("Cancel confirmed arrangements before cancelling this trip.");
 
     req.status = "Withdrawn";
     return this.repo.update(req.id, req, context);
@@ -581,21 +641,30 @@ export class TravelService {
     const req = this.repo.getById(id);
     if (!req) throw new Error("Not found");
     const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
+    const isAssignedIndependentReviewer =
+      req.approvalRoute?.kind === "HR Own Travel" &&
+      req.approvalRoute.reviewerEmployeeId === context.actor.employeeId &&
+      context.actor.activeRole !== "Super Admin";
     const isAssignedManager =
-      context.actor.activeRole === "Line Manager" &&
+      req.approvalRoute?.kind !== "HR Own Travel" &&
+      (context.actor.activeRole === "Line Manager" || context.actor.activeRole === "HR") &&
       employee?.lineManagerId === context.actor.employeeId;
-    const isSuperAdmin = context.actor.activeRole === "Super Admin";
-    if ((!isAssignedManager && !isSuperAdmin) || context.actor.employeeId === req.employeeId) {
+    if (
+      (!isAssignedManager && !isAssignedIndependentReviewer) ||
+      context.actor.employeeId === req.employeeId
+    ) {
       this.deny(
         "review this travel request as supervisor",
         id,
-        "Only the traveller's assigned supervisor can complete this review.",
+        "Only the assigned trip reviewer can complete this review.",
         context,
       );
     }
     if (req.status !== "Pending HR and Accounts" || req.managerApprovalStatus !== "Pending") {
       throw new Error("Invalid state for supervisor review.");
     }
+    if (req.approvalRoute?.kind === "Managerless Executive")
+      throw new Error("This trip does not require a supervisor decision.");
     if (!approve && notes.trim().length < 3) {
       throw new Error("Rejection requires a detailed reason.");
     }
@@ -605,6 +674,16 @@ export class TravelService {
     if (approve) {
       req.managerApprovedAt = new Date().toISOString();
       req.managerApprovedBy = context.actor.userId;
+      if (
+        req.approvalRoute?.kind !== "HR Own Travel" &&
+        context.actor.activeRole === "HR" &&
+        req.hrApprovalStatus === "Pending"
+      ) {
+        req.hrApprovalStatus = "Approved";
+        req.hrNotes = "HR reviewed the trip as the assigned supervisor.";
+        req.hrApprovedAt = req.managerApprovedAt;
+        req.hrApprovedBy = context.actor.userId;
+      }
     }
     req.status = this.calculateFinalStatus(req);
     this.capturePreAuthorisation(req);
@@ -621,14 +700,15 @@ export class TravelService {
   hrApprove(id: string, approve: boolean, notes: string, context: ActorContext): TravelRequest {
     const req = this.repo.getById(id);
     if (!req) throw new Error("Not found");
-    this.requireReviewerRole(
-      req,
-      context,
-      ["HR", "Super Admin"],
-      "review this travel request for HR",
-      id,
-    );
-    if (req.status !== "Pending HR and Accounts") throw new Error("Invalid state for approval.");
+    this.requireReviewerRole(req, context, ["HR"], "review this travel request for HR", id);
+    if (
+      req.status !== "Pending HR and Accounts" ||
+      req.hrApprovalStatus !== "Pending" ||
+      (req.approvalRoute?.kind === "Managerless Executive" &&
+        req.approvalRoute.reviewerRole !== "HR") ||
+      !["Approved", "Not Required"].includes(req.managerApprovalStatus)
+    )
+      throw new Error("Invalid state for HR review.");
     if (!approve && (!notes || notes.trim().length < 3)) {
       throw new Error("Rejection requires a detailed reason.");
     }
@@ -697,11 +777,23 @@ export class TravelService {
     this.requireReviewerRole(
       req,
       context,
-      ["Accounts", "Super Admin"],
+      ["Accounts"],
       "review this travel request for budget",
       id,
     );
-    if (req.status !== "Pending HR and Accounts") throw new Error("Invalid state for approval.");
+    if (
+      req.status !== "Pending HR and Accounts" ||
+      req.accountsApprovalStatus !== "Pending" ||
+      (req.approvalRoute?.kind === "Managerless Executive" &&
+        req.approvalRoute.reviewerRole !== "Accounts") ||
+      !["Approved", "Not Required"].includes(req.managerApprovalStatus) ||
+      (req.approvalRoute?.kind === "Standard" || !req.approvalRoute
+        ? req.hrApprovalStatus !== "Approved"
+        : req.approvalRoute.kind === "HR Own Travel"
+          ? req.hrApprovalStatus !== "Not Required"
+          : false)
+    )
+      throw new Error("Invalid state for Finance review.");
     if (!approve && (!notes || notes.trim().length < 3)) {
       throw new Error("Rejection requires a detailed reason.");
     }
@@ -1093,19 +1185,47 @@ export class TravelService {
     const { storage, audit } = getApplicationDataServices();
     const notifService = new NotificationService(storage, audit);
     const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
-    const reviewerRoles = ["HR", "Accounts"];
+    if (req.approvalRoute?.kind === "HR Own Travel") {
+      const reviewerEmployeeId = req.approvalRoute.reviewerEmployeeId;
+      const reviewer = storage
+        .readCollection<{ id: string; employeeId?: string; status: string }>("users")
+        .find((user) => user.employeeId === reviewerEmployeeId && user.status === "Active");
+      if (reviewer && reviewer.id !== context.actor.userId)
+        notifService.create(
+          {
+            recipientUserId: reviewer.id,
+            type: "Info",
+            title: "HR colleague’s travel needs your review",
+            message: `${employee?.preferredName ?? "An HR colleague"} requested travel to ${req.destination}.`,
+            priority: "High",
+            status: "Unread",
+            deduplicationKey: `travel-hr-own-review-${req.id}`,
+          },
+          context,
+        );
+      return;
+    }
+    const reviewerRoles =
+      req.approvalRoute?.kind === "Managerless Executive"
+        ? [req.approvalRoute.reviewerRole, ...(req.approvalRoute.notifyHr ? ["HR"] : [])]
+        : ["HR", "Accounts"];
     const reviewers = storage
       .readCollection<{ id: string; roles: string[]; status: string }>("users")
       .filter(
         (user) => user.status === "Active" && user.roles.some((r) => reviewerRoles.includes(r)),
       );
     for (const reviewer of reviewers) {
+      if (reviewer.id === context.actor.userId) continue;
+      const informational =
+        req.approvalRoute?.kind === "Managerless Executive" &&
+        reviewer.roles.includes("HR") &&
+        !reviewer.roles.includes(req.approvalRoute.reviewerRole);
       notifService.create(
         {
           recipientUserId: reviewer.id,
           type: "Info",
-          title: "Travel request awaiting review",
-          message: `${employee?.preferredName ?? "An employee"} requested travel to ${req.destination} (${req.startDate} - ${req.endDate}).`,
+          title: informational ? "Executive trip submitted" : "Travel request awaiting review",
+          message: `${employee?.preferredName ?? "An employee"} requested travel to ${req.destination} (${req.startDate} - ${req.endDate}).${informational ? " HR is informed; Finance will decide." : ""}`,
           priority: "Normal",
           status: "Unread",
           deduplicationKey: `travel-submitted-${req.id}`,
@@ -1130,7 +1250,12 @@ export class TravelService {
     > = {
       "Pre-authorised": {
         title: "Travel request pre-authorised",
-        message: `Your trip to ${req.destination} was pre-authorised by your supervisor, HR and Accounts.`,
+        message:
+          req.approvalRoute?.kind === "Managerless Executive"
+            ? `Your trip to ${req.destination} was approved by ${req.approvalRoute.reviewerRole === "Accounts" ? "Finance" : "HR"}.`
+            : req.approvalRoute?.kind === "HR Own Travel"
+              ? `Your trip to ${req.destination} was approved by the assigned independent reviewer and Finance.`
+              : `Your trip to ${req.destination} was pre-authorised by your supervisor, HR and Accounts.`,
         type: "Success",
       },
       Rejected: {
@@ -1191,9 +1316,12 @@ export class TravelService {
       return "Rejected";
     }
     if (
-      req.managerApprovalStatus === "Approved" &&
-      req.hrApprovalStatus === "Approved" &&
-      req.accountsApprovalStatus === "Approved"
+      travelApprovalComplete(
+        req.approvalRoute ?? { kind: "Standard" },
+        req.managerApprovalStatus,
+        req.hrApprovalStatus,
+        req.accountsApprovalStatus,
+      )
     ) {
       return "Pre-authorised";
     }

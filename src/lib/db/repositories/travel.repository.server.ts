@@ -1,16 +1,21 @@
 import "@tanstack/react-start/server-only";
 import { getReminderRules } from "./reminder-rules.repository.server.ts";
-import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
+import { validateSupervisorAccount } from "./supervisor-access.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, lt, not, or, sql } from "drizzle-orm";
 
-import type { TravelRequest } from "../../data/travel-types.ts";
+import { isSupervisorOptionalPosition } from "../../data/executive-reporting.ts";
+import {
+  travelApprovalComplete,
+  type TravelApprovalRoute,
+  type TravelRequest,
+} from "../../data/travel-types.ts";
 import { getDatabaseClient } from "../client.ts";
 import { readObjectFile } from "../object-storage.server.ts";
 import { fileMetadata } from "../schema/documents.ts";
 import { employees, roles, userRoles, users } from "../schema/employee.ts";
-import { costCentres, currencies, projects } from "../schema/master-data.ts";
+import { costCentres, currencies, positions, projects } from "../schema/master-data.ts";
 import { auditEvents, notifications } from "../schema/system.ts";
 import { appSettings } from "../schema/organisation.ts";
 import {
@@ -22,6 +27,7 @@ import {
 } from "../schema/travel-payroll.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 import { lockPayrollSourceAllocation } from "./payroll-allocation-lock.server.ts";
+import { getApprovalRoutingSettingsInDatabase } from "./approval-routing.repository.server.ts";
 
 type Tx = Parameters<Parameters<ReturnType<typeof getDatabaseClient>["transaction"]>[0]>[0];
 type MasterTable = typeof projects | typeof costCentres | typeof currencies;
@@ -59,6 +65,35 @@ async function userForEmployee(tx: Tx, org: string, employeeId: string) {
     )
     .limit(1);
   return user?.id;
+}
+async function requireTravelSupervisor(tx: Tx, org: string, employeeId: string) {
+  const [employee] = await tx
+    .select({ supervisorId: employees.lineManagerId })
+    .from(employees)
+    .where(
+      and(
+        eq(employees.organisationId, org),
+        eq(employees.id, employeeId),
+        isNull(employees.archivedAt),
+      ),
+    )
+    .limit(1);
+  const account = await validateSupervisorAccount(tx, org, employeeId, employee?.supervisorId);
+  const [access] = await tx
+    .select({ roleId: userRoles.roleId })
+    .from(userRoles)
+    .innerJoin(roles, eq(roles.id, userRoles.roleId))
+    .where(
+      and(
+        eq(userRoles.organisationId, org),
+        eq(userRoles.userId, account.userId),
+        inArray(roles.code, ["Line Manager", "HR"]),
+      ),
+    )
+    .limit(1);
+  if (!access)
+    throw new Error("Ask HR to assign a supervisor with Line Manager or HR approval access.");
+  return account;
 }
 async function organisationToday(tx: Tx, org: string): Promise<string> {
   const [settings] = await tx
@@ -129,6 +164,7 @@ function mapTravel(
     id: row.id,
     databaseId: row.id,
     employeeId: row.employeeId,
+    approvalRoute: row.approvalRoute,
     participants: row.participants,
     bookings: row.bookings,
     purpose: row.purpose,
@@ -222,12 +258,14 @@ export async function listTravelRequestsForActor(org: string, actor: AuditActorC
                   inArray(travelRequests.employeeId, directReports),
                   sql`${travelRequests.participants} @> ${JSON.stringify([{ managerId: actor.employeeId }])}::jsonb`,
                   sql`${travelRequests.participants} @> ${JSON.stringify([{ employeeId: actor.employeeId }])}::jsonb`,
+                  sql`${travelRequests.approvalRoute} @> ${JSON.stringify({ kind: "HR Own Travel", reviewerEmployeeId: actor.employeeId })}::jsonb`,
                 )!,
               ]
             : [
                 or(
                   eq(travelRequests.employeeId, actor.employeeId),
                   sql`${travelRequests.participants} @> ${JSON.stringify([{ employeeId: actor.employeeId }])}::jsonb`,
+                  sql`${travelRequests.approvalRoute} @> ${JSON.stringify({ kind: "HR Own Travel", reviewerEmployeeId: actor.employeeId })}::jsonb`,
                 )!,
               ]),
       ),
@@ -276,7 +314,7 @@ export async function createTravelRequestInDatabase(
   },
   actor: AuditActorContext,
 ) {
-  if (!actor.employeeId || actor.employeeId !== input.employeeId)
+  if (!actor.userId || !actor.employeeId || actor.employeeId !== input.employeeId)
     throw new Error("You can only request travel for yourself.");
   if (!input.purpose.trim() || !input.destination.trim())
     throw new Error("Enter the business purpose and destination.");
@@ -299,8 +337,14 @@ export async function createTravelRequestInDatabase(
         preferredName: employees.preferredName,
         lineManagerId: employees.lineManagerId,
         employmentConfirmationStatus: employees.employmentConfirmationStatus,
+        positionName: positions.name,
+        positionIsActive: positions.isActive,
       })
       .from(employees)
+      .leftJoin(
+        positions,
+        and(eq(positions.id, employees.positionId), eq(positions.organisationId, org)),
+      )
       .where(and(eq(employees.organisationId, org), eq(employees.id, input.employeeId)))
       .limit(1);
     if (!employee || !["Active", "Probation", "Notice"].includes(employee.status))
@@ -309,9 +353,93 @@ export async function createTravelRequestInDatabase(
       throw new Error(
         "HR must confirm your employment details before you can request business travel.",
       );
-    if (!employee.lineManagerId)
+    const managerlessExecutive =
+      !employee.lineManagerId &&
+      employee.positionIsActive === true &&
+      isSupervisorOptionalPosition(employee.positionName ?? "");
+    const [hrMembership] = await tx
+      .select({ id: userRoles.userId })
+      .from(userRoles)
+      .innerJoin(roles, eq(roles.id, userRoles.roleId))
+      .where(
+        and(
+          eq(userRoles.organisationId, org),
+          eq(userRoles.userId, actor.userId!),
+          eq(roles.code, "HR"),
+        ),
+      )
+      .limit(1);
+    const hrOwnTravel = !managerlessExecutive && Boolean(hrMembership);
+    if (!employee.lineManagerId && !managerlessExecutive && !hrOwnTravel)
       throw new Error("Ask HR to assign your supervisor before requesting business travel.");
-    await requireEmployeeSupervisor(tx, org, input.employeeId);
+    if (employee.lineManagerId && !hrOwnTravel)
+      await requireTravelSupervisor(tx, org, input.employeeId);
+    const routingSettings =
+      managerlessExecutive || hrOwnTravel
+        ? await getApprovalRoutingSettingsInDatabase(org, tx)
+        : null;
+    const approvalRoute: TravelApprovalRoute =
+      managerlessExecutive && routingSettings
+        ? {
+            kind: "Managerless Executive",
+            reviewerRole: routingSettings.managerlessExecutiveTravelReviewerRole,
+            notifyHr: routingSettings.managerlessExecutiveTravelNotifyHr,
+          }
+        : hrOwnTravel && routingSettings
+          ? {
+              kind: "HR Own Travel",
+              reviewerEmployeeId: routingSettings.hrOwnRequestReviewerEmployeeId ?? "",
+            }
+          : { kind: "Standard" };
+    if (approvalRoute.kind === "HR Own Travel") {
+      if (!approvalRoute.reviewerEmployeeId)
+        throw new Error(
+          "Ask HR to choose an independent reviewer for HR staff requests in Company Setup.",
+        );
+      if (approvalRoute.reviewerEmployeeId === employee.id)
+        throw new Error(
+          "You cannot review your own travel request. Ask HR to choose another reviewer.",
+        );
+      const [reviewer] = await tx
+        .select({ id: employees.id, status: employees.status, name: employees.preferredName })
+        .from(employees)
+        .where(
+          and(
+            eq(employees.organisationId, org),
+            eq(employees.id, approvalRoute.reviewerEmployeeId),
+            isNull(employees.archivedAt),
+          ),
+        )
+        .limit(1);
+      if (!reviewer || !["Active", "Probation", "Notice"].includes(reviewer.status))
+        throw new Error("The selected independent reviewer is not an active employee.");
+      approvalRoute.reviewerName = reviewer.name;
+    }
+    const routeReviewerIds =
+      approvalRoute.kind === "Managerless Executive"
+        ? (await usersForRoles(tx, org, [approvalRoute.reviewerRole])).filter(
+            (userId) => userId !== actor.userId,
+          )
+        : approvalRoute.kind === "HR Own Travel"
+          ? [await userForEmployee(tx, org, approvalRoute.reviewerEmployeeId)].filter(
+              (userId): userId is string => Boolean(userId) && userId !== actor.userId,
+            )
+          : [];
+    if (approvalRoute.kind !== "Standard") {
+      if (!routeReviewerIds.length)
+        throw new Error(
+          "No independent travel reviewer is active. Ask HR to check approval routing.",
+        );
+      if (approvalRoute.kind === "HR Own Travel") {
+        const financeReviewers = await usersForRoles(tx, org, ["Accounts"]);
+        if (
+          !financeReviewers.some(
+            (userId) => userId !== actor.userId && !routeReviewerIds.includes(userId),
+          )
+        )
+          throw new Error("No separate Finance reviewer is active for this trip.");
+      }
+    }
     const participants: NonNullable<TravelRequest["participants"]> = [];
     const participantIds = [...new Set(input.participantIds ?? [])].filter(
       (id) => id !== input.employeeId,
@@ -358,7 +486,7 @@ export async function createTravelRequestInDatabase(
         person.employmentConfirmationStatus !== "Confirmed"
       )
         throw new Error("Select colleagues with confirmed, active employment details.");
-      await requireEmployeeSupervisor(tx, org, employeeId);
+      await requireTravelSupervisor(tx, org, employeeId);
       participants.push({
         employeeId,
         name: person.preferredName,
@@ -368,7 +496,11 @@ export async function createTravelRequestInDatabase(
     }
     const travellerIds = new Set([input.employeeId, ...participantIds]);
     if (
-      travellerIds.has(employee.lineManagerId) ||
+      (approvalRoute.kind === "Standard" &&
+        employee.lineManagerId &&
+        travellerIds.has(employee.lineManagerId)) ||
+      (approvalRoute.kind === "HR Own Travel" &&
+        travellerIds.has(approvalRoute.reviewerEmployeeId)) ||
       participants.some((participant) => travellerIds.has(participant.managerId))
     )
       throw new Error(
@@ -417,6 +549,22 @@ export async function createTravelRequestInDatabase(
       id,
       organisationId: org,
       employeeId: input.employeeId,
+      approvalRoute,
+      managerApprovalStatus:
+        managerlessExecutive && participants.length === 0 ? "Not Required" : "Pending",
+      hrApprovalStatus:
+        approvalRoute.kind === "HR Own Travel" ||
+        (managerlessExecutive &&
+          approvalRoute.kind === "Managerless Executive" &&
+          approvalRoute.reviewerRole !== "HR")
+          ? "Not Required"
+          : "Pending",
+      accountsApprovalStatus:
+        managerlessExecutive &&
+        approvalRoute.kind === "Managerless Executive" &&
+        approvalRoute.reviewerRole !== "Accounts"
+          ? "Not Required"
+          : "Pending",
       purpose: input.purpose.trim(),
       participants,
       destination: input.destination.trim(),
@@ -436,7 +584,9 @@ export async function createTravelRequestInDatabase(
       createdBy: actor.userId,
       updatedBy: actor.userId,
     } as typeof travelRequests.$inferInsert);
-    const managerUserId = await userForEmployee(tx, org, employee.lineManagerId);
+    const managerUserId = employee.lineManagerId
+      ? await userForEmployee(tx, org, employee.lineManagerId)
+      : undefined;
     for (const participant of participants) {
       const manager = await userForEmployee(tx, org, participant.managerId);
       if (manager)
@@ -462,42 +612,94 @@ export async function createTravelRequestInDatabase(
           id,
           {
             title: "You were added to a trip",
-            message: `${employee.preferredName} included you in the trip to ${input.destination}. Supervisor and HR approval are still required.`,
+            message: `${employee.preferredName} included you in the trip to ${input.destination}. Open the trip to see its current approval steps.`,
             key: `travel-added-${id}`,
             path: `/staff/travel/${id}`,
           },
           actor.userId!,
         );
     }
-    if (!managerUserId) throw new Error("Your assigned supervisor does not have active access.");
-    await notify(
-      tx,
-      org,
-      [managerUserId],
-      id,
-      {
-        title: "Travel request awaiting review",
-        message: `${employee.preferredName} requested travel to ${input.destination.trim()}.`,
-        key: `travel-submitted-${id}`,
-        path: "/staff/travel-approvals",
-        priority: "High",
-      },
-      actor.userId!,
-    );
-    await notify(
-      tx,
-      org,
-      await usersForRoles(tx, org, ["HR"]),
-      id,
-      {
-        title: "Travel request submitted",
-        message: `${employee.preferredName} requested travel to ${input.destination.trim()}. Supervisor approval is pending.`,
-        key: `travel-submitted-${id}`,
-        path: "/staff/travel-hr-approvals",
-        priority: "High",
-      },
-      actor.userId!,
-    );
+    if (approvalRoute.kind === "Standard") {
+      if (!managerUserId) throw new Error("Your assigned supervisor does not have active access.");
+      await notify(
+        tx,
+        org,
+        [managerUserId],
+        id,
+        {
+          title: "Travel request awaiting review",
+          message: `${employee.preferredName} requested travel to ${input.destination.trim()}.`,
+          key: `travel-submitted-${id}`,
+          path: "/staff/travel-approvals",
+          priority: "High",
+        },
+        actor.userId!,
+      );
+      await notify(
+        tx,
+        org,
+        await usersForRoles(tx, org, ["HR"]),
+        id,
+        {
+          title: "Travel request submitted",
+          message: `${employee.preferredName} requested travel to ${input.destination.trim()}. Supervisor approval is pending.`,
+          key: `travel-submitted-${id}`,
+          path: "/staff/travel-hr-approvals",
+          priority: "High",
+        },
+        actor.userId!,
+      );
+    } else if (approvalRoute.kind === "Managerless Executive") {
+      if (approvalRoute.notifyHr && approvalRoute.reviewerRole !== "HR")
+        await notify(
+          tx,
+          org,
+          (await usersForRoles(tx, org, ["HR"])).filter(
+            (userId) => userId !== actor.userId && !routeReviewerIds.includes(userId),
+          ),
+          id,
+          {
+            title: "Executive trip submitted",
+            message: `${employee.preferredName} requested travel to ${input.destination.trim()}. HR is informed; ${approvalRoute.reviewerRole === "Accounts" ? "Finance" : "HR"} will decide.`,
+            key: `travel-executive-hr-info-${id}`,
+            path: `/staff/travel/${id}`,
+          },
+          actor.userId!,
+        );
+      if (participants.length === 0)
+        await notify(
+          tx,
+          org,
+          routeReviewerIds,
+          id,
+          {
+            title: "Executive trip needs your decision",
+            message: `${employee.preferredName} requested travel to ${input.destination.trim()}.`,
+            key: `travel-executive-review-${id}`,
+            path:
+              approvalRoute.reviewerRole === "Accounts"
+                ? "/staff/travel-accounts-approvals"
+                : "/staff/travel-hr-approvals",
+            priority: "High",
+          },
+          actor.userId!,
+        );
+    } else {
+      await notify(
+        tx,
+        org,
+        routeReviewerIds,
+        id,
+        {
+          title: "HR colleague’s travel needs your review",
+          message: `${employee.preferredName} requested travel to ${input.destination.trim()}. Review the trip as the assigned independent reviewer.`,
+          key: `travel-hr-own-review-${id}`,
+          path: `/staff/travel/${id}`,
+          priority: "High",
+        },
+        actor.userId!,
+      );
+    }
     await tx.insert(auditEvents).values({
       organisationId: org,
       ...auditActor(actor),
@@ -507,6 +709,7 @@ export async function createTravelRequestInDatabase(
       entityId: id,
       afterSummary: {
         status: "Pending HR and Accounts",
+        approvalRoute,
         totalEstimate: total,
         currency: currency.code,
       },
@@ -619,21 +822,43 @@ export async function decideTravelRequestInDatabase(
       throw new Error("You cannot approve your own travel request.");
     if (request.status !== "Pending HR and Accounts")
       throw new Error("This request is no longer awaiting approval.");
+    const approvalRoute = request.approvalRoute;
+    if (approvalRoute.kind === "Managerless Executive") {
+      if (stage !== "Manager" && stage !== approvalRoute.reviewerRole)
+        throw new Error("This stage is not required for this trip.");
+      if (stage === "Manager" && request.participants.length === 0)
+        throw new Error("This trip does not require a supervisor decision.");
+    }
+    if (approvalRoute.kind === "HR Own Travel" && stage === "HR")
+      throw new Error(
+        "HR cannot review its own travel request; the independent reviewer is assigned.",
+      );
+    const hrApprovalStatusBefore = request.hrApprovalStatus;
     if (stage === "Manager") {
       const [employee] = await tx
         .select({ lineManagerId: employees.lineManagerId })
         .from(employees)
         .where(and(eq(employees.organisationId, org), eq(employees.id, request.employeeId)))
         .limit(1);
-      if (
-        role(actor) !== "Line Manager" ||
-        (employee?.lineManagerId !== actor.employeeId &&
-          !request.participants.some(
-            (p) => p.managerId === actor.employeeId && p.status === "Pending",
-          ))
-      )
-        throw new Error("Only the employee's assigned supervisor can review the business need.");
-      const ownerDecision = employee?.lineManagerId === actor.employeeId;
+      const assignedIndependentReviewer =
+        approvalRoute.kind === "HR Own Travel" &&
+        approvalRoute.reviewerEmployeeId === actor.employeeId &&
+        role(actor) !== "Super Admin";
+      const standardOwnerReviewer =
+        approvalRoute.kind === "Standard" &&
+        employee?.lineManagerId === actor.employeeId &&
+        ["Line Manager", "HR"].includes(role(actor));
+      const participantSupervisor =
+        ["Line Manager", "HR"].includes(role(actor)) &&
+        request.participants.some(
+          (participant) =>
+            participant.managerId === actor.employeeId && participant.status === "Pending",
+        );
+      if (!assignedIndependentReviewer && !standardOwnerReviewer && !participantSupervisor)
+        throw new Error(
+          "Only the assigned trip reviewer or a traveller's supervisor can decide this step.",
+        );
+      const ownerDecision = assignedIndependentReviewer || standardOwnerReviewer;
       if (
         ownerDecision &&
         request.managerApprovedBy &&
@@ -653,11 +878,40 @@ export async function decideTravelRequestInDatabase(
           : p,
       );
       // Keep the organiser's decision separately until every traveller's supervisor has decided.
-      const ownerApproved = ownerDecision ? decision === "approve" : !!request.managerApprovedBy;
+      const ownerApproved =
+        approvalRoute.kind === "Managerless Executive"
+          ? true
+          : ownerDecision
+            ? decision === "approve"
+            : !!request.managerApprovedBy;
+      const hrStandInReview =
+        approvalRoute.kind === "Standard" &&
+        role(actor) === "HR" &&
+        decision === "approve" &&
+        request.hrApprovalStatus === "Pending";
+      const hrStandInReviewerId = hrStandInReview ? actor.userId : request.hrApprovedBy;
+      const hrStandInReviewedAt = hrStandInReview ? new Date().toISOString() : request.hrApprovedAt;
+      const completeHrStandInReview =
+        decision === "approve" &&
+        ownerApproved &&
+        participants.every((participant) => participant.status === "Approved") &&
+        request.hrApprovalStatus === "Pending" &&
+        Boolean(hrStandInReviewerId);
       await tx
         .update(travelRequests)
         .set({
           participants,
+          ...(hrStandInReview || completeHrStandInReview
+            ? {
+                ...(completeHrStandInReview ? { hrApprovalStatus: "Approved" as const } : {}),
+                hrNotes: "HR reviewed the trip as the assigned supervisor.",
+                hrApprovedAt: hrStandInReviewedAt,
+                hrApprovedBy: hrStandInReviewerId,
+              }
+            : {}),
+          ...(decision === "reject" && request.hrApprovalStatus === "Pending"
+            ? { hrNotes: null, hrApprovedAt: null, hrApprovedBy: null }
+            : {}),
           updatedAt: new Date(),
           updatedBy: actor.userId!,
           recordVersion: sql`${travelRequests.recordVersion} + 1`,
@@ -665,6 +919,19 @@ export async function decideTravelRequestInDatabase(
         })
         .where(eq(travelRequests.id, requestId));
       request.participants = participants;
+      if (completeHrStandInReview) {
+        request.hrApprovalStatus = "Approved";
+        await tx.insert(travelApprovals).values({
+          id: randomUUID(),
+          organisationId: org,
+          travelRequestId: requestId,
+          stage: "HR",
+          state: "Approved",
+          decidedBy: hrStandInReviewerId!,
+          decidedAt: hrStandInReviewedAt ?? new Date().toISOString(),
+          reason: "HR reviewed the trip as the assigned supervisor.",
+        } as typeof travelApprovals.$inferInsert);
+      }
       if (
         decision === "approve" &&
         (!ownerApproved || participants.some((p) => p.status !== "Approved"))
@@ -672,18 +939,35 @@ export async function decideTravelRequestInDatabase(
         await tx.insert(auditEvents).values({
           organisationId: org,
           ...auditActor(actor),
-          action: "approve-participation",
+          action:
+            approvalRoute.kind === "HR Own Travel" && ownerDecision
+              ? "approve-independent-review"
+              : "approve-participation",
           module: "travel",
           entityType: "travel-request",
           entityId: requestId,
-          afterSummary: { participants },
-          reason: "Approved assigned travellers; other supervisors still pending",
+          afterSummary: {
+            participants,
+            ...(approvalRoute.kind === "HR Own Travel" && ownerDecision
+              ? { managerApprovedBy: actor.userId, independentReviewerEmployeeId: actor.employeeId }
+              : {}),
+          },
+          reason:
+            approvalRoute.kind === "HR Own Travel" && ownerDecision
+              ? "Independent reviewer approved; participant supervisors still pending"
+              : "A trip review was completed; other assigned reviewers are still pending",
           riskLevel: "Medium",
         } as typeof auditEvents.$inferInsert);
         return;
       }
     }
-    if (stage !== "Manager" && request.managerApprovalStatus !== "Approved")
+    if (
+      stage !== "Manager" &&
+      ![
+        "Approved",
+        ...(approvalRoute.kind === "Managerless Executive" ? ["Not Required"] : []),
+      ].includes(request.managerApprovalStatus)
+    )
       throw new Error("All travellers' supervisors must approve first.");
     if (
       stage !== "Manager" &&
@@ -694,7 +978,11 @@ export async function decideTravelRequestInDatabase(
       throw new Error(
         "A supervisor who approved this trip cannot complete another approval stage.",
       );
-    if (stage === "Accounts" && request.hrApprovalStatus !== "Approved")
+    if (
+      stage === "Accounts" &&
+      approvalRoute.kind === "Standard" &&
+      request.hrApprovalStatus !== "Approved"
+    )
       throw new Error("HR must approve before Finance reviews the budget.");
     if (stage === "Accounts" && request.hrApprovedBy === actor.userId)
       throw new Error("A different Finance reviewer must approve the budget.");
@@ -732,7 +1020,7 @@ export async function decideTravelRequestInDatabase(
     const nextStatus =
       decision === "reject"
         ? "Rejected"
-        : nextManager === "Approved" && nextHr === "Approved" && nextAccounts === "Approved"
+        : travelApprovalComplete(approvalRoute, nextManager, nextHr, nextAccounts)
           ? "Pre-authorised"
           : "Pending HR and Accounts";
     const decidedAt = new Date().toISOString();
@@ -757,7 +1045,9 @@ export async function decideTravelRequestInDatabase(
               managerNotes: reason?.trim() ?? null,
               managerApprovedAt: decision === "approve" ? decidedAt : null,
               managerApprovedBy:
-                decision === "approve" ? (request.managerApprovedBy ?? actor.userId) : null,
+                decision === "approve" && approvalRoute.kind !== "Managerless Executive"
+                  ? (request.managerApprovedBy ?? actor.userId)
+                  : null,
             }
           : {}),
         ...(stage === "HR"
@@ -794,26 +1084,42 @@ export async function decideTravelRequestInDatabase(
       decidedBy: actor.userId,
       reason: reason?.trim(),
     } as typeof travelApprovals.$inferInsert);
-    if (decision === "approve" && stage !== "Accounts") {
+    if (decision === "approve" && nextStatus !== "Pre-authorised") {
+      const nextReviewRole =
+        approvalRoute.kind === "Managerless Executive"
+          ? approvalRoute.reviewerRole
+          : approvalRoute.kind === "HR Own Travel"
+            ? "Accounts"
+            : stage === "Manager" && nextHr !== "Approved"
+              ? "HR"
+              : "Accounts";
       await notify(
         tx,
         org,
-        await usersForRoles(tx, org, [stage === "Manager" ? "HR" : "Accounts"]),
+        (await usersForRoles(tx, org, [nextReviewRole])).filter(
+          (userId) => userId !== actor.userId,
+        ),
         requestId,
         {
           title:
-            stage === "Manager"
+            nextReviewRole === "HR"
               ? "Travel ready for HR approval"
               : "Travel ready for Finance review",
           message: `Review the trip to ${request.destination}, ${request.startDate} to ${request.endDate}.`,
           key: `travel-next-stage-${requestId}-${stage}`,
           path:
-            stage === "Manager" ? "/staff/travel-hr-approvals" : "/staff/travel-accounts-approvals",
+            nextReviewRole === "HR"
+              ? "/staff/travel-hr-approvals"
+              : "/staff/travel-accounts-approvals",
         },
         actor.userId!,
       );
     }
-    if (decision === "approve" && stage === "HR") {
+    if (
+      decision === "approve" &&
+      approvalRoute.kind === "Standard" &&
+      (stage === "HR" || (stage === "Manager" && nextHr === "Approved"))
+    ) {
       const organiser = await userForEmployee(tx, org, request.employeeId);
       if (organiser)
         await notify(
@@ -830,6 +1136,19 @@ export async function decideTravelRequestInDatabase(
           actor.userId!,
         );
     }
+    const [independentReviewer] =
+      approvalRoute.kind === "HR Own Travel"
+        ? await tx
+            .select({ name: employees.preferredName })
+            .from(employees)
+            .where(
+              and(
+                eq(employees.organisationId, org),
+                eq(employees.id, approvalRoute.reviewerEmployeeId),
+              ),
+            )
+            .limit(1)
+        : [];
     const traveller = await userForEmployee(tx, org, request.employeeId);
     if (traveller)
       await notify(
@@ -843,13 +1162,21 @@ export async function decideTravelRequestInDatabase(
               ? "Travel request pre-authorised"
               : decision === "reject"
                 ? "Travel request rejected"
-                : `${stage} review completed`,
+                : approvalRoute.kind === "HR Own Travel" && stage === "Manager"
+                  ? "Independent travel review completed"
+                  : `${stage} review completed`,
           message:
             nextStatus === "Pre-authorised"
-              ? `Your trip to ${request.destination} is pre-authorised by your supervisor, HR and Accounts.`
+              ? approvalRoute.kind === "Managerless Executive"
+                ? `Your trip to ${request.destination} was approved by ${approvalRoute.reviewerRole === "Accounts" ? "Finance" : "HR"}. You can request arrangements now.`
+                : approvalRoute.kind === "HR Own Travel"
+                  ? `Your trip to ${request.destination} was approved by ${independentReviewer?.name ?? "the independent reviewer"} and Finance. You can request arrangements now.`
+                  : `Your trip to ${request.destination} is pre-authorised by your supervisor, HR and Accounts.`
               : decision === "reject"
                 ? `Your trip to ${request.destination} was rejected. ${reason?.trim()}`
-                : `${stage} completed its review. The remaining approvals are still required.`,
+                : approvalRoute.kind === "HR Own Travel" && stage === "Manager"
+                  ? `${independentReviewer?.name ?? "The independent reviewer"} completed the first review. Finance will review costs next.`
+                  : `${stage} completed its review. The remaining approvals are still required.`,
           key: `travel-decision-${requestId}-${stage}`,
           path: `/staff/travel/${requestId}`,
           priority: decision === "reject" ? "High" : "Normal",
@@ -860,14 +1187,24 @@ export async function decideTravelRequestInDatabase(
       organisationId: org,
       ...auditActor(actor),
       action:
-        decision === "approve" ? `approve-${stage.toLowerCase()}` : `reject-${stage.toLowerCase()}`,
+        approvalRoute.kind === "HR Own Travel" && stage === "Manager"
+          ? actor.employeeId === approvalRoute.reviewerEmployeeId
+            ? decision === "approve"
+              ? "approve-independent-review"
+              : "reject-independent-review"
+            : decision === "approve"
+              ? "approve-participation"
+              : "reject-participation"
+          : decision === "approve"
+            ? `approve-${stage.toLowerCase()}`
+            : `reject-${stage.toLowerCase()}`,
       module: "travel",
       entityType: "travel-request",
       entityId: requestId,
       beforeSummary: {
         status: request.status,
         manager: request.managerApprovalStatus,
-        hr: request.hrApprovalStatus,
+        hr: hrApprovalStatusBefore,
         accounts: request.accountsApprovalStatus,
       },
       afterSummary: {
@@ -1252,6 +1589,10 @@ export async function readTravelFileInDatabase(
     request.employeeId !== actor.employeeId &&
     !request.participants.some((p) => p.employeeId === actor.employeeId) &&
     !(
+      request.approvalRoute.kind === "HR Own Travel" &&
+      request.approvalRoute.reviewerEmployeeId === actor.employeeId
+    ) &&
+    !(
       role(actor) === "Travel Admin" &&
       bookingId &&
       !expenseLineId &&
@@ -1462,8 +1803,16 @@ export async function changeTravelBookingInDatabase(
       throw new Error("This trip is not open for booking changes.");
     if (trip.endDate < (await organisationToday(tx, org)))
       throw new Error("Arrangements cannot be changed after the trip has ended.");
-    if (trip.managerApprovalStatus !== "Approved" || trip.hrApprovalStatus !== "Approved")
-      throw new Error("Supervisor and HR approval are required before requesting arrangements.");
+    if (
+      trip.approvalRoute.kind !== "Standard"
+        ? trip.status !== "Pre-authorised"
+        : trip.managerApprovalStatus !== "Approved" || trip.hrApprovalStatus !== "Approved"
+    )
+      throw new Error(
+        trip.approvalRoute.kind !== "Standard"
+          ? "The trip reviewer must approve before arrangements can be requested."
+          : "Supervisor and HR approval are required before requesting arrangements.",
+      );
     const bookings = [...trip.bookings];
     let recipients: string[] = [];
     let title = "";
@@ -1584,6 +1933,11 @@ export async function changeTravelBookingInDatabase(
         recordVersion: sql`${travelRequests.recordVersion} + 1`,
       })
       .where(eq(travelRequests.id, trip.id));
+    const affectedBooking =
+      input.action === "request"
+        ? bookings.at(-1)
+        : bookings.find((booking) => booking.id === input.bookingId);
+    if (!affectedBooking) throw new Error("Arrangement not found.");
     await notify(
       tx,
       org,
@@ -1593,7 +1947,7 @@ export async function changeTravelBookingInDatabase(
         title,
         message: `${trip.destination}, ${trip.startDate} to ${trip.endDate}. ${input.name ?? bookings.find((b) => b.id === input.bookingId)?.name ?? ""}`,
         key: `travel-booking-${trip.id}-${trip.recordVersion + 1}`,
-        path: "/staff/travel",
+        path: `/staff/travel/${trip.id}#booking-${affectedBooking.id}`,
       },
       actor.userId!,
     );
@@ -1673,19 +2027,21 @@ export async function processTravelWorker(now = new Date()) {
         });
       } else if (request.status === "Pending HR and Accounts") {
         if (request.managerApprovalStatus === "Pending") {
-          const [employee] = await tx
-            .select({ manager: employees.lineManagerId })
-            .from(employees)
-            .where(
-              and(
-                eq(employees.organisationId, request.organisationId),
-                eq(employees.id, request.employeeId),
-              ),
-            )
-            .limit(1);
-          const manager = employee?.manager
-            ? await userForEmployee(tx, request.organisationId, employee.manager)
-            : undefined;
+          let manager: string | undefined;
+          if (request.approvalRoute.kind === "Standard") {
+            const [employee] = await tx
+              .select({ manager: employees.lineManagerId })
+              .from(employees)
+              .where(
+                and(
+                  eq(employees.organisationId, request.organisationId),
+                  eq(employees.id, request.employeeId),
+                ),
+              )
+              .limit(1);
+            if (employee?.manager)
+              manager = await userForEmployee(tx, request.organisationId, employee.manager);
+          }
           const managers = new Set<string>();
           if (manager && !request.managerApprovedBy) managers.add(manager);
           for (const participant of request.participants.filter((p) => p.status === "Pending")) {
@@ -1698,14 +2054,41 @@ export async function processTravelWorker(now = new Date()) {
               recipients: [...managers],
               path: "/staff/travel-approvals",
             });
+          if (request.approvalRoute.kind === "HR Own Travel" && !request.managerApprovedBy) {
+            const independentReviewer = await userForEmployee(
+              tx,
+              request.organisationId,
+              request.approvalRoute.reviewerEmployeeId,
+            );
+            if (independentReviewer)
+              stages.push({
+                name: "independent travel review",
+                recipients: [independentReviewer],
+                path: `/staff/travel/${request.id}`,
+              });
+          }
         }
-        if (request.hrApprovalStatus === "Pending" && request.managerApprovalStatus === "Approved")
+        if (
+          request.hrApprovalStatus === "Pending" &&
+          ["Approved", "Not Required"].includes(request.managerApprovalStatus) &&
+          (request.approvalRoute.kind === "Standard" ||
+            (request.approvalRoute.kind === "Managerless Executive" &&
+              request.approvalRoute.reviewerRole === "HR"))
+        )
           stages.push({
             name: "HR approval",
             recipients: await usersForRoles(tx, request.organisationId, ["HR"]),
             path: "/staff/travel-hr-approvals",
           });
-        if (request.accountsApprovalStatus === "Pending" && request.hrApprovalStatus === "Approved")
+        if (
+          request.accountsApprovalStatus === "Pending" &&
+          ["Approved", "Not Required"].includes(request.managerApprovalStatus) &&
+          (request.approvalRoute.kind === "Standard"
+            ? request.hrApprovalStatus === "Approved"
+            : request.approvalRoute.kind === "HR Own Travel"
+              ? request.hrApprovalStatus === "Not Required"
+              : request.approvalRoute.reviewerRole === "Accounts")
+        )
           stages.push({
             name: "Finance approval",
             recipients: await usersForRoles(tx, request.organisationId, ["Accounts"]),

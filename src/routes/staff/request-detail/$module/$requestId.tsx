@@ -1,18 +1,30 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ArrowUpRight, Clock3, FileText } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
+import { ArrowLeft, ArrowUpRight, Clock3, FileText, Paperclip } from "lucide-react";
 import { useCurrentUser } from "@/lib/auth";
 import { REQUEST_MODULES } from "@/lib/data/request-tracking";
 import { getTrackedRequestDetailFn } from "@/lib/server-functions/request-tracking.server";
+import { readLeaveAttachmentFn } from "@/lib/server-functions/leave.server";
 import { Button } from "@/components/ui/button";
+import { DecisionSnapshot } from "@/components/requests/decision-snapshot";
 
 export const Route = createFileRoute("/staff/request-detail/$module/$requestId")({
   component: RequestDetailPage,
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { from?: "my" | "organisation" | "reviewed" } => {
+    const from = search["from"];
+    return from === "my" || from === "organisation" || from === "reviewed" ? { from } : {};
+  },
 });
 
 function RequestDetailPage() {
   const { module, requestId } = Route.useParams();
+  const { from } = Route.useSearch();
   const user = useCurrentUser();
+  const [openingEvidence, setOpeningEvidence] = useState(false);
   const validModule = REQUEST_MODULES.find((item) => item === module);
   const query = useQuery({
     queryKey: ["request-detail", module, requestId, user?.id, user?.activeRole],
@@ -48,13 +60,49 @@ function RequestDetailPage() {
     );
 
   const { request, canOpenOriginal } = query.data;
+  const returnView =
+    from ??
+    (request.employeeId === user.employeeId
+      ? "my"
+      : user.activeRole === "HR" || user.activeRole === "Super Admin"
+        ? "organisation"
+        : "reviewed");
   const details = Object.entries(request.details).filter(
     ([, value]) => typeof value === "string" && value.trim().length > 0,
   );
+  const downloadLeaveEvidence = async () => {
+    if (openingEvidence || !user) return;
+    setOpeningEvidence(true);
+    try {
+      const result = await readLeaveAttachmentFn({
+        data: {
+          actor: {
+            actorId: user.id,
+            ...(user.workspaceEmail ? { actorEmail: user.workspaceEmail } : {}),
+            activeRole: user.activeRole,
+          },
+          requestId,
+        },
+      });
+      const blob = new Blob([Uint8Array.from(result.bytes)], { type: result.metadata.mimeType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = result.metadata.name;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Supporting evidence could not be opened.",
+      );
+    } finally {
+      setOpeningEvidence(false);
+    }
+  };
   return (
     <main className="mx-auto max-w-4xl space-y-5 pb-10">
       <Button asChild variant="ghost" size="sm">
-        <Link to="/staff/requests">
+        <Link to="/staff/requests" search={{ view: returnView }}>
           <ArrowLeft aria-hidden="true" /> Back to requests
         </Link>
       </Button>
@@ -128,6 +176,20 @@ function RequestDetailPage() {
             </Link>
           </Button>
         )}
+        {!request.archivedAt &&
+          request.module === "Leave" &&
+          request.details["Supporting evidence"] === "Attached" && (
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-5"
+              disabled={openingEvidence}
+              onClick={() => void downloadLeaveEvidence()}
+            >
+              <Paperclip aria-hidden="true" />
+              {openingEvidence ? "Opening evidence..." : "Download supporting evidence"}
+            </Button>
+          )}
         <p className="mt-4 text-xs text-muted-foreground">
           These are the current saved details. The timeline below preserves recorded decisions and
           their dates.
@@ -157,6 +219,7 @@ function RequestDetailPage() {
                   Status after decision: {event.statusAfter}
                 </p>
               )}
+              <DecisionSnapshot snapshot={event.snapshot} unavailable={event.snapshotUnavailable} />
             </li>
           ))}
         </ol>

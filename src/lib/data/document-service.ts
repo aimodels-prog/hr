@@ -510,13 +510,8 @@ export class DocumentService {
     const doc = this.documentRepo.getById(documentId);
     if (!doc || doc.status !== "Pending Verification")
       throw new Error("Document is not pending verification");
-    if (actorContext.actor.activeRole !== "HR" && actorContext.actor.activeRole !== "Super Admin") {
-      this.deny(
-        "verify document",
-        doc.employeeId,
-        actorContext,
-        "Only HR or a Super Admin can verify documents.",
-      );
+    if (actorContext.actor.activeRole !== "HR") {
+      this.deny("verify document", doc.employeeId, actorContext, "Only HR can verify documents.");
     }
     if (actorContext.actor.employeeId === doc.employeeId) {
       this.deny(
@@ -581,13 +576,8 @@ export class DocumentService {
     const doc = this.documentRepo.getById(documentId);
     if (!doc || doc.status !== "Pending Verification")
       throw new Error("Document is not pending verification");
-    if (actorContext.actor.activeRole !== "HR" && actorContext.actor.activeRole !== "Super Admin") {
-      this.deny(
-        "reject document",
-        doc.employeeId,
-        actorContext,
-        "Only HR or a Super Admin can reject documents.",
-      );
+    if (actorContext.actor.activeRole !== "HR") {
+      this.deny("reject document", doc.employeeId, actorContext, "Only HR can reject documents.");
     }
     if (actorContext.actor.employeeId === doc.employeeId) {
       this.deny(

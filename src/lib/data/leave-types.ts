@@ -193,6 +193,8 @@ export interface LeaveRequest extends BaseRecord {
   requesterName?: string;
   /** Current assigned supervisor, resolved by the server for this visible request. */
   lineManagerName?: string;
+  /** Snapshot reviewer for an HR employee's own request, visible only to authorised viewers. */
+  independentReviewerEmployeeId?: string;
   policyId: RecordId;
   startDate: string;
   endDate: string;

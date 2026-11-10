@@ -23,6 +23,7 @@ export const HR_SETUP_SECTIONS = [
   "documentRequirements",
   "reminders",
   "leavePolicies",
+  "approvalRouting",
   "connections",
   "interviewTemplates",
   "onboardingTemplates",
@@ -42,6 +43,7 @@ export const HR_COMPANY_SETTINGS_KEYS = [
   "leaveIncludesWeekends",
   "annualCarryExpiryDates",
   "annualCarryExpiryMonthDay",
+  "approvalRouting",
   "requireOnboardingCompletionBeforeDashboard",
 ] as const;
 

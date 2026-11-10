@@ -307,6 +307,54 @@ test(
       await sql`UPDATE overtime_claims SET updated_at=${new Date(now.getTime() - 72 * 60 * 60 * 1000)} WHERE id=${correctionId}`;
       assert.ok((await processOvertimeWorker(now)).reminders > 0);
       assert.equal((await processOvertimeWorker(now)).reminders, 0);
+
+      // HR is the assigned supervisor but holds no Line Manager role. One decision
+      // completes the actual overtime claim; no second HR verification is requested.
+      await sql`UPDATE employees SET line_manager_id=${ids.hrEmployee} WHERE id=${ids.employee}`;
+      const standInDateValue = new Date(date);
+      standInDateValue.setUTCDate(standInDateValue.getUTCDate() - 5);
+      const standInId = await createOvertimeClaimInDatabase(
+        ids.organisation!,
+        {
+          ...base,
+          date: standInDateValue.toISOString().slice(0, 10),
+          reason: "Urgent client response",
+        },
+        employeeActor,
+      );
+      await assert.rejects(
+        decideOvertimeClaimInDatabase(
+          ids.organisation!,
+          standInId,
+          "approve",
+          undefined,
+          managerActor,
+        ),
+        /assigned overtime approver/,
+      );
+      await decideOvertimeClaimInDatabase(
+        ids.organisation!,
+        standInId,
+        "approve",
+        "Reviewed as assigned HR supervisor",
+        hrActor,
+      );
+      assert.equal(
+        (await listOvertimeClaimsForActor(ids.organisation!, employeeActor)).find(
+          (claim) => claim.id === standInId,
+        )?.status,
+        "Approved",
+      );
+      await assert.rejects(
+        decideOvertimeClaimInDatabase(
+          ids.organisation!,
+          standInId,
+          "approve",
+          "A second HR approval must not be possible",
+          hrActor,
+        ),
+        /assigned overtime approver/,
+      );
     } finally {
       await sql.end({ timeout: 5 });
     }

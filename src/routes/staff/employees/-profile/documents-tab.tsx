@@ -241,7 +241,7 @@ export function DocumentsTab({
   );
 
   // Identify missing mandatory docs
-  const missingDocs = requirements
+  const missingRequirements = requirements
     .filter((r) => r.required)
     .filter(
       (r) =>
@@ -251,8 +251,7 @@ export function DocumentsTab({
               (!d.requirementId && d.type === r.type && r.id === r.type)) &&
             ["Valid", "Pending Verification", "Expiring"].includes(d.computedStatus),
         ),
-    )
-    .map((r) => r.name);
+    );
 
   const form = useForm<z.infer<typeof documentSchema>>({
     resolver: zodResolver(documentSchema),
@@ -267,6 +266,26 @@ export function DocumentsTab({
       visibility: "Restricted",
     },
   });
+  const openRequirementUpload = (requirement: DocumentRequirement) => {
+    if (requirement.uploadBy === "HR" && !isHrOrAdmin) return;
+    setIsReplacing(null);
+    setReplacementRequirement(undefined);
+    setRequirementId(requirement.id);
+    setAnswers({});
+    setSelectedFile(null);
+    setDependantId("employee");
+    form.reset({
+      type: requirement.type,
+      documentNumber: "",
+      issueDate: "",
+      expiryDate: "",
+      issuingAuthority: "",
+      issuingCountry: "",
+      notes: "",
+      visibility: "Restricted",
+    });
+    setIsUploadOpen(true);
+  };
   const selectedDocumentType = form.watch("type");
   const isInsuranceDocument = selectedDocumentType.startsWith("insurance_");
   useEffect(() => {
@@ -644,7 +663,7 @@ export function DocumentsTab({
                 <FileUp className="mr-2 h-4 w-4" /> Upload Document
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-md">
+            <DialogContent className="max-h-[90dvh] w-[calc(100%-1.5rem)] max-w-md overflow-y-auto rounded-xl p-4 sm:p-6">
               <DialogHeader>
                 <DialogTitle>
                   {isReplacing ? "Submit document revision" : "Upload Document"}
@@ -920,7 +939,7 @@ export function DocumentsTab({
         )}
       </div>
 
-      {(isSelf || isHrOrAdmin) && missingDocs.length > 0 && (
+      {(isSelf || isHrOrAdmin) && missingRequirements.length > 0 && (
         <Card className="border-destructive/50 bg-destructive/5">
           <CardHeader className="py-3 px-4">
             <CardTitle className="text-sm text-destructive flex items-center">
@@ -928,14 +947,29 @@ export function DocumentsTab({
             </CardTitle>
           </CardHeader>
           <CardContent className="py-2 px-4 flex gap-2 flex-wrap">
-            {missingDocs.map((md) => (
-              <div
-                key={md}
-                className="px-3 py-1 bg-destructive/10 text-destructive text-xs rounded-full capitalize"
-              >
-                {md.replace("_", " ")}
-              </div>
-            ))}
+            {missingRequirements.map((requirement) =>
+              requirement.uploadBy === "HR" && !isHrOrAdmin ? (
+                <span
+                  key={requirement.id}
+                  className="rounded-full bg-destructive/10 px-3 py-1 text-xs text-destructive"
+                  title="HR provides this document"
+                >
+                  {requirement.name} · HR will add
+                </span>
+              ) : (
+                <Button
+                  key={requirement.id}
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-auto min-h-9 rounded-full border-destructive/30 px-3 py-1 text-xs text-destructive hover:bg-destructive/10"
+                  onClick={() => openRequirementUpload(requirement)}
+                  aria-label={`Upload missing ${requirement.name}`}
+                >
+                  Upload {requirement.name}
+                </Button>
+              ),
+            )}
           </CardContent>
         </Card>
       )}
@@ -1065,28 +1099,30 @@ export function DocumentsTab({
                           <Edit2 className="h-4 w-4" />
                         </Button>
                       )}
-                    {isHrOrAdmin && doc.computedStatus === "Pending Verification" && (
-                      <>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-emerald-600"
-                          title="Verify"
-                          onClick={() => handleVerify(doc.id, true)}
-                        >
-                          <CheckCircle2 className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-destructive"
-                          title="Reject"
-                          onClick={() => handleVerify(doc.id, false)}
-                        >
-                          <XCircle className="h-4 w-4" />
-                        </Button>
-                      </>
-                    )}
+                    {currentUser.activeRole === "HR" &&
+                      !isSelf &&
+                      doc.computedStatus === "Pending Verification" && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-emerald-600"
+                            title="Verify"
+                            onClick={() => handleVerify(doc.id, true)}
+                          >
+                            <CheckCircle2 className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-destructive"
+                            title="Reject"
+                            onClick={() => handleVerify(doc.id, false)}
+                          >
+                            <XCircle className="h-4 w-4" />
+                          </Button>
+                        </>
+                      )}
                   </TableCell>
                 </TableRow>
               ))

@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { format, parseISO } from "date-fns";
 import {
@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/select";
 import { useCurrentUser } from "@/lib/auth";
 import { TaskService, type AppTask, type TaskState } from "@/lib/data/task-service";
-import { approvalActionUrl } from "@/lib/data/approval-links";
+import { isApprovalTask } from "@/lib/data/request-tracking";
 
 export const Route = createFileRoute("/staff/my-tasks")({
   component: MyTasksRoute,
@@ -51,6 +51,11 @@ function MyTasksRoute() {
   const [moduleFilter, setModuleFilter] = useState("All");
   const [view, setView] = useState<TaskView>("All");
   const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
+  const reminderTasks = useMemo(() => tasks.filter((task) => !isApprovalTask(task)), [tasks]);
+  const approvalCount = tasks.length - reminderTasks.length;
+  const showApprovalsLink =
+    currentUser.activeRole !== "Super Admin" &&
+    (approvalCount > 0 || ["HR", "Line Manager", "Accounts"].includes(currentUser.activeRole));
 
   const loadTasks = useCallback(async () => {
     setIsLoading(true);
@@ -79,12 +84,12 @@ function MyTasksRoute() {
   }, [loadTasks]);
 
   const modules = useMemo(
-    () => ["All", ...new Set(tasks.map((task) => task.module).sort())],
-    [tasks],
+    () => ["All", ...new Set(reminderTasks.map((task) => task.module).sort())],
+    [reminderTasks],
   );
   const filteredTasks = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    return tasks.filter((task) => {
+    return reminderTasks.filter((task) => {
       if (moduleFilter !== "All" && task.module !== moduleFilter) return false;
       if (view !== "All" && task.state !== view) return false;
       if (!normalizedQuery) return true;
@@ -94,30 +99,47 @@ function MyTasksRoute() {
         .filter(Boolean)
         .some((value) => value!.toLowerCase().includes(normalizedQuery));
     });
-  }, [currentUser.activeRole, moduleFilter, query, tasks, view]);
+  }, [currentUser.activeRole, moduleFilter, query, reminderTasks, view]);
 
   const totals = {
-    all: tasks.length,
-    overdue: tasks.filter((task) => task.state === "Overdue").length,
-    dueSoon: tasks.filter((task) => task.state === "Due Soon").length,
-    blocked: tasks.filter((task) => task.state === "Blocked").length,
+    all: reminderTasks.length,
+    overdue: reminderTasks.filter((task) => task.state === "Overdue").length,
+    dueSoon: reminderTasks.filter((task) => task.state === "Due Soon").length,
+    blocked: reminderTasks.filter((task) => task.state === "Blocked").length,
   };
 
   return (
     <div className="mx-auto flex max-w-[1180px] flex-col gap-6 pb-10">
       <PageHeader
-        title="My Tasks"
-        description={
-          currentUser.activeRole === "Employee"
-            ? "Your personal actions and deadlines in one place."
-            : `Approvals and actions assigned to you while working as ${currentUser.activeRole === "Line Manager" ? "Supervisor" : currentUser.activeRole}.`
-        }
+        title="Tasks & Reminders"
+        description="Your actions and deadlines, separate from approval decisions."
         actions={
           <Button variant="outline" onClick={() => loadTasks()} disabled={isLoading}>
             <RefreshCcw className={isLoading ? "animate-spin" : ""} /> Refresh
           </Button>
         }
       />
+
+      {showApprovalsLink && (
+        <section
+          aria-label="Approval decisions"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-4"
+        >
+          <div>
+            <h2 className="font-semibold">Approvals</h2>
+            <p className="text-sm text-muted-foreground">
+              {approvalCount > 0
+                ? `${approvalCount} decision${approvalCount === 1 ? "" : "s"} waiting for you.`
+                : "Requests needing your decision appear in one place."}
+            </p>
+          </div>
+          <Button asChild>
+            <Link to="/staff/requests" search={{ view: "approvals" }}>
+              Open approvals <ArrowRight className="h-4 w-4" />
+            </Link>
+          </Button>
+        </section>
+      )}
 
       <section aria-label="Task summary" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryCard
@@ -207,14 +229,14 @@ function MyTasksRoute() {
           <CardContent className="flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
             <CheckCircle2 className="mb-4 h-12 w-12 text-emerald-500 opacity-70" />
             <h2 className="text-lg font-semibold text-foreground">
-              {tasks.length === 0 ? "You’re all caught up" : "No tasks match these filters"}
+              {reminderTasks.length === 0 ? "You’re all caught up" : "No tasks match these filters"}
             </h2>
             <p className="mt-1 max-w-md text-sm">
-              {tasks.length === 0
-                ? "There are no approvals or actions waiting for you in this role."
+              {reminderTasks.length === 0
+                ? "There are no tasks or reminders waiting for you in this role."
                 : "Clear the search or choose another task area to see more work."}
             </p>
-            {tasks.length > 0 && (
+            {reminderTasks.length > 0 && (
               <Button
                 className="mt-4"
                 variant="outline"
@@ -275,7 +297,7 @@ function MyTasksRoute() {
                   className="w-full shrink-0 sm:w-auto"
                   variant={task.state === "Blocked" ? "outline" : "default"}
                   onClick={() => {
-                    const [path, hash = ""] = approvalActionUrl(task).split("#");
+                    const [path, hash = ""] = task.actionUrl.split("#");
                     return navigate({ to: path!, hash });
                   }}
                 >

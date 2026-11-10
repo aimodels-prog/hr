@@ -395,7 +395,7 @@ function OrganisationHrDashboardDetails() {
     });
   }
 
-  if (pendingHrTravel.length > 0) {
+  if (currentUser.activeRole === "HR" && pendingHrTravel.length > 0) {
     const names = [...new Set(pendingHrTravel.map((r) => nameFor(r.employeeId)))];
     attentionItems.push({
       id: "travel-hr-approval",
@@ -468,13 +468,7 @@ function OrganisationHrDashboardDetails() {
         <summary id="hr-attention-heading" className="mb-3 cursor-pointer text-sm font-semibold">
           Organisation follow-up
         </summary>
-        <AttentionQueue items={attentionItems.slice(0, 5)} />
-        {attentionItems.length > 5 ? (
-          <p className="mt-2 text-xs text-muted-foreground">
-            {attentionItems.length - 5} more item{attentionItems.length - 5 === 1 ? "" : "s"} can be
-            reviewed from My Tasks.
-          </p>
-        ) : null}
+        <AttentionQueue items={attentionItems} />
       </details>
 
       <details className="rounded-xl border border-border/70 bg-card p-4">

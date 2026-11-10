@@ -9,6 +9,7 @@ import type { OffboardingCase } from "../src/lib/data/offboarding-types.ts";
 import { OnboardingService } from "../src/lib/data/onboarding-service.ts";
 import type { OnboardingCase } from "../src/lib/data/onboarding-types.ts";
 import { initializeSeedData } from "../src/lib/data/seed-service.ts";
+import type { LeaveRequest } from "../src/lib/data/leave-types.ts";
 import { MemoryStorageDriver } from "../src/lib/data/storage-driver.ts";
 import { VersionedStorageService } from "../src/lib/data/storage.ts";
 import { TaskService } from "../src/lib/data/task-service.ts";
@@ -72,6 +73,51 @@ test("document tasks link to the exact document and documents section", () => {
   assert.equal(
     task?.actionUrl,
     "/staff/employees/employee-omar#section=documents&document=document-deep-link",
+  );
+});
+
+test("an assigned HR supervisor receives leave decisions; Super Admin receives no leave approval work", () => {
+  const { storage } = setup();
+  const request = {
+    ...base("leave-hr-stand-in-task"),
+    employeeId: "employee-aisha",
+    policyId: "annual-leave",
+    startDate: "2026-09-01",
+    endDate: "2026-09-02",
+    isHalfDay: false,
+    workingDaysRequested: 2,
+    reason: "Family visit",
+    status: "Pending Line Manager",
+    chainApprovals: [
+      { role: "Line Manager", status: "Pending" },
+      { role: "HR", status: "Pending" },
+    ],
+    policySnapshot: {
+      name: "Annual Leave",
+      type: "Annual",
+      isPaid: true,
+      baseEntitlementDays: 30,
+      accrualMode: "Upfront",
+    },
+  } as const satisfies LeaveRequest;
+  storage.writeCollection<LeaveRequest>("leave_requests", [request]);
+  const service = new TaskService();
+  const hrTasks = service.getMyTasks({
+    userId: "user-rana",
+    employeeId: "employee-rana",
+    activeRole: "HR",
+  });
+  assert.ok(hrTasks.some((task) => task.id === `leave-manager-${request.id}`));
+
+  storage.writeCollection<LeaveRequest>("leave_requests", [{ ...request, status: "Pending HR" }]);
+  const superAdminTasks = service.getMyTasks({
+    userId: "user-rana",
+    employeeId: "employee-rana",
+    activeRole: "Super Admin",
+  });
+  assert.equal(
+    superAdminTasks.some((task) => task.sourceType === "leave-request"),
+    false,
   );
 });
 
@@ -206,7 +252,7 @@ test("onboarding completion is enforced by owner role and denials are audited", 
       undefined,
       "Not needed",
     ),
-    /Only HR or a Super Admin/i,
+    /Only HR can waive/i,
   );
 });
 
@@ -229,7 +275,7 @@ test("offboarding financial and HR clearances require the correct active role", 
   assert.throws(
     () =>
       service.grantFinancialClearance(offboarding.id, actor("user-rana", "employee-rana", "HR")),
-    /Only Accounts or Super Admin/i,
+    /Only Accounts/i,
   );
   const financiallyCleared = service.grantFinancialClearance(
     offboarding.id,
@@ -242,7 +288,7 @@ test("offboarding financial and HR clearances require the correct active role", 
         offboarding.id,
         actor("user-aisha", "employee-aisha", "Accounts"),
       ),
-    /Only HR or Super Admin/i,
+    /Only HR/i,
   );
   const legallyCleared = service.grantLegalClearance(
     offboarding.id,

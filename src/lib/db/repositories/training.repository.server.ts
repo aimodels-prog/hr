@@ -2,10 +2,10 @@ import "@tanstack/react-start/server-only";
 import { getReminderRules } from "./reminder-rules.repository.server.ts";
 import { trainingReminderThreshold } from "../../data/reminder-rules.ts";
 import { changeReason, trainingReasonRequired } from "../../data/change-reason-policy.ts";
-import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
+import { validateSupervisorAccount } from "./supervisor-access.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 
 import type {
   TrainingCourse,
@@ -29,6 +29,14 @@ import {
   trainingSessions,
 } from "../schema/talent.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
+import { hrIndependentReviewAssignments } from "../schema/hr-independent-review.ts";
+import {
+  actorIsIndependentHrReviewer,
+  assignIndependentHrReviewer,
+  assignedIndependentHrReviewer,
+  employeeHasHrRole,
+  independentReviewerForHrEmployee,
+} from "./independent-hr-review.repository.server.ts";
 
 type Db = ReturnType<typeof getDatabaseClient>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -88,7 +96,11 @@ async function scopedEmployees(org: string, actor: AuditActorContext) {
   return [actor.employeeId, ...reports.map((item) => item.id)];
 }
 async function assertManager(tx: Tx, org: string, employeeId: string, actor: AuditActorContext) {
-  if (activeRole(actor) !== "Line Manager" || !actor.employeeId || actor.employeeId === employeeId)
+  if (
+    !["Line Manager", "HR"].includes(activeRole(actor)) ||
+    !actor.employeeId ||
+    actor.employeeId === employeeId
+  )
     throw new Error("Only the employee's assigned supervisor can complete this action.");
   const [employee] = await tx
     .select({ managerId: employees.lineManagerId })
@@ -97,6 +109,28 @@ async function assertManager(tx: Tx, org: string, employeeId: string, actor: Aud
     .limit(1);
   if (employee?.managerId !== actor.employeeId)
     throw new Error("Only the employee's assigned supervisor can complete this action.");
+}
+async function requireTrainingSupervisor(tx: Tx, org: string, employeeId: string) {
+  const [employee] = await tx
+    .select({ managerId: employees.lineManagerId })
+    .from(employees)
+    .where(and(eq(employees.organisationId, org), eq(employees.id, employeeId)))
+    .limit(1);
+  const account = await validateSupervisorAccount(tx, org, employeeId, employee?.managerId);
+  const [access] = await tx
+    .select({ roleId: userRoles.roleId })
+    .from(userRoles)
+    .innerJoin(roles, eq(roles.id, userRoles.roleId))
+    .where(
+      and(
+        eq(userRoles.organisationId, org),
+        eq(userRoles.userId, account.userId),
+        inArray(roles.code, ["Line Manager", "HR"]),
+      ),
+    )
+    .limit(1);
+  if (!access)
+    throw new Error("Ask HR to assign a supervisor with Line Manager or HR approval access.");
 }
 async function notifyEmployee(
   tx: Tx,
@@ -210,6 +244,26 @@ export async function listTrainingForActor(
   const db = getDatabaseClient();
   const scoped = await scopedEmployees(org, actor);
   const noRows = scoped !== null && scoped.length === 0;
+  const independentAssignments =
+    isHr(actor) || actor.employeeId
+      ? await db
+          .select({
+            requestId: hrIndependentReviewAssignments.requestId,
+            reviewerEmployeeId: hrIndependentReviewAssignments.reviewerEmployeeId,
+          })
+          .from(hrIndependentReviewAssignments)
+          .where(
+            and(
+              eq(hrIndependentReviewAssignments.organisationId, org),
+              eq(hrIndependentReviewAssignments.module, "Training"),
+              ...(!isHr(actor) && actor.employeeId
+                ? [eq(hrIndependentReviewAssignments.reviewerEmployeeId, actor.employeeId)]
+                : []),
+              isNull(hrIndependentReviewAssignments.archivedAt),
+            ),
+          )
+      : [];
+  const assignedIds = independentAssignments.map((item) => item.requestId);
   const [courseRows, sessionRows, requestRows, assignmentRows, recordRows] = await Promise.all([
     db
       .select()
@@ -235,7 +289,14 @@ export async function listTrainingForActor(
             and(
               eq(trainingRequests.organisationId, org),
               isNull(trainingRequests.archivedAt),
-              ...(scoped ? [inArray(trainingRequests.employeeId, scoped)] : []),
+              ...(scoped
+                ? [
+                    or(
+                      inArray(trainingRequests.employeeId, scoped),
+                      ...(assignedIds.length ? [inArray(trainingRequests.id, assignedIds)] : []),
+                    ),
+                  ]
+                : []),
             ),
           ),
     noRows
@@ -289,6 +350,13 @@ export async function listTrainingForActor(
     requests: requestRows.map((row) => ({
       ...base(row),
       employeeId: row.employeeId,
+      ...(independentAssignments.find((item) => item.requestId === row.id)
+        ? {
+            independentReviewerEmployeeId: independentAssignments.find(
+              (item) => item.requestId === row.id,
+            )!.reviewerEmployeeId,
+          }
+        : {}),
       courseId: row.courseId,
       origin: row.origin as TrainingRequest["origin"],
       reason: row.reason,
@@ -677,6 +745,10 @@ export async function createTrainingRequestInDatabase(
     if (!employee || ["Inactive", "Archived"].includes(employee.status))
       throw new Error("Select an active employee.");
     if (!course) throw new Error("Select an active training course.");
+    const independentReviewer =
+      input.origin === "Employee Request" && Number(course.cost) > 0
+        ? await independentReviewerForHrEmployee(org, input.employeeId, tx)
+        : null;
     input = {
       ...input,
       reason: changeReason(
@@ -711,10 +783,10 @@ export async function createTrainingRequestInDatabase(
       input.origin === "HR Assignment" ||
       (input.origin === "Employee Request" && Number(course.cost) === 0)
         ? "Approved"
-        : input.origin === "Supervisor Assignment" || !employee.lineManagerId
+        : independentReviewer || input.origin === "Supervisor Assignment" || !employee.lineManagerId
           ? "Pending HR"
           : "Pending Supervisor";
-    if (status === "Pending Supervisor") await requireEmployeeSupervisor(tx, org, input.employeeId);
+    if (status === "Pending Supervisor") await requireTrainingSupervisor(tx, org, input.employeeId);
     const now = new Date().toISOString();
     await tx.insert(trainingRequests).values({
       id: requestId,
@@ -737,6 +809,16 @@ export async function createTrainingRequestInDatabase(
       createdBy: actor.userId,
       updatedBy: actor.userId,
     } as typeof trainingRequests.$inferInsert);
+    if (independentReviewer)
+      await assignIndependentHrReviewer(
+        org,
+        "Training",
+        requestId,
+        input.employeeId,
+        independentReviewer.employeeId,
+        actor.userId,
+        tx,
+      );
     if (status === "Approved")
       await createAssignment(
         tx,
@@ -758,6 +840,17 @@ export async function createTrainingRequestInDatabase(
         `${employee.preferredName} requested ${course.title}.`,
         requestId,
         `training-supervisor-${requestId}`,
+        actor,
+      );
+    else if (independentReviewer)
+      await notifyEmployee(
+        tx,
+        org,
+        independentReviewer.employeeId,
+        "Training request awaiting independent review",
+        `${employee.preferredName} requested ${course.title}.`,
+        requestId,
+        `training-independent-${requestId}`,
         actor,
       );
     else
@@ -806,8 +899,6 @@ export async function decideTrainingRequestInDatabase(
   if (decision === "Reject" && comment.trim().length < 5)
     throw new Error("Record a reason for rejecting this request.");
   comment = comment.trim() || "Training request approved";
-  if (stage === "HR" && activeRole(actor) !== "HR")
-    throw new Error("Only HR can decide training requests.");
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
     const [request] = await tx
@@ -819,14 +910,33 @@ export async function decideTrainingRequestInDatabase(
     if (!request) throw new Error("Training request not found.");
     if (actor.employeeId === request.employeeId)
       throw new Error("You cannot approve your own training request.");
+    const assignedReviewer = await assignedIndependentHrReviewer(
+      org,
+      "Training",
+      request.id,
+      request.employeeId,
+      tx,
+    );
+    const independentReview = actorIsIndependentHrReviewer(
+      actor,
+      request.employeeId,
+      assignedReviewer,
+    );
+    if (stage === "HR" && (assignedReviewer ? !independentReview : activeRole(actor) !== "HR"))
+      throw new Error("You are not the assigned training reviewer.");
     if (stage === "Supervisor") {
       await assertManager(tx, org, request.employeeId, actor);
       if (request.status !== "Pending Supervisor")
         throw new Error("This request is not awaiting supervisor review.");
     } else if (request.status !== "Pending HR")
       throw new Error("This request is not awaiting HR review.");
+    const hrStandIn = stage === "Supervisor" && activeRole(actor) === "HR";
     const status: TrainingRequest["status"] =
-      decision === "Reject" ? "Rejected" : stage === "Supervisor" ? "Pending HR" : "Approved";
+      decision === "Reject"
+        ? "Rejected"
+        : stage === "Supervisor" && !hrStandIn
+          ? "Pending HR"
+          : "Approved";
     const now = new Date().toISOString();
     await tx
       .update(trainingRequests)
@@ -837,6 +947,9 @@ export async function decideTrainingRequestInDatabase(
               supervisorDecisionAt: now,
               supervisorDecisionBy: actor.userId,
               supervisorComment: comment.trim(),
+              ...(hrStandIn && decision === "Approve"
+                ? { hrDecisionAt: now, hrDecisionBy: actor.userId, hrComment: comment.trim() }
+                : {}),
             }
           : { hrDecisionAt: now, hrDecisionBy: actor.userId, hrComment: comment.trim() }),
         rejectionReason: decision === "Reject" ? comment.trim() : null,
@@ -1503,15 +1616,48 @@ export async function addTrainingRecordInDatabase(
       createdBy: actor.userId,
       updatedBy: actor.userId,
     } as typeof trainingRecords.$inferInsert);
-    await notifyHr(
-      tx,
-      org,
-      "Training certificate awaiting verification",
-      `${input.title.trim()} has been submitted for verification.`,
-      id,
-      `training-certificate-review-${id}`,
-      actor,
-    );
+    const independentReviewer = await independentReviewerForHrEmployee(org, input.employeeId, tx);
+    if (independentReviewer) {
+      await assignIndependentHrReviewer(
+        org,
+        "Training Certificate",
+        id,
+        input.employeeId,
+        independentReviewer.employeeId,
+        actor.userId,
+        tx,
+      );
+      await tx
+        .insert(notifications)
+        .values({
+          organisationId: org,
+          recipientUserId: independentReviewer.userId,
+          type: "training",
+          title: "Training certificate awaiting your review",
+          message: `${input.title.trim()} has been submitted for independent verification.`,
+          priority: "High",
+          status: "Unread",
+          deduplicationKey: `training-certificate-review-${id}-${independentReviewer.userId}`,
+          link: {
+            entityType: "training-record",
+            entityId: id,
+            path: `/staff/independent-record-reviews#review=${id}`,
+          },
+          createdBy: actor.userId,
+          updatedBy: actor.userId,
+        } as typeof notifications.$inferInsert)
+        .onConflictDoNothing();
+    } else {
+      await notifyHr(
+        tx,
+        org,
+        "Training certificate awaiting verification",
+        `${input.title.trim()} has been submitted for verification.`,
+        id,
+        `training-certificate-review-${id}`,
+        actor,
+      );
+    }
     await audit(
       tx,
       org,
@@ -1538,10 +1684,9 @@ export async function decideTrainingRecordInDatabase(
   reason: string,
   actor: AuditActorContext,
 ) {
-  if (activeRole(actor) !== "HR") throw new Error("Only HR can verify training certificates.");
   if (decision === "Reject" && reason.trim().length < 5)
     throw new Error("Record a reason for rejecting this certificate.");
-  reason = reason.trim() || "Training certificate verified by HR";
+  reason = reason.trim() || "Training certificate verified";
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
     const [record] = await tx
@@ -1551,6 +1696,20 @@ export async function decideTrainingRecordInDatabase(
       .for("update")
       .limit(1);
     if (!record) throw new Error("Training record not found.");
+    const hrOwner = await employeeHasHrRole(org, record.employeeId, tx);
+    const assignedReviewer = await assignedIndependentHrReviewer(
+      org,
+      "Training Certificate",
+      recordId,
+      record.employeeId,
+      tx,
+    );
+    if (
+      hrOwner || assignedReviewer
+        ? !actorIsIndependentHrReviewer(actor, record.employeeId, assignedReviewer)
+        : activeRole(actor) !== "HR"
+    )
+      throw new Error("Only the assigned independent reviewer or HR can verify this certificate.");
     if (record.hrVerified || record.rejectedAt)
       throw new Error(
         "This certificate decision is locked. Submit a corrected certificate as a new record for HR review.",
@@ -1612,7 +1771,9 @@ export async function decideTrainingRecordInDatabase(
       decision === "Verify"
         ? "Training certificate verified"
         : "Training certificate needs attention",
-      decision === "Verify" ? `${record.title} has been verified by HR.` : reason.trim(),
+      decision === "Verify"
+        ? `${actor.displayName}${assignedReviewer ? " (independent reviewer)" : " from HR"} verified ${record.title}.`
+        : `${actor.displayName} returned ${record.title}: ${reason.trim()}`,
       recordId,
       `training-record-${recordId}-${decision}`,
       actor,
@@ -1650,7 +1811,25 @@ export async function readTrainingCertificateInDatabase(
     .limit(1);
   if (!record?.certificateFileId) throw new Error("No certificate is attached to this record.");
   const scoped = await scopedEmployees(org, actor);
-  if (scoped && !scoped.includes(record.employeeId))
+  const assignedReview =
+    actor.activeRole === "Employee" &&
+    !!actor.employeeId &&
+    !!(
+      await db
+        .select({ id: hrIndependentReviewAssignments.id })
+        .from(hrIndependentReviewAssignments)
+        .where(
+          and(
+            eq(hrIndependentReviewAssignments.organisationId, org),
+            eq(hrIndependentReviewAssignments.module, "Training Certificate"),
+            eq(hrIndependentReviewAssignments.requestId, recordId),
+            eq(hrIndependentReviewAssignments.reviewerEmployeeId, actor.employeeId),
+            isNull(hrIndependentReviewAssignments.archivedAt),
+          ),
+        )
+        .limit(1)
+    )[0];
+  if (scoped && !scoped.includes(record.employeeId) && !assignedReview)
     throw new Error("You are not authorised to view this certificate.");
   return readObjectFile(
     org,

@@ -45,6 +45,15 @@ export const Route = createFileRoute("/staff/timesheet-approvals/$timesheetId")(
 });
 
 function TimesheetApprovalDetailWrapper() {
+  const currentUser = useCurrentUser();
+  const { timesheetId } = Route.useParams();
+  const assigned = new TimesheetService()
+    .getTimesheetsForContext(currentUser.getActorContext())
+    .some(
+      (sheet) =>
+        sheet.id === timesheetId && sheet.independentReviewerEmployeeId === currentUser.employeeId,
+    );
+  if (assigned && currentUser.activeRole !== "Super Admin") return <TimesheetApprovalDetailRoute />;
   return (
     <RequireAnyPermission
       permissions={["timesheet:approve_direct_reports", "timesheet:finance_view"]}
@@ -77,15 +86,28 @@ function TimesheetApprovalDetailRoute() {
   if (!timesheet) return <div>Timesheet not found.</div>;
 
   const emp = empService
-    .getEmployees(currentUser.getActorContext())
+    .getDirectoryEmployees(currentUser.getActorContext())
     .find((e) => e.id === timesheet.employeeId);
   const period = tsService.getPeriods().find((p) => p.id === timesheet.periodId);
 
   const isAssignedSupervisor =
-    currentUser.activeRole === "Line Manager" && emp?.lineManagerId === currentUser.employeeId;
-  const isHrReviewer = currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
+    ["Line Manager", "HR"].includes(currentUser.activeRole) &&
+    emp?.lineManagerId === currentUser.employeeId &&
+    emp?.id !== currentUser.employeeId;
+  const isHrReviewer = currentUser.activeRole === "HR";
+  const isIndependentReviewer =
+    timesheet.independentReviewerEmployeeId === currentUser.employeeId &&
+    timesheet.employeeId !== currentUser.employeeId &&
+    currentUser.activeRole !== "Super Admin";
   const isFinanceViewer = currentUser.activeRole === "Accounts";
-  if (!isAssignedSupervisor && !isHrReviewer && !isFinanceViewer) {
+  const isAdminViewer = currentUser.activeRole === "Super Admin";
+  if (
+    !isAssignedSupervisor &&
+    !isHrReviewer &&
+    !isIndependentReviewer &&
+    !isFinanceViewer &&
+    !isAdminViewer
+  ) {
     return (
       <div className="p-8 text-destructive">
         You do not have access to this employee&apos;s timesheet.
@@ -397,7 +419,7 @@ function TimesheetApprovalDetailRoute() {
         </CardContent>
         <CardFooter className="flex justify-end gap-2 bg-muted/20 py-4 border-t mt-4">
           {((isAssignedSupervisor && timesheet.status === "Pending Manager") ||
-            (isHrReviewer && timesheet.status === "Pending HR")) && (
+            ((isHrReviewer || isIndependentReviewer) && timesheet.status === "Pending HR")) && (
             <>
               <Button
                 variant="destructive"
@@ -419,7 +441,9 @@ function TimesheetApprovalDetailRoute() {
                 }
               >
                 <CheckCircle className="w-4 h-4 mr-2" />
-                {timesheet.status === "Pending Manager" ? "Send to HR" : "Approve Timesheet"}
+                {timesheet.status === "Pending Manager" && !isHrReviewer
+                  ? "Send to HR"
+                  : "Approve timesheet"}
               </Button>
             </>
           )}

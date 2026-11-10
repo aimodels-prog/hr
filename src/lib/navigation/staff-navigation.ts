@@ -550,7 +550,9 @@ export function staffNavigation(role: Role, can: (permission: Permission) => boo
         ...attendance,
         ...pick("/staff/time-away", "Time Away", "absence hospital appointment"),
         ...pick("/staff/me/overtime", "My Overtime", "apply request overtime"),
-        ...pick("/staff/travel", "My Travel", "trip request car flight hotel receipts expenses"),
+        ...(role === "Travel Admin"
+          ? []
+          : pick("/staff/travel", "My Travel", "trip request car flight hotel receipts expenses")),
       ],
     },
     {
@@ -616,6 +618,12 @@ export function staffNavigation(role: Role, can: (permission: Permission) => boo
         : []),
     ],
   };
+  const myRequests: NavItem = {
+    title: "My Requests",
+    url: "/staff/requests?view=my",
+    icon: ClipboardCheck,
+    keywords: "my own submitted requests status progress history",
+  };
   const companySetup = available.find((item) => item.url === "/staff/settings");
   if (companySetup) {
     const sections =
@@ -630,6 +638,7 @@ export function staffNavigation(role: Role, can: (permission: Permission) => boo
       employmentTypes: "Employment types",
       workingTimes: "Working hours",
       publicHolidays: "Public holidays",
+      approvalRouting: "Approval routes",
       projects: "Projects",
       grades: "Grades",
       connections: "Email & Calendar",
@@ -656,25 +665,28 @@ export function staffNavigation(role: Role, can: (permission: Permission) => boo
     .map((group) => ({
       ...group,
       label: group.label === "HR Settings" ? "Settings" : group.label,
-      items: group.items.map((item) => ({
-        ...item,
-        title:
-          item.url === "/staff/employees" && hr
-            ? "Manage Employees"
-            : item.url === "/staff/vacancies"
-              ? "Job Vacancies"
-              : item.url === "/staff/candidates/intake"
-                ? "CV Uploads & Mailboxes"
-                : item.url === "/staff/performance/cycles"
-                  ? "Appraisal Periods"
-                  : item.url === "/staff/training"
-                    ? "Training"
-                    : item.url === "/staff/onboarding"
-                      ? "New Employees"
-                      : item.url === "/staff/offboarding"
-                        ? "Leaving Employees"
-                        : item.title,
-      })),
+      // Decisions belong in the one approval inbox, not beside attendance records.
+      items: group.items
+        .filter((item) => role !== "HR" || item.url !== "/staff/attendance#section=site-visits")
+        .map((item) => ({
+          ...item,
+          title:
+            item.url === "/staff/employees" && hr
+              ? "Manage Employees"
+              : item.url === "/staff/vacancies"
+                ? "Job Vacancies"
+                : item.url === "/staff/candidates/intake"
+                  ? "CV Uploads & Mailboxes"
+                  : item.url === "/staff/performance/cycles"
+                    ? "Appraisal Periods"
+                    : item.url === "/staff/training"
+                      ? "Training"
+                      : item.url === "/staff/onboarding"
+                        ? "New Employees"
+                        : item.url === "/staff/offboarding"
+                          ? "Leaving Employees"
+                          : item.title,
+        })),
     }));
   if (hr) {
     business
@@ -702,6 +714,40 @@ export function staffNavigation(role: Role, can: (permission: Permission) => boo
         settings.items.push(...administration.items);
         administration.items = [];
       }
+
+      // Keep the daily destinations visible. Less-frequent pages stay one menu search
+      // away and highlight the page HR would naturally open to find them.
+      const nestUnder = (childUrl: string, parentUrl: string, aliases = "") => {
+        const parent = business
+          .flatMap((group) => group.items)
+          .find((item) => item.url === parentUrl);
+        const group = business.find((candidate) =>
+          candidate.items.some((item) => item.url === childUrl),
+        );
+        if (!parent || !group) return;
+        const index = group.items.findIndex((item) => item.url === childUrl);
+        const [child] = group.items.splice(index, 1);
+        if (!child) return;
+        parent.shortcuts = [
+          ...(parent.shortcuts ?? []),
+          {
+            title: child.title,
+            url: child.url,
+            keywords: [child.keywords, aliases, "add edit manage"].filter(Boolean).join(" "),
+          },
+        ];
+      };
+      nestUnder("/staff/org-chart", "/staff/employees", "organogram hierarchy reporting");
+      nestUnder("/staff/anniversaries", "/staff/employees");
+      nestUnder("/staff/offboarding", "/staff/employees", "offboarding exit clearance");
+      nestUnder("/staff/time-away", "/staff/attendance");
+      nestUnder("/staff/candidates/contacts", "/staff/candidates");
+      nestUnder("/staff/recommendations", "/staff/candidates");
+      nestUnder("/staff/offers", "/staff/candidates");
+      nestUnder("/staff/performance/cycles", "/staff/performance/team");
+      nestUnder("/staff/settings?section=documentRequirements", "/staff/settings");
+      nestUnder("/staff/settings?section=reminders", "/staff/settings");
+      nestUnder("/staff/timesheet-settings", "/staff/settings", "working hours policy");
     }
   }
   const home: NavGroup = {
@@ -723,6 +769,11 @@ export function staffNavigation(role: Role, can: (permission: Permission) => boo
                   keywords: "assigned reviews approval",
                 },
                 {
+                  title: "My decisions",
+                  url: "/staff/requests?view=reviewed",
+                  keywords: "approved rejected declined review history",
+                },
+                {
                   title: "Assigned offer approvals",
                   url: "/staff/offers",
                   keywords: "assigned offer approve",
@@ -732,18 +783,45 @@ export function staffNavigation(role: Role, can: (permission: Permission) => boo
           ]
         : role === "HR"
           ? []
-          : role === "Super Admin"
-            ? [
-                {
-                  ...inbox,
-                  title: "Employee requests",
-                  url: "/staff/requests?view=organisation",
-                  shortcuts: [],
-                },
-              ]
-            : [inbox]),
+          : role === "IT"
+            ? [myRequests]
+            : role === "Travel Admin"
+              ? [
+                  {
+                    ...pick("/staff/travel")[0]!,
+                    title: "Travel bookings & requests",
+                    keywords: "booking desk car flight hotel travel requests",
+                    shortcuts: [
+                      {
+                        title: "My requests",
+                        url: "/staff/requests?view=my",
+                        keywords: "my submitted requests status history",
+                      },
+                    ],
+                  },
+                ]
+              : role === "Super Admin"
+                ? [
+                    {
+                      ...inbox,
+                      title: "Request status",
+                      url: "/staff/requests?view=organisation",
+                      keywords: "employee requests status progress read only",
+                      shortcuts: [],
+                    },
+                  ]
+                : role === "Line Manager" || role === "Accounts"
+                  ? [inbox, myRequests]
+                  : [inbox]),
     ],
   };
+  if (role === "HR" || role === "Super Admin") {
+    const reports = business.find((group) => group.label === "Reports");
+    if (reports) {
+      home.items.push(...reports.items);
+      reports.items = [];
+    }
+  }
   const hrApprovals: NavGroup = {
     label: "HR",
     items: [
@@ -753,29 +831,24 @@ export function staffNavigation(role: Role, can: (permission: Permission) => boo
         icon: ClipboardCheck,
         keywords:
           "approve approval leave document timesheet attendance overtime travel training decisions",
-        shortcuts: approvals,
-      },
-      {
-        title: "Employee Requests",
-        url: "/staff/requests?view=organisation",
-        icon: FileSearch,
-        keywords: "approval status history all employees",
-      },
-      {
-        title: "My decisions",
-        url: "/staff/requests?view=reviewed",
-        icon: ClipboardCheck,
-        keywords: "approved reviewed rejected returned history",
-      },
-      {
-        title: "My Requests",
-        url: "/staff/requests?view=my",
-        icon: ClipboardCheck,
-        keywords: "my own submitted requests status history",
+        // Keep every former destination available in search and nested page navigation.
+        shortcuts: [
+          ...(inbox.shortcuts ?? []),
+          ...pick(
+            "/staff/attendance#section=site-visits",
+            "Visit Approvals",
+            "quick visits official duty approve",
+          ),
+          {
+            title: "My Requests",
+            url: "/staff/requests?view=my",
+            keywords: "my own submitted requests status history",
+          },
+        ],
       },
     ],
   };
-  const result = hr
+  const result: NavGroup[] = hr
     ? [home, ...(role === "HR" ? [hrApprovals] : []), ...business]
     : role === "Employee"
       ? [
@@ -800,12 +873,69 @@ export function staffNavigation(role: Role, can: (permission: Permission) => boo
           },
         ]
       : [home, ...personal, ...business];
+  if (role === "Super Admin") {
+    const nestUnder = (childUrl: string, parentUrl: string, aliases = "") => {
+      const parent = result.flatMap((group) => group.items).find((item) => item.url === parentUrl);
+      const group = result.find((candidate) =>
+        candidate.items.some((item) => item.url === childUrl),
+      );
+      if (!parent || !group) return;
+      const index = group.items.findIndex((item) => item.url === childUrl);
+      const [child] = group.items.splice(index, 1);
+      if (!child) return;
+      parent.shortcuts = [
+        ...(parent.shortcuts ?? []),
+        {
+          title: child.title,
+          url: child.url,
+          keywords: [child.keywords, aliases, "open manage view"].filter(Boolean).join(" "),
+        },
+      ];
+    };
+    nestUnder("/staff/org-chart", "/staff/employees", "organogram hierarchy reporting");
+    nestUnder("/staff/anniversaries", "/staff/employees");
+    nestUnder("/staff/offboarding", "/staff/employees", "leaving employees exit clearance");
+    nestUnder("/staff/time-away", "/staff/attendance", "hospital appointment absence");
+    nestUnder("/staff/candidates/intake", "/staff/candidates", "cv uploads mailbox intake");
+    nestUnder("/staff/candidates/contacts", "/staff/candidates");
+    nestUnder("/staff/recommendations", "/staff/candidates", "referrals");
+    nestUnder("/staff/performance/cycles", "/staff/performance/team", "appraisal objectives");
+    nestUnder("/staff/payroll/overtime", "/staff/payroll/periods", "approved overtime ledger");
+    nestUnder("/staff/settings?section=documentRequirements", "/staff/settings");
+    nestUnder("/staff/settings?section=reminders", "/staff/settings");
+    nestUnder("/staff/timesheet-settings", "/staff/settings", "working hours policy");
+  }
+  if (!["HR", "Super Admin"].includes(role)) {
+    const nestUnder = (childUrl: string, parentUrl: string, aliases = "") => {
+      const parent = result.flatMap((group) => group.items).find((item) => item.url === parentUrl);
+      const group = result.find((candidate) =>
+        candidate.items.some((item) => item.url === childUrl),
+      );
+      if (!parent || !group) return;
+      const index = group.items.findIndex((item) => item.url === childUrl);
+      const [child] = group.items.splice(index, 1);
+      if (!child) return;
+      parent.shortcuts = [
+        ...(parent.shortcuts ?? []),
+        {
+          title: child.title,
+          url: child.url,
+          keywords: [child.keywords, aliases].filter(Boolean).join(" "),
+        },
+      ];
+    };
+    nestUnder("/staff/time-away", "/staff/me/attendance", "hospital appointment absence");
+    nestUnder("/staff/me/overtime", "/staff/me/timesheets", "apply overtime extra hours");
+    nestUnder("/staff/me/onboarding", "/staff/me/profile", "new joiner checklist setup");
+    nestUnder("/staff/interviews", "/staff/my-tasks", "assigned interview panel");
+    nestUnder("/staff/org-chart", "/staff/employees", "organogram hierarchy colleagues");
+  }
   return [...result, ...groups.filter((group) => group.label === "Support")]
     .filter((group) => group.items.length)
     .map((group) => ({
       ...group,
       items: group.items.map((item) =>
-        item.url === "/staff/travel" && ["Travel Admin", "Accounts"].includes(role)
+        item.url === "/staff/travel" && role === "Accounts"
           ? {
               ...item,
               title: "Travel & bookings",

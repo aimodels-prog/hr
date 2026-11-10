@@ -271,18 +271,19 @@ export class OffboardingService {
       explicitlyAssigned ||
       (task.ownerRole === "Employee" && context.actor.employeeId === c.employeeId) ||
       (task.ownerRole === "Line Manager" &&
-        role === "Line Manager" &&
+        !task.assignedUserId &&
+        (role === "Line Manager" || role === "HR") &&
         employee?.lineManagerId === context.actor.employeeId) ||
       (task.ownerRole === role &&
         task.ownerRole !== "Employee" &&
         task.ownerRole !== "Line Manager");
 
     if (status === "Waived") {
-      if (role !== "HR" && role !== "Super Admin") {
+      if (role !== "HR") {
         this.deny(
           "waive offboarding task",
           task.id,
-          "Only HR or a Super Admin can waive an offboarding task.",
+          "Only HR can waive an offboarding task.",
           context,
         );
       }
@@ -570,6 +571,7 @@ export class OffboardingService {
         task.assignedUserId === context.actor.employeeId ||
         (task.ownerRole === "Employee" && c.employeeId === context.actor.employeeId) ||
         (task.ownerRole === "Line Manager" &&
+          !task.assignedUserId &&
           role === "Line Manager" &&
           employee?.lineManagerId === context.actor.employeeId) ||
         // Employee/Line Manager are relationship-scoped by the two branches above and must
@@ -645,6 +647,7 @@ export class OffboardingService {
         task.assignedUserId === context.actor.employeeId ||
         (task.ownerRole === "Employee" && c.employeeId === context.actor.employeeId) ||
         (task.ownerRole === "Line Manager" &&
+          !task.assignedUserId &&
           role === "Line Manager" &&
           employee?.lineManagerId === context.actor.employeeId) ||
         (task.ownerRole === role &&
@@ -1142,7 +1145,7 @@ export class OffboardingService {
   grantFinancialClearance(caseId: string, context: ActorContext): OffboardingCase {
     const c = this.casesRepo.getById(caseId);
     if (!c) throw new Error("Case not found");
-    this.requireRole(context, ["Accounts", "Super Admin"], "confirm financial clearance", caseId);
+    this.requireRole(context, ["Accounts"], "confirm financial clearance", caseId);
     assertOffboardingCaseActive(c.status);
     // A departing employee who also happens to hold Accounts or Super Admin must never be able
     // to grant clearance on their own case, independent of the role check above.
@@ -1167,7 +1170,7 @@ export class OffboardingService {
   grantLegalClearance(caseId: string, context: ActorContext): OffboardingCase {
     const c = this.casesRepo.getById(caseId);
     if (!c) throw new Error("Case not found");
-    this.requireRole(context, ["HR", "Super Admin"], "confirm HR and document clearance", caseId);
+    this.requireRole(context, ["HR"], "confirm HR and document clearance", caseId);
     assertOffboardingCaseActive(c.status);
     // A departing employee who also happens to hold HR or Super Admin must never be able to
     // grant clearance on their own case, independent of the role check above.

@@ -62,6 +62,16 @@ const hr: ActorContext = {
   },
 };
 
+const hrDirectReport: ActorContext = {
+  actor: {
+    userId: "user-aisha",
+    employeeId: "employee-aisha",
+    displayName: "Aisha Al Habsi",
+    activeRole: "Employee",
+    roles: ["Employee"],
+  },
+};
+
 const accounts: ActorContext = {
   actor: {
     userId: "user-mariam-2",
@@ -344,6 +354,46 @@ test("manager approval always waits for HR, even when the legacy verification op
   assert.equal(reviewed.approvedAt, undefined);
   const approved = overtime.hrVerify(claim.id, true, "", hr);
   assert.equal(approved.status, "Approved");
+});
+
+test("assigned HR supervisor approves retrospective overtime once without a duplicate HR step", async () => {
+  const { overtime } = harness();
+  const claim = await overtime.submitClaim(
+    { employeeId: "employee-aisha", date: "2026-08-10", hours: 2, reason: "Urgent site delivery" },
+    hrDirectReport,
+  );
+  const approved = overtime.managerApprove(claim.id, hr);
+  assert.equal(approved.status, "Approved");
+  assert.equal(approved.approvedBy, hr.actor.userId);
+  assert.throws(() => overtime.hrVerify(claim.id, true, "Again", hr), /Invalid status/);
+});
+
+test("HR cannot act as supervisor for an employee who is not their direct report", async () => {
+  const { overtime } = harness();
+  const claim = await overtime.submitClaim(
+    { employeeId: "employee-omar", date: "2026-08-10", hours: 2, reason: "Client escalation" },
+    employee,
+  );
+  assert.throws(() => overtime.managerApprove(claim.id, hr), /not authorised/);
+});
+
+test("HR pre-authorisation stays separate from the later actual-hours review", async () => {
+  const { overtime } = harness();
+  const workDate = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const claim = await overtime.submitClaim(
+    {
+      employeeId: "employee-aisha",
+      date: workDate,
+      hours: 2,
+      reason: "Planned project delivery",
+      requestKind: "Planned",
+    },
+    hrDirectReport,
+  );
+  const preAuthorised = overtime.managerApprove(claim.id, hr);
+  assert.equal(preAuthorised.status, "Pre-authorised");
+  assert.equal(preAuthorised.authorisedHours, 2);
+  assert.equal(preAuthorised.approvedBy, undefined);
 });
 
 test("HR verification stage is honoured when required, and Accounts cannot verify", async () => {

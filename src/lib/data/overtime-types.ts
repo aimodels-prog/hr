@@ -62,6 +62,7 @@ export interface PayrollOvertimeLedgerRow {
 }
 
 export interface OvertimeClaim extends BaseRecord {
+  independentReviewerEmployeeId?: string;
   databaseId?: string;
   employeeId: RecordId;
   date: string; // YYYY-MM-DD

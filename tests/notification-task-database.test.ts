@@ -86,6 +86,25 @@ test(
 
       const tasks = await listTasksForActorInDatabase(ids.org!, managerActor);
       assert.ok(tasks.some((task) => task.sourceId === ids.request && task.module === "Leave"));
+      const hrStandInTasks = await listTasksForActorInDatabase(ids.org!, {
+        ...managerActor,
+        activeRole: "HR",
+        roles: ["Employee", "HR"],
+      });
+      assert.ok(
+        hrStandInTasks.some((task) => task.id === `leave-manager-${ids.request}`),
+        "An assigned HR supervisor must find their manager-stage decision in the inbox",
+      );
+      const superAdminTasks = await listTasksForActorInDatabase(ids.org!, {
+        ...managerActor,
+        activeRole: "Super Admin",
+        roles: ["Employee", "Super Admin"],
+      });
+      assert.equal(
+        superAdminTasks.some((task) => task.id === `leave-manager-${ids.request}`),
+        false,
+        "A Super Admin with the same reporting line must not receive an approval task",
+      );
       const employeeTasks = await listTasksForActorInDatabase(ids.org!, {
         userId: ids.employeeUser,
         employeeId: ids.employee,
@@ -168,6 +187,16 @@ test(
         },
         { role: "HR", status: "Pending" },
       ])}::jsonb WHERE id=${ids.request}`;
+      const superAdminAtHrStage = await listTasksForActorInDatabase(ids.org!, {
+        ...managerActor,
+        activeRole: "Super Admin",
+        roles: ["Employee", "Super Admin"],
+      });
+      assert.equal(
+        superAdminAtHrStage.some((task) => task.id === `leave-hr-${ids.request}`),
+        false,
+        "Super Admin must not receive HR's final approval task",
+      );
       await sql`INSERT INTO audit_events (organisation_id,actor_user_id,actor_employee_id,actor_display_name,active_role,actor_roles,action,module,entity_type,entity_id,reason)
         VALUES (${ids.org},${ids.managerUser},${ids.manager},'Task Manager','Line Manager',ARRAY['Employee','Line Manager'],'approve','leave','leave-request',${ids.request},'Manager approved this leave')`;
       const reviewed = await listTrackedRequests(ids.org!, managerActor, {
@@ -206,18 +235,22 @@ test(
         employeeProgress.rows[0]?.actionUrl,
         `/staff/me/leave-balances#request=${ids.request}`,
       );
-      await assert.rejects(
-        () =>
-          listTrackedRequests(
-            ids.org!,
-            { ...employeeActor, activeRole: "Employee" },
-            {
-              scope: "reviewed",
-              page: 1,
-            },
-          ),
-        /approval role/i,
+      const reviewerInEmployeeMode = await listTrackedRequests(
+        ids.org!,
+        { ...managerActor, activeRole: "Employee", roles: ["Employee"] },
+        { scope: "reviewed", page: 1, module: "Leave", requestId: ids.request },
       );
+      assert.equal(
+        reviewerInEmployeeMode.total,
+        1,
+        "An actual reviewer can still see their decision in Employee mode",
+      );
+      const unrelatedEmployeeReview = await listTrackedRequests(
+        ids.org!,
+        { ...employeeActor, activeRole: "Employee" },
+        { scope: "reviewed", page: 1, module: "Leave", requestId: ids.request },
+      );
+      assert.equal(unrelatedEmployeeReview.total, 0);
       await enqueueWorkflowEmails();
       const [queued] =
         await sql`SELECT count(*)::int count FROM workflow_notification_emails WHERE organisation_id=${ids.org}`;
@@ -293,6 +326,82 @@ test(
         !adminVisitTasks.some((task) => task.sourceType === "site-visit-request"),
         "Super Admin access alone cannot review visits",
       );
+      await sql`UPDATE employees SET employment_confirmation_status='Pending HR Review',
+        proposed_employment_details=${sql.json({
+          legalName: "Task Employee",
+          preferredName: "Task Employee",
+          staffEntryType: "Existing Employee",
+          startDate: "2025-01-01",
+          departmentId: ids.department,
+          positionId: ids.position,
+          locationId: ids.location,
+          employmentTypeId: ids.employmentType,
+          lineManagerId: ids.manager,
+          lineManagerEmail: "task-mgr@viahr.test",
+          visaRequired: false,
+        })} WHERE id=${ids.employee}`;
+      const employmentTask = (
+        await listTasksForActorInDatabase(ids.org!, {
+          ...managerActor,
+          activeRole: "HR",
+          roles: ["Employee", "HR"],
+        })
+      ).find((task) => task.id === `employment-hr-${ids.employee}`);
+      assert.equal(
+        employmentTask?.actionUrl,
+        `/staff/employees/${ids.employee}#section=employment`,
+      );
+      assert.equal(employmentTask?.sourceType, "employee");
+      assert.equal(
+        (
+          await listTasksForActorInDatabase(ids.org!, {
+            ...managerActor,
+            activeRole: "Super Admin",
+            roles: ["Employee", "Super Admin"],
+          })
+        ).some((task) => task.id === `employment-hr-${ids.employee}`),
+        false,
+      );
+      await sql`UPDATE employees SET employment_confirmation_status='Confirmed' WHERE id=${ids.employee}`;
+      assert.equal(
+        (
+          await listTasksForActorInDatabase(ids.org!, {
+            ...managerActor,
+            activeRole: "HR",
+            roles: ["Employee", "HR"],
+          })
+        ).some((task) => task.id === `employment-hr-${ids.employee}`),
+        false,
+      );
+      await sql`INSERT INTO hr_independent_review_assignments
+        (organisation_id,module,request_id,requester_employee_id,reviewer_employee_id,stage,created_by,updated_by)
+        VALUES (${ids.org},'Leave',${ids.request},${ids.employee},${ids.manager},'HR',${ids.managerUser},${ids.managerUser})`;
+      const independentTasks = await listTasksForActorInDatabase(ids.org!, {
+        ...managerActor,
+        activeRole: "Employee",
+        roles: ["Employee"],
+      });
+      assert.ok(
+        independentTasks.some((task) => task.id === `independent-hr-review-Leave-${ids.request}`),
+        "The named reviewer sees HR-stage work in Employee mode",
+      );
+      const genericHrTasks = await listTasksForActorInDatabase(ids.org!, {
+        ...managerActor,
+        activeRole: "HR",
+        roles: ["Employee", "HR"],
+      });
+      assert.equal(
+        genericHrTasks.some((task) => task.id === `leave-hr-${ids.request}`),
+        false,
+        "HR's shared queue must not expose a privately assigned decision",
+      );
+      const assignedProgress = await listTrackedRequests(ids.org!, employeeActor, {
+        scope: "my",
+        page: 1,
+        module: "Leave",
+        requestId: ids.request,
+      });
+      assert.equal(assignedProgress.rows[0]?.waitingFor, "Task Manager");
       await sql`UPDATE leave_requests SET archived_at=now() WHERE id=${ids.request}`;
       const archivedHistory = await listTrackedRequests(ids.org!, employeeActor, {
         scope: "my",

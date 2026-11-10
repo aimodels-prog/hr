@@ -351,6 +351,49 @@ function CandidatesIndex() {
     );
   });
 
+  const hiddenFilterCount = [
+    locationFilter !== "all",
+    projectFilter !== "all",
+    sourceFilter !== "all",
+    positionFilter !== "all",
+    talentPoolFilter !== "all",
+    nationalityFilter !== "all",
+    visaFilter !== "all",
+    ownerFilter !== "all",
+    recommenderFilter !== "all",
+    followUpFilter !== "all",
+    lastContactFilter !== "all",
+    Boolean(minimumExperience),
+    Boolean(maximumExperience),
+    Boolean(minimumScore),
+    myCandidatesOnly,
+    hideDoNotContact,
+  ].filter(Boolean).length;
+  const hasActiveFilters = Boolean(
+    searchQuery.trim() || stageFilter !== "all" || hiddenFilterCount,
+  );
+
+  const clearFilters = () => {
+    setSearchQuery("");
+    setStageFilter("all");
+    setLocationFilter("all");
+    setProjectFilter("all");
+    setSourceFilter("all");
+    setPositionFilter("all");
+    setTalentPoolFilter("all");
+    setNationalityFilter("all");
+    setVisaFilter("all");
+    setOwnerFilter("all");
+    setRecommenderFilter("all");
+    setFollowUpFilter("all");
+    setLastContactFilter("all");
+    setMinimumExperience("");
+    setMaximumExperience("");
+    setMinimumScore("");
+    setMyCandidatesOnly(false);
+    setHideDoNotContact(false);
+  };
+
   const exportCsv = async (format: ExportFormat) => {
     let csvContent: string;
     try {
@@ -371,8 +414,8 @@ function CandidatesIndex() {
   };
 
   return (
-    <div className="flex h-full flex-col gap-6 p-6">
-      <div className="flex items-center justify-between">
+    <div className="flex h-full flex-col gap-6 p-3 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="font-display text-2xl font-semibold">Candidate Pool</h1>
           <p className="text-sm text-muted-foreground">
@@ -463,74 +506,80 @@ function CandidatesIndex() {
           </SelectContent>
         </Select>
 
-        <Select value={projectFilter} onValueChange={setProjectFilter}>
-          <SelectTrigger className="w-[180px] bg-background">
-            <SelectValue placeholder="Project" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Projects</SelectItem>
-            {projects.map((p) => (
-              <SelectItem key={p.id} value={p.id}>
-                {p.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select value={locationFilter} onValueChange={setLocationFilter}>
-          <SelectTrigger className="w-[180px] bg-background">
-            <SelectValue placeholder="Location" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Locations</SelectItem>
-            {locations.map((loc) => (
-              <SelectItem key={loc} value={loc}>
-                {loc}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select value={sourceFilter} onValueChange={setSourceFilter}>
-          <SelectTrigger className="w-[180px] bg-background">
-            <SelectValue placeholder="Source" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Sources</SelectItem>
-            {sources.map((src) => (
-              <SelectItem key={src} value={src}>
-                {src}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
         <Button
           type="button"
           variant={showMoreFilters ? "secondary" : "outline"}
           onClick={() => setShowMoreFilters((value) => !value)}
+          aria-expanded={showMoreFilters}
+          aria-controls="candidate-extra-filters"
         >
           <Filter className="mr-2 h-4 w-4" /> More filters
+          {hiddenFilterCount > 0 && <span className="ml-1">({hiddenFilterCount})</span>}
         </Button>
-
-        <label className="flex items-center gap-2 rounded-md border bg-background px-3 text-sm">
-          <Checkbox
-            checked={myCandidatesOnly}
-            onCheckedChange={(v) => setMyCandidatesOnly(v === true)}
-          />
-          My candidates
-        </label>
-
-        <label className="flex items-center gap-2 rounded-md border bg-background px-3 text-sm">
-          <Checkbox
-            checked={hideDoNotContact}
-            onCheckedChange={(v) => setHideDoNotContact(v === true)}
-          />
-          Hide Do Not Contact
-        </label>
+        {hasActiveFilters && (
+          <Button type="button" variant="ghost" onClick={clearFilters}>
+            Clear filters
+          </Button>
+        )}
 
         {showMoreFilters && (
-          <div className="grid w-full grid-cols-1 gap-3 border-t pt-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div
+            id="candidate-extra-filters"
+            className="grid w-full grid-cols-1 gap-3 border-t pt-4 sm:grid-cols-2 lg:grid-cols-4"
+          >
+            <Select value={projectFilter} onValueChange={setProjectFilter}>
+              <SelectTrigger className="bg-background">
+                <SelectValue placeholder="Project" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Projects</SelectItem>
+                {projects.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={locationFilter} onValueChange={setLocationFilter}>
+              <SelectTrigger className="bg-background">
+                <SelectValue placeholder="Location" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Locations</SelectItem>
+                {locations.map((loc) => (
+                  <SelectItem key={loc} value={loc}>
+                    {loc}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={sourceFilter} onValueChange={setSourceFilter}>
+              <SelectTrigger className="bg-background">
+                <SelectValue placeholder="Source" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Sources</SelectItem>
+                {sources.map((src) => (
+                  <SelectItem key={src} value={src}>
+                    {src}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <label className="flex min-h-10 items-center gap-2 rounded-md border bg-background px-3 text-sm">
+              <Checkbox
+                checked={myCandidatesOnly}
+                onCheckedChange={(v) => setMyCandidatesOnly(v === true)}
+              />
+              My candidates
+            </label>
+            <label className="flex min-h-10 items-center gap-2 rounded-md border bg-background px-3 text-sm">
+              <Checkbox
+                checked={hideDoNotContact}
+                onCheckedChange={(v) => setHideDoNotContact(v === true)}
+              />
+              Hide Do Not Contact
+            </label>
             <Select value={positionFilter} onValueChange={setPositionFilter}>
               <SelectTrigger>
                 <SelectValue placeholder="Position" />
@@ -670,137 +719,227 @@ function CandidatesIndex() {
             onArchive={(c) => setArchiveTarget({ id: c.id, name: `${c.firstName} ${c.lastName}` })}
           />
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Candidate Name</TableHead>
-                <TableHead>Project</TableHead>
-                <TableHead>Stage</TableHead>
-                <TableHead>Experience</TableHead>
-                <TableHead>Active Applications</TableHead>
-                <TableHead>Location</TableHead>
-                <TableHead>Source</TableHead>
-                <TableHead>Owner</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          <>
+            <div className="grid gap-3 p-3 md:hidden">
               {filteredCandidates.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={9} className="h-32 text-center text-muted-foreground">
-                    No candidates found matching your criteria.
-                  </TableCell>
-                </TableRow>
+                <div className="py-10 text-center text-sm text-muted-foreground">
+                  <p>No candidates found matching your criteria.</p>
+                  {hasActiveFilters && (
+                    <Button type="button" variant="link" onClick={clearFilters}>
+                      Clear filters
+                    </Button>
+                  )}
+                </div>
               ) : (
-                filteredCandidates.map((candidate) => {
-                  const recentApp = candidate.applications.sort((a, b) =>
-                    b.createdAt.localeCompare(a.createdAt),
-                  )[0];
-                  const vacancy = recentApp
-                    ? vacancies.find((v) => v.id === recentApp.vacancyId)
-                    : null;
-
-                  return (
-                    <TableRow
-                      key={candidate.id}
-                      className={`cursor-pointer hover:bg-muted/50 ${candidate.doNotContact ? "bg-red-500/5 hover:bg-red-500/10" : ""}`}
-                      onClick={() => navigate({ to: `/staff/candidates/${candidate.id}` })}
-                    >
-                      <TableCell>
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 font-semibold text-primary">
-                            {candidate.firstName[0]}
-                            {candidate.lastName[0]}
-                          </div>
-                          <div>
-                            <div className="font-medium flex items-center gap-2">
-                              {candidate.firstName} {candidate.lastName}
-                              {selectedForInterview.has(candidate.id) && (
-                                <Badge variant="secondary">Selected for interview</Badge>
-                              )}
-                              {candidate.doNotContact && (
-                                <span title="Do Not Contact">
-                                  <ShieldAlert className="h-4 w-4 text-destructive" />
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {candidate.currentTitle || "No title provided"}
-                            </div>
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {candidate.projectId ? (
-                          projectNameById.get(candidate.projectId) || "Unknown"
-                        ) : (
-                          <span className="text-muted-foreground">&mdash;</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            candidate.stage === "Hired"
-                              ? "default"
-                              : candidate.stage === "Applied"
-                                ? "secondary"
-                                : candidate.stage === "Archived"
-                                  ? "outline"
-                                  : "default"
+                filteredCandidates.map((candidate) => (
+                  <article key={candidate.id} className="space-y-3 rounded-xl border p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <Link
+                          to="/staff/candidates/$candidateId"
+                          params={{ candidateId: candidate.id }}
+                          className="text-base font-semibold text-primary hover:underline"
+                        >
+                          {candidate.firstName} {candidate.lastName}
+                        </Link>
+                        <p className="text-sm text-muted-foreground">
+                          {candidate.currentTitle || "No title provided"}
+                        </p>
+                      </div>
+                      <Badge variant="secondary">{candidate.stage}</Badge>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                      <span>{candidate.yearsOfExperience} years experience</span>
+                      <span aria-hidden="true">&middot;</span>
+                      <span>{candidate.applications.length} applications</span>
+                      {candidate.location && (
+                        <>
+                          <span aria-hidden="true">&middot;</span>
+                          <span>{candidate.location}</span>
+                        </>
+                      )}
+                    </div>
+                    {selectedForInterview.has(candidate.id) && (
+                      <Badge variant="outline">Selected for interview</Badge>
+                    )}
+                    {candidate.doNotContact && (
+                      <p className="text-xs font-medium text-destructive">Do not contact</p>
+                    )}
+                    <div className="flex items-center justify-between gap-2 border-t pt-3">
+                      <Button asChild size="sm">
+                        <Link
+                          to="/staff/candidates/$candidateId"
+                          params={{ candidateId: candidate.id }}
+                        >
+                          View candidate
+                        </Link>
+                      </Button>
+                      {candidate.stage !== "Archived" && candidate.stage !== "Hired" && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() =>
+                            setArchiveTarget({
+                              id: candidate.id,
+                              name: `${candidate.firstName} ${candidate.lastName}`,
+                            })
                           }
                         >
-                          {candidate.stage}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>{candidate.yearsOfExperience} yrs</TableCell>
-                      <TableCell>
-                        {candidate.applications.length > 0 ? (
-                          <div className="flex flex-col text-sm">
-                            <span className="font-medium">
-                              {candidate.applications.length} application(s)
-                            </span>
-                            {vacancy && (
-                              <span className="text-xs text-muted-foreground truncate max-w-[150px]">
-                                {vacancy.title}
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground">None</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm">{candidate.location}</TableCell>
-                      <TableCell className="text-sm">{candidate.source || "Unknown"}</TableCell>
-                      <TableCell className="text-sm">
-                        {candidate.hrOwnerId ? (
-                          userById.get(candidate.hrOwnerId) || "Unknown"
-                        ) : (
-                          <span className="text-muted-foreground">Unassigned</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {candidate.stage !== "Archived" && candidate.stage !== "Hired" && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setArchiveTarget({
-                                id: candidate.id,
-                                name: `${candidate.firstName} ${candidate.lastName}`,
-                              });
-                            }}
-                          >
-                            <Archive className="mr-1.5 h-3.5 w-3.5" /> Archive
+                          Archive
+                        </Button>
+                      )}
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+            <div className="hidden md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Candidate Name</TableHead>
+                    <TableHead>Project</TableHead>
+                    <TableHead>Stage</TableHead>
+                    <TableHead>Experience</TableHead>
+                    <TableHead>Active Applications</TableHead>
+                    <TableHead>Location</TableHead>
+                    <TableHead>Source</TableHead>
+                    <TableHead>Owner</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredCandidates.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={9} className="h-32 text-center text-muted-foreground">
+                        <p>No candidates found matching your criteria.</p>
+                        {hasActiveFilters && (
+                          <Button type="button" variant="link" onClick={clearFilters}>
+                            Clear filters
                           </Button>
                         )}
                       </TableCell>
                     </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
+                  ) : (
+                    filteredCandidates.map((candidate) => {
+                      const recentApp = [...candidate.applications].sort((a, b) =>
+                        b.createdAt.localeCompare(a.createdAt),
+                      )[0];
+                      const vacancy = recentApp
+                        ? vacancies.find((v) => v.id === recentApp.vacancyId)
+                        : null;
+
+                      return (
+                        <TableRow
+                          key={candidate.id}
+                          className={`cursor-pointer hover:bg-muted/50 ${candidate.doNotContact ? "bg-red-500/5 hover:bg-red-500/10" : ""}`}
+                          onClick={() => navigate({ to: `/staff/candidates/${candidate.id}` })}
+                        >
+                          <TableCell>
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 font-semibold text-primary">
+                                {candidate.firstName[0]}
+                                {candidate.lastName[0]}
+                              </div>
+                              <div>
+                                <div className="font-medium flex items-center gap-2">
+                                  <Link
+                                    to="/staff/candidates/$candidateId"
+                                    params={{ candidateId: candidate.id }}
+                                    onClick={(event) => event.stopPropagation()}
+                                    className="rounded-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                  >
+                                    {candidate.firstName} {candidate.lastName}
+                                  </Link>
+                                  {selectedForInterview.has(candidate.id) && (
+                                    <Badge variant="secondary">Selected for interview</Badge>
+                                  )}
+                                  {candidate.doNotContact && (
+                                    <span title="Do Not Contact">
+                                      <ShieldAlert className="h-4 w-4 text-destructive" />
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {candidate.currentTitle || "No title provided"}
+                                </div>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {candidate.projectId ? (
+                              projectNameById.get(candidate.projectId) || "Unknown"
+                            ) : (
+                              <span className="text-muted-foreground">&mdash;</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={
+                                candidate.stage === "Hired"
+                                  ? "default"
+                                  : candidate.stage === "Applied"
+                                    ? "secondary"
+                                    : candidate.stage === "Archived"
+                                      ? "outline"
+                                      : "default"
+                              }
+                            >
+                              {candidate.stage}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{candidate.yearsOfExperience} yrs</TableCell>
+                          <TableCell>
+                            {candidate.applications.length > 0 ? (
+                              <div className="flex flex-col text-sm">
+                                <span className="font-medium">
+                                  {candidate.applications.length} application(s)
+                                </span>
+                                {vacancy && (
+                                  <span className="text-xs text-muted-foreground truncate max-w-[150px]">
+                                    {vacancy.title}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">None</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-sm">{candidate.location}</TableCell>
+                          <TableCell className="text-sm">{candidate.source || "Unknown"}</TableCell>
+                          <TableCell className="text-sm">
+                            {candidate.hrOwnerId ? (
+                              userById.get(candidate.hrOwnerId) || "Unknown"
+                            ) : (
+                              <span className="text-muted-foreground">Unassigned</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {candidate.stage !== "Archived" && candidate.stage !== "Hired" && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setArchiveTarget({
+                                    id: candidate.id,
+                                    name: `${candidate.firstName} ${candidate.lastName}`,
+                                  });
+                                }}
+                              >
+                                <Archive className="mr-1.5 h-3.5 w-3.5" /> Archive
+                              </Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </>
         )}
       </div>
 

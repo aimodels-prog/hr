@@ -126,6 +126,7 @@ export type CorrectionStatus = "Pending Manager" | "Pending HR" | "Approved" | "
 export type AttendanceCorrectionType = "Punch Correction" | "Missed Sign-out";
 
 export interface AttendanceCorrection extends BaseRecord {
+  independentReviewerEmployeeId?: string;
   databaseId?: string | undefined;
   attendanceRecordId: RecordId;
   employeeId: RecordId;

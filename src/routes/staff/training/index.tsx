@@ -150,7 +150,11 @@ function StaffTrainingRoute() {
   const courses = service.getCourses(context, { includeInactive: isHr });
   const requests = service
     .getRequests(context)
-    .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
+    .filter(
+      (row) =>
+        employeeFilter.matchesEmployee(row.employeeId) ||
+        row.independentReviewerEmployeeId === currentUser.employeeId,
+    );
   const enrollments = service
     .getEnrollments(context)
     .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
@@ -158,7 +162,7 @@ function StaffTrainingRoute() {
   const records = service
     .getTeamRecords(context)
     .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
-  const employees = employeeService.getEmployees(context);
+  const employees = employeeService.getDirectoryEmployees(context);
   const locations = masterDataService.list("locations", false).filter((item) => item.isActive);
   const projects = masterDataService.listProjects(false).filter((item) => item.isActive);
   const selectedValues = (value: string) =>
@@ -203,9 +207,20 @@ function StaffTrainingRoute() {
       .toLowerCase()
       .includes(search.toLowerCase()),
   );
-  const pendingRequests = requests.filter((request) =>
-    isHr ? request.status === "Pending HR" : request.status === "Pending Supervisor",
-  );
+  const pendingRequests = requests.filter((request) => {
+    if (request.employeeId === currentUser.employeeId) return false;
+    if (request.status === "Pending HR")
+      return request.independentReviewerEmployeeId
+        ? request.independentReviewerEmployeeId === currentUser.employeeId &&
+            currentUser.activeRole !== "Super Admin"
+        : isHr;
+    if (!["HR", "Line Manager"].includes(currentUser.activeRole)) return false;
+    if (request.status !== "Pending Supervisor") return false;
+    return (
+      employees.find((employee) => employee.id === request.employeeId)?.lineManagerId ===
+      currentUser.employeeId
+    );
+  });
 
   useEffect(() => {
     if (!focusedTrainingId || openedFocusedTraining.current === focusedTrainingId) return;
@@ -822,7 +837,7 @@ function StaffTrainingRoute() {
       </Tabs>
 
       <Dialog open={assignmentOpen} onOpenChange={setAssignmentOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Assign training</DialogTitle>
             <DialogDescription>Add a course to an employee's development plan.</DialogDescription>
@@ -907,7 +922,7 @@ function StaffTrainingRoute() {
       </Dialog>
 
       <Dialog open={Boolean(decision)} onOpenChange={(open) => !open && setDecision(null)}>
-        <DialogContent>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{decision?.value} training request</DialogTitle>
             <DialogDescription>
@@ -944,7 +959,7 @@ function StaffTrainingRoute() {
       </Dialog>
 
       <Dialog open={courseDialog} onOpenChange={setCourseDialog}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{courseForm.id ? "Edit course" : "Add course"}</DialogTitle>
             <DialogDescription>
@@ -1139,7 +1154,7 @@ function StaffTrainingRoute() {
       </Dialog>
 
       <Dialog open={sessionOpen} onOpenChange={setSessionOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Schedule training session</DialogTitle>
           </DialogHeader>
@@ -1260,7 +1275,7 @@ function StaffTrainingRoute() {
       </Dialog>
 
       <Dialog open={Boolean(schedule)} onOpenChange={(open) => !open && setSchedule(null)}>
-        <DialogContent>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Choose a training session</DialogTitle>
           </DialogHeader>
@@ -1301,7 +1316,7 @@ function StaffTrainingRoute() {
       </Dialog>
 
       <Dialog open={Boolean(completion)} onOpenChange={(open) => !open && setCompletion(null)}>
-        <DialogContent>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Complete training record</DialogTitle>
             <DialogDescription>
@@ -1366,7 +1381,7 @@ function StaffTrainingRoute() {
       </Dialog>
 
       <Dialog open={Boolean(reasonAction)} onOpenChange={(open) => !open && setReasonAction(null)}>
-        <DialogContent>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{reasonAction?.kind}</DialogTitle>
             <DialogDescription>

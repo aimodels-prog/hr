@@ -150,10 +150,10 @@ export const employeeGuide = [
     "/staff/requests",
     "pending approval approved rejected returned status reminder email notification bell",
     [
-      "Open My Requests or Approvals and choose your own requests.",
+      "Open My Requests to see everything you submitted.",
       "Find the request and open its details. Read its current status and outstanding approval stage.",
       "If returned, read the reviewer’s comments, correct the details and submit again.",
-      "Check My Tasks for assigned actions and the notification bell for updates. Open the linked record before acting.",
+      "Check My Tasks for work assigned to you and the notification bell for updates. A notification opens the related record.",
     ],
     "Saving a draft is not the same as submitting it. Pending means a decision is still needed; returned means you need to make changes.",
     [
@@ -187,20 +187,22 @@ export const employeeGuide = [
     "/staff/leave",
     "annual holiday vacation sick maternity paternity nationality omani balance",
     [
-      "Open My Leave Balances to check your allowance and the leave year.",
-      "On My Leave Balances, choose Request Leave. Select Leave Type, Start Date and End Date.",
+      "Choose Request leave on your dashboard, or open My Leave and choose Request Leave.",
+      "Select the leave type, start date and end date. Check your available days on the same page.",
       "Check the calculated days. Complete Reason for Leave and Covering Colleague when required, and attach any supporting evidence requested for that leave type.",
-      "Choose Submit Request. Check Request History or My Requests or Approvals to confirm the request appears and follow its progress.",
+      "Choose Submit Request. Open My Requests to see its status, named reviewers and decision history.",
+      "If HR has confirmed your CEO or Country Manager position and you have no supervisor, ordinary leave goes directly to HR for one decision.",
       "If the dates cross a leave year, the allowance is exceeded, or the notice is short, choose special approval and explain why. You can also ask for special approval even when the usual rules are met.",
       "A special request goes to your line manager, then Riccardo, then HR. HR chooses which available leave balances to use and whether any remaining days are paid or unpaid. Finance is notified after HR approves.",
+      "If you are an executive without a supervisor, ask HR to arrange an independent reviewer before making a special request. The ordinary direct-to-HR route does not cover special approval.",
       "Wait for the final decision before treating your leave as approved.",
       "Once approved, your covered days show as leave automatically. You do not need to clock in or enter work hours for full leave days. Half-day leave leaves the other half for work.",
       "If you came to the office on an approved leave day and completed your machine sign-in and sign-out, that date can be counted as work instead. Check your leave history and balance afterward. HR reviews short or unclear machine records and leave with special pay or balance rules.",
     ],
-    "The request goes through the required reviews. HR is notified as well as the relevant manager; a notification alone is not approval.",
+    "The request goes through its required reviews. HR is notified, and the relevant manager is included when one is required. A notification alone is not approval.",
     [
       "A leave type can be limited by nationality or other employment conditions. Ask HR if your eligibility details are wrong.",
-      "If submission is blocked, check HR confirmation, your supervisor, balance, dates and overlapping requests.",
+      "If submission is blocked, check HR confirmation, your supervisor if one is required, balance, dates and overlapping requests.",
     ],
   ),
   article(
@@ -340,7 +342,7 @@ export const employeeGuide = [
       "Check leave, holidays and breaks. Save your daily entries as you go. Submit once for the whole month after it ends. Explain a difference from attendance when prompted.",
       "Save your work, then Submit when the whole period is correct.",
     ],
-    "Submission goes through manager review and HR approval before Finance uses the approved timesheet. Automatically filled hours do not automatically approve it.",
+    "Your assigned supervisor and HR review the sheet before Finance uses it. If HR is also your supervisor, one HR decision completes those reviews. Automatically filled hours do not approve the sheet.",
     [
       "All locations use timesheets, including staff who do not use machine attendance.",
       "If the month is unavailable or closed, ask HR to check the timesheet period. Do not put the hours in a different month.",
@@ -378,6 +380,7 @@ export const employeeGuide = [
     [
       "Open My Travel and start a travel request.",
       "Enter the destination, travel dates and business purpose. Add colleagues if you are travelling together; each colleague's supervisor must approve their participation.",
+      "If VIA will arrange a car, flight or hotel, say Yes and enter the best cost estimate. Finance uses that estimate as the booking budget.",
       "Check attachments and submit. Read each outstanding review stage in the request.",
       "After supervisor and HR approval, open Travel arrangements to request a car, flight, hotel or Other. Give Other arrangements a name. Finance approves the cost, then Travel Admin confirms the booking details here.",
     ],

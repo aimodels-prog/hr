@@ -207,7 +207,9 @@ function LeaveBalancesRoute() {
   const [requestPage, setRequestPage] = useState(1);
   const [detailRequestId, setDetailRequestId] = useState<string | null>(null);
   useEffect(() => {
-    setDetailRequestId(new URLSearchParams(location.hash.replace(/^#/, "")).get("request"));
+    const params = new URLSearchParams(location.hash.replace(/^#/, ""));
+    setDetailRequestId(params.get("request"));
+    if (params.get("action") === "request") setIsRequestOpen(true);
   }, [location.hash]);
   const [activityPage, setActivityPage] = useState(1);
   const [withdrawTarget, setWithdrawTarget] = useState<LeaveRequest | null>(null);
@@ -329,6 +331,57 @@ function LeaveBalancesRoute() {
     }
   };
 
+  const requestActions = (request: LeaveRequest) => {
+    const canWithdraw = request.status.startsWith("Pending");
+    const canCancel = request.status === "Approved" && request.endDate >= today;
+    const canAmend = request.status === "Approved" && request.startDate > today;
+    return (
+      <div className="flex flex-wrap items-center gap-1">
+        <Button variant="outline" size="sm" onClick={() => setDetailRequestId(request.id)}>
+          Approval details
+        </Button>
+        {canWithdraw && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            onClick={() => setWithdrawTarget(request)}
+          >
+            Withdraw
+          </Button>
+        )}
+        {canAmend && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setAmendTarget(request);
+              setAmendment({
+                startDate: request.startDate,
+                endDate: request.endDate,
+                reason: "",
+              });
+            }}
+          >
+            Change dates
+          </Button>
+        )}
+        {canCancel && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setCancelTarget(request);
+              setCancellationReason("");
+            }}
+          >
+            Cancel leave
+          </Button>
+        )}
+      </div>
+    );
+  };
+
   if (!employeeId) {
     return (
       <div className="flex min-h-80 flex-col items-center justify-center rounded-xl border border-dashed p-10 text-center text-muted-foreground">
@@ -361,6 +414,33 @@ function LeaveBalancesRoute() {
           </div>
         }
       />
+
+      <section aria-label="Your leave at a glance" className="grid gap-3 sm:grid-cols-2">
+        <Card>
+          <CardContent className="flex items-center justify-between gap-3 p-4 sm:p-5">
+            <div>
+              <p className="text-sm text-muted-foreground">Awaiting a decision</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums">{pendingRequests.length}</p>
+            </div>
+            <Button asChild size="sm" variant="outline">
+              <a href="#leave-history">View requests</a>
+            </Button>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex items-center gap-3 p-4 sm:p-5">
+            <CalendarDays className="h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
+            <div>
+              <p className="text-sm text-muted-foreground">Next approved leave</p>
+              <p className="mt-1 font-semibold">
+                {nextApproved
+                  ? `${formatDate(nextApproved.date)} · ${leaveDisplayType(nextApproved.request, policyById.get(nextApproved.request.policyId))}`
+                  : "Nothing scheduled"}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
 
       {annualPolicy && annualBalance && (
         <section className="overflow-hidden rounded-2xl border bg-card shadow-sm">
@@ -421,166 +501,146 @@ function LeaveBalancesRoute() {
         </section>
       )}
 
-      <Card>
-        <CardHeader className="border-b">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <CardTitle>Your Leave Allowances</CardTitle>
-              <CardDescription className="mt-1">
-                Every type of leave currently available to you.
-              </CardDescription>
+      <details className="group">
+        <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3 text-sm font-semibold hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary [&::-webkit-details-marker]:hidden">
+          <span>Leave types and rules</span>
+          <span className="text-xs font-medium text-primary">
+            <span className="group-open:hidden">Show {policies.length} types</span>
+            <span className="hidden group-open:inline">Hide details</span>
+          </span>
+        </summary>
+        <Card className="mt-3">
+          <CardHeader className="border-b">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <CardTitle>Your Leave Allowances</CardTitle>
+                <CardDescription className="mt-1">
+                  Every type of leave currently available to you.
+                </CardDescription>
+              </div>
+              <Badge variant="secondary">{policies.length} available types</Badge>
             </div>
-            <Badge variant="secondary">{policies.length} available types</Badge>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          <DataTableShell className="rounded-none border-0 shadow-none">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Leave type</TableHead>
-                  <TableHead>Entitlement</TableHead>
-                  <TableHead className="text-right">Carried</TableHead>
-                  <TableHead className="text-right">Used / scheduled</TableHead>
-                  <TableHead className="text-right">Pending</TableHead>
-                  <TableHead className="text-right">Available</TableHead>
-                  <TableHead>Request rules</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {policies.map((policy) => {
-                  const balance = balanceByPolicy.get(policy.id);
-                  const hasBeenUsed = requests.some(
-                    (request) =>
-                      request.policyId === policy.id &&
-                      ACTIVE_OR_USED_STATUSES.includes(request.status),
-                  );
-                  const isLedgerBalance = policy.scope === "Annual" || policy.scope === "Ledger";
-                  const availableLabel = !policy.consumesBalance
-                    ? "No deduction"
-                    : policy.scope === "Per Event"
-                      ? `${formatDays(policy.baseEntitlementDays)} / event`
-                      : policy.scope === "Once Per Service"
-                        ? hasBeenUsed
-                          ? "Used"
-                          : `${formatDays(policy.baseEntitlementDays)} days`
-                        : `${formatDays(balance?.available ?? 0)} days`;
+          </CardHeader>
+          <CardContent className="p-0">
+            <DataTableShell className="rounded-none border-0 shadow-none">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Leave type</TableHead>
+                    <TableHead>Entitlement</TableHead>
+                    <TableHead className="text-right">Carried</TableHead>
+                    <TableHead className="text-right">Used / scheduled</TableHead>
+                    <TableHead className="text-right">Pending</TableHead>
+                    <TableHead className="text-right">Available</TableHead>
+                    <TableHead>Request rules</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {policies.map((policy) => {
+                    const balance = balanceByPolicy.get(policy.id);
+                    const hasBeenUsed = requests.some(
+                      (request) =>
+                        request.policyId === policy.id &&
+                        ACTIVE_OR_USED_STATUSES.includes(request.status),
+                    );
+                    const isLedgerBalance = policy.scope === "Annual" || policy.scope === "Ledger";
+                    const availableLabel = !policy.consumesBalance
+                      ? "No deduction"
+                      : policy.scope === "Per Event"
+                        ? `${formatDays(policy.baseEntitlementDays)} / event`
+                        : policy.scope === "Once Per Service"
+                          ? hasBeenUsed
+                            ? "Used"
+                            : `${formatDays(policy.baseEntitlementDays)} days`
+                          : `${formatDays(balance?.available ?? 0)} days`;
 
-                  return (
-                    <TableRow key={policy.id}>
-                      <TableCell className="min-w-60">
-                        <div className="font-medium">{policy.name}</div>
-                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                          <Badge variant="outline" className="font-mono text-[10px]">
-                            {policy.code}
-                          </Badge>
-                          <span className="text-xs text-muted-foreground">
-                            {policy.isPaid ? "Paid" : "Unpaid"} · {policy.scope}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap font-medium">
-                        {policy.type === "Annual" && balance?.entitlement
-                          ? `${formatDays(balance.entitlement)} days / year`
-                          : entitlementLabel(policy)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {isLedgerBalance
-                          ? formatDays(balance?.carryRemaining ?? balance?.carriedForward ?? 0)
-                          : "—"}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {isLedgerBalance
-                          ? formatDays((balance?.taken ?? 0) + (balance?.approvedFuture ?? 0))
-                          : "—"}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {balance?.pending ? formatDays(balance.pending) : "—"}
-                      </TableCell>
-                      <TableCell className="text-right font-semibold tabular-nums">
-                        {availableLabel}
-                      </TableCell>
-                      <TableCell className="min-w-52 text-xs leading-5 text-muted-foreground">
-                        {policy.noticeRules?.enabled ? (
-                          <span>
-                            Up to {policy.noticeRules.shortLeaveMaxDays} days:{" "}
-                            {policy.noticeRules.shortLeaveNoticeDays}-day notice. Longer:{" "}
-                            {policy.noticeRules.longLeaveNoticeDays}-day notice.
-                            <span className="block">
-                              Shorter notice can be sent for special approval.
+                    return (
+                      <TableRow key={policy.id}>
+                        <TableCell className="min-w-60">
+                          <div className="font-medium">{policy.name}</div>
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            <Badge variant="outline" className="font-mono text-[10px]">
+                              {policy.code}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">
+                              {policy.isPaid ? "Paid" : "Unpaid"} · {policy.scope}
                             </span>
-                          </span>
-                        ) : (
-                          <span>No advance-notice rule</span>
-                        )}
-                        {policy.requiresAttachment && (
-                          <span className="block font-medium text-foreground">
-                            Evidence required
-                          </span>
-                        )}
-                        {policy.requiresHandoverContact && (
-                          <span className="block font-medium text-foreground">
-                            Covering colleague required
-                          </span>
-                        )}
-                        {!!policy.eligibility?.minimumServiceMonths && (
-                          <span className="block font-medium text-foreground">
-                            Available after {policy.eligibility.minimumServiceMonths} completed
-                            months of service
-                          </span>
-                        )}
-                        {policy.eligibility?.omaniOnly && (
-                          <span className="block font-medium text-foreground">
-                            Omani employees only
-                          </span>
-                        )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap font-medium">
+                          {policy.type === "Annual" && balance?.entitlement
+                            ? `${formatDays(balance.entitlement)} days / year`
+                            : entitlementLabel(policy)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {isLedgerBalance
+                            ? formatDays(balance?.carryRemaining ?? balance?.carriedForward ?? 0)
+                            : "—"}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {isLedgerBalance
+                            ? formatDays((balance?.taken ?? 0) + (balance?.approvedFuture ?? 0))
+                            : "—"}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {balance?.pending ? formatDays(balance.pending) : "—"}
+                        </TableCell>
+                        <TableCell className="text-right font-semibold tabular-nums">
+                          {availableLabel}
+                        </TableCell>
+                        <TableCell className="min-w-52 text-xs leading-5 text-muted-foreground">
+                          {policy.noticeRules?.enabled ? (
+                            <span>
+                              Up to {policy.noticeRules.shortLeaveMaxDays} days:{" "}
+                              {policy.noticeRules.shortLeaveNoticeDays}-day notice. Longer:{" "}
+                              {policy.noticeRules.longLeaveNoticeDays}-day notice.
+                              <span className="block">
+                                Shorter notice can be sent for special approval.
+                              </span>
+                            </span>
+                          ) : (
+                            <span>No advance-notice rule</span>
+                          )}
+                          {policy.requiresAttachment && (
+                            <span className="block font-medium text-foreground">
+                              Evidence required
+                            </span>
+                          )}
+                          {policy.requiresHandoverContact && (
+                            <span className="block font-medium text-foreground">
+                              Covering colleague required
+                            </span>
+                          )}
+                          {!!policy.eligibility?.minimumServiceMonths && (
+                            <span className="block font-medium text-foreground">
+                              Available after {policy.eligibility.minimumServiceMonths} completed
+                              months of service
+                            </span>
+                          )}
+                          {policy.eligibility?.omaniOnly && (
+                            <span className="block font-medium text-foreground">
+                              Omani employees only
+                            </span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                  {policies.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
+                        No leave policies are currently available for your profile.
                       </TableCell>
                     </TableRow>
-                  );
-                })}
-                {policies.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
-                      No leave policies are currently available for your profile.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </DataTableShell>
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Card>
-          <CardContent className="flex items-center gap-4 p-5">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
-              <Activity className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Requests awaiting approval</p>
-              <p className="text-xl font-semibold">{pendingRequests.length}</p>
-            </div>
+                  )}
+                </TableBody>
+              </Table>
+            </DataTableShell>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="flex items-center gap-4 p-5">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
-              <CalendarDays className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Next approved leave</p>
-              <p className="text-base font-semibold">
-                {nextApproved
-                  ? `${formatDate(nextApproved.date)} · ${leaveDisplayType(nextApproved.request, policyById.get(nextApproved.request.policyId))}`
-                  : "Nothing scheduled"}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      </details>
 
-      <Card className="overflow-hidden">
+      <Card id="leave-history" className="overflow-hidden scroll-mt-6">
         <Tabs defaultValue="requests">
           <CardHeader className="border-b pb-0">
             <div>
@@ -620,7 +680,45 @@ function LeaveBalancesRoute() {
               </p>
             </div>
             <CardContent className="p-0">
-              <DataTableShell className="rounded-none border-0 shadow-none">
+              <div className="divide-y md:hidden">
+                {visibleRequests.map((request) => {
+                  const policy = policyById.get(request.policyId);
+                  const fullyReplacedByWork =
+                    request.status === "Cancellation Approved" &&
+                    Boolean(request.policySnapshot.officeWorkCorrections?.length) &&
+                    request.policySnapshot.workingDates?.length === 0;
+                  return (
+                    <article key={request.id} className="space-y-3 px-4 py-5">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="font-semibold">{leaveDisplayType(request, policy)}</p>
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            {formatDate(request.startDate)}
+                            {request.startDate !== request.endDate &&
+                              ` – ${formatDate(request.endDate)}`}
+                            {` · ${formatDays(request.workingDaysRequested)} days`}
+                          </p>
+                        </div>
+                        <Badge variant={requestVariant(request.status)}>
+                          {fullyReplacedByWork ? "Counted as work" : request.status}
+                        </Badge>
+                      </div>
+                      {leaveDecisionSummary(request) && (
+                        <p className="text-sm text-muted-foreground">
+                          {leaveDecisionSummary(request)}
+                        </p>
+                      )}
+                      <div className="pt-1">{requestActions(request)}</div>
+                    </article>
+                  );
+                })}
+                {requests.length === 0 && (
+                  <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                    You have not submitted a leave request yet.
+                  </p>
+                )}
+              </div>
+              <DataTableShell className="hidden rounded-none border-0 shadow-none md:block">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -639,13 +737,6 @@ function LeaveBalancesRoute() {
                         request.status === "Cancellation Approved" &&
                         Boolean(request.policySnapshot.officeWorkCorrections?.length) &&
                         request.policySnapshot.workingDates?.length === 0;
-                      const canWithdraw = request.status.startsWith("Pending");
-                      const canCancel =
-                        request.status === "Approved" &&
-                        request.endDate >= new Date().toISOString().slice(0, 10);
-                      const canAmend =
-                        request.status === "Approved" &&
-                        request.startDate > new Date().toISOString().slice(0, 10);
                       const reason =
                         request.status === "Declined"
                           ? `Declined: ${request.refusalReason || "reason not recorded"}`
@@ -697,53 +788,7 @@ function LeaveBalancesRoute() {
                           <TableCell className="max-w-64 truncate text-muted-foreground">
                             {reason}
                           </TableCell>
-                          <TableCell className="text-right">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setDetailRequestId(request.id)}
-                            >
-                              Approval details
-                            </Button>
-                            {canWithdraw && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-destructive hover:text-destructive"
-                                onClick={() => setWithdrawTarget(request)}
-                              >
-                                Withdraw
-                              </Button>
-                            )}
-                            {canAmend && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  setAmendTarget(request);
-                                  setAmendment({
-                                    startDate: request.startDate,
-                                    endDate: request.endDate,
-                                    reason: "",
-                                  });
-                                }}
-                              >
-                                Change dates
-                              </Button>
-                            )}
-                            {canCancel && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  setCancelTarget(request);
-                                  setCancellationReason("");
-                                }}
-                              >
-                                Cancel leave
-                              </Button>
-                            )}
-                          </TableCell>
+                          <TableCell>{requestActions(request)}</TableCell>
                         </TableRow>
                       );
                     })}

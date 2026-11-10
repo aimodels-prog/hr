@@ -117,6 +117,13 @@ export class TimesheetService {
       snapshot.timesheets.map((sheet) => ({
         ...sheet,
         employeeId: employeeMap.get(sheet.employeeId) ?? sheet.employeeId,
+        ...(sheet.independentReviewerEmployeeId
+          ? {
+              independentReviewerEmployeeId:
+                employeeMap.get(sheet.independentReviewerEmployeeId) ??
+                sheet.independentReviewerEmployeeId,
+            }
+          : {}),
         ...(sheet.approvedBy
           ? { approvedBy: userMap.get(sheet.approvedBy) ?? sheet.approvedBy }
           : {}),
@@ -511,9 +518,17 @@ export class TimesheetService {
           .filter((employee) => employee.lineManagerId === context.actor.employeeId)
           .map((employee) => employee.id),
       );
-      return all.filter((timesheet) => reportIds.has(timesheet.employeeId));
+      return all.filter(
+        (timesheet) =>
+          reportIds.has(timesheet.employeeId) ||
+          timesheet.independentReviewerEmployeeId === context.actor.employeeId,
+      );
     }
-    return all.filter((timesheet) => timesheet.employeeId === context.actor.employeeId);
+    return all.filter(
+      (timesheet) =>
+        timesheet.employeeId === context.actor.employeeId ||
+        timesheet.independentReviewerEmployeeId === context.actor.employeeId,
+    );
   }
 
   getTimesheetsForEmployee(employeeId: string, context: ActorContext): TimesheetWithEntries[] {
@@ -1269,9 +1284,13 @@ export class TimesheetService {
   ): TimesheetWithEntries {
     const ts = this.timesheetRepo.getById(timesheetId);
     if (!ts) throw new Error("Timesheet not found");
+    if (ts.employeeId === context.actor.employeeId)
+      throw new Error("You cannot return your own timesheet.");
     if (ts.status === "Pending Manager") {
       this.requireDirectReport(ts.employeeId, context, "return this timesheet");
     } else if (ts.status === "Pending HR") {
+      if (context.actor.activeRole !== "HR")
+        this.deny(context, "return this timesheet", ts.employeeId);
       this.requireHrApproval(context, "return this timesheet");
     } else {
       throw new Error("Only timesheets awaiting review can be returned.");
@@ -1294,28 +1313,45 @@ export class TimesheetService {
 
     if (ts.status === "Pending Manager") {
       this.requireDirectReport(ts.employeeId, context, "review this timesheet");
+      const standIn =
+        context.actor.activeRole === "HR" &&
+        new EmployeeService().getById(ts.employeeId, SYSTEM_CONTEXT)?.lineManagerId ===
+          context.actor.employeeId;
       const reconciliation = this.reconcileAttendance(ts);
       if (reconciliation.unresolvedCount > 0) {
         throw new Error(
           "This timesheet has unexplained attendance differences and must be returned to the employee.",
         );
       }
-      ts.status = "Pending HR";
+      ts.status = standIn
+        ? this.getSettings().payrollLockBehaviour === "Automatic on Approval"
+          ? "Payroll Locked"
+          : "Approved"
+        : "Pending HR";
       ts.supervisorReviewedAt = new Date().toISOString();
       ts.supervisorReviewedBy = context.actor.userId;
+      if (standIn) {
+        ts.approvedAt = new Date().toISOString();
+        ts.approvedBy = context.actor.userId;
+      }
       ts.attendanceReconciliationSnapshot = reconciliation;
       ts.totalHours = reconciliation.timesheetWorkHours;
       const updated = this.timesheetRepo.update(ts.id, ts, {
         ...context,
-        reason: "Supervisor reviewed the timesheet; HR final approval is required",
+        reason: standIn
+          ? "Assigned HR supervisor completed the timesheet review"
+          : "Supervisor reviewed the timesheet; HR final approval is required",
       });
-      this.notifyHrReviewers(updated, context);
+      if (standIn) this.notifyEmployee(updated, context);
+      else this.notifyHrReviewers(updated, context);
       return updated;
     }
 
     if (ts.status !== "Pending HR") {
       throw new Error("Only timesheets awaiting supervisor or HR review can be approved.");
     }
+    if (context.actor.activeRole !== "HR")
+      this.deny(context, "give final approval to this timesheet", ts.employeeId);
     this.requireHrApproval(context, "give final approval to this timesheet");
 
     const reconciliation = this.reconcileAttendance(ts);
@@ -1555,25 +1591,11 @@ export class TimesheetService {
   private requireDirectReport(employeeId: string, context: ActorContext, action: string): void {
     const employee = new EmployeeService().getById(employeeId, SYSTEM_CONTEXT);
     if (
-      context.actor.activeRole === "Line Manager" &&
+      ["Line Manager", "HR"].includes(context.actor.activeRole ?? "") &&
       context.actor.employeeId &&
-      employee?.lineManagerId === context.actor.employeeId
+      employee?.lineManagerId === context.actor.employeeId &&
+      employeeId !== context.actor.employeeId
     ) {
-      return;
-    }
-    if (["HR", "Super Admin"].includes(context.actor.activeRole ?? "")) {
-      if ((context.reason?.trim().length ?? 0) < 5) {
-        getApplicationDataServices().audit.record({
-          context,
-          action: "timesheet_access_denied",
-          module: "timesheets",
-          entityType: "timesheet",
-          entityId: employeeId,
-          reason: "Supervisor recovery was attempted without the required explanation.",
-          riskLevel: "High",
-        });
-        throw new Error("Enter a reason for completing the unavailable supervisor's review.");
-      }
       return;
     }
     this.deny(context, action, employeeId);

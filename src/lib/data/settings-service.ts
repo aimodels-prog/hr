@@ -1,6 +1,10 @@
 import { getApplicationDataServices } from "./application-data.ts";
 import type { ActorContext, AppSettings } from "./types.ts";
 import { canChangeCompanySettings } from "../auth/company-setup-policy.ts";
+import {
+  DEFAULT_APPROVAL_ROUTING_SETTINGS,
+  parseApprovalRoutingSettings,
+} from "./approval-routing-settings.ts";
 
 const SETTINGS_COLLECTION = "appSettings";
 
@@ -35,8 +39,12 @@ export class SettingsService {
       const { storage } = getApplicationDataServices();
       const [stored] = storage.readCollection<AppSettings>(SETTINGS_COLLECTION);
       if (stored) {
-        memoryCachedSettings = stored;
-        return stored;
+        const hydrated = {
+          ...stored,
+          approvalRouting: parseApprovalRoutingSettings(stored.approvalRouting),
+        };
+        memoryCachedSettings = hydrated;
+        return hydrated;
       }
     } catch {
       // Fallback for isolated runtime
@@ -53,6 +61,7 @@ export class SettingsService {
       probationDurationMonths: 3,
       leaveYearStart: "01-01",
       leaveIncludesWeekends: true,
+      approvalRouting: DEFAULT_APPROVAL_ROUTING_SETTINGS,
       leaveYearEnd: "12-31",
       documentReminderDays: [30, 15, 7],
       requireOnboardingCompletionBeforeDashboard: false,
@@ -74,14 +83,32 @@ export class SettingsService {
 
     const { getAppSettingsFn } = await import("../server-functions/settings.server.ts");
     const settings = (await getAppSettingsFn({ data: {} })) as unknown as AppSettings;
+    settings.approvalRouting = parseApprovalRoutingSettings(settings.approvalRouting);
     memoryCachedSettings = settings;
     return settings;
   }
 
   async saveAppSettings(settings: AppSettings, context: ActorContext): Promise<AppSettings> {
-    this.validate(settings);
-
     const previous = this.getAppSettingsSync();
+    const requestedRouting = parseApprovalRoutingSettings(
+      settings.approvalRouting ?? previous.approvalRouting,
+    );
+    settings = { ...settings, approvalRouting: requestedRouting };
+    this.validate(settings);
+    if (
+      requestedRouting.hrOwnRequestReviewerEmployeeId !==
+        parseApprovalRoutingSettings(previous.approvalRouting).hrOwnRequestReviewerEmployeeId &&
+      !context.actor.roles.includes("Super Admin")
+    ) {
+      throw new Error("Only Super Admin can assign the independent reviewer for HR requests.");
+    }
+    if (
+      requestedRouting.hrOwnRequestReviewerEmployeeId !==
+        parseApprovalRoutingSettings(previous.approvalRouting).hrOwnRequestReviewerEmployeeId &&
+      context.actor.roles.includes("HR")
+    ) {
+      throw new Error("An HR team member cannot assign the reviewer for their own requests.");
+    }
     const ignored = new Set([
       "updatedAt",
       "updatedBy",

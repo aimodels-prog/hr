@@ -224,7 +224,7 @@ export function HrSidebar() {
         )}
       </SidebarContent>
       <SidebarFooter className="border-t border-sidebar-border/70 px-3 py-3 text-xs">
-        {switchRole && (
+        {switchRole && assignedRoles.length === 2 && (
           <SidebarMenuButton
             tooltip={
               switchRole === "Employee" ? "My employee workspace" : `${switchRole} workspace`

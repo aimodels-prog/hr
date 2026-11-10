@@ -417,6 +417,8 @@ export function EmployeeProfileView({ employeeId: requestedEmployeeId }: { emplo
   const visibleHistory = history.filter((record) => record.field !== "salary" || canViewPayroll);
   const canEditEmployment =
     currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
+  const canReviewEmployment =
+    currentUser.activeRole === "HR" && employee.id !== currentUser.employeeId;
   const canEditCompensation =
     currentUser.activeRole === "Accounts" || currentUser.activeRole === "Super Admin";
   const canViewAudit = currentUser.permissions.has("system:audit_view");
@@ -1342,7 +1344,7 @@ export function EmployeeProfileView({ employeeId: requestedEmployeeId }: { emplo
                           {employee.employmentReviewNote}
                         </p>
                       )}
-                      {canEditEmployment &&
+                      {canReviewEmployment &&
                         employee.employmentConfirmationStatus === "Pending HR Review" && (
                           <div className="space-y-3">
                             <Textarea

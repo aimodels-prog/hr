@@ -13,7 +13,7 @@ async function previewAs(page: Page, userId: string, activeRole: PreviewRole) {
     { selectedUser: userId, selectedRole: activeRole },
   );
   await page.goto("/staff/my-tasks");
-  await expect(page.getByRole("heading", { name: "My Tasks" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Tasks & Reminders" })).toBeVisible();
   await expect(page.getByText("Tasks could not be loaded")).toHaveCount(0);
 }
 

@@ -17,8 +17,11 @@ import {
   saveTrainingCourseInDatabase,
   saveTrainingSessionInDatabase,
   scheduleTrainingAssignmentInDatabase,
-  withdrawTrainingRequestInDatabase,
 } from "../src/lib/db/repositories/training.repository.server.ts";
+import {
+  listPendingIndependentHrReviewsInDatabase,
+  reassignPendingIndependentHrReviewInDatabase,
+} from "../src/lib/db/repositories/independent-hr-reassignment.repository.server.ts";
 
 const testDatabaseUrl = process.env["VIA_HR_TEST_DATABASE_URL"]?.trim();
 if (testDatabaseUrl) process.env["DATABASE_URL"] = testDatabaseUrl;
@@ -94,16 +97,27 @@ test(
       }
       const roleRows = await sql<
         { id: string; code: string }[]
-      >`SELECT id,code FROM roles WHERE code IN ('Employee','Line Manager','HR')`;
+      >`SELECT id,code FROM roles WHERE code IN ('Employee','Line Manager','HR','Super Admin')`;
       const roleIds = Object.fromEntries(roleRows.map((row) => [row.code, row.id]));
       for (const [userKey, codes] of [
         ["employeeUser", ["Employee"]],
-        ["managerUser", ["Employee", "Line Manager"]],
+        ["managerUser", ["Employee", "Line Manager", "Super Admin"]],
         ["otherManagerUser", ["Employee", "Line Manager"]],
         ["hrUser", ["Employee", "HR"]],
       ] as const)
         for (const code of codes)
           await sql`INSERT INTO user_roles (organisation_id,user_id,role_id,assigned_by,reason) VALUES (${ids.org},${ids[userKey]},${roleIds[code]},${ids.hrUser},'Training test access') ON CONFLICT DO NOTHING`;
+
+      await sql`INSERT INTO app_settings (
+        organisation_id,timezone,base_currency,working_days,standard_daily_hours,
+        standard_weekly_hours,leave_year_start,leave_year_end,document_reminder_days,
+        employee_number_format,candidate_reference_format,additional_settings,created_by,updated_by
+      ) VALUES (
+        ${ids.org},'Asia/Dubai','AED',ARRAY[1,2,3,4,5],8,40,'01-01','12-31',
+        ARRAY[30,7], 'EMP-{YEAR}-{SEQUENCE}', 'APP-{YEAR}-{SEQUENCE}',
+        ${sql.json({ approvalRouting: { hrOwnRequestReviewerEmployeeId: ids.otherManager } })},
+        ${ids.hrUser},${ids.hrUser}
+      )`;
 
       const courseId = await saveTrainingCourseInDatabase(
         ids.org!,
@@ -149,7 +163,69 @@ test(
           ),
         /own training/,
       );
-      await withdrawTrainingRequestInDatabase(ids.org!, hrSelfRequest, "", hrActor);
+      const [assigned] = await sql`
+        SELECT reviewer_employee_id FROM hr_independent_review_assignments
+        WHERE organisation_id=${ids.org} AND module='Training' AND request_id=${hrSelfRequest}`;
+      assert.equal(assigned?.reviewer_employee_id, ids.otherManager);
+      const pendingBefore = await listPendingIndependentHrReviewsInDatabase(ids.org!);
+      assert.equal(
+        pendingBefore.find((item) => item.requestId === hrSelfRequest)?.reviewerName,
+        "Other Manager",
+      );
+      const superAdminActor = {
+        userId: ids.managerUser!,
+        employeeId: ids.manager!,
+        displayName: "Independent administrator",
+        activeRole: "Super Admin" as const,
+        roles: ["Employee", "Line Manager", "Super Admin"],
+      };
+      await reassignPendingIndependentHrReviewInDatabase(
+        ids.org!,
+        "Training",
+        hrSelfRequest,
+        ids.manager!,
+        superAdminActor,
+      );
+      const pendingAfter = await listPendingIndependentHrReviewsInDatabase(ids.org!);
+      assert.equal(
+        pendingAfter.find((item) => item.requestId === hrSelfRequest)?.reviewerEmployeeId,
+        ids.manager,
+      );
+      await assert.rejects(
+        () =>
+          decideTrainingRequestInDatabase(
+            ids.org!,
+            hrSelfRequest,
+            "HR",
+            "Approve",
+            "Former reviewer",
+            actor("otherManagerUser", "otherManager", "Employee"),
+          ),
+        /assigned|reviewer|authorised/i,
+      );
+      await decideTrainingRequestInDatabase(
+        ids.org!,
+        hrSelfRequest,
+        "HR",
+        "Approve",
+        "Approved independently",
+        actor("managerUser", "manager", "Employee"),
+      );
+      const [hrOwnDecision] =
+        await sql`SELECT status,hr_decision_by FROM training_requests WHERE id=${hrSelfRequest}`;
+      assert.equal(hrOwnDecision?.status, "Approved");
+      assert.equal(hrOwnDecision?.hr_decision_by, ids.managerUser);
+      await assert.rejects(
+        () =>
+          reassignPendingIndependentHrReviewInDatabase(
+            ids.org!,
+            "Training",
+            hrSelfRequest,
+            ids.otherManager!,
+            superAdminActor,
+          ),
+        /still awaiting independent review/,
+      );
       await assert.rejects(
         createTrainingRequestInDatabase(
           ids.org!,
@@ -222,6 +298,65 @@ test(
         managerActor,
       );
       await decideTrainingRequestInDatabase(ids.org!, requestId, "HR", "Approve", "", hrActor);
+      // HR can stand in as the employee's assigned supervisor without asking the
+      // same HR account for a second approval or requiring an extra role grant.
+      await sql`UPDATE employees SET line_manager_id=${ids.hr} WHERE id=${ids.employee}`;
+      const standInCourseId = await saveTrainingCourseInDatabase(
+        ids.org!,
+        {
+          code: "STANDIN-101",
+          title: "Assigned HR supervisor review",
+          description: "Paid training with HR as the named supervisor.",
+          provider: "VIA Academy",
+          category: "General",
+          deliveryType: "Classroom",
+          durationHours: 2,
+          cost: 100,
+          currency: "AED",
+          requiredRoles: [],
+          requiredLocations: [],
+          requiredProjects: [],
+          isMandatory: false,
+          isActive: true,
+        },
+        hrActor,
+      );
+      const standInRequestId = await createTrainingRequestInDatabase(
+        ids.org!,
+        {
+          employeeId: ids.employee!,
+          courseId: standInCourseId,
+          reason: "A paid development course needed for the employee's current work.",
+          origin: "Employee Request",
+        },
+        employeeActor,
+      );
+      await decideTrainingRequestInDatabase(
+        ids.org!,
+        standInRequestId,
+        "Supervisor",
+        "Approve",
+        "Approved as assigned HR supervisor",
+        hrActor,
+      );
+      const [standInResult] = await sql`
+        SELECT status,supervisor_decision_by,hr_decision_by
+        FROM training_requests WHERE id=${standInRequestId}`;
+      assert.equal(standInResult?.status, "Approved");
+      assert.equal(standInResult?.supervisor_decision_by, ids.hrUser);
+      assert.equal(standInResult?.hr_decision_by, ids.hrUser);
+      await assert.rejects(
+        () =>
+          decideTrainingRequestInDatabase(
+            ids.org!,
+            standInRequestId,
+            "HR",
+            "Approve",
+            "Duplicate approval",
+            hrActor,
+          ),
+        /not awaiting HR review/,
+      );
       let snapshot = await listTrainingForActor(ids.org!, hrActor);
       const assignment = snapshot.enrollments.find((item) => item.requestId === requestId)!;
       assert.equal(assignment.status, "Assigned");

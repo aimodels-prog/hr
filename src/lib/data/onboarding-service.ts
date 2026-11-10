@@ -434,18 +434,19 @@ export class OnboardingService {
       explicitlyAssigned ||
       (task.ownerRole === "Employee" && context.actor.employeeId === c.employeeId) ||
       (task.ownerRole === "Line Manager" &&
-        role === "Line Manager" &&
+        !task.assignedUserId &&
+        (role === "Line Manager" || role === "HR") &&
         employee?.lineManagerId === context.actor.employeeId) ||
       (task.ownerRole === role &&
         task.ownerRole !== "Employee" &&
         task.ownerRole !== "Line Manager");
 
     if (status === "Waived") {
-      if (role !== "HR" && role !== "Super Admin") {
+      if (role !== "HR") {
         this.deny(
           "waive onboarding task",
           task.id,
-          "Only HR or a Super Admin can waive an onboarding task.",
+          "Only HR can waive an onboarding task.",
           context,
         );
       }
@@ -1052,6 +1053,7 @@ export class OnboardingService {
         task.assignedUserId === context.actor.employeeId ||
         (task.ownerRole === "Employee" && c.employeeId === context.actor.employeeId) ||
         (task.ownerRole === "Line Manager" &&
+          !task.assignedUserId &&
           role === "Line Manager" &&
           employee?.lineManagerId === context.actor.employeeId) ||
         // Employee/Line Manager are relationship-scoped by the two branches above and must
@@ -1086,6 +1088,7 @@ export class OnboardingService {
         task.assignedUserId === context.actor.employeeId ||
         (task.ownerRole === "Employee" && c.employeeId === context.actor.employeeId) ||
         (task.ownerRole === "Line Manager" &&
+          !task.assignedUserId &&
           role === "Line Manager" &&
           employee?.lineManagerId === context.actor.employeeId) ||
         (task.ownerRole === role &&

@@ -13,6 +13,7 @@ import { MasterDataForm } from "@/components/settings/master-data-form";
 import { DataManagement } from "@/components/settings/data-management";
 import { toast } from "sonner";
 import { LeavePolicyConfig } from "@/components/settings/leave-policy-config";
+import { ApprovalRoutingPanel } from "@/components/settings/approval-routing-panel";
 import { OnboardingTemplatesPanel } from "@/components/settings/onboarding-templates-panel";
 import { OffboardingTemplatesPanel } from "@/components/settings/offboarding-templates-panel";
 import { InterviewTemplatesPanel } from "@/components/settings/interview-templates-panel";
@@ -81,6 +82,11 @@ const SETTINGS_GROUPS = [
         key: "leavePolicies",
         label: "Leave policies",
         description: "Entitlements and request rules",
+      },
+      {
+        key: "approvalRouting",
+        label: "Approval routes",
+        description: "Independent reviewers and executive travel decisions",
       },
     ],
   },
@@ -276,6 +282,8 @@ function SettingsSectionContent({ section }: { section: SettingsSection }) {
       return <MasterDataSection collection="publicHolidays" title="Public Holidays" />;
     case "leavePolicies":
       return <LeavePolicyConfig />;
+    case "approvalRouting":
+      return <ApprovalRoutingPanel />;
     case "onboardingTemplates":
       return <OnboardingTemplatesPanel />;
     case "offboardingTemplates":

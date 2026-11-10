@@ -14,7 +14,7 @@ import { initializeSeedData } from "../src/lib/data/seed-service.ts";
 import { MemoryStorageDriver } from "../src/lib/data/storage-driver.ts";
 import { VersionedStorageService } from "../src/lib/data/storage.ts";
 import { TrainingService } from "../src/lib/data/training-service.ts";
-import type { ActorContext, FileMetadata } from "../src/lib/data/types.ts";
+import type { ActorContext, Employee, FileMetadata } from "../src/lib/data/types.ts";
 
 const employee: ActorContext = {
   actor: {
@@ -278,6 +278,88 @@ test("objectives require self-service, 100% weighting and the assigned superviso
   );
 });
 
+test("HR can review objectives and the appraisal of an assigned report in the HR role", () => {
+  setup();
+  const { storage } = getApplicationDataServices();
+  storage.writeCollection(
+    "employees",
+    storage
+      .readCollection<Employee>("employees")
+      .map((item) =>
+        item.id === "employee-omar" ? { ...item, lineManagerId: hr.actor.employeeId } : item,
+      ),
+  );
+  const service = new PerformanceService();
+  const cycle = service.createCycle(
+    {
+      name: "HR supervisor review",
+      templateId: service.getTemplates(hr)[0]!.id,
+      status: "Active",
+      departments: ["Operations"],
+      employmentTypes: [],
+      selfAssessmentDeadline: "2027-02-28",
+      managerReviewDeadline: "2027-03-31",
+      discussionDeadline: "2027-04-30",
+      requiresModeration: false,
+    },
+    hr,
+  );
+  const goals = new GoalService();
+  const goal = goals.createGoal(
+    {
+      employeeId: "employee-omar",
+      cycleId: cycle.id,
+      title: "Improve site reporting",
+      description: "Deliver accurate reports across the review period.",
+      successMeasure: "Monthly reporting audit",
+      targetValue: "At least 95 percent",
+      startDate: "2026-09-01",
+      dueDate: "2027-01-31",
+      weight: 100,
+    },
+    employee,
+  );
+  goals.submitCycleGoalsForApproval("employee-omar", cycle.id, employee);
+  assert.equal(goals.getPendingGoalsForManager(hr).length, 1);
+  assert.throws(() => goals.approveGoal(goal.id, manager), /assigned supervisor/i);
+  goals.approveGoal(goal.id, hr);
+  let review = service
+    .getReviewsForEmployee("employee-omar", employee)
+    .find((item) => item.cycleId === cycle.id)!;
+  const selfSections = structuredClone(review.sections).map((section) => ({
+    ...section,
+    items: section.items.map((item) => ({
+      ...item,
+      selfRating: 4,
+      selfComment: "Completed the agreed work with recorded evidence.",
+    })),
+  }));
+  review = service.submitSelfAssessment(review.id, selfSections, employee);
+  const managerSections = structuredClone(review.sections).map((section) => ({
+    ...section,
+    items: section.items.map((item) => ({
+      ...item,
+      managerRating: 4,
+      managerComment: "Results were consistent with the agreed measures.",
+    })),
+  }));
+  review = service.submitManagerReview(
+    review.id,
+    managerSections,
+    "The employee delivered the agreed results consistently.",
+    "Continue improving reporting accuracy and team planning.",
+    hr,
+  );
+  assert.equal(review.status, "Discussion Pending");
+  review = service.recordDiscussion(
+    review.id,
+    "2026-08-29",
+    "We discussed the results and agreed next-period priorities.",
+    hr,
+  );
+  assert.equal(review.status, "Acknowledgement Pending");
+});
+
 for (const role of ["Employee", "Line Manager", "HR", "Accounts", "IT", "Super Admin"] as const)
   test(`performance self-service and independent HR lock work for ${role}`, () => {
     setup();
@@ -353,7 +435,7 @@ for (const role of ["Employee", "Line Manager", "HR", "Accounts", "IT", "Super A
     if (role === "HR" || role === "Super Admin") {
       assert.throws(
         () => service.approveModeration(review.id, "My own moderation.", selfActor),
-        /own performance/,
+        role === "HR" ? /own performance/ : /not authorised/,
       );
     }
     review = service.approveModeration(
@@ -502,5 +584,32 @@ test("training follows employee request, supervisor, HR, session and completion"
   assert.equal(
     audit.list().some((event) => event.entityType === "training-enrollment"),
     true,
+  );
+});
+
+test("an assigned HR supervisor completes a paid training request in one decision", () => {
+  setup();
+  const storage = getApplicationDataServices().storage;
+  storage.writeCollection<Employee>(
+    "employees",
+    storage
+      .readCollection<Employee>("employees")
+      .map((person) =>
+        person.id === "employee-omar" ? { ...person, lineManagerId: "employee-rana" } : person,
+      ),
+  );
+  const service = new TrainingService();
+  const request = service
+    .getRequests(hr)
+    .find((item) => item.id === "training-request-omar-first-aid")!;
+  assert.equal(request.status, "Pending Supervisor");
+  const approved = service.decideSupervisor(request.id, "Approve", "Relevant paid training", hr);
+  assert.equal(approved.status, "Approved");
+  assert.equal(approved.supervisorDecisionBy, hr.actor.userId);
+  assert.equal(approved.hrDecisionBy, hr.actor.userId);
+  assert.ok(service.getEnrollments(hr).some((item) => item.requestId === request.id));
+  assert.throws(
+    () => service.decideHr(request.id, "Approve", "Duplicate approval", hr),
+    /not awaiting HR review/,
   );
 });

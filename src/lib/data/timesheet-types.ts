@@ -71,6 +71,7 @@ export type TimesheetStatus =
   | "Corrected";
 
 export interface Timesheet extends BaseRecord {
+  independentReviewerEmployeeId?: string;
   databaseId?: string;
   employeeId: RecordId;
   periodId: RecordId;

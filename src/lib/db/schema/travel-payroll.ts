@@ -1,5 +1,9 @@
 import { sql } from "drizzle-orm";
-import type { TravelParticipant, TravelBooking } from "../../data/travel-types.ts";
+import type {
+  TravelParticipant,
+  TravelBooking,
+  TravelApprovalRoute,
+} from "../../data/travel-types.ts";
 import {
   boolean,
   check,
@@ -35,6 +39,7 @@ export const travelApprovalState = pgEnum("travel_approval_state", [
   "Pending",
   "Approved",
   "Rejected",
+  "Not Required",
 ]);
 
 export const travelRequests = pgTable(
@@ -47,6 +52,10 @@ export const travelRequests = pgTable(
     employeeId: uuid("employee_id")
       .notNull()
       .references(() => employees.id, { onDelete: "restrict" }),
+    approvalRoute: jsonb("approval_route")
+      .$type<TravelApprovalRoute>()
+      .notNull()
+      .default({ kind: "Standard" }),
     purpose: text("purpose").notNull(),
     participants: jsonb("participants").$type<TravelParticipant[]>().notNull().default([]),
     bookings: jsonb("bookings").$type<TravelBooking[]>().notNull().default([]),
@@ -126,7 +135,25 @@ export const travelRequests = pgTable(
     check("travel_requests_currency_format", sql`${table.currency} ~ '^[A-Z]{3}$'`),
     check(
       "travel_requests_pre_authorised_dual_approval",
-      sql`${table.status} <> 'Pre-authorised' OR (${table.managerApprovalStatus} = 'Approved' AND ${table.hrApprovalStatus} = 'Approved' AND ${table.accountsApprovalStatus} = 'Approved' AND ${table.preAuthorisedAt} IS NOT NULL)`,
+      sql`${table.status} <> 'Pre-authorised' OR (
+        ${table.preAuthorisedAt} IS NOT NULL AND (
+          ((${table.approvalRoute}->>'kind') = 'Standard'
+            AND ${table.managerApprovalStatus} = 'Approved'
+            AND ${table.hrApprovalStatus} = 'Approved'
+            AND ${table.accountsApprovalStatus} = 'Approved')
+          OR ((${table.approvalRoute}->>'kind') = 'Managerless Executive'
+            AND ${table.managerApprovalStatus} IN ('Approved', 'Not Required')
+            AND (((${table.approvalRoute}->>'reviewerRole') = 'Accounts'
+                  AND ${table.hrApprovalStatus} = 'Not Required'
+                  AND ${table.accountsApprovalStatus} = 'Approved')
+              OR ((${table.approvalRoute}->>'reviewerRole') = 'HR'
+                  AND ${table.hrApprovalStatus} = 'Approved'
+                  AND ${table.accountsApprovalStatus} = 'Not Required')))
+          OR ((${table.approvalRoute}->>'kind') = 'HR Own Travel'
+            AND ${table.managerApprovalStatus} = 'Approved'
+            AND ${table.hrApprovalStatus} = 'Not Required'
+            AND ${table.accountsApprovalStatus} = 'Approved')
+        ))`,
     ),
     check("travel_requests_record_version_positive", sql`${table.recordVersion} >= 1`),
   ],

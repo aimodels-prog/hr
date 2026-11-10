@@ -116,7 +116,7 @@ export async function listTasksForActorInDatabase(
         'leave-request', l.id::text, l.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM leave_requests l JOIN employees e ON e.id=l.employee_id
       WHERE l.organisation_id=${organisationId} AND l.archived_at IS NULL
-        AND ${role} IN ('Line Manager','HR','Super Admin')
+        AND ${role} IN ('Line Manager','HR')
         AND e.line_manager_id=${employeeId}::uuid AND l.status IN ('Pending Line Manager','Amendment Pending Line Manager')
 
       UNION ALL
@@ -126,7 +126,7 @@ export async function listTasksForActorInDatabase(
         '/staff/timesheet-approvals/' || t.id, 'timesheet', t.id::text, t.employee_id::text,
         coalesce(e.preferred_name,e.legal_name)
       FROM timesheets t JOIN employees e ON e.id=t.employee_id
-      WHERE t.organisation_id=${organisationId} AND t.archived_at IS NULL AND ${role}='Line Manager'
+      WHERE t.organisation_id=${organisationId} AND t.archived_at IS NULL AND ${role} IN ('Line Manager','HR')
         AND e.line_manager_id=${employeeId}::uuid AND t.status='Pending Manager'
 
       UNION ALL
@@ -135,7 +135,7 @@ export async function listTasksForActorInDatabase(
         (c.created_at::date + 1)::text, NULL, 'Review correction', '/staff/attendance/corrections',
         'attendance-correction', c.id::text, c.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM attendance_corrections c JOIN employees e ON e.id=c.employee_id
-      WHERE c.organisation_id=${organisationId} AND c.archived_at IS NULL AND ${role}='Line Manager'
+      WHERE c.organisation_id=${organisationId} AND c.archived_at IS NULL AND ${role} IN ('Line Manager','HR')
         AND e.line_manager_id=${employeeId}::uuid AND c.status='Pending Manager'
 
       UNION ALL
@@ -145,7 +145,7 @@ export async function listTasksForActorInDatabase(
         (o.created_at::date + 2)::text, NULL, 'Review claim', '/staff/overtime-approvals',
         'overtime-claim', o.id::text, o.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM overtime_claims o JOIN employees e ON e.id=o.employee_id
-      WHERE o.organisation_id=${organisationId} AND o.archived_at IS NULL AND ${role}='Line Manager'
+      WHERE o.organisation_id=${organisationId} AND o.archived_at IS NULL AND ${role} IN ('Line Manager','HR')
         AND e.line_manager_id=${employeeId}::uuid AND o.status IN ('Pending Pre-authorisation','Pending Manager')
 
       UNION ALL
@@ -154,7 +154,7 @@ export async function listTasksForActorInDatabase(
         (r.created_at::date + 3)::text, NULL, 'Review training', '/staff/training',
         'training-request', r.id::text, r.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM training_requests r JOIN employees e ON e.id=r.employee_id
-      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role}='Line Manager'
+      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role} IN ('Line Manager','HR')
         AND e.line_manager_id=${employeeId}::uuid AND r.status='Pending Supervisor'
 
       UNION ALL
@@ -165,7 +165,7 @@ export async function listTasksForActorInDatabase(
         NULL, 'Open review', '/staff/performance/reviews/' || r.id, 'performance-review', r.id::text,
         r.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM performance_reviews r JOIN performance_cycles c ON c.id=r.cycle_id JOIN employees e ON e.id=r.employee_id
-      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role}='Line Manager'
+      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role} IN ('Line Manager','HR')
         AND e.line_manager_id=${employeeId}::uuid AND r.status IN ('Manager Review Pending','Discussion Pending')
 
       UNION ALL
@@ -187,7 +187,10 @@ export async function listTasksForActorInDatabase(
         (l.updated_at::date + 2)::text, NULL, 'Review request', '/staff/leave-approvals',
         'leave-request', l.id::text, l.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM leave_requests l JOIN employees e ON e.id=l.employee_id
-      WHERE l.organisation_id=${organisationId} AND l.archived_at IS NULL AND ${role} IN ('HR','Super Admin')
+      WHERE l.organisation_id=${organisationId} AND l.archived_at IS NULL AND ${role}='HR'
+        AND NOT EXISTS (SELECT 1 FROM hr_independent_review_assignments a
+          WHERE a.organisation_id=l.organisation_id AND a.archived_at IS NULL AND a.module='Leave'
+            AND a.request_id=l.id AND a.stage='HR')
         AND (
           l.status IN ('Amendment Pending HR','Cancellation Pending')
           OR (l.status='Pending HR' AND (
@@ -210,7 +213,7 @@ export async function listTasksForActorInDatabase(
         'leave-request', l.id::text, l.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM leave_requests l JOIN employees e ON e.id=l.employee_id
       WHERE l.organisation_id=${organisationId} AND l.archived_at IS NULL
-        AND ${role} IN ('Line Manager','HR','Super Admin')
+        AND ${role} IN ('Employee','Line Manager','HR')
         AND l.status='Pending HR'
         AND l.chain_approvals @> '[{"role":"Country Manager","status":"Pending"}]'::jsonb
         AND coalesce(
@@ -225,7 +228,10 @@ export async function listTasksForActorInDatabase(
         (t.updated_at::date + 2)::text, NULL, 'Review timesheet', '/staff/timesheet-approvals/' || t.id,
         'timesheet', t.id::text, t.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM timesheets t JOIN employees e ON e.id=t.employee_id
-      WHERE t.organisation_id=${organisationId} AND t.archived_at IS NULL AND ${role} IN ('HR','Super Admin') AND t.status='Pending HR'
+      WHERE t.organisation_id=${organisationId} AND t.archived_at IS NULL AND ${role}='HR' AND t.status='Pending HR'
+        AND NOT EXISTS (SELECT 1 FROM hr_independent_review_assignments a
+          WHERE a.organisation_id=t.organisation_id AND a.archived_at IS NULL AND a.module='Timesheet'
+            AND a.request_id=t.id AND a.stage='HR')
 
       UNION ALL
       SELECT 'attendance-hr-' || c.id, 'Attendance', 'Complete attendance correction review',
@@ -233,7 +239,10 @@ export async function listTasksForActorInDatabase(
         (c.updated_at::date + 1)::text, NULL, 'Review correction', '/staff/attendance/corrections',
         'attendance-correction', c.id::text, c.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM attendance_corrections c JOIN employees e ON e.id=c.employee_id
-      WHERE c.organisation_id=${organisationId} AND c.archived_at IS NULL AND ${role} IN ('HR','Super Admin') AND c.status='Pending HR'
+      WHERE c.organisation_id=${organisationId} AND c.archived_at IS NULL AND ${role}='HR' AND c.status='Pending HR'
+        AND NOT EXISTS (SELECT 1 FROM hr_independent_review_assignments a
+          WHERE a.organisation_id=c.organisation_id AND a.archived_at IS NULL AND a.module='Attendance Correction'
+            AND a.request_id=c.id AND a.stage='HR')
 
       UNION ALL
       SELECT 'site-visit-hr-' || v.id, 'Attendance', 'Review site visit request',
@@ -241,8 +250,11 @@ export async function listTasksForActorInDatabase(
         v.date::text, NULL, 'Review request', '/staff/attendance#section=site-visits&visit=' || v.id::text, 'site-visit-request', v.id::text,
         v.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM site_visit_requests v JOIN employees e ON e.id=v.employee_id
-      WHERE v.organisation_id=${organisationId} AND v.archived_at IS NULL AND ${role} IN ('HR','Super Admin')
+      WHERE v.organisation_id=${organisationId} AND v.archived_at IS NULL AND ${role}='HR'
         AND v.employee_id<>${employeeId}::uuid
+        AND NOT EXISTS (SELECT 1 FROM hr_independent_review_assignments a
+          WHERE a.organisation_id=v.organisation_id AND a.archived_at IS NULL
+            AND a.module='Visit' AND a.request_id=v.id AND a.stage='HR')
         AND (v.status='Pending HR' OR (v.status IN ('Approved','Completed') AND v.details->'extension'->>'status'='Pending'))
 
       UNION ALL
@@ -255,6 +267,41 @@ export async function listTasksForActorInDatabase(
       WHERE a.organisation_id=${organisationId} AND a.archived_at IS NULL AND ${role}='HR'
         AND a.status='Pending HR' AND a.employee_id<>${employeeId}::uuid
         AND a.created_by<>${actor.userId}::uuid
+        AND NOT EXISTS (SELECT 1 FROM hr_independent_review_assignments ira
+          WHERE ira.organisation_id=a.organisation_id AND ira.archived_at IS NULL
+            AND ira.module='Time Away' AND ira.request_id=a.id AND ira.stage='HR')
+
+      UNION ALL
+      SELECT 'independent-hr-review-Visit-' || v.id, 'Attendance', 'Review HR colleague visit',
+        coalesce(e.preferred_name,e.legal_name) || ' requested a visit to ' || v.destination || '.', 'High',
+        v.date::text, NULL, 'Review visit', '/staff/independent-visit-reviews#review=' || v.id,
+        'site-visit-request', v.id::text, v.employee_id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM hr_independent_review_assignments ira
+      JOIN site_visit_requests v ON v.id=ira.request_id AND v.organisation_id=ira.organisation_id
+      JOIN employees e ON e.id=v.employee_id AND e.organisation_id=v.organisation_id
+      JOIN employees reviewer ON reviewer.id=ira.reviewer_employee_id AND reviewer.organisation_id=ira.organisation_id
+      WHERE ira.organisation_id=${organisationId} AND ira.archived_at IS NULL
+        AND ira.module='Visit' AND ira.stage='HR' AND ${role}='Employee'
+        AND ira.reviewer_employee_id=${employeeId}::uuid AND ira.requester_employee_id<>${employeeId}::uuid
+        AND reviewer.status='Active' AND reviewer.archived_at IS NULL
+        AND v.archived_at IS NULL
+        AND (v.status='Pending HR' OR (v.status IN ('Approved','Completed') AND v.details->'extension'->>'status'='Pending'))
+
+      UNION ALL
+      SELECT 'independent-hr-review-Time-Away-' || a.id, 'Attendance', 'Review HR colleague time away',
+        coalesce(e.preferred_name,e.legal_name) || ' has time away waiting for your decision.', 'High',
+        a.date::text, NULL, 'Review time away',
+        '/staff/time-away?date=' || a.date::text || '&review=' || a.id,
+        'time-away', a.id::text, a.employee_id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM hr_independent_review_assignments ira
+      JOIN time_away a ON a.id=ira.request_id AND a.organisation_id=ira.organisation_id
+      JOIN employees e ON e.id=a.employee_id AND e.organisation_id=a.organisation_id
+      JOIN employees reviewer ON reviewer.id=ira.reviewer_employee_id AND reviewer.organisation_id=ira.organisation_id
+      WHERE ira.organisation_id=${organisationId} AND ira.archived_at IS NULL
+        AND ira.module='Time Away' AND ira.stage='HR' AND ${role}='Employee'
+        AND ira.reviewer_employee_id=${employeeId}::uuid AND ira.requester_employee_id<>${employeeId}::uuid
+        AND reviewer.status='Active' AND reviewer.archived_at IS NULL
+        AND a.archived_at IS NULL AND a.status='Pending HR'
 
       UNION ALL
       SELECT 'overtime-hr-' || o.id, 'Overtime', 'Verify overtime claim',
@@ -262,7 +309,10 @@ export async function listTasksForActorInDatabase(
         (o.updated_at::date + 2)::text, NULL, 'Verify claim', '/staff/overtime-approvals',
         'overtime-claim', o.id::text, o.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM overtime_claims o JOIN employees e ON e.id=o.employee_id
-      WHERE o.organisation_id=${organisationId} AND o.archived_at IS NULL AND ${role} IN ('HR','Super Admin') AND o.status='Pending HR'
+      WHERE o.organisation_id=${organisationId} AND o.archived_at IS NULL AND ${role}='HR' AND o.status='Pending HR'
+        AND NOT EXISTS (SELECT 1 FROM hr_independent_review_assignments a
+          WHERE a.organisation_id=o.organisation_id AND a.archived_at IS NULL AND a.module='Overtime'
+            AND a.request_id=o.id AND a.stage='HR')
 
       UNION ALL
       SELECT 'training-hr-' || r.id, 'Training', 'Approve training request',
@@ -270,7 +320,81 @@ export async function listTasksForActorInDatabase(
         (r.updated_at::date + 3)::text, NULL, 'Review training', '/staff/training',
         'training-request', r.id::text, r.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM training_requests r JOIN employees e ON e.id=r.employee_id
-      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role} IN ('HR','Super Admin') AND r.status='Pending HR'
+      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role}='HR' AND r.status='Pending HR'
+        AND NOT EXISTS (SELECT 1 FROM hr_independent_review_assignments a
+          WHERE a.organisation_id=r.organisation_id AND a.archived_at IS NULL AND a.module='Training'
+            AND a.request_id=r.id AND a.stage='HR')
+
+      UNION ALL
+      SELECT 'independent-hr-review-Leave-' || l.id, 'Leave', 'Review HR colleague leave',
+        coalesce(e.preferred_name,e.legal_name) || ' needs your independent decision.', 'High',
+        (l.updated_at::date + 2)::text, NULL, 'Review leave', '/staff/leave-approvals',
+        'leave-request', l.id::text, l.employee_id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM hr_independent_review_assignments a
+      JOIN leave_requests l ON l.id=a.request_id AND l.organisation_id=a.organisation_id
+      JOIN employees e ON e.id=l.employee_id AND e.organisation_id=l.organisation_id
+      JOIN employees reviewer ON reviewer.id=a.reviewer_employee_id AND reviewer.organisation_id=a.organisation_id
+      WHERE a.organisation_id=${organisationId} AND a.archived_at IS NULL AND a.module='Leave' AND a.stage='HR' AND ${role}='Employee'
+        AND a.reviewer_employee_id=${employeeId}::uuid AND a.requester_employee_id<>${employeeId}::uuid
+        AND reviewer.status='Active' AND reviewer.archived_at IS NULL
+        AND l.archived_at IS NULL AND l.status='Pending HR'
+        AND l.chain_approvals @> '[{"role":"HR","status":"Pending"}]'::jsonb
+
+      UNION ALL
+      SELECT 'independent-hr-review-Timesheet-' || t.id, 'Timesheets', 'Review HR colleague timesheet',
+        coalesce(e.preferred_name,e.legal_name) || ' needs your independent decision.', 'High',
+        (t.updated_at::date + 2)::text, NULL, 'Review timesheet', '/staff/timesheet-approvals/' || t.id,
+        'timesheet', t.id::text, t.employee_id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM hr_independent_review_assignments a
+      JOIN timesheets t ON t.id=a.request_id AND t.organisation_id=a.organisation_id
+      JOIN employees e ON e.id=t.employee_id AND e.organisation_id=t.organisation_id
+      JOIN employees reviewer ON reviewer.id=a.reviewer_employee_id AND reviewer.organisation_id=a.organisation_id
+      WHERE a.organisation_id=${organisationId} AND a.archived_at IS NULL AND a.module='Timesheet' AND a.stage='HR' AND ${role}='Employee'
+        AND a.reviewer_employee_id=${employeeId}::uuid AND a.requester_employee_id<>${employeeId}::uuid
+        AND reviewer.status='Active' AND reviewer.archived_at IS NULL
+        AND t.archived_at IS NULL AND t.status='Pending HR'
+
+      UNION ALL
+      SELECT 'independent-hr-review-Attendance-' || c.id, 'Attendance', 'Review HR colleague attendance correction',
+        coalesce(e.preferred_name,e.legal_name) || ' needs your independent decision.', 'High',
+        (c.updated_at::date + 1)::text, NULL, 'Review correction', '/staff/attendance/corrections',
+        'attendance-correction', c.id::text, c.employee_id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM hr_independent_review_assignments a
+      JOIN attendance_corrections c ON c.id=a.request_id AND c.organisation_id=a.organisation_id
+      JOIN employees e ON e.id=c.employee_id AND e.organisation_id=c.organisation_id
+      JOIN employees reviewer ON reviewer.id=a.reviewer_employee_id AND reviewer.organisation_id=a.organisation_id
+      WHERE a.organisation_id=${organisationId} AND a.archived_at IS NULL AND a.module='Attendance Correction' AND a.stage='HR' AND ${role}='Employee'
+        AND a.reviewer_employee_id=${employeeId}::uuid AND a.requester_employee_id<>${employeeId}::uuid
+        AND reviewer.status='Active' AND reviewer.archived_at IS NULL
+        AND c.archived_at IS NULL AND c.status='Pending HR'
+
+      UNION ALL
+      SELECT 'independent-hr-review-Overtime-' || o.id, 'Overtime', 'Review HR colleague overtime',
+        coalesce(e.preferred_name,e.legal_name) || ' needs your independent decision.', 'High',
+        (o.updated_at::date + 2)::text, NULL, 'Review overtime', '/staff/overtime-approvals',
+        'overtime-claim', o.id::text, o.employee_id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM hr_independent_review_assignments a
+      JOIN overtime_claims o ON o.id=a.request_id AND o.organisation_id=a.organisation_id
+      JOIN employees e ON e.id=o.employee_id AND e.organisation_id=o.organisation_id
+      JOIN employees reviewer ON reviewer.id=a.reviewer_employee_id AND reviewer.organisation_id=a.organisation_id
+      WHERE a.organisation_id=${organisationId} AND a.archived_at IS NULL AND a.module='Overtime' AND a.stage='HR' AND ${role}='Employee'
+        AND a.reviewer_employee_id=${employeeId}::uuid AND a.requester_employee_id<>${employeeId}::uuid
+        AND reviewer.status='Active' AND reviewer.archived_at IS NULL
+        AND o.archived_at IS NULL AND o.status IN ('Pending HR','Pending Pre-authorisation')
+
+      UNION ALL
+      SELECT 'independent-hr-review-Training-' || r.id, 'Training', 'Review HR colleague training request',
+        coalesce(e.preferred_name,e.legal_name) || ' needs your independent decision.', 'Normal',
+        (r.updated_at::date + 3)::text, NULL, 'Review training', '/staff/training',
+        'training-request', r.id::text, r.employee_id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM hr_independent_review_assignments a
+      JOIN training_requests r ON r.id=a.request_id AND r.organisation_id=a.organisation_id
+      JOIN employees e ON e.id=r.employee_id AND e.organisation_id=r.organisation_id
+      JOIN employees reviewer ON reviewer.id=a.reviewer_employee_id AND reviewer.organisation_id=a.organisation_id
+      WHERE a.organisation_id=${organisationId} AND a.archived_at IS NULL AND a.module='Training' AND a.stage='HR' AND ${role}='Employee'
+        AND a.reviewer_employee_id=${employeeId}::uuid AND a.requester_employee_id<>${employeeId}::uuid
+        AND reviewer.status='Active' AND reviewer.archived_at IS NULL
+        AND r.archived_at IS NULL AND r.status='Pending HR'
 
       UNION ALL
       SELECT 'training-verify-' || r.id, 'Training', 'Verify training certificate',
@@ -278,8 +402,11 @@ export async function listTasksForActorInDatabase(
         (r.created_at::date + 3)::text, NULL, 'Review certificate', '/staff/training',
         'training-record', r.id::text, r.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM training_records r JOIN employees e ON e.id=r.employee_id
-      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role} IN ('HR','Super Admin')
+      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role}='HR'
         AND r.certificate_file_id IS NOT NULL AND r.hr_verified=false AND r.rejected_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM users ru JOIN user_roles rur ON rur.user_id=ru.id
+          JOIN roles rr ON rr.id=rur.role_id WHERE ru.organisation_id=r.organisation_id
+          AND ru.employee_id=r.employee_id AND rr.code='HR')
 
       UNION ALL
       SELECT 'travel-hr-' || r.id, 'Travel', 'Review travel pre-authorisation',
@@ -289,7 +416,11 @@ export async function listTasksForActorInDatabase(
       FROM travel_requests r JOIN employees e ON e.id=r.employee_id
       WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role}='HR'
         AND r.status='Pending HR and Accounts' AND r.hr_approval_status='Pending'
-        AND r.manager_approval_status='Approved'
+        AND r.manager_approval_status IN ('Approved','Not Required')
+        AND (coalesce(r.approval_route->>'kind','Standard')='Standard'
+          OR (r.approval_route->>'kind'='Managerless Executive'
+            AND r.approval_route->>'reviewerRole'='HR'
+            AND r.accounts_approval_status='Not Required'))
         AND r.employee_id<>${employeeId}::uuid
         AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(r.participants) p WHERE p->>'employeeId'=${employeeId})
         AND r.manager_approved_by IS DISTINCT FROM ${actor.userId}::uuid
@@ -301,7 +432,7 @@ export async function listTasksForActorInDatabase(
         (r.created_at::date + 2)::text, NULL, 'Review travel', '/staff/travel-approvals',
         'travel-request', r.id::text, r.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM travel_requests r JOIN employees e ON e.id=r.employee_id AND e.organisation_id=r.organisation_id
-      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role}='Line Manager'
+      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role} IN ('Line Manager','HR')
         AND r.employee_id<>${employeeId}::uuid
         AND r.status='Pending HR and Accounts' AND r.manager_approval_status='Pending'
         AND ((e.line_manager_id=${employeeId}::uuid AND r.manager_approved_by IS NULL)
@@ -309,12 +440,24 @@ export async function listTasksForActorInDatabase(
             WHERE p->>'managerId'=${employeeId} AND p->>'status'='Pending'))
 
       UNION ALL
+      SELECT 'independent-hr-review-Travel-' || r.id, 'Travel', 'Review HR colleague travel',
+        coalesce(e.preferred_name,e.legal_name) || ' needs your independent travel decision.', 'High',
+        (r.created_at::date + 2)::text, NULL, 'Review trip', '/staff/travel/' || r.id,
+        'travel-request', r.id::text, r.employee_id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM travel_requests r JOIN employees e ON e.id=r.employee_id AND e.organisation_id=r.organisation_id
+      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role}='Employee'
+        AND r.status='Pending HR and Accounts' AND r.manager_approval_status='Pending'
+        AND r.approval_route->>'kind'='HR Own Travel'
+        AND r.approval_route->>'reviewerEmployeeId'=${employeeId}
+        AND r.employee_id<>${employeeId}::uuid
+
+      UNION ALL
       SELECT 'goal-manager-' || g.id, 'Performance', 'Review employee objective',
         coalesce(e.preferred_name,e.legal_name) || ' has an objective awaiting your decision.', 'Normal',
         (g.updated_at::date + 3)::text, NULL, 'Review objective', '/staff/performance/team',
         'employee-goal', g.id::text, g.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM employee_goals g JOIN employees e ON e.id=g.employee_id AND e.organisation_id=g.organisation_id
-      WHERE g.organisation_id=${organisationId} AND g.archived_at IS NULL AND ${role}='Line Manager'
+      WHERE g.organisation_id=${organisationId} AND g.archived_at IS NULL AND ${role} IN ('Line Manager','HR')
         AND e.line_manager_id=${employeeId}::uuid AND g.employee_id<>${employeeId}::uuid
         AND g.status IN ('Pending Approval','Completion Pending')
 
@@ -324,7 +467,7 @@ export async function listTasksForActorInDatabase(
         (r.created_at::date + 3)::text, NULL, 'Review referral', '/staff/recommendations',
         'candidate-recommendation', r.id::text, r.recommender_employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM candidate_recommendations r LEFT JOIN employees e ON e.id=r.recommender_employee_id AND e.organisation_id=r.organisation_id
-      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role} IN ('HR','Super Admin')
+      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role}='HR'
         AND r.review_status='Pending HR Review' AND r.recommender_employee_id IS NOT NULL
 
       UNION ALL
@@ -335,7 +478,14 @@ export async function listTasksForActorInDatabase(
       FROM travel_requests r JOIN employees e ON e.id=r.employee_id
       WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role}='Accounts'
         AND r.status='Pending HR and Accounts' AND r.accounts_approval_status='Pending'
-        AND r.manager_approval_status='Approved' AND r.hr_approval_status='Approved'
+        AND r.manager_approval_status IN ('Approved','Not Required')
+        AND ((coalesce(r.approval_route->>'kind','Standard')='Standard' AND r.hr_approval_status='Approved')
+          OR (r.approval_route->>'kind'='Managerless Executive'
+            AND r.approval_route->>'reviewerRole'='Accounts'
+            AND r.hr_approval_status='Not Required')
+          OR (r.approval_route->>'kind'='HR Own Travel'
+            AND r.manager_approval_status='Approved'
+            AND r.hr_approval_status='Not Required'))
         AND r.employee_id<>${employeeId}::uuid
         AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(r.participants) p WHERE p->>'employeeId'=${employeeId})
         AND r.manager_approved_by IS DISTINCT FROM ${actor.userId}::uuid
@@ -360,7 +510,7 @@ export async function listTasksForActorInDatabase(
         c.discussion_deadline::text, NULL, 'Open review', '/staff/performance/reviews/' || r.id,
         'performance-review', r.id::text, r.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM performance_reviews r JOIN performance_cycles c ON c.id=r.cycle_id JOIN employees e ON e.id=r.employee_id
-      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role} IN ('HR','Super Admin')
+      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role}='HR'
         AND r.status IN ('Moderation Pending','Acknowledged')
 
       UNION ALL
@@ -370,7 +520,67 @@ export async function listTasksForActorInDatabase(
         '/staff/employees/' || d.employee_id || '#section=documents&document=' || d.id,
         'employee-document', d.id::text, d.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM employee_documents d JOIN employees e ON e.id=d.employee_id
-      WHERE d.organisation_id=${organisationId} AND d.archived_at IS NULL AND ${role} IN ('HR','Super Admin') AND d.status='Pending Verification'
+      WHERE d.organisation_id=${organisationId} AND d.archived_at IS NULL AND ${role}='HR' AND d.status='Pending Verification'
+        AND NOT EXISTS (SELECT 1 FROM users du JOIN user_roles dur ON dur.user_id=du.id
+          JOIN roles dr ON dr.id=dur.role_id WHERE du.organisation_id=d.organisation_id
+          AND du.employee_id=d.employee_id AND dr.code='HR')
+
+      UNION ALL
+      SELECT 'employment-hr-' || e.id, 'Employment details', 'Confirm employment details',
+        coalesce(e.preferred_name,e.legal_name) || ' has employment details awaiting HR confirmation.', 'Normal',
+        (e.updated_at::date + 3)::text, NULL, 'Review details',
+        '/staff/employees/' || e.id || '#section=employment',
+        'employee', e.id::text, e.id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM employees e
+      WHERE e.organisation_id=${organisationId} AND e.archived_at IS NULL AND ${role}='HR'
+        AND e.employment_confirmation_status='Pending HR Review'
+        AND e.proposed_employment_details IS NOT NULL
+        AND e.id<>${employeeId}::uuid
+        AND NOT EXISTS (SELECT 1 FROM users eu JOIN user_roles eur ON eur.user_id=eu.id
+          JOIN roles er ON er.id=eur.role_id WHERE eu.organisation_id=e.organisation_id
+          AND eu.employee_id=e.id AND er.code='HR')
+
+      UNION ALL
+      SELECT 'independent-hr-review-' || a.module || '-' || a.request_id, 'HR records',
+        CASE a.module WHEN 'Document' THEN 'Review assigned employee document'
+          WHEN 'Training Certificate' THEN 'Review assigned training certificate'
+          ELSE 'Confirm assigned employment details' END,
+        'Review ' || coalesce(e.preferred_name,e.legal_name) || '''s ' || lower(a.module) || '.',
+        'High', (a.created_at::date + 3)::text, NULL, 'Review now',
+        '/staff/independent-record-reviews#review=' || a.request_id,
+        CASE a.module WHEN 'Document' THEN 'employee-document'
+          WHEN 'Training Certificate' THEN 'training-record' ELSE 'employee' END,
+        a.request_id::text, a.requester_employee_id::text,
+        coalesce(e.preferred_name,e.legal_name)
+      FROM hr_independent_review_assignments a
+      JOIN employees e ON e.id=a.requester_employee_id AND e.organisation_id=a.organisation_id
+      LEFT JOIN employee_documents d ON a.module='Document' AND d.id=a.request_id
+        AND d.organisation_id=a.organisation_id AND d.archived_at IS NULL
+      LEFT JOIN training_records tr ON a.module='Training Certificate' AND tr.id=a.request_id
+        AND tr.organisation_id=a.organisation_id AND tr.archived_at IS NULL
+      WHERE a.organisation_id=${organisationId} AND a.archived_at IS NULL
+        AND ${role}='Employee' AND a.reviewer_employee_id=${employeeId}::uuid
+        AND a.requester_employee_id<>${employeeId}::uuid
+        AND ((a.module='Document' AND d.status='Pending Verification')
+          OR (a.module='Training Certificate' AND tr.hr_verified=false AND tr.rejected_at IS NULL)
+          OR (a.module='Employment Confirmation' AND e.employment_confirmation_status='Pending HR Review'
+            AND e.proposed_employment_details IS NOT NULL))
+
+      UNION ALL
+      SELECT 'travel-booking-accounts-' || (booking->>'id'), 'Travel', 'Review travel arrangement cost',
+        coalesce(e.preferred_name,e.legal_name) || ' requested ' ||
+          coalesce(nullif(booking->>'name',''),'an arrangement') || ' for ' || r.destination || '.', 'Normal',
+        (r.updated_at::date + 2)::text, NULL, 'Review cost',
+        '/staff/travel/' || r.id || '#booking-' || (booking->>'id'),
+        'travel-request', r.id::text, r.employee_id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM travel_requests r JOIN employees e ON e.id=r.employee_id AND e.organisation_id=r.organisation_id
+      CROSS JOIN LATERAL jsonb_array_elements(coalesce(r.bookings,'[]'::jsonb)) booking
+      WHERE r.organisation_id=${organisationId} AND r.archived_at IS NULL AND ${role}='Accounts'
+        AND r.status='Pre-authorised' AND r.end_date>=${today}::date
+        AND (booking->>'status')='Pending Finance' AND (booking->>'id') IS NOT NULL
+        AND r.employee_id<>${employeeId}::uuid
+        AND (booking->>'requestedBy') IS DISTINCT FROM ${actor.userId}
+        AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(r.participants) p WHERE p->>'employeeId'=${employeeId})
 
       UNION ALL
       SELECT 'onboarding-' || c.id || '-' || t.id, 'Onboarding', t.title,
@@ -383,7 +593,7 @@ export async function listTasksForActorInDatabase(
       WHERE t.organisation_id=${organisationId} AND t.archived_at IS NULL AND c.status='In Progress' AND t.status IN ('Pending','Blocked')
         AND (t.assigned_user_id=${actor.userId}::uuid OR (t.assigned_user_id IS NULL AND (
           (t.owner_role='Employee' AND c.employee_id=${employeeId}::uuid) OR
-          (t.owner_role='Line Manager' AND ${role}='Line Manager' AND e.line_manager_id=${employeeId}::uuid) OR
+          (t.owner_role='Line Manager' AND ${role} IN ('Line Manager','HR') AND e.line_manager_id=${employeeId}::uuid) OR
           (t.owner_role=${role}::system_role_code AND ${role} NOT IN ('Employee','Line Manager')))))
 
       UNION ALL
@@ -397,8 +607,42 @@ export async function listTasksForActorInDatabase(
       WHERE t.organisation_id=${organisationId} AND t.archived_at IS NULL AND c.status NOT IN ('Completed','Cancelled') AND t.status IN ('Pending','Blocked')
         AND (t.assigned_user_id=${actor.userId}::uuid OR (t.assigned_user_id IS NULL AND (
           (t.owner_role='Employee' AND c.employee_id=${employeeId}::uuid) OR
-          (t.owner_role='Line Manager' AND ${role}='Line Manager' AND e.line_manager_id=${employeeId}::uuid) OR
+          (t.owner_role='Line Manager' AND ${role} IN ('Line Manager','HR') AND e.line_manager_id=${employeeId}::uuid) OR
           (t.owner_role=${role}::system_role_code AND ${role} NOT IN ('Employee','Line Manager')))))
+
+      UNION ALL
+      SELECT 'offboarding-financial-' || c.id, 'Offboarding', 'Confirm financial clearance',
+        'Review expenses, advances and final payroll inputs for ' || coalesce(e.preferred_name,e.legal_name) || '.',
+        'High', c.last_working_date::text, NULL, 'Open clearance', '/staff/offboarding/' || c.id,
+        'offboarding-case', c.id::text, c.employee_id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM offboarding_cases c JOIN employees e ON e.id=c.employee_id AND e.organisation_id=c.organisation_id
+      WHERE c.organisation_id=${organisationId} AND c.archived_at IS NULL
+        AND c.status IN ('In Progress','Pending Clearance') AND c.progress_percentage=100
+        AND c.financial_clearance_at IS NULL AND ${role}='Accounts'
+        AND c.employee_id<>${employeeId}::uuid
+
+      UNION ALL
+      SELECT 'offboarding-legal-' || c.id, 'Offboarding', 'Confirm HR and document clearance',
+        'Review the HR and document closure for ' || coalesce(e.preferred_name,e.legal_name) || '.',
+        'High', c.last_working_date::text, NULL, 'Open clearance', '/staff/offboarding/' || c.id,
+        'offboarding-case', c.id::text, c.employee_id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM offboarding_cases c JOIN employees e ON e.id=c.employee_id AND e.organisation_id=c.organisation_id
+      WHERE c.organisation_id=${organisationId} AND c.archived_at IS NULL
+        AND c.status IN ('In Progress','Pending Clearance') AND c.progress_percentage=100
+        AND c.legal_clearance_at IS NULL AND ${role}='HR'
+        AND c.employee_id<>${employeeId}::uuid
+
+      UNION ALL
+      SELECT 'offboarding-finalise-' || c.id, 'Offboarding', 'Complete offboarding',
+        'All clearances are complete for ' || coalesce(e.preferred_name,e.legal_name) || '.',
+        'High', c.last_working_date::text, NULL, 'Open case', '/staff/offboarding/' || c.id,
+        'offboarding-case', c.id::text, c.employee_id::text, coalesce(e.preferred_name,e.legal_name)
+      FROM offboarding_cases c JOIN employees e ON e.id=c.employee_id AND e.organisation_id=c.organisation_id
+      WHERE c.organisation_id=${organisationId} AND c.archived_at IS NULL
+        AND c.status IN ('In Progress','Pending Clearance') AND c.progress_percentage=100
+        AND c.financial_clearance_at IS NOT NULL AND c.legal_clearance_at IS NOT NULL
+        AND c.last_working_date<=${today}::date AND ${role}='HR'
+        AND c.employee_id<>${employeeId}::uuid
 
       UNION ALL
       SELECT 'interview-scorecard-' || i.id || '-' || ${actor.userId}, 'Recruitment', 'Complete interview scorecard',
@@ -449,10 +693,12 @@ export async function listTasksForActorInDatabase(
         WHEN 'site-visit-request' THEN (SELECT record_version FROM site_visit_requests v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
         WHEN 'time-away' THEN (SELECT record_version FROM time_away v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
         WHEN 'travel-request' THEN (SELECT record_version FROM travel_requests v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
+        WHEN 'employee' THEN (SELECT record_version FROM employees v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
         WHEN 'profile-change-request' THEN (SELECT record_version FROM profile_change_requests v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
         WHEN 'employee-document' THEN (SELECT record_version FROM employee_documents v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
         WHEN 'performance-review' THEN (SELECT record_version FROM performance_reviews v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
         WHEN 'offer' THEN (SELECT record_version FROM job_offers v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
+        WHEN 'offboarding-case' THEN (SELECT record_version FROM offboarding_cases v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
         WHEN 'candidate-recommendation' THEN (SELECT record_version FROM candidate_recommendations v WHERE v.id::text=task_rows.source_id AND v.organisation_id=${organisationId})
         ELSE 1 END source_version FROM task_rows
   `);

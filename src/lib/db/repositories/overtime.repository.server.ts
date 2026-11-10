@@ -1,9 +1,9 @@
 import "@tanstack/react-start/server-only";
-import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
+import { validateSupervisorAccount } from "./supervisor-access.repository.server.ts";
 import { organisationLeaveYear } from "./leave-year.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import { getDatabaseClient } from "../client.ts";
 import { employees, roles, userRoles, users } from "../schema/employee.ts";
@@ -22,9 +22,54 @@ import { payrollPeriods } from "../schema/travel-payroll.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 import { lockPayrollSourceAllocation } from "./payroll-allocation-lock.server.ts";
 import { readObjectFile } from "../object-storage.server.ts";
+import { hrIndependentReviewAssignments } from "../schema/hr-independent-review.ts";
+import {
+  actorIsIndependentHrReviewer,
+  assignIndependentHrReviewer,
+  assignedIndependentHrReviewer,
+  independentReviewerForHrEmployee,
+} from "./independent-hr-review.repository.server.ts";
 
 function activeRole(actor: AuditActorContext) {
   return actor.activeRole ?? actor.roles?.[0] ?? "Employee";
+}
+
+type Tx = Parameters<Parameters<ReturnType<typeof getDatabaseClient>["transaction"]>[0]>[0];
+
+/** Overtime may be reviewed by an assigned HR supervisor without adding another role. */
+async function requireOvertimeSupervisor(tx: Tx, organisationId: string, employeeId: string) {
+  const [employee] = await tx
+    .select({ supervisorId: employees.lineManagerId })
+    .from(employees)
+    .where(
+      and(
+        eq(employees.organisationId, organisationId),
+        eq(employees.id, employeeId),
+        isNull(employees.archivedAt),
+      ),
+    )
+    .limit(1);
+  const account = await validateSupervisorAccount(
+    tx,
+    organisationId,
+    employeeId,
+    employee?.supervisorId,
+  );
+  const [access] = await tx
+    .select({ roleId: userRoles.roleId })
+    .from(userRoles)
+    .innerJoin(roles, eq(roles.id, userRoles.roleId))
+    .where(
+      and(
+        eq(userRoles.organisationId, organisationId),
+        eq(userRoles.userId, account.userId),
+        inArray(roles.code, ["Line Manager", "HR"]),
+      ),
+    )
+    .limit(1);
+  if (!access)
+    throw new Error("Ask HR to assign a supervisor with Line Manager or HR approval access.");
+  return account;
 }
 
 async function activeMaster(
@@ -137,13 +182,21 @@ export async function createOvertimeClaimInDatabase(
     const isHr = ["HR", "Super Admin"].includes(activeRole(actor));
     if (!isSelf && !isAssignedManager && !isHr)
       throw new Error("You may record overtime only for yourself or an assigned direct report.");
-    if (!employee.lineManagerId || employee.lineManagerId === input.employeeId)
+    const independentReviewer = await independentReviewerForHrEmployee(
+      organisationId,
+      input.employeeId,
+      tx,
+    );
+    if (
+      !independentReviewer &&
+      (!employee.lineManagerId || employee.lineManagerId === input.employeeId)
+    )
       throw new Error(
         "An active, independent supervisor must be assigned before overtime can be submitted.",
       );
     if (input.projectId)
       await activeMaster(tx, projects, organisationId, input.projectId, "project");
-    await requireEmployeeSupervisor(tx, organisationId, input.employeeId);
+    if (!independentReviewer) await requireOvertimeSupervisor(tx, organisationId, input.employeeId);
     await activeMaster(tx, costCentres, organisationId, input.costCentreId, "cost centre");
     await activeMaster(tx, activityCodes, organisationId, input.activityCodeId, "activity");
     await activeMaster(tx, locations, organisationId, input.locationId, "work location");
@@ -264,10 +317,25 @@ export async function createOvertimeClaimInDatabase(
       locationId: input.locationId,
       evidenceFileId: input.evidenceFileId,
       crossCheckWarnings,
-      status: requestKind === "Planned" ? "Pending Pre-authorisation" : "Pending Manager",
+      status:
+        requestKind === "Planned"
+          ? "Pending Pre-authorisation"
+          : independentReviewer
+            ? "Pending HR"
+            : "Pending Manager",
       createdBy: actor.userId,
       updatedBy: actor.userId,
     } as typeof overtimeClaims.$inferInsert);
+    if (independentReviewer)
+      await assignIndependentHrReviewer(
+        organisationId,
+        "Overtime",
+        id,
+        input.employeeId,
+        independentReviewer.employeeId,
+        actor.userId,
+        tx,
+      );
     await tx.insert(auditEvents).values({
       organisationId,
       actorUserId: actor.userId,
@@ -293,7 +361,7 @@ export async function createOvertimeClaimInDatabase(
       .where(
         and(
           eq(users.organisationId, organisationId),
-          eq(users.employeeId, employee.lineManagerId),
+          eq(users.employeeId, independentReviewer?.employeeId ?? employee.lineManagerId!),
           eq(users.status, "Active"),
         ),
       )
@@ -309,7 +377,7 @@ export async function createOvertimeClaimInDatabase(
             ? "Planned overtime awaiting pre-authorisation"
             : "Emergency overtime awaiting your review",
         message: `${employee.preferredName}'s ${input.hours} hour overtime request is ready for review.`,
-        key: `overtime-manager-${id}`,
+        key: `overtime-${independentReviewer ? "independent" : "manager"}-${id}`,
         claimId: id,
       },
       actor.userId,
@@ -344,10 +412,28 @@ export async function decideOvertimeClaimInDatabase(
     const preAuthorisation = claim.status === "Pending Pre-authorisation";
     const manager = claim.status === "Pending Manager" || preAuthorisation;
     const hr = claim.status === "Pending HR";
+    const assignedReviewer = await assignedIndependentHrReviewer(
+      organisationId,
+      "Overtime",
+      claimId,
+      claim.employeeId,
+      tx,
+    );
+    const independentReview = actorIsIndependentHrReviewer(
+      actor,
+      claim.employeeId,
+      assignedReviewer,
+    );
+    const assignedSupervisor =
+      Boolean(actor.employeeId) && actor.employeeId === employee?.lineManagerId;
+    const hrStandIn =
+      manager && !preAuthorisation && actor.activeRole === "HR" && assignedSupervisor;
     if (
       (manager &&
-        (actor.activeRole !== "Line Manager" || actor.employeeId !== employee?.lineManagerId)) ||
-      (hr && actor.activeRole !== "HR") ||
+        (assignedReviewer
+          ? !independentReview
+          : !["Line Manager", "HR"].includes(actor.activeRole ?? "") || !assignedSupervisor)) ||
+      (hr && (assignedReviewer ? !independentReview : actor.activeRole !== "HR")) ||
       (!manager && !hr)
     )
       throw new Error("You are not the assigned overtime approver.");
@@ -361,7 +447,9 @@ export async function decideOvertimeClaimInDatabase(
         : preAuthorisation
           ? "Pre-authorised"
           : manager
-            ? "Pending HR"
+            ? independentReview || hrStandIn
+              ? "Approved"
+              : "Pending HR"
             : "Approved";
     let toilCreditedAt: string | undefined;
     let toilPolicy: typeof leavePolicies.$inferSelect | undefined;
@@ -392,7 +480,12 @@ export async function decideOvertimeClaimInDatabase(
       .update(overtimeClaims)
       .set({
         status: next,
-        ...(manager ? { managerNotes: notes?.trim() } : { hrNotes: notes?.trim() }),
+        ...(manager
+          ? {
+              managerNotes: notes?.trim(),
+              ...(hrStandIn ? { hrNotes: "HR approved as the assigned supervisor." } : {}),
+            }
+          : { hrNotes: notes?.trim() }),
         ...(next === "Pre-authorised"
           ? {
               authorisedHours: claim.hours,
@@ -460,7 +553,7 @@ export async function decideOvertimeClaimInDatabase(
       module: "overtime",
       entityType: "overtime-claim",
       entityId: claimId,
-      afterSummary: { status: next },
+      afterSummary: { status: next, ...(hrStandIn ? { hrStandIn: true } : {}) },
       reason: notes?.trim() ?? `Overtime ${decision}d`,
       riskLevel: "High",
     } as typeof auditEvents.$inferInsert);
@@ -584,7 +677,15 @@ export async function confirmPlannedOvertimeInDatabase(
       throw new Error(`Actual overtime exceeds the monthly limit of ${monthlyLimit} hours.`);
     const authorisedHours = Number(claim.authorisedHours ?? claim.hours);
     const exceeded = actualHours > authorisedHours;
-    if (exceeded) await requireEmployeeSupervisor(tx, organisationId, claim.employeeId);
+    const assignedReviewer = await assignedIndependentHrReviewer(
+      organisationId,
+      "Overtime",
+      claim.id,
+      claim.employeeId,
+      tx,
+    );
+    if (exceeded && !assignedReviewer)
+      await requireOvertimeSupervisor(tx, organisationId, claim.employeeId);
     if (exceeded && note.trim().length < 5)
       throw new Error("Explain why actual overtime exceeded the pre-authorised hours.");
 
@@ -593,7 +694,7 @@ export async function confirmPlannedOvertimeInDatabase(
       .set({
         hours: String(actualHours),
         actualConfirmedAt: new Date().toISOString(),
-        status: exceeded ? "Pending Manager" : "Pending HR",
+        status: exceeded && !assignedReviewer ? "Pending Manager" : "Pending HR",
         ...(note.trim() ? { reason: `${claim.reason}\nActual-hours note: ${note.trim()}` } : {}),
         updatedAt: new Date(),
         updatedBy: actor.userId,
@@ -602,7 +703,9 @@ export async function confirmPlannedOvertimeInDatabase(
       .where(eq(overtimeClaims.id, claim.id));
 
     let reviewerIds: Array<string | undefined>;
-    if (exceeded) {
+    if (assignedReviewer) {
+      reviewerIds = [assignedReviewer.userId];
+    } else if (exceeded) {
       const [employee] = await tx
         .select({ managerId: employees.lineManagerId })
         .from(employees)
@@ -668,7 +771,10 @@ export async function confirmPlannedOvertimeInDatabase(
       entityType: "overtime-claim",
       entityId: claim.id,
       beforeSummary: { authorisedHours },
-      afterSummary: { actualHours, status: exceeded ? "Pending Manager" : "Pending HR" },
+      afterSummary: {
+        actualHours,
+        status: exceeded && !assignedReviewer ? "Pending Manager" : "Pending HR",
+      },
       reason: note.trim() || "Confirmed actual planned overtime hours",
       riskLevel: exceeded ? "High" : "Medium",
     } as typeof auditEvents.$inferInsert);
@@ -697,6 +803,27 @@ export async function listOvertimeClaimsForActor(organisationId: string, actor: 
   } else if (!["HR", "Accounts", "Super Admin"].includes(role)) {
     throw new Error("You are not authorised to view overtime claims.");
   }
+  const privileged = ["HR", "Accounts", "Super Admin"].includes(role);
+  const independentAssignments =
+    privileged || actor.employeeId
+      ? await db
+          .select({
+            requestId: hrIndependentReviewAssignments.requestId,
+            reviewerEmployeeId: hrIndependentReviewAssignments.reviewerEmployeeId,
+          })
+          .from(hrIndependentReviewAssignments)
+          .where(
+            and(
+              eq(hrIndependentReviewAssignments.organisationId, organisationId),
+              eq(hrIndependentReviewAssignments.module, "Overtime"),
+              ...(!privileged && actor.employeeId
+                ? [eq(hrIndependentReviewAssignments.reviewerEmployeeId, actor.employeeId)]
+                : []),
+              isNull(hrIndependentReviewAssignments.archivedAt),
+            ),
+          )
+      : [];
+  const assignedIds = independentAssignments.map((item) => item.requestId);
   const rows = await db
     .select()
     .from(overtimeClaims)
@@ -704,7 +831,13 @@ export async function listOvertimeClaimsForActor(organisationId: string, actor: 
       and(
         eq(overtimeClaims.organisationId, organisationId),
         sql`${overtimeClaims.archivedAt} IS NULL`,
-        ...(employeeIds ? [inArray(overtimeClaims.employeeId, employeeIds)] : []),
+        ...(employeeIds
+          ? [
+              sql`(${inArray(overtimeClaims.employeeId, employeeIds)} OR ${
+                assignedIds.length ? inArray(overtimeClaims.id, assignedIds) : sql`false`
+              })`,
+            ]
+          : []),
         ...(role === "Accounts"
           ? [
               sql`(${overtimeClaims.status} = 'Approved' OR ${overtimeClaims.employeeId} = ${actor.employeeId ?? null}::uuid)`,
@@ -717,6 +850,13 @@ export async function listOvertimeClaimsForActor(organisationId: string, actor: 
     id: row.id,
     databaseId: row.id,
     employeeId: row.employeeId,
+    ...(independentAssignments.find((item) => item.requestId === row.id)
+      ? {
+          independentReviewerEmployeeId: independentAssignments.find(
+            (item) => item.requestId === row.id,
+          )!.reviewerEmployeeId,
+        }
+      : {}),
     date: row.date,
     hours: Number(row.hours),
     ...(row.projectId ? { projectId: row.projectId } : {}),
@@ -897,7 +1037,7 @@ export async function correctOvertimeClaimInDatabase(
       reason: input.reason.trim(),
       riskLevel: "Critical",
     } as typeof auditEvents.$inferInsert);
-    await requireEmployeeSupervisor(tx, organisationId, original.employeeId);
+    await requireOvertimeSupervisor(tx, organisationId, original.employeeId);
     const [claimEmployee] = await tx
       .select({ lineManagerId: employees.lineManagerId })
       .from(employees)
@@ -953,8 +1093,24 @@ export async function readOvertimeEvidenceInDatabase(
     .from(employees)
     .where(eq(employees.id, claim.employeeId))
     .limit(1);
+  const [independentAssignment] = await db
+    .select({
+      reviewerEmployeeId: hrIndependentReviewAssignments.reviewerEmployeeId,
+    })
+    .from(hrIndependentReviewAssignments)
+    .where(
+      and(
+        eq(hrIndependentReviewAssignments.organisationId, organisationId),
+        eq(hrIndependentReviewAssignments.module, "Overtime"),
+        eq(hrIndependentReviewAssignments.requestId, claimId),
+        isNull(hrIndependentReviewAssignments.archivedAt),
+      ),
+    )
+    .limit(1);
   const allowed =
     actor.employeeId === claim.employeeId ||
+    (actor.activeRole !== "Super Admin" &&
+      actor.employeeId === independentAssignment?.reviewerEmployeeId) ||
     employee?.lineManagerId === actor.employeeId ||
     ["HR", "Accounts", "Super Admin"].includes(activeRole(actor));
   if (!allowed) throw new Error("You are not authorised to view this overtime evidence.");

@@ -197,15 +197,13 @@ export class TrainingService {
     context: ActorContext,
   ): Promise<void> {
     const { decideTrainingRequestFn } = await import("../server-functions/training.server.ts");
+    const request = this.requireRequest(requestId);
     await this.refreshAfter(
       decideTrainingRequestFn({
         data: {
           actor: await trainingServerActor(context),
           requestId: trainingDatabaseId("training_requests", requestId),
-          stage:
-            context.actor.activeRole === "HR" || context.actor.activeRole === "Super Admin"
-              ? "HR"
-              : "Supervisor",
+          stage: request.status === "Pending Supervisor" ? "Supervisor" : "HR",
           decision,
           comment,
         },
@@ -443,7 +441,11 @@ export class TrainingService {
       return requests.filter((request) => reportIds.has(request.employeeId));
     }
     if (context.actor.employeeId) {
-      return requests.filter((request) => request.employeeId === context.actor.employeeId);
+      return requests.filter(
+        (request) =>
+          request.employeeId === context.actor.employeeId ||
+          request.independentReviewerEmployeeId === context.actor.employeeId,
+      );
     }
     this.deny(context, "view training requests", "all", "You cannot view training requests.");
   }
@@ -566,18 +568,23 @@ export class TrainingService {
     if (decision === "Reject" && comment.trim().length < 5)
       throw new Error("Record a reason for rejecting this request.");
     comment = comment.trim() || "Training request approved";
+    const hrStandIn = context.actor.activeRole === "HR";
+    const now = this.now().toISOString();
     const updated = this.requestRepo.update(
       request.id,
       decision === "Approve"
         ? {
-            status: "Pending HR",
-            supervisorDecisionAt: this.now().toISOString(),
+            status: hrStandIn ? "Approved" : "Pending HR",
+            supervisorDecisionAt: now,
             supervisorDecisionBy: context.actor.userId,
             supervisorComment: comment.trim(),
+            ...(hrStandIn
+              ? { hrDecisionAt: now, hrDecisionBy: context.actor.userId, hrComment: comment.trim() }
+              : {}),
           }
         : {
             status: "Rejected",
-            supervisorDecisionAt: this.now().toISOString(),
+            supervisorDecisionAt: now,
             supervisorDecisionBy: context.actor.userId,
             supervisorComment: comment.trim(),
             rejectionReason: comment.trim(),
@@ -585,12 +592,21 @@ export class TrainingService {
       { ...context, reason: comment.trim() },
     );
     const course = this.requireCourse(request.courseId);
-    if (decision === "Approve") this.notifyHr(updated, course, context);
+    if (decision === "Approve") {
+      if (hrStandIn) this.createEnrollment(updated, context);
+      else this.notifyHr(updated, course, context);
+    }
     this.notifyEmployee(
       request.employeeId,
-      decision === "Approve" ? "Training request sent to HR" : "Training request declined",
       decision === "Approve"
-        ? `${course.title} has been supported by your supervisor and is awaiting HR approval.`
+        ? hrStandIn
+          ? "Training approved"
+          : "Training request sent to HR"
+        : "Training request declined",
+      decision === "Approve"
+        ? hrStandIn
+          ? `${course.title} has been approved and added to your training plan.`
+          : `${course.title} has been supported by your supervisor and is awaiting HR approval.`
         : `${course.title} was declined: ${comment.trim()}`,
       "/staff/me/training",
       `training-supervisor-decision-${request.id}-${decision}`,
@@ -605,7 +621,13 @@ export class TrainingService {
     comment: string,
     context: ActorContext,
   ): TrainingRequest {
-    this.requireHr(context, "decide this training request", requestId);
+    if (context.actor.activeRole !== "HR")
+      this.deny(
+        context,
+        "decide this training request",
+        requestId,
+        "Only HR can decide training requests.",
+      );
     const request = this.requireRequest(requestId);
     this.requireNotSelf(
       request.employeeId,
@@ -1376,7 +1398,7 @@ export class TrainingService {
   private requireAssignedManager(employeeId: string, context: ActorContext, action: string): void {
     const employee = this.employeeService.getById(employeeId, SYSTEM_CONTEXT);
     if (
-      context.actor.activeRole === "Line Manager" &&
+      ["Line Manager", "HR"].includes(context.actor.activeRole ?? "Employee") &&
       context.actor.employeeId &&
       context.actor.employeeId !== employeeId &&
       employee?.lineManagerId === context.actor.employeeId

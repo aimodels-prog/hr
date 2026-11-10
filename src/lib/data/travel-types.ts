@@ -25,8 +25,8 @@ export interface TravelBooking {
   documentFileId?: string;
 }
 
-// "Pre-authorised" authorises the trip and spend ceiling after the supervisor, HR and Accounts
-// reviews. It does not mean the post-trip expenses have been settled.
+// "Pre-authorised" authorises the trip and spend ceiling after every required
+// review. It does not mean the post-trip expenses have been settled.
 export type TravelRequestStatus =
   | "Draft"
   | "Pending HR and Accounts"
@@ -35,7 +35,39 @@ export type TravelRequestStatus =
   | "Closed"
   | "Rejected"
   | "Withdrawn";
-export type TravelApprovalState = "Pending" | "Approved" | "Rejected";
+export type TravelApprovalState = "Pending" | "Approved" | "Rejected" | "Not Required";
+
+/** Captured at submission so later settings changes cannot silently reroute a pending trip. */
+export type TravelApprovalRoute =
+  | { kind: "Standard" }
+  | {
+      kind: "Managerless Executive";
+      reviewerRole: "Accounts" | "HR";
+      notifyHr: boolean;
+    }
+  | {
+      kind: "HR Own Travel";
+      reviewerEmployeeId: string;
+      reviewerName?: string;
+    };
+
+export function travelApprovalComplete(
+  route: TravelApprovalRoute,
+  manager: TravelApprovalState,
+  hr: TravelApprovalState,
+  accounts: TravelApprovalState,
+): boolean {
+  if (route.kind === "Standard")
+    return manager === "Approved" && hr === "Approved" && accounts === "Approved";
+  if (route.kind === "HR Own Travel")
+    return manager === "Approved" && hr === "Not Required" && accounts === "Approved";
+  return (
+    (manager === "Not Required" || manager === "Approved") &&
+    (route.reviewerRole === "Accounts"
+      ? hr === "Not Required" && accounts === "Approved"
+      : hr === "Approved" && accounts === "Not Required")
+  );
+}
 
 export interface TravelBudgetSnapshot {
   estTransport: number;
@@ -66,6 +98,7 @@ export interface TravelRequest extends BaseRecord {
   /** Authoritative PostgreSQL UUID while the legacy browser cache remains during cutover. */
   databaseId?: string;
   employeeId: RecordId;
+  approvalRoute?: TravelApprovalRoute;
   purpose: string;
   destination: string;
   startDate: string; // YYYY-MM-DD

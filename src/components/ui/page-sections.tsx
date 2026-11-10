@@ -131,16 +131,36 @@ export function SectionNavigation({
     if (!current && first) select(first.value);
   }, [current, items, select, restoreHash]);
   if (sidebar) {
-    return sidebar.target
-      ? createPortal(
-          <div {...props} className={cn(className, "py-1")}>
-            <nav aria-label="Page sections" className="space-y-0.5">
-              {children}
-            </nav>
-          </div>,
-          sidebar.target,
-        )
-      : null;
+    return (
+      <>
+        <details data-section-menu className="group rounded-xl border bg-card lg:hidden">
+          <summary className="flex min-h-12 cursor-pointer list-none items-center gap-2 px-4 py-3 [&::-webkit-details-marker]:hidden">
+            <List className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span className="min-w-0 flex-1 text-sm">
+              <span className="block text-xs text-muted-foreground">On this page</span>
+              <span className="font-semibold">{current?.label}</span>
+            </span>
+            <ChevronDown
+              className="size-4 shrink-0 transition-transform group-open:rotate-180"
+              aria-hidden="true"
+            />
+          </summary>
+          <nav aria-label="Page sections" className="space-y-1 border-t p-2">
+            {children}
+          </nav>
+        </details>
+        {sidebar.target
+          ? createPortal(
+              <div {...props} className={cn(className, "py-1")}>
+                <nav aria-label="Page sections" className="space-y-0.5">
+                  {children}
+                </nav>
+              </div>,
+              sidebar.target,
+            )
+          : null}
+      </>
+    );
   }
   return (
     <aside className="min-w-0 lg:sticky lg:top-20">
@@ -217,7 +237,7 @@ export function SectionLink({
         "flex min-h-11 w-full items-center justify-start gap-2 whitespace-normal rounded-lg border-l-2 px-3 py-2.5 text-left text-sm leading-5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         sidebar
           ? cn(
-              "rounded-md px-2 text-xs leading-5 text-sidebar-detail hover:bg-sidebar-detail-accent",
+              "rounded-md px-2 text-sm leading-5 text-sidebar-detail hover:bg-sidebar-detail-accent lg:text-xs",
               active
                 ? "border-sidebar-detail bg-sidebar-detail-accent font-semibold"
                 : "border-transparent",

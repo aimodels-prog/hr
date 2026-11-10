@@ -2,11 +2,12 @@ import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ClipboardCheck } from "lucide-react";
 import { useCurrentUser } from "@/lib/auth";
+import { isApprovalTask } from "@/lib/data/request-tracking";
 import { getMyTasksFn } from "@/lib/server-functions/task.server";
 import { Button } from "@/components/ui/button";
 import { AttentionQueue } from "./dashboard-kit";
 
-/** The same verified task list as Tasks & Reminders, without waiting for dashboard modules. */
+/** Personal tasks and reminders only; decisions live in the approvals inbox. */
 export function DashboardActionQueue() {
   const user = useCurrentUser();
   const actor = {
@@ -21,12 +22,13 @@ export function DashboardActionQueue() {
     staleTime: 15_000,
     refetchInterval: 60_000,
   });
+  const reminderTasks = (tasks.data ?? []).filter((task) => !isApprovalTask(task));
   return (
-    <section aria-label="Needs attention" className="space-y-3 rounded-xl border bg-card p-4">
+    <section aria-label="Tasks and reminders" className="space-y-3 rounded-xl border bg-card p-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold">Needs attention</h2>
+        <h2 className="text-sm font-semibold">Tasks & reminders</h2>
         <Link to="/staff/my-tasks" className="text-sm text-primary underline">
-          View all{tasks.data ? ` (${tasks.data.length})` : ""}
+          View tasks{tasks.data ? ` (${reminderTasks.length})` : ""}
         </Link>
       </div>
       {tasks.isPending ? (
@@ -40,9 +42,11 @@ export function DashboardActionQueue() {
             Try again
           </Button>
         </div>
+      ) : reminderTasks.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No tasks or reminders right now.</p>
       ) : (
         <AttentionQueue
-          items={(tasks.data ?? []).slice(0, 5).map((task) => ({
+          items={reminderTasks.slice(0, 5).map((task) => ({
             id: task.id,
             severity:
               task.state === "Overdue" || task.priority === "High" || task.priority === "Critical"

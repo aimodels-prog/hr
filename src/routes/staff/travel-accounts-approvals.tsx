@@ -84,11 +84,17 @@ function AccountsTravelApprovalsContent() {
       r.hrApprovedBy !== currentUser.id &&
       !r.participants?.some((participant) => participant.decidedBy === currentUser.id) &&
       r.accountsApprovalStatus === "Pending" &&
-      r.managerApprovalStatus === "Approved" &&
-      r.hrApprovalStatus === "Approved" &&
+      ["Approved", "Not Required"].includes(r.managerApprovalStatus) &&
+      (r.approvalRoute?.kind === "Managerless Executive"
+        ? r.approvalRoute.reviewerRole === "Accounts" && r.hrApprovalStatus === "Not Required"
+        : r.approvalRoute?.kind === "HR Own Travel"
+          ? r.hrApprovalStatus === "Not Required"
+          : r.hrApprovalStatus === "Approved") &&
       r.status === "Pending HR and Accounts",
   );
-  const processed = requests.filter((r) => r.accountsApprovalStatus !== "Pending");
+  const processed = requests.filter((r) =>
+    ["Approved", "Rejected"].includes(r.accountsApprovalStatus),
+  );
 
   useEffect(() => {
     if (!focusedRequestId || openedFocusedRequest.current === focusedRequestId) return;

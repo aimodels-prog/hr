@@ -173,7 +173,7 @@ export function PulseStrip({
             ) : null}
             {metric.onClick && (
               <span className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-primary">
-                {metric.label === "Awaiting decisions" ? "View approval queues" : "View people"}
+                {metric.label === "Pending across company" ? "View request groups" : "View people"}
                 <ArrowUpRight className="size-3.5" aria-hidden="true" />
               </span>
             )}

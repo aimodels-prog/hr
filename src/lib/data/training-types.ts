@@ -27,6 +27,7 @@ export interface TrainingCourse extends BaseRecord {
 }
 
 export interface TrainingRequest extends BaseRecord {
+  independentReviewerEmployeeId?: string;
   databaseId?: string;
   employeeId: RecordId;
   courseId: RecordId;

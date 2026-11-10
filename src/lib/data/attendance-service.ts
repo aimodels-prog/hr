@@ -327,6 +327,13 @@ export class AttendanceService {
         databaseId: row.id,
         attendanceRecordId: recordIdMap.get(row.attendanceRecordId) ?? row.attendanceRecordId,
         employeeId,
+        ...(row.independentReviewerEmployeeId
+          ? {
+              independentReviewerEmployeeId:
+                employeeMap.get(row.independentReviewerEmployeeId) ??
+                row.independentReviewerEmployeeId,
+            }
+          : {}),
         correctionType: row.correctionType as AttendanceCorrectionType,
         ...(row.originalClockIn ? { originalClockIn: localTime(row.originalClockIn) } : {}),
         ...(row.originalClockOut ? { originalClockOut: localTime(row.originalClockOut) } : {}),
@@ -1085,7 +1092,21 @@ export class AttendanceService {
         .map((record) => this.presentRecord(record));
     }
     return context.actor.employeeId
-      ? this.getRecordsForEmployee(context.actor.employeeId, context)
+      ? [
+          ...this.getRecordsForEmployee(context.actor.employeeId, context),
+          ...this.recordRepo
+            .list()
+            .filter((record) =>
+              this.correctionRepo
+                .list()
+                .some(
+                  (correction) =>
+                    correction.attendanceRecordId === record.id &&
+                    correction.independentReviewerEmployeeId === context.actor.employeeId,
+                ),
+            )
+            .map((record) => this.presentRecord(record)),
+        ]
       : [];
   }
 
@@ -1112,7 +1133,15 @@ export class AttendanceService {
       return this.getCorrectionsForDirectReports(context);
     }
     return context.actor.employeeId
-      ? this.getCorrectionsForEmployee(context.actor.employeeId, context)
+      ? this.correctionRepo
+          .list()
+          .map((item) => this.normaliseCorrection(item))
+          .filter(
+            (item) =>
+              item.employeeId === context.actor.employeeId ||
+              item.independentReviewerEmployeeId === context.actor.employeeId,
+          )
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       : [];
   }
 
@@ -1695,11 +1724,13 @@ export class AttendanceService {
     notes: string,
     context: ActorContext,
   ): AttendanceCorrection {
-    this.requireAdmin(context, "finalise attendance corrections");
+    this.requireRole(context, ["HR"], "finalise attendance corrections");
     const storedCorrection = this.correctionRepo.getById(correctionId);
     const correction = storedCorrection ? this.normaliseCorrection(storedCorrection) : null;
     if (!correction) throw new Error("Correction was not found.");
     if (correction.status !== "Pending HR") throw new Error("Correction is not awaiting HR.");
+    if (correction.employeeId === context.actor.employeeId)
+      throw new Error("You cannot approve your own attendance correction.");
     if (notes.trim().length < 3) throw new Error("HR decision notes are required.");
     const record = this.recordRepo.getById(correction.attendanceRecordId);
     if (!record) throw new Error("The underlying attendance record was not found.");
@@ -2386,7 +2417,7 @@ export class AttendanceService {
     notes: string,
     context: ActorContext,
   ): AttendanceCorrection {
-    this.requireRole(context, ["Line Manager", "HR", "Super Admin"], "review this correction");
+    this.requireRole(context, ["Line Manager", "HR"], "review this correction");
     if (notes.trim().length < 3) throw new Error("Manager decision notes are required.");
     const storedCorrection = this.correctionRepo.getById(correctionId);
     const correction = storedCorrection ? this.normaliseCorrection(storedCorrection) : null;
@@ -2395,14 +2426,28 @@ export class AttendanceService {
       throw new Error("Correction is not awaiting a manager.");
     const employee = new EmployeeService().getById(correction.employeeId, SYSTEM_CONTEXT);
     if (
-      !["HR", "Super Admin"].includes(effectiveRole(context) ?? "") &&
-      (!context.actor.employeeId || employee?.lineManagerId !== context.actor.employeeId)
+      !context.actor.employeeId ||
+      employee?.lineManagerId !== context.actor.employeeId ||
+      correction.employeeId === context.actor.employeeId
     ) {
       this.recordDenied("correction_review_denied", correction.id, context);
       throw new Error("Only the employee's assigned line manager can review this correction.");
     }
+    const hrStandIn = effectiveRole(context) === "HR";
+    const record = this.recordRepo.getById(correction.attendanceRecordId);
+    if (approve && hrStandIn && !record)
+      throw new Error("The underlying attendance record was not found.");
+    if (approve && hrStandIn && record)
+      this.updateRecordInternal(
+        record.id,
+        {
+          clockIn: correction.proposedClockIn ?? record.clockIn,
+          clockOut: correction.proposedClockOut ?? record.clockOut,
+          status: "Corrected",
+        },
+        { ...context, reason: notes.trim() },
+      );
     if (!approve) {
-      const record = this.recordRepo.getById(correction.attendanceRecordId);
       if (record) {
         this.recordRepo.update(
           record.id,
@@ -2414,14 +2459,21 @@ export class AttendanceService {
     const updated = this.correctionRepo.update(
       correction.id,
       {
-        status: approve ? "Pending HR" : "Rejected",
+        status: approve ? (hrStandIn ? "Approved" : "Pending HR") : "Rejected",
         managerNotes: notes.trim(),
         managerReviewedBy: context.actor.userId,
         managerReviewedAt: this.now().toISOString(),
+        ...(approve && hrStandIn
+          ? {
+              hrNotes: notes.trim(),
+              hrReviewedBy: context.actor.userId,
+              hrReviewedAt: this.now().toISOString(),
+            }
+          : {}),
       },
       { ...context, reason: notes.trim() },
     );
-    if (approve) {
+    if (approve && !hrStandIn) {
       this.notifyHr(
         "Attendance correction awaiting HR",
         `${context.actor.displayName} endorsed an attendance correction.`,
@@ -2432,9 +2484,9 @@ export class AttendanceService {
     } else {
       this.notifyEmployee(
         correction.employeeId,
-        "Attendance correction rejected by manager",
-        notes.trim(),
-        `attendance-correction-manager-rejected-${correction.id}`,
+        approve ? "Attendance correction approved" : "Attendance correction rejected by manager",
+        approve ? "Your corrected attendance punches have been applied." : notes.trim(),
+        `attendance-correction-manager-${correction.id}-${updated.status}`,
         "/staff/me/attendance",
         context,
       );

@@ -6,26 +6,47 @@ import { auditEvents } from "../schema/system.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 import {
   STATUS_GROUPS,
+  requestDecisionOutcome,
   toTrackedRequest,
   type RequestDecision,
   type RequestSubmission,
   type RequestRow,
   type RequestGroup,
 } from "../../data/request-tracking.ts";
+import {
+  canViewRequestDecisionSnapshot,
+  parseRequestDecisionSnapshot,
+  TRACKED_AUDIT_ACTION_PATTERN,
+} from "../../data/request-decision-snapshot.ts";
+import { reviewedEmployeeCurrentDetailsPolicy } from "../../data/request-tracking-detail-access.ts";
 
 // Static SQL expressions only. No caller-provided identifier or SQL is interpolated here.
+const independentReviewerMeta = (
+  module:
+    | "Leave"
+    | "Timesheet"
+    | "Attendance Correction"
+    | "Overtime"
+    | "Training"
+    | "Visit"
+    | "Time Away"
+    | "Document"
+    | "Training Certificate"
+    | "Employment Confirmation",
+) =>
+  `,'independentReviewerName',(SELECT coalesce(rev.preferred_name,rev.legal_name) FROM hr_independent_review_assignments ia JOIN employees rev ON rev.id=ia.reviewer_employee_id AND rev.organisation_id=ia.organisation_id WHERE ia.organisation_id=r.organisation_id AND ia.module='${module}' AND ia.request_id=r.id AND ia.stage='HR' AND ia.archived_at IS NULL LIMIT 1)`;
 const reviewerRolesByModule: Record<string, readonly string[]> = {
-  Leave: ["HR", "Line Manager"],
-  Timesheets: ["HR", "Line Manager"],
-  Overtime: ["HR", "Line Manager"],
-  "Attendance corrections": ["HR", "Line Manager"],
-  "Time Away": ["HR"],
-  Visits: ["HR"],
-  Travel: ["HR", "Line Manager", "Accounts", "Travel Admin"],
-  Training: ["HR", "Line Manager"],
-  "Training certificates": ["HR"],
-  "Profile updates": ["HR"],
-  Documents: ["HR"],
+  Leave: ["HR", "Line Manager", "Employee"],
+  Timesheets: ["HR", "Line Manager", "Employee"],
+  Overtime: ["HR", "Line Manager", "Employee"],
+  "Attendance corrections": ["HR", "Line Manager", "Employee"],
+  "Time Away": ["HR", "Employee"],
+  Visits: ["HR", "Employee"],
+  Travel: ["HR", "Line Manager", "Accounts", "Travel Admin", "Employee"],
+  Training: ["HR", "Line Manager", "Employee"],
+  "Training certificates": ["HR", "Employee"],
+  "Profile updates": ["HR", "Employee"],
+  Documents: ["HR", "Employee"],
   Objectives: ["HR", "Line Manager"],
   Performance: ["HR", "Line Manager"],
   Applications: ["HR"],
@@ -41,9 +62,12 @@ const sources = [
       "btrim(regexp_replace(COALESCE(NULLIF(btrim(r.policy_snapshot->>'name'), ''), 'Leave'), '[[:space:]]+[—–-][[:space:]]+imported history[[:space:]]*$', '', 'i')) || ' · ' || r.start_date || ' to ' || r.end_date",
     self: "'/staff/me/leave-balances#request=' || r.id",
     hr: "'/staff/leave-admin#request=' || r.id",
-    meta: "jsonb_build_object('chain',r.chain_approvals,'amendmentChain',r.pending_amendment->'chainApprovals')",
+    meta:
+      "jsonb_build_object('chain',r.chain_approvals,'amendmentChain',r.pending_amendment->'chainApprovals','specialRequest',r.policy_snapshot ? 'specialRequest','noticeException',r.policy_snapshot ? 'noticeException','countryManagerName',(SELECT coalesce(cm.preferred_name,cm.legal_name) FROM employees cm WHERE cm.organisation_id=r.organisation_id AND cm.id::text=coalesce(r.policy_snapshot->'specialRequest'->>'countryManagerEmployeeId',r.policy_snapshot->'noticeException'->>'countryManagerEmployeeId') LIMIT 1)" +
+      independentReviewerMeta("Leave") +
+      ")",
     details:
-      "jsonb_build_object('Leave type',btrim(regexp_replace(COALESCE(NULLIF(btrim(r.policy_snapshot->>'name'), ''), 'Leave'), 'imported history[[:space:]]*$', '', 'i'), ' ' || chr(8211) || chr(8212) || '-'),'Dates',r.start_date::text || ' to ' || r.end_date::text,'Days requested',r.working_days_requested::text,'Reason',r.reason,'Half day',CASE WHEN r.is_half_day THEN 'Yes' ELSE 'No' END,'Special request',CASE WHEN r.policy_snapshot ? 'specialRequest' THEN 'Yes' END,'HR balance allocation',(r.policy_snapshot->'specialRequest'->'allocations')::text,'Remaining days pay',r.policy_snapshot->'specialRequest'->>'remainingPay')",
+      "jsonb_build_object('Leave type',btrim(regexp_replace(COALESCE(NULLIF(btrim(r.policy_snapshot->>'name'), ''), 'Leave'), 'imported history[[:space:]]*$', '', 'i'), ' ' || chr(8211) || chr(8212) || '-'),'Dates',r.start_date::text || ' to ' || r.end_date::text,'Days requested',r.working_days_requested::text,'Reason',r.reason,'Half day',CASE WHEN r.is_half_day THEN 'Yes' ELSE 'No' END,'Special request',CASE WHEN r.policy_snapshot ? 'specialRequest' THEN 'Yes' END,'Leave balance used',(SELECT string_agg(coalesce(lp.name,'Leave') || ' ' || (allocation.value->>'leaveYear') || ': ' || (allocation.value->>'days') || ' days', E'\\n') FROM jsonb_array_elements(CASE WHEN jsonb_typeof(r.policy_snapshot->'specialRequest'->'allocations')='array' THEN r.policy_snapshot->'specialRequest'->'allocations' ELSE '[]'::jsonb END) AS allocation(value) LEFT JOIN leave_policies lp ON lp.organisation_id=r.organisation_id AND lp.id::text=(allocation.value->>'policyId')),'Remaining days pay',r.policy_snapshot->'specialRequest'->>'remainingPay','Supporting evidence',CASE WHEN r.attachment_file_id IS NOT NULL THEN 'Attached' END)",
     auditType: "leave-request",
     decisionActions: "^(approve|decline|reject)$",
   },
@@ -52,7 +76,10 @@ const sources = [
     module: "Timesheets",
     self: "'/staff/me/timesheets/' || r.period_id",
     hr: "'/staff/timesheet-monitoring'",
-    meta: "jsonb_build_object('submittedAt',r.submitted_at,'managerAt',r.supervisor_reviewed_at,'managerBy',r.supervisor_reviewed_by,'approvedAt',r.approved_at,'approvedBy',r.approved_by)",
+    meta:
+      "jsonb_build_object('submittedAt',r.submitted_at,'managerAt',r.supervisor_reviewed_at,'managerBy',r.supervisor_reviewed_by,'approvedAt',r.approved_at,'approvedBy',r.approved_by" +
+      independentReviewerMeta("Timesheet") +
+      ")",
     details:
       "jsonb_build_object('Period',(SELECT p.start_date::text || ' to ' || p.end_date::text FROM timesheet_periods p WHERE p.id=r.period_id),'Expected hours',r.expected_hours::text,'Recorded hours',r.total_hours::text,'Work entries',(SELECT string_agg(te.work_date::text || ' / ' || coalesce(project.name,'Project') || ' / ' || te.hours::text || ' h' || coalesce(' - ' || nullif(te.notes,''),''), E'\\n' ORDER BY te.work_date,project.name) FROM timesheet_entries te LEFT JOIN projects project ON project.id=te.project_id WHERE te.timesheet_id=r.id AND te.archived_at IS NULL))",
     reviewedBy: ["r.supervisor_reviewed_by", "r.approved_by"],
@@ -64,7 +91,10 @@ const sources = [
     module: "Overtime",
     self: "'/staff/overtime'",
     hr: "'/staff/overtime-approvals'",
-    meta: "jsonb_build_object('approvedAt',r.approved_at,'approvedBy',r.approved_by,'preAuthorisedAt',r.pre_authorised_at,'preAuthorisedBy',r.pre_authorised_by)",
+    meta:
+      "jsonb_build_object('approvedAt',r.approved_at,'approvedBy',r.approved_by,'preAuthorisedAt',r.pre_authorised_at,'preAuthorisedBy',r.pre_authorised_by" +
+      independentReviewerMeta("Overtime") +
+      ")",
     details:
       "jsonb_build_object('Date',r.date::text,'Hours requested',r.hours::text,'Reason',r.reason,'Compensation',r.compensation_type,'Request type',r.request_kind)",
     reviewedBy: ["r.pre_authorised_by", "r.approved_by"],
@@ -76,7 +106,10 @@ const sources = [
     module: "Attendance corrections",
     self: "'/staff/me/attendance'",
     hr: "'/staff/attendance/corrections'",
-    meta: "jsonb_build_object('managerAt',r.manager_reviewed_at,'managerBy',r.manager_reviewed_by,'hrAt',r.hr_reviewed_at,'hrBy',r.hr_reviewed_by,'managerComment',r.manager_notes,'hrComment',r.hr_notes)",
+    meta:
+      "jsonb_build_object('managerAt',r.manager_reviewed_at,'managerBy',r.manager_reviewed_by,'hrAt',r.hr_reviewed_at,'hrBy',r.hr_reviewed_by,'managerComment',r.manager_notes,'hrComment',r.hr_notes" +
+      independentReviewerMeta("Attendance Correction") +
+      ")",
     details:
       "jsonb_build_object('Correction type',r.correction_type,'Original clock in',r.original_clock_in::text,'Original clock out',r.original_clock_out::text,'Proposed clock in',r.proposed_clock_in::text,'Proposed clock out',r.proposed_clock_out::text,'Explanation',r.explanation)",
     reviewedBy: ["r.manager_reviewed_by", "r.hr_reviewed_by"],
@@ -89,7 +122,10 @@ const sources = [
     title: "r.category || ' · ' || r.date::text",
     self: "'/staff/time-away?date=' || r.date::text",
     hr: "'/staff/time-away?date=' || r.date::text",
-    meta: "jsonb_build_object('hrBy',r.reviewed_by,'hrComment',r.review_note)",
+    meta:
+      "jsonb_build_object('hrBy',r.reviewed_by,'hrComment',r.review_note" +
+      independentReviewerMeta("Time Away") +
+      ")",
     details:
       "jsonb_build_object('Date',r.date::text,'From',r.start_time,'Until',r.end_time,'Category',r.category,'Note',r.note,'Treatment',r.treatment)",
     reviewedBy: ["r.reviewed_by"],
@@ -99,9 +135,14 @@ const sources = [
   {
     table: "site_visit_requests",
     module: "Visits",
+    status:
+      "CASE WHEN r.details->'extension'->>'status'='Pending' THEN 'Extension Pending' ELSE r.status::text END",
     self: "'/staff/me/attendance'",
     hr: "'/staff/attendance'",
-    meta: "jsonb_build_object('submittedAt',r.requested_at,'hrAt',r.hr_reviewed_at,'hrBy',r.hr_reviewed_by,'hrComment',r.hr_notes,'extensionPending',coalesce(r.details->'extension'->>'status'='Pending',false))",
+    meta:
+      "jsonb_build_object('submittedAt',r.requested_at,'hrAt',r.hr_reviewed_at,'hrBy',r.hr_reviewed_by,'hrComment',r.hr_notes,'extensionPending',coalesce(r.details->'extension'->>'status'='Pending',false)" +
+      independentReviewerMeta("Visit") +
+      ")",
     details:
       "jsonb_build_object('Date',r.date::text,'From',r.start_time,'Until',r.end_time,'Origin',r.origin,'Destination',r.destination,'Purpose',r.purpose)",
     reviewedBy: ["r.hr_reviewed_by"],
@@ -113,7 +154,7 @@ const sources = [
     module: "Travel",
     self: "'/staff/travel/' || r.id",
     hr: "'/staff/travel/' || r.id",
-    meta: "jsonb_build_object('manager',r.manager_approval_status,'hr',r.hr_approval_status,'finance',r.accounts_approval_status,'managerAt',r.manager_approved_at,'managerBy',r.manager_approved_by,'hrAt',r.hr_approved_at,'hrBy',r.hr_approved_by,'financeAt',r.accounts_approved_at,'financeBy',r.accounts_approved_by,'closedAt',r.closed_at,'closedBy',r.closed_by)",
+    meta: "jsonb_build_object('manager',r.manager_approval_status,'hr',r.hr_approval_status,'finance',r.accounts_approval_status,'approvalRoute',r.approval_route,'independentReviewerName',(SELECT coalesce(rev.preferred_name,rev.legal_name) FROM employees rev WHERE rev.organisation_id=r.organisation_id AND rev.id::text=r.approval_route->>'reviewerEmployeeId' LIMIT 1),'pendingParticipantManagers',(SELECT string_agg(DISTINCT coalesce(m.preferred_name,m.legal_name), ', ') FROM jsonb_array_elements(r.participants) p JOIN employees m ON m.organisation_id=r.organisation_id AND m.id::text=p->>'managerId' WHERE p->>'status'='Pending'),'managerAt',r.manager_approved_at,'managerBy',r.manager_approved_by,'hrAt',r.hr_approved_at,'hrBy',r.hr_approved_by,'financeAt',r.accounts_approved_at,'financeBy',r.accounts_approved_by,'closedAt',r.closed_at,'closedBy',r.closed_by)",
     details:
       "jsonb_build_object('Destination',r.destination,'Purpose',r.purpose,'Dates',r.start_date::text || ' to ' || r.end_date::text,'Estimated cost',r.total_estimate::text || ' ' || r.currency,'Notes',r.notes)",
     reviewedBy: [
@@ -123,14 +164,18 @@ const sources = [
       "r.closed_by",
     ],
     auditType: "travel-request",
-    decisionActions: "^((approve|reject)-(manager|hr|accounts)|close|reject)$",
+    decisionActions:
+      "^((approve|reject)-(manager|hr|accounts|independent-review|participation)|close|reject)$",
   },
   {
     table: "training_requests",
     module: "Training",
     self: "'/staff/me/training'",
     hr: "'/staff/training'",
-    meta: "jsonb_build_object('managerAt',r.supervisor_decision_at,'managerBy',r.supervisor_decision_by,'hrAt',r.hr_decision_at,'hrBy',r.hr_decision_by,'managerComment',r.supervisor_comment,'hrComment',r.hr_comment)",
+    meta:
+      "jsonb_build_object('managerAt',r.supervisor_decision_at,'managerBy',r.supervisor_decision_by,'hrAt',r.hr_decision_at,'hrBy',r.hr_decision_by,'managerComment',r.supervisor_comment,'hrComment',r.hr_comment" +
+      independentReviewerMeta("Training") +
+      ")",
     details:
       "jsonb_build_object('Course',(SELECT c.title FROM training_courses c WHERE c.id=r.course_id),'Reason',r.reason,'Origin',r.origin)",
     reviewedBy: ["r.supervisor_decision_by", "r.hr_decision_by"],
@@ -147,14 +192,39 @@ const sources = [
     reviewedBy: ["r.reviewer_id"],
   },
   {
+    table: "employees",
+    module: "Profile updates",
+    employee: "r.id",
+    title: "'Employment details'",
+    status: "r.employment_confirmation_status",
+    sourceWhere:
+      "(r.employment_confirmation_status <> 'Confirmed' OR r.employment_confirmed_by IS NOT NULL)",
+    self: "'/staff/me/profile'",
+    reviewedSelf: "'/staff/independent-record-reviews#review=' || r.id",
+    hr: "'/staff/employees/' || r.id || '#section=employment'",
+    meta:
+      "jsonb_build_object('hrAt',r.employment_confirmed_at,'hrBy',r.employment_confirmed_by,'hrComment',r.employment_review_note" +
+      independentReviewerMeta("Employment Confirmation") +
+      ")",
+    details:
+      "jsonb_build_object('Employee',coalesce(r.proposed_employment_details->>'legalName',r.legal_name),'Start date',coalesce(r.proposed_employment_details->>'startDate',r.start_date::text),'Position',(SELECT p.name FROM positions p WHERE p.id=coalesce((r.proposed_employment_details->>'positionId')::uuid,r.position_id)),'Department',(SELECT d.name FROM departments d WHERE d.id=coalesce((r.proposed_employment_details->>'departmentId')::uuid,r.department_id)),'Location',(SELECT l.name FROM locations l WHERE l.id=coalesce((r.proposed_employment_details->>'locationId')::uuid,r.location_id)),'Supervisor',coalesce(r.proposed_employment_details->>'lineManagerEmail',(SELECT m.work_email FROM employees m WHERE m.id=r.line_manager_id),'No supervisor'),'Review note',r.employment_review_note)",
+    reviewedBy: ["r.employment_confirmed_by"],
+    auditType: "employee-employment-details",
+    decisionActions: "^(confirm|request-changes)$",
+  },
+  {
     table: "training_records",
     module: "Training certificates",
     title: "r.title",
     status:
       "CASE WHEN r.hr_verified THEN 'Verified' WHEN r.rejected_at IS NOT NULL THEN 'Rejected' ELSE 'Pending HR' END",
     self: "'/staff/me/training'",
+    reviewedSelf: "'/staff/independent-record-reviews#review=' || r.id",
     hr: "'/staff/employees/' || r.employee_id",
-    meta: "jsonb_build_object('hrAt',coalesce(r.verified_at,r.rejected_at),'hrBy',coalesce(r.verified_by,r.rejected_by),'hrComment',coalesce(r.verification_comment,r.rejection_reason))",
+    meta:
+      "jsonb_build_object('hrAt',coalesce(r.verified_at,r.rejected_at),'hrBy',coalesce(r.verified_by,r.rejected_by),'hrComment',coalesce(r.verification_comment,r.rejection_reason)" +
+      independentReviewerMeta("Training Certificate") +
+      ")",
     details:
       "jsonb_build_object('Certificate',r.title,'Provider',r.provider,'Completion date',r.completion_date::text,'Expiry date',r.expiry_date::text)",
     reviewedBy: ["r.verified_by", "r.rejected_by"],
@@ -169,7 +239,12 @@ const sources = [
     details:
       "jsonb_build_object('Document type',initcap(replace(r.type::text,'_',' ')),'Issue date',r.issue_date::text,'Expiry date',r.expiry_date::text,'Issuing authority',r.issuing_authority,'Issuing country',r.issuing_country,'Notes',r.notes)",
     self: "'/staff/me/profile'",
+    reviewedSelf: "'/staff/independent-record-reviews#review=' || r.id",
     hr: "'/staff/employees/' || r.employee_id || '#documents'",
+    meta:
+      "jsonb_build_object('hrComment',r.rejection_reason" +
+      independentReviewerMeta("Document") +
+      ")",
     auditType: "employee-document",
     decisionActions: "^(verify|reject)$",
   },
@@ -258,7 +333,9 @@ const sources = [
   employee?: string;
   status?: string;
   self: string;
+  reviewedSelf?: string;
   hr: string;
+  sourceWhere?: string;
   meta?: string;
   details?: string;
   detailsSelf?: string;
@@ -292,7 +369,7 @@ export async function listTrackedRequests(
     throw new Error("Only HR can view the organisation request tracker.");
   if (
     reviewed &&
-    !["HR", "Line Manager", "Accounts", "Travel Admin"].includes(actor.activeRole ?? "")
+    !["HR", "Line Manager", "Accounts", "Travel Admin", "Employee"].includes(actor.activeRole ?? "")
   )
     throw new Error("Use an approval role to view your decisions.");
   if (!hr && !reviewed && !actor.employeeId) throw new Error("An employee profile is required.");
@@ -351,24 +428,49 @@ export async function listTrackedRequests(
                 AND historical.action ~* ${source.decisionActions}
             )`
           : sql`false`;
+      const detailPolicy =
+        reviewed && actor.activeRole === "Employee"
+          ? reviewedEmployeeCurrentDetailsPolicy(source.table)
+          : { kind: "normal" as const };
       const detailsExpression =
-        input.includeDetails && "details" in source
-          ? !hr && !reviewed && "detailsSelf" in source
-            ? source.detailsSelf
-            : source.details
-          : "'{}'::jsonb";
+        !input.includeDetails || !("details" in source)
+          ? sql`'{}'::jsonb`
+          : detailPolicy.kind === "omit"
+            ? sql`'{}'::jsonb`
+            : detailPolicy.kind === "assigned"
+              ? actor.employeeId
+                ? sql`CASE WHEN EXISTS (
+                    SELECT 1 FROM hr_independent_review_assignments ia
+                    WHERE ia.organisation_id=r.organisation_id
+                      AND ia.module=${detailPolicy.module}
+                      AND ia.request_id=r.id
+                      AND ia.stage='HR'
+                      AND ia.reviewer_employee_id=${actor.employeeId}::uuid
+                      AND ia.archived_at IS NULL
+                  ) THEN ${sql.raw(source.details)} ELSE '{}'::jsonb END`
+                : sql`'{}'::jsonb`
+              : sql.raw(
+                  !hr && !reviewed && "detailsSelf" in source ? source.detailsSelf : source.details,
+                );
+      const actionExpression =
+        reviewed && actor.activeRole === "Employee" && "reviewedSelf" in source
+          ? source.reviewedSelf
+          : hr || (reviewed && actor.activeRole === "HR")
+            ? source.hr
+            : source.self;
       return sql`SELECT r.id::text id, ${source.module}::text module, ${title}::text title,
       ${sql.raw(employee)}::text employee_id, coalesce(e.preferred_name,e.legal_name) employee_name,
       e.work_email employee_email, coalesce(m.preferred_name,m.legal_name) manager_name,
       creator.display_name created_by_name, ${sql.raw(status)}::text status, r.created_at, r.updated_at, r.archived_at,
-      ${sql.raw(hr || (reviewed && actor.activeRole === "HR") ? source.hr : source.self)} action_url,
+      ${sql.raw(actionExpression)} action_url,
       ${sql.raw("meta" in source ? source.meta : "'{}'::jsonb")} metadata,
-      ${sql.raw(detailsExpression)} details
+      ${detailsExpression} details
       FROM ${sql.raw(source.table)} r
       LEFT JOIN employees e ON e.id=${sql.raw(employee)} AND e.organisation_id=${organisationId}
       LEFT JOIN employees m ON m.id=e.line_manager_id AND m.organisation_id=${organisationId} AND m.archived_at IS NULL
       LEFT JOIN users creator ON creator.id=r.created_by AND creator.organisation_id=${organisationId}
       WHERE r.organisation_id=${organisationId}
+        AND ${"sourceWhere" in source ? sql.raw(source.sourceWhere) : sql`true`}
         AND (r.archived_at IS NULL
           OR (${sql.raw(status)})::text IN ('Approved','Rejected','Declined','Valid','Verified','Replaced','Pre-authorised','Completed','Closed','Taken','Locked','Payroll Locked')
           OR ${historicDecision})
@@ -428,7 +530,7 @@ export async function listTrackedRequests(
             and(
               eq(auditEvents.organisationId, organisationId),
               inArray(auditEvents.entityId, ids),
-              sql`${auditEvents.action} ~* '^(submit|request)$|(approv|reject|declin|return|verif|moderat|lock|close|manager)'`,
+              sql`${auditEvents.action} ~* ${TRACKED_AUDIT_ACTION_PATTERN}`,
             ),
           )
           .orderBy(asc(auditEvents.occurredAt))
@@ -444,6 +546,18 @@ export async function listTrackedRequests(
   const decisionsByRecord = new Map<string, RequestDecision[]>();
   const submissionsByRecord = new Map<string, RequestSubmission[]>();
   const rowsByKey = new Map(payload.rows.map((row) => [`${row.module}:${row.id}`, row]));
+  const actualReviewerUserIdsByRecord = new Map<string, Set<string>>();
+  for (const audit of audits) {
+    const source = sources.find(
+      (item) => "auditType" in item && item.auditType === audit.entityType,
+    );
+    if (!source || !("decisionActions" in source) || !audit.actorUserId) continue;
+    if (!new RegExp(source.decisionActions, "i").test(audit.action)) continue;
+    const key = `${source.module}:${audit.entityId}`;
+    const reviewers = actualReviewerUserIdsByRecord.get(key) ?? new Set<string>();
+    reviewers.add(audit.actorUserId);
+    actualReviewerUserIdsByRecord.set(key, reviewers);
+  }
   for (const audit of audits) {
     const source = sources.find(
       (item) => "auditType" in item && item.auditType === audit.entityType,
@@ -459,19 +573,7 @@ export async function listTrackedRequests(
     if (!("decisionActions" in source)) continue;
     if (!new RegExp(source.decisionActions, "i").test(audit.action)) continue;
     const action = audit.action.toLowerCase();
-    const outcome = /reject|declin/.test(action)
-      ? "Rejected"
-      : /return/.test(action)
-        ? "Returned"
-        : /reopen/.test(action)
-          ? "Reopened"
-          : /moderate/.test(action)
-            ? "Moderated"
-            : /lock/.test(action)
-              ? "Locked"
-              : /close/.test(action)
-                ? "Closed"
-                : "Approved";
+    const outcome = requestDecisionOutcome(action);
     const stage = /-(manager|hr|accounts)$/.exec(action)?.[1];
     const chainRole = ["chain", "amendmentChain"]
       .flatMap((chainKey) => {
@@ -489,13 +591,17 @@ export async function listTrackedRequests(
     const role =
       typeof chainRole?.role === "string"
         ? chainRole.role
-        : stage
-          ? stage === "hr"
-            ? "HR"
-            : stage === "accounts"
-              ? "Accounts"
-              : "Line Manager"
-          : audit.role || "Reviewer";
+        : /-independent-review$/.test(action)
+          ? "Independent reviewer"
+          : source.module === "Profile updates" && audit.role === "Employee"
+            ? "Independent reviewer"
+            : stage
+              ? stage === "hr"
+                ? "HR"
+                : stage === "accounts"
+                  ? "Accounts"
+                  : "Line Manager"
+              : audit.role || "Reviewer";
     const decisions = decisionsByRecord.get(key) ?? [];
     const after =
       audit.afterSummary &&
@@ -503,6 +609,17 @@ export async function listTrackedRequests(
       !Array.isArray(audit.afterSummary)
         ? (audit.afterSummary as Record<string, unknown>)
         : {};
+    const row = rowsByKey.get(key);
+    const mayReadSnapshot =
+      !!row &&
+      canViewRequestDecisionSnapshot({
+        subjectEmployeeId: row.employee_id,
+        viewerEmployeeId: actor.employeeId,
+        viewerUserId: actorUserId,
+        viewerRole: actor.activeRole,
+        actualReviewerUserIds: actualReviewerUserIdsByRecord.get(key) ?? new Set<string>(),
+      });
+    const snapshot = mayReadSnapshot ? parseRequestDecisionSnapshot(source.module, after) : null;
     decisions.push({
       ...(audit.actorUserId ? { actorId: audit.actorUserId } : {}),
       actorName: audit.actorName,
@@ -510,6 +627,10 @@ export async function listTrackedRequests(
       outcome,
       at: audit.at,
       ...(typeof after["status"] === "string" ? { statusAfter: after["status"] } : {}),
+      ...(snapshot ? { snapshot } : {}),
+      ...(mayReadSnapshot && ["Profile updates", "Timesheets"].includes(source.module) && !snapshot
+        ? { snapshotUnavailable: true }
+        : {}),
       ...((!reviewed || actor.activeRole === "HR" || audit.actorUserId === actorUserId) &&
       audit.reason
         ? { comment: audit.reason }

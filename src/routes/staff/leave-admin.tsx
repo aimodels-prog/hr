@@ -185,7 +185,7 @@ function LeaveAdminContent() {
           description="Check employee balances, review leave records, or see who will be away on the calendar. Choose a section on the left, or open Sections on your phone."
           actions={
             <div className="flex flex-wrap items-center gap-2">
-              <SickLeaveBackdateDialog employees={employees} />
+              {currentUser.activeRole === "HR" && <SickLeaveBackdateDialog employees={employees} />}
               <Button
                 variant="outline"
                 onClick={() => {

@@ -158,10 +158,9 @@ function OffboardingCaseRoute() {
   }
 
   const isActiveCase = isOffboardingCaseActive(offboardingCase.status);
-  const canWaive = currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
-  const canFinance =
-    currentUser.activeRole === "Accounts" || currentUser.activeRole === "Super Admin";
-  const canLegal = currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
+  const canWaive = currentUser.activeRole === "HR";
+  const canFinance = currentUser.activeRole === "Accounts";
+  const canLegal = currentUser.activeRole === "HR";
   const canFinalize = currentUser.activeRole === "HR";
   const canSeeConfidential =
     currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
@@ -179,7 +178,8 @@ function OffboardingCaseRoute() {
     if (task.ownerRole === "Employee") return currentUser.employeeId === employee.id;
     if (task.ownerRole === "Line Manager") {
       return (
-        currentUser.activeRole === "Line Manager" &&
+        !task.assignedUserId &&
+        ["Line Manager", "HR"].includes(currentUser.activeRole) &&
         employee.lineManagerId === currentUser.employeeId
       );
     }

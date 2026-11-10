@@ -1,11 +1,19 @@
 import { createServerFn } from "@tanstack/react-start";
 import * as z from "zod";
 import { canChangeCompanySettings } from "../auth/company-setup-policy.ts";
+import { and, asc, eq, isNull } from "drizzle-orm";
 
 import { getDatabaseClient } from "../db/client.ts";
 import { getAppSettings, saveAppSettings } from "../db/repositories/settings.repository.server.ts";
+import { getApprovalRoutingSettingsInDatabase } from "../db/repositories/approval-routing.repository.server.ts";
+import { assignExistingHrOwnRequestsToConfiguredReviewerInDatabase } from "../db/repositories/independent-hr-review.repository.server.ts";
+import {
+  listPendingIndependentHrReviewsInDatabase,
+  reassignPendingIndependentHrReviewInDatabase,
+} from "../db/repositories/independent-hr-reassignment.repository.server.ts";
 import { reconcileAnnualCarryExpiryInDatabase } from "../db/repositories/leave.repository.server.ts";
 import { auditEvents } from "../db/schema/system.ts";
+import { employees, users } from "../db/schema/employee.ts";
 import {
   resolveDefaultOrganisationId,
   resolveOrganisationIdForActor,
@@ -37,6 +45,14 @@ const AppSettingsInputSchema = z.object({
     .regex(/^\d{2}-\d{2}$/)
     .nullable()
     .optional(),
+  approvalRouting: z
+    .object({
+      hrOwnRequestReviewerEmployeeId: z.string().uuid().nullable(),
+      managerlessExecutiveTravelReviewerRole: z.enum(["Accounts", "HR"]),
+      managerlessExecutiveTravelNotifyHr: z.boolean(),
+      managerlessExecutiveAttendanceReviewerEmployeeId: z.string().uuid().nullable(),
+    })
+    .optional(),
   leaveYearEnd: z.string().regex(/^\d{2}-\d{2}$/, "Format must be MM-DD"),
   documentReminderDays: z.array(z.number().int().min(1).max(3650)),
   employeeNumberFormat: z.string().min(1).includes("{0000}", { message: "Must include {0000}" }),
@@ -60,6 +76,156 @@ export const getAppSettingsFn = createServerFn({ method: "GET" })
   .handler(async (): Promise<AppSettings> => {
     const orgId = await resolveDefaultOrganisationId();
     return getAppSettings(orgId);
+  });
+
+/** Lightweight, authorised choices for an independently assigned reviewer. */
+export const getApprovalRoutingOptionsFn = createServerFn({ method: "POST" })
+  .validator((input: { actorId: string; actorEmail?: string }) =>
+    z
+      .object({ actorId: z.string().min(1), actorEmail: z.string().email().optional() })
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const orgId = await resolveOrganisationIdForActor(data.actorId, data.actorEmail);
+    const { verified, actor } = await verifyServerActorRole(
+      orgId,
+      data.actorId,
+      undefined,
+      data.actorEmail,
+    );
+    if (!verified || !actor || !actor.roles.some((role) => role === "HR" || role === "Super Admin"))
+      throw new Error("Only HR or Super Admin can view approval routing choices.");
+    return getDatabaseClient()
+      .select({
+        employeeId: employees.id,
+        name: employees.preferredName,
+        legalName: employees.legalName,
+        workEmail: employees.workEmail,
+      })
+      .from(employees)
+      .innerJoin(
+        users,
+        and(
+          eq(users.organisationId, orgId),
+          eq(users.employeeId, employees.id),
+          eq(users.status, "Active"),
+          isNull(users.archivedAt),
+        ),
+      )
+      .where(
+        and(
+          eq(employees.organisationId, orgId),
+          eq(employees.status, "Active"),
+          isNull(employees.archivedAt),
+        ),
+      )
+      .orderBy(asc(employees.preferredName), asc(employees.legalName));
+  });
+
+/** Existing waiting requests are changed only after a separate Super Admin confirmation. */
+export const assignExistingHrOwnRequestsFn = createServerFn({ method: "POST" })
+  .validator((input: { actorId: string; actorEmail?: string }) =>
+    z
+      .object({ actorId: z.string().min(1), actorEmail: z.string().email().optional() })
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const orgId = await resolveOrganisationIdForActor(data.actorId, data.actorEmail);
+    const { verified, actor } = await verifyServerActorRole(
+      orgId,
+      data.actorId,
+      undefined,
+      data.actorEmail,
+    );
+    if (!verified || !actor || !actor.roles.includes("Super Admin") || actor.roles.includes("HR"))
+      throw new Error("An independent Super Admin must assign existing HR requests.");
+    const routing = await getApprovalRoutingSettingsInDatabase(orgId);
+    if (!routing.hrOwnRequestReviewerEmployeeId)
+      throw new Error("Save an independent HR reviewer before assigning existing requests.");
+    return assignExistingHrOwnRequestsToConfiguredReviewerInDatabase(orgId, {
+      ...actor,
+      activeRole: "Super Admin",
+    });
+  });
+
+/** A named reviewer is changed only by a separate, explicit Super Admin action. */
+export const getPendingIndependentHrReviewsFn = createServerFn({ method: "POST" })
+  .validator((input: { actorId: string; actorEmail?: string }) =>
+    z
+      .object({ actorId: z.string().min(1), actorEmail: z.string().email().optional() })
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const orgId = await resolveOrganisationIdForActor(data.actorId, data.actorEmail);
+    const { verified, actor } = await verifyServerActorRole(
+      orgId,
+      data.actorId,
+      undefined,
+      data.actorEmail,
+    );
+    if (!verified || !actor || !actor.roles.includes("Super Admin") || actor.roles.includes("HR"))
+      throw new Error("An independent Super Admin must manage HR review assignments.");
+    return listPendingIndependentHrReviewsInDatabase(orgId);
+  });
+
+export const reassignPendingIndependentHrReviewFn = createServerFn({ method: "POST" })
+  .validator(
+    (input: {
+      actorId: string;
+      actorEmail?: string;
+      module:
+        | "Leave"
+        | "Timesheet"
+        | "Attendance Correction"
+        | "Overtime"
+        | "Training"
+        | "Visit"
+        | "Time Away"
+        | "Document"
+        | "Training Certificate"
+        | "Employment Confirmation";
+      requestId: string;
+      newReviewerEmployeeId: string;
+    }) =>
+      z
+        .object({
+          actorId: z.string().min(1),
+          actorEmail: z.string().email().optional(),
+          module: z.enum([
+            "Leave",
+            "Timesheet",
+            "Attendance Correction",
+            "Overtime",
+            "Training",
+            "Visit",
+            "Time Away",
+            "Document",
+            "Training Certificate",
+            "Employment Confirmation",
+          ]),
+          requestId: z.string().uuid(),
+          newReviewerEmployeeId: z.string().uuid(),
+        })
+        .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const orgId = await resolveOrganisationIdForActor(data.actorId, data.actorEmail);
+    const { verified, actor } = await verifyServerActorRole(
+      orgId,
+      data.actorId,
+      undefined,
+      data.actorEmail,
+    );
+    if (!verified || !actor || !actor.roles.includes("Super Admin") || actor.roles.includes("HR"))
+      throw new Error("An independent Super Admin must reassign HR requests.");
+    await reassignPendingIndependentHrReviewInDatabase(
+      orgId,
+      data.module,
+      data.requestId,
+      data.newReviewerEmployeeId,
+      { ...actor, activeRole: "Super Admin" },
+    );
+    return { reassigned: true };
   });
 
 export const saveAppSettingsFn = createServerFn({ method: "POST" })
@@ -202,6 +368,7 @@ export const saveAppSettingsFn = createServerFn({ method: "POST" })
     const completeSettings: AppSettings = {
       ...previous,
       ...settings,
+      approvalRouting: settings.approvalRouting ?? previous.approvalRouting,
       id: previous.id,
       createdAt: settings.createdAt ?? previous.createdAt ?? new Date().toISOString(),
       createdBy: settings.createdBy ?? previous.createdBy ?? actor.userId,

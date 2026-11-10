@@ -210,6 +210,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     "attendance:site_visit_approve",
     "attendance:manage_all",
     "travel:request_self",
+    "travel:manager_review",
     "travel:hr_review",
     "document:view_self",
     "document:view_direct_reports",

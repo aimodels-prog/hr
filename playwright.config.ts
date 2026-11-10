@@ -7,9 +7,13 @@ const localChrome = "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const configuredBrowser =
   process.env["VIA_HR_E2E_BROWSER_EXECUTABLE"]?.trim() ||
   (isWindows && existsSync(localChrome) ? localChrome : undefined);
+const port = process.env["VIA_HR_E2E_PORT"]?.trim() || "4173";
+if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535)
+  throw new Error("VIA_HR_E2E_PORT must be a valid local port.");
+const baseURL = `http://127.0.0.1:${port}`;
 const webServerCommand =
   process.env["VIA_HR_E2E_WEB_SERVER_COMMAND"]?.trim() ||
-  `${isWindows ? "npm.cmd" : "npm"} run dev -- --host 127.0.0.1 --port 4173`;
+  `${isWindows ? "npm.cmd" : "npm"} run dev -- --host 127.0.0.1 --port ${port}`;
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -20,7 +24,7 @@ export default defineConfig({
   workers: 1,
   reporter: "line",
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL,
     headless: true,
     ...(configuredBrowser ? { launchOptions: { executablePath: configuredBrowser } } : {}),
     trace: "retain-on-failure",
@@ -28,7 +32,7 @@ export default defineConfig({
   },
   webServer: {
     command: webServerCommand,
-    url: "http://127.0.0.1:4173",
+    url: baseURL,
     reuseExistingServer: true,
     timeout: 60_000,
     env: {

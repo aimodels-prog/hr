@@ -2,7 +2,6 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   ClipboardCheck,
   ArrowRight,
-  UserCheck,
   Briefcase,
   FilePlus2,
   CalendarPlus,
@@ -49,6 +48,7 @@ function Dashboard() {
     title: string;
     description: string;
     to: string;
+    hash?: string;
     icon: LucideIcon;
     tone: string;
   }> =
@@ -59,7 +59,7 @@ function Dashboard() {
             description: "Start a hiring request",
             to: "/staff/vacancies/new",
             icon: FilePlus2,
-            tone: "bg-primary/10 text-primary",
+            tone: "bg-info/10 text-info",
           },
           {
             title: "Add employee",
@@ -75,28 +75,14 @@ function Dashboard() {
             icon: Upload,
             tone: "bg-info/10 text-info",
           },
-          {
-            title: "New employees",
-            description: "Track new joiner readiness",
-            to: "/staff/onboarding",
-            icon: UserCheck,
-            tone: "bg-primary/10 text-primary",
-          },
         ]
       : activeRole === "Line Manager"
         ? [
             {
-              title: "Leave approvals",
-              description: "Review direct-report leave",
-              to: "/staff/leave-approvals",
+              title: "My requests",
+              description: "Track my own requests",
+              to: "/staff/requests?view=my",
               icon: CalendarPlus,
-              tone: "bg-primary/10 text-primary",
-            },
-            {
-              title: "Timesheet approvals",
-              description: "Review submitted hours",
-              to: "/staff/timesheet-approvals",
-              icon: Clock3,
               tone: "bg-warning/10 text-warning",
             },
             {
@@ -121,13 +107,6 @@ function Dashboard() {
                 description: "Prepare and validate inputs",
                 to: "/staff/payroll/periods",
                 icon: WalletCards,
-                tone: "bg-primary/10 text-primary",
-              },
-              {
-                title: "Travel approvals",
-                description: "Review budget clearance",
-                to: "/staff/travel-accounts-approvals",
-                icon: Plane,
                 tone: "bg-info/10 text-info",
               },
               {
@@ -145,58 +124,21 @@ function Dashboard() {
                 tone: "bg-success/10 text-success",
               },
             ]
-          : activeRole === "Super Admin"
+          : activeRole === "Travel Admin"
             ? [
                 {
-                  title: "Create employee",
-                  description: "Add a staff record",
-                  to: "/staff/employees/new",
-                  icon: UserPlus,
+                  title: "Travel bookings",
+                  description: "Arrange approved trips",
+                  to: "/staff/travel",
+                  icon: Plane,
                   tone: "bg-primary/10 text-primary",
                 },
                 {
-                  title: "Final leave approvals",
-                  description: "Complete leave decisions",
-                  to: "/staff/leave-approvals",
-                  icon: CalendarPlus,
-                  tone: "bg-success/10 text-success",
-                },
-                {
-                  title: "Payroll control",
-                  description: "Review and lock periods",
-                  to: "/staff/payroll/periods",
-                  icon: WalletCards,
-                  tone: "bg-warning/10 text-warning",
-                },
-                {
-                  title: "Audit history",
-                  description: "Review sensitive changes",
-                  to: "/staff/audit",
-                  icon: ShieldCheck,
-                  tone: "bg-destructive/10 text-destructive",
-                },
-                {
-                  title: "System settings",
-                  description: "Roles, rules and master data",
-                  to: "/staff/settings",
-                  icon: Settings,
+                  title: "My requests",
+                  description: "Track my own requests",
+                  to: "/staff/requests?view=my",
+                  icon: ClipboardCheck,
                   tone: "bg-info/10 text-info",
-                },
-                {
-                  title: "Reports centre",
-                  description: "Executive people insight",
-                  to: "/staff/reports",
-                  icon: Briefcase,
-                  tone: "bg-primary/10 text-primary",
-                },
-              ]
-            : [
-                {
-                  title: "Request leave",
-                  description: "Check balance and request",
-                  to: "/staff/me/leave-balances",
-                  icon: CalendarPlus,
-                  tone: "bg-primary/10 text-primary",
                 },
                 {
                   title: "My timesheet",
@@ -205,30 +147,82 @@ function Dashboard() {
                   icon: Clock3,
                   tone: "bg-warning/10 text-warning",
                 },
-                {
-                  title: "Request travel",
-                  description: "Request approval before travel",
-                  to: "/staff/travel/new",
-                  icon: Plane,
-                  tone: "bg-info/10 text-info",
-                },
-                {
-                  title: "My profile",
-                  description: "Documents and personal data",
-                  to: "/staff/me/profile",
-                  icon: UserCheck,
-                  tone: "bg-success/10 text-success",
-                },
-              ];
+              ]
+            : activeRole === "Super Admin"
+              ? [
+                  {
+                    title: "Employee requests",
+                    description: "View progress without deciding",
+                    to: "/staff/requests?view=organisation",
+                    icon: ClipboardCheck,
+                    tone: "bg-success/10 text-success",
+                  },
+                  {
+                    title: "Audit history",
+                    description: "Review sensitive changes",
+                    to: "/staff/audit",
+                    icon: ShieldCheck,
+                    tone: "bg-destructive/10 text-destructive",
+                  },
+                  {
+                    title: "System settings",
+                    description: "Roles, rules and master data",
+                    to: "/staff/settings",
+                    icon: Settings,
+                    tone: "bg-info/10 text-info",
+                  },
+                  {
+                    title: "Reports centre",
+                    description: "Executive people insight",
+                    to: "/staff/reports",
+                    icon: Briefcase,
+                    tone: "bg-primary/10 text-primary",
+                  },
+                ]
+              : [
+                  {
+                    title: "Request leave",
+                    description: "Check balance and request",
+                    to: "/staff/me/leave-balances",
+                    hash: "action=request",
+                    icon: CalendarPlus,
+                    tone: "bg-primary/10 text-primary",
+                  },
+                  {
+                    title: "My timesheet",
+                    description: "Record and submit hours",
+                    to: "/staff/me/timesheets",
+                    icon: Clock3,
+                    tone: "bg-warning/10 text-warning",
+                  },
+                  {
+                    title: "Request travel",
+                    description: "Request approval before travel",
+                    to: "/staff/travel/new",
+                    icon: Plane,
+                    tone: "bg-info/10 text-info",
+                  },
+                  {
+                    title: "My requests",
+                    description: "Track requests and approvals",
+                    to: "/staff/requests?view=my",
+                    icon: ClipboardCheck,
+                    tone: "bg-success/10 text-success",
+                  },
+                ];
 
   const quickAccess = (
-    <section aria-label="Quick access" className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+    <section
+      aria-label="Quick access"
+      className={`grid gap-2 sm:grid-cols-2 ${roleQuickActions.length === 3 ? "xl:grid-cols-3" : "xl:grid-cols-4"}`}
+    >
       {roleQuickActions.map((action) => {
         const Icon = action.icon;
         return (
           <Link
             key={action.title}
             to={action.to}
+            {...(action.hash ? { hash: action.hash } : {})}
             className="group flex min-h-12 items-center gap-3 rounded-xl border bg-card px-3 py-2.5 transition-colors hover:border-primary/30 hover:bg-muted/30"
           >
             <span
@@ -283,10 +277,10 @@ function Dashboard() {
         )}
       </div>
 
-      {quickAccess}
       <RequestTrackerSummary />
+      {quickAccess}
       <DashboardActionQueue />
-      {(activeRole === "Employee" || activeRole === "IT") && currentEmployee && (
+      {["Employee", "IT", "Travel Admin"].includes(activeRole) && currentEmployee && (
         <EmployeeDashboard employee={currentEmployee} userId={currentUserId} />
       )}
       {activeRole === "Line Manager" && currentEmployee && (

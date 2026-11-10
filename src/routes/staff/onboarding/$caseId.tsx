@@ -143,7 +143,7 @@ function OnboardingCaseRoute() {
     );
   }
 
-  const canWaive = currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
+  const canWaive = currentUser.activeRole === "HR";
   const canSeeAudit = currentUser.can("system:audit_view");
   const canManageCases =
     currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin";
@@ -158,7 +158,8 @@ function OnboardingCaseRoute() {
     if (task.ownerRole === "Employee") return currentUser.employeeId === employee.id;
     if (task.ownerRole === "Line Manager") {
       return (
-        currentUser.activeRole === "Line Manager" &&
+        !task.assignedUserId &&
+        ["Line Manager", "HR"].includes(currentUser.activeRole) &&
         employee.lineManagerId === currentUser.employeeId
       );
     }

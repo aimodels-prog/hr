@@ -83,7 +83,7 @@ test("employee essentials remain usable at a mobile viewport", async ({ page }) 
   const routes = [
     { path: "/staff", landmark: /Welcome back/i },
     { path: "/staff/me/profile", landmark: "Omar Rahman" },
-    { path: "/staff/my-tasks", landmark: "My Tasks" },
+    { path: "/staff/my-tasks", landmark: "Tasks & Reminders" },
     { path: "/staff/me/leave-balances", landmark: "My Leave" },
   ];
 

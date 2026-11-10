@@ -120,7 +120,6 @@ export class TaskService {
     this.addPerformanceTasks(viewer, directReportIds, employeeName, addTask);
     this.addHrTasks(viewer, employeeName, today, addTask);
     this.addAccountsTasks(viewer, employeeName, addTask);
-    this.addSuperAdminTasks(viewer, employeeName, addTask);
     this.addInterviewTasks(viewer, addTask);
 
     const stateOrder: Record<TaskState, number> = {
@@ -292,7 +291,7 @@ export class TaskService {
     employeeName: (employeeId: string) => string,
     addTask: AddTask,
   ): void {
-    if (viewer.activeRole !== "Line Manager" || !viewer.employeeId) return;
+    if (!["Line Manager", "HR"].includes(viewer.activeRole) || !viewer.employeeId) return;
     const { storage } = getApplicationDataServices();
     for (const request of storage.readCollection<LeaveRequest>("leave_requests")) {
       if (
@@ -368,7 +367,7 @@ export class TaskService {
     for (const claim of storage.readCollection<OvertimeClaim>("overtimeClaims")) {
       if (
         isActive(claim) &&
-        claim.status === "Pending Manager" &&
+        (claim.status === "Pending Manager" || claim.status === "Pending Pre-authorisation") &&
         directReportIds.has(claim.employeeId)
       ) {
         addTask({
@@ -388,7 +387,10 @@ export class TaskService {
       }
     }
     for (const goal of storage.readCollection<EmployeeGoal>("employeeGoals")) {
-      if (goal.status === "Pending Approval" && directReportIds.has(goal.employeeId)) {
+      if (
+        (goal.status === "Pending Approval" || goal.status === "Completion Pending") &&
+        directReportIds.has(goal.employeeId)
+      ) {
         addTask({
           id: `goal-manager-${goal.id}`,
           module: "Performance",
@@ -605,7 +607,7 @@ export class TaskService {
         });
       }
       if (
-        viewer.activeRole === "Line Manager" &&
+        ["Line Manager", "HR"].includes(viewer.activeRole) &&
         directReportIds.has(review.employeeId) &&
         review.status === "Manager Review Pending"
       ) {
@@ -624,10 +626,7 @@ export class TaskService {
           subjectName: employeeName(review.employeeId),
         });
       }
-      if (
-        (viewer.activeRole === "HR" || viewer.activeRole === "Super Admin") &&
-        review.status === "Moderation Pending"
-      ) {
+      if (viewer.activeRole === "HR" && review.status === "Moderation Pending") {
         addTask({
           id: `performance-moderation-${review.id}`,
           module: "Performance",
@@ -645,7 +644,7 @@ export class TaskService {
       }
       if (
         review.status === "Discussion Pending" &&
-        viewer.activeRole === "Line Manager" &&
+        ["Line Manager", "HR"].includes(viewer.activeRole) &&
         directReportIds.has(review.employeeId)
       ) {
         addTask({
@@ -679,10 +678,7 @@ export class TaskService {
           subjectName: employeeName(review.employeeId),
         });
       }
-      if (
-        (viewer.activeRole === "HR" || viewer.activeRole === "Super Admin") &&
-        review.status === "Acknowledged"
-      ) {
+      if (viewer.activeRole === "HR" && review.status === "Acknowledged") {
         addTask({
           id: `performance-lock-${review.id}`,
           module: "Performance",
@@ -991,77 +987,6 @@ export class TaskService {
     }
   }
 
-  private addSuperAdminTasks(
-    viewer: TaskViewer,
-    employeeName: (employeeId: string) => string,
-    addTask: AddTask,
-  ): void {
-    if (viewer.activeRole !== "Super Admin") return;
-    const { storage } = getApplicationDataServices();
-    for (const request of storage.readCollection<LeaveRequest>("leave_requests")) {
-      if (
-        isActive(request) &&
-        (request.status === "Pending HR" ||
-          request.status === "Pending Super Admin" ||
-          request.status === "Cancellation Pending")
-      ) {
-        addTask({
-          id: `leave-final-${request.id}`,
-          module: "Leave",
-          title:
-            request.status === "Cancellation Pending"
-              ? "Review leave cancellation"
-              : "Complete final leave review",
-          description: `${employeeName(request.employeeId)}’s ${request.policySnapshot.name} request requires a final decision.`,
-          priority: "High",
-          dueDate: addDays(request.updatedAt.slice(0, 10), 2),
-          actionLabel: "Review request",
-          actionUrl: "/staff/leave-approvals",
-          sourceType: "leave-request",
-          sourceId: request.id,
-          subjectEmployeeId: request.employeeId,
-          subjectName: employeeName(request.employeeId),
-        });
-      }
-    }
-    for (const request of storage.readCollection<TravelRequest>("travelRequests")) {
-      if (isActive(request) && request.status === "Pending Super Admin Closure") {
-        addTask({
-          id: `travel-close-${request.id}`,
-          module: "Travel",
-          title: "Close reimbursement",
-          description: `${employeeName(request.employeeId)} submitted trip expenses for ${request.destination}.`,
-          priority: "High",
-          dueDate: addDays(request.updatedAt.slice(0, 10), 3),
-          actionLabel: "Review reimbursement",
-          actionUrl: "/staff/travel-closures",
-          sourceType: "travel-request",
-          sourceId: request.id,
-          subjectEmployeeId: request.employeeId,
-          subjectName: employeeName(request.employeeId),
-        });
-      }
-    }
-    for (const period of storage.readCollection<PayrollPeriod>("payrollPeriods")) {
-      const unresolved = period.exceptions.filter((exception) => !exception.acknowledged);
-      if (unresolved.length === 0) continue;
-      addTask({
-        id: `payroll-exceptions-${period.id}`,
-        module: "Payroll",
-        title: "Resolve payroll exceptions",
-        description: `${period.name} has ${unresolved.length} unresolved exception${unresolved.length === 1 ? "" : "s"}.`,
-        priority: unresolved.some((exception) => exception.severity === "High")
-          ? "Critical"
-          : "High",
-        dueDate: period.cutoffDate,
-        actionLabel: "Review payroll",
-        actionUrl: `/staff/payroll/periods/${period.id}`,
-        sourceType: "payroll-period",
-        sourceId: period.id,
-      });
-    }
-  }
-
   private addInterviewTasks(viewer: TaskViewer, addTask: AddTask): void {
     const { storage } = getApplicationDataServices();
     const submittedInterviewIds = new Set(
@@ -1114,7 +1039,10 @@ export class TaskService {
     }
     if (task.ownerRole === "Employee") return caseEmployeeId === viewer.employeeId;
     if (task.ownerRole === "Line Manager") {
-      return viewer.activeRole === "Line Manager" && employee?.lineManagerId === viewer.employeeId;
+      return (
+        ["Line Manager", "HR"].includes(viewer.activeRole) &&
+        employee?.lineManagerId === viewer.employeeId
+      );
     }
     return task.ownerRole === viewer.activeRole;
   }

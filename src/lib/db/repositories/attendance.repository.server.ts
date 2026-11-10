@@ -8,6 +8,8 @@ import {
   approvedLeaveSnapshotIncludesDate,
 } from "../../data/approved-leave.ts";
 import { leaveDisplayType } from "../../data/leave-presentation.ts";
+import { correctionNeedsDirectHrReview } from "../../data/executive-reporting.ts";
+import { getApprovalRoutingSettingsInDatabase } from "./approval-routing.repository.server.ts";
 import {
   attendanceBreakMinutes,
   flexibleOfficeSchedule,
@@ -34,10 +36,11 @@ import { getDatabaseClient } from "../client.ts";
 import { deleteObjectFile, readObjectFile } from "../object-storage.server.ts";
 import { employees, users } from "../schema/employee.ts";
 import { fileMetadata } from "../schema/documents.ts";
-import { locations, publicHolidays } from "../schema/master-data.ts";
+import { locations, positions, publicHolidays } from "../schema/master-data.ts";
 import { leaveRequests } from "../schema/leave.ts";
 import { appSettings } from "../schema/organisation.ts";
 import { auditEvents } from "../schema/system.ts";
+import { hrIndependentReviewAssignments } from "../schema/hr-independent-review.ts";
 import {
   attendanceCorrections,
   attendancePolicies,
@@ -48,6 +51,12 @@ import {
 } from "../schema/time.ts";
 import { notifications } from "../schema/system.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
+import {
+  actorIsIndependentHrReviewer,
+  assignIndependentHrReviewer,
+  assignedIndependentHrReviewer,
+  independentReviewerForHrEmployee,
+} from "./independent-hr-review.repository.server.ts";
 
 function distanceMeters(aLat: number, aLon: number, bLat: number, bLon: number): number {
   const r = 6371000;
@@ -949,6 +958,32 @@ export async function requestAttendanceCorrectionInDatabase(
   const db = getDatabaseClient();
   const id = randomUUID();
   await db.transaction(async (tx) => {
+    const independentReviewer = await independentReviewerForHrEmployee(
+      organisationId,
+      actor.employeeId!,
+      tx,
+    );
+    const [requester] = await tx
+      .select({
+        lineManagerId: employees.lineManagerId,
+        positionName: positions.name,
+      })
+      .from(employees)
+      .innerJoin(positions, eq(positions.id, employees.positionId))
+      .where(
+        and(
+          eq(employees.organisationId, organisationId),
+          eq(employees.id, actor.employeeId!),
+          inArray(employees.status, ["Active", "Probation", "Notice"]),
+          isNull(employees.archivedAt),
+        ),
+      )
+      .limit(1);
+    if (!requester) throw new Error("An active employee profile is required.");
+    const managerlessExecutive = correctionNeedsDirectHrReview(
+      requester.positionName,
+      requester.lineManagerId,
+    );
     let record: typeof attendanceRecords.$inferSelect | undefined;
     if (input.attendanceRecordId) {
       [record] = await tx
@@ -968,7 +1003,8 @@ export async function requestAttendanceCorrectionInDatabase(
       if (input.employeeId !== actor.employeeId)
         throw new Error("Employees can request corrections only for their own attendance.");
       // A completely missing record is still a full punch correction, not the HR-only shortcut.
-      await requireEmployeeSupervisor(tx, organisationId, actor.employeeId!);
+      if (!independentReviewer && !managerlessExecutive)
+        await requireEmployeeSupervisor(tx, organisationId, actor.employeeId!);
       const [[employee], [settings], [policy]] = await Promise.all([
         tx
           .select({
@@ -1127,7 +1163,45 @@ export async function requestAttendanceCorrectionInDatabase(
       (!input.proposedClockIn ||
         input.proposedClockIn === zonedParts(new Date(record.clockInAt), timezone).time ||
         input.proposedClockIn === record.clockInAt);
-    if (!clockOutOnly) await requireEmployeeSupervisor(tx, organisationId, actor.employeeId!);
+    if (!clockOutOnly && !independentReviewer && !managerlessExecutive)
+      await requireEmployeeSupervisor(tx, organisationId, actor.employeeId!);
+    let executiveAttendanceReviewer: { employeeId: string; userId: string } | null = null;
+    if (managerlessExecutive && !independentReviewer && !clockOutOnly) {
+      const reviewerEmployeeId = (await getApprovalRoutingSettingsInDatabase(organisationId, tx))
+        .managerlessExecutiveAttendanceReviewerEmployeeId;
+      if (reviewerEmployeeId) {
+        if (reviewerEmployeeId === actor.employeeId)
+          throw new Error(
+            "You cannot review your own attendance correction. Ask the administrator to change the reviewer.",
+          );
+        const [reviewer] = await tx
+          .select({ employeeId: employees.id, userId: users.id })
+          .from(employees)
+          .innerJoin(
+            users,
+            and(
+              eq(users.organisationId, organisationId),
+              eq(users.employeeId, employees.id),
+              eq(users.status, "Active"),
+              isNull(users.archivedAt),
+            ),
+          )
+          .where(
+            and(
+              eq(employees.organisationId, organisationId),
+              eq(employees.id, reviewerEmployeeId),
+              eq(employees.status, "Active"),
+              isNull(employees.archivedAt),
+            ),
+          )
+          .limit(1);
+        if (!reviewer)
+          throw new Error(
+            "The configured attendance reviewer is unavailable. Ask the administrator to choose an active reviewer.",
+          );
+        executiveAttendanceReviewer = reviewer;
+      }
+    }
     const proposedClockIn = clockOutOnly
       ? record.clockInAt!
       : input.proposedClockIn
@@ -1191,16 +1265,56 @@ export async function requestAttendanceCorrectionInDatabase(
       proposedClockOut,
       explanation: input.explanation.trim(),
       evidenceFileId: input.evidenceFileId,
-      status: clockOutOnly ? "Pending HR" : "Pending Manager",
+      status:
+        clockOutOnly || independentReviewer || managerlessExecutive
+          ? "Pending HR"
+          : "Pending Manager",
       createdBy: actor.userId,
       updatedBy: actor.userId,
     } as typeof attendanceCorrections.$inferInsert);
-    if (clockOutOnly)
+    if (independentReviewer || executiveAttendanceReviewer) {
+      const assignedReviewer = independentReviewer ?? executiveAttendanceReviewer!;
+      await assignIndependentHrReviewer(
+        organisationId,
+        "Attendance Correction",
+        id,
+        actor.employeeId!,
+        assignedReviewer.employeeId,
+        actor.userId,
+        tx,
+      );
+      await tx
+        .insert(notifications)
+        .values({
+          organisationId,
+          recipientUserId: assignedReviewer.userId,
+          type: "attendance.correction_submitted",
+          title: "Attendance correction awaiting your review",
+          message:
+            "You are the assigned reviewer. Check the original and proposed attendance times.",
+          priority: "Normal",
+          status: "Unread",
+          deduplicationKey: `attendance-assigned-${id}-${assignedReviewer.userId}`,
+          link: {
+            entityType: "attendance-correction",
+            entityId: id,
+            path: "/staff/attendance/corrections",
+          },
+          createdBy: actor.userId,
+          updatedBy: actor.userId,
+        } as typeof notifications.$inferInsert)
+        .onConflictDoNothing();
+    } else if (clockOutOnly || managerlessExecutive)
       await tx.execute(sql`INSERT INTO notifications
       (organisation_id,recipient_user_id,type,title,message,priority,deduplication_key,link,created_by,updated_by)
-      SELECT ${organisationId}::uuid,u.id,'attendance.correction_submitted','Clock-out awaiting HR approval',
-        'An employee submitted a missing clock-out time. Review the original punch and proposed time.',
-        'Normal','clockout-review-' || ${id} || '-' || u.id,
+      SELECT ${organisationId}::uuid,u.id,'attendance.correction_submitted',
+        ${clockOutOnly ? "Clock-out awaiting HR approval" : "Attendance correction awaiting HR approval"},
+        ${
+          clockOutOnly
+            ? "An employee submitted a missing clock-out time. Review the original punch and proposed time."
+            : "A supervisor-free executive submitted an attendance correction. Review the original and proposed times."
+        },
+        'Normal','attendance-correction-review-' || ${id} || '-' || u.id,
         jsonb_build_object('entityType','attendance-correction','entityId',${id}::text,'path','/staff/attendance/corrections'),
         ${actor.userId}::uuid,${actor.userId}::uuid
       FROM users u JOIN user_roles ur ON ur.user_id=u.id AND ur.organisation_id=u.organisation_id
@@ -1266,10 +1380,28 @@ export async function decideAttendanceCorrectionInDatabase(
       .limit(1);
     const managerStage = correction.status === "Pending Manager";
     const hrStage = correction.status === "Pending HR";
+    const assignedReviewer = await assignedIndependentHrReviewer(
+      organisationId,
+      "Attendance Correction",
+      correctionId,
+      correction.employeeId,
+      tx,
+    );
+    const independentReview = actorIsIndependentHrReviewer(
+      actor,
+      correction.employeeId,
+      assignedReviewer,
+    );
+    const hrStandIn =
+      managerStage &&
+      actor.activeRole === "HR" &&
+      actor.employeeId === employee?.lineManagerId &&
+      actor.employeeId !== correction.employeeId;
     if (
       (managerStage &&
+        !hrStandIn &&
         (actor.activeRole !== "Line Manager" || actor.employeeId !== employee?.lineManagerId)) ||
-      (hrStage && actor.activeRole !== "HR") ||
+      (hrStage && (assignedReviewer ? !independentReview : actor.activeRole !== "HR")) ||
       (!managerStage && !hrStage)
     )
       throw new Error("You are not the assigned correction approver.");
@@ -1298,7 +1430,7 @@ export async function decideAttendanceCorrectionInDatabase(
           recordVersion: sql`${attendanceCorrections.recordVersion} + 1`,
         })
         .where(eq(attendanceCorrections.id, correctionId));
-    } else if (managerStage) {
+    } else if (managerStage && !hrStandIn) {
       await tx
         .update(attendanceCorrections)
         .set({
@@ -1435,6 +1567,13 @@ export async function decideAttendanceCorrectionInDatabase(
         .update(attendanceCorrections)
         .set({
           status: "Approved",
+          ...(hrStandIn
+            ? {
+                managerNotes: notes?.trim(),
+                managerReviewedBy: actor.userId,
+                managerReviewedAt: new Date().toISOString(),
+              }
+            : {}),
           hrNotes: notes?.trim(),
           hrReviewedBy: actor.userId,
           hrReviewedAt: new Date().toISOString(),
@@ -1485,7 +1624,13 @@ export async function decideAttendanceCorrectionInDatabase(
       afterSummary: {
         stage: correction.status,
         decision,
-        status: decision === "reject" ? "Rejected" : managerStage ? "Pending HR" : "Approved",
+        status:
+          decision === "reject"
+            ? "Rejected"
+            : managerStage && !hrStandIn
+              ? "Pending HR"
+              : "Approved",
+        ...(hrStandIn ? { hrStandIn: true } : {}),
         recordVersion: correction.recordVersion + 1,
       },
       reason: notes?.trim() ?? "Attendance correction decision",
@@ -1508,12 +1653,12 @@ export async function decideAttendanceCorrectionInDatabase(
           title:
             decision === "reject"
               ? "Attendance correction declined"
-              : managerStage
+              : managerStage && !hrStandIn
                 ? "Attendance correction sent to HR"
                 : "Attendance correction approved",
           message:
             notes?.trim() ||
-            (managerStage
+            (managerStage && !hrStandIn
               ? "Your supervisor approved the request. HR will complete the review."
               : `Your attendance correction was ${decision === "approve" ? "approved" : "declined"}.`),
           priority: decision === "reject" ? "High" : "Normal",
@@ -1553,8 +1698,24 @@ export async function readAttendanceCorrectionEvidenceInDatabase(
     )
     .limit(1);
   if (!row?.evidenceFileId) throw new Error("No evidence is attached to this correction.");
+  const [independentAssignment] = await db
+    .select({
+      reviewerEmployeeId: hrIndependentReviewAssignments.reviewerEmployeeId,
+    })
+    .from(hrIndependentReviewAssignments)
+    .where(
+      and(
+        eq(hrIndependentReviewAssignments.organisationId, organisationId),
+        eq(hrIndependentReviewAssignments.module, "Attendance Correction"),
+        eq(hrIndependentReviewAssignments.requestId, correctionId),
+        isNull(hrIndependentReviewAssignments.archivedAt),
+      ),
+    )
+    .limit(1);
   const permitted =
     actor.employeeId === row.employeeId ||
+    (actor.activeRole !== "Super Admin" &&
+      actor.employeeId === independentAssignment?.reviewerEmployeeId) ||
     actor.employeeId === row.lineManagerId ||
     actor.activeRole === "HR" ||
     actor.activeRole === "Super Admin";
@@ -1686,6 +1847,7 @@ export async function requestSiteVisitInDatabase(
           eq(siteVisitRequests.organisationId, organisationId),
           eq(siteVisitRequests.employeeId, input.employeeId),
           eq(siteVisitRequests.date, input.date),
+          isNull(siteVisitRequests.archivedAt),
           inArray(siteVisitRequests.status, ["Pending HR", "Approved", "Completed"]),
         ),
       )
@@ -1711,16 +1873,33 @@ export async function requestSiteVisitInDatabase(
       createdBy: actor.userId!,
       updatedBy: actor.userId!,
     } as typeof siteVisitRequests.$inferInsert);
-    const hrUsers = await tx
-      .select({ id: users.id })
-      .from(users)
-      .where(
-        and(
-          eq(users.organisationId, organisationId),
-          eq(users.status, "Active"),
-          sql`EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ${users.id} AND ur.organisation_id = ${organisationId} AND r.code='HR')`,
-        ),
+    const independentReviewer = await independentReviewerForHrEmployee(
+      organisationId,
+      input.employeeId,
+      tx,
+    );
+    if (independentReviewer)
+      await assignIndependentHrReviewer(
+        organisationId,
+        "Visit",
+        id,
+        input.employeeId,
+        independentReviewer.employeeId,
+        actor.userId,
+        tx,
       );
+    const hrUsers = independentReviewer
+      ? [{ id: independentReviewer.userId }]
+      : await tx
+          .select({ id: users.id })
+          .from(users)
+          .where(
+            and(
+              eq(users.organisationId, organisationId),
+              eq(users.status, "Active"),
+              sql`EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ${users.id} AND ur.organisation_id = ${organisationId} AND r.code='HR')`,
+            ),
+          );
     for (const hr of hrUsers) {
       if (hr.id === actor.userId) continue;
       await tx
@@ -1729,15 +1908,46 @@ export async function requestSiteVisitInDatabase(
           organisationId,
           recipientUserId: hr.id,
           type: "attendance.site_visit",
-          title: "Site visit awaiting review",
+          title: independentReviewer
+            ? "Site visit needs your review"
+            : "Site visit awaiting review",
           message: `${actor.displayName} requested a ${input.origin.toLowerCase()}-origin site visit to ${input.destination.trim()}.`,
           priority: "Normal",
           deduplicationKey: `site-visit-review-${id}`,
           link: {
             entityType: "site-visit",
             entityId: id,
-            path: `/staff/attendance#section=site-visits&visit=${id}`,
+            path: independentReviewer
+              ? `/staff/independent-visit-reviews#review=${id}`
+              : `/staff/attendance#section=site-visits&visit=${id}`,
           },
+          createdBy: actor.userId!,
+          updatedBy: actor.userId!,
+        } as typeof notifications.$inferInsert)
+        .onConflictDoNothing();
+    }
+    if (independentReviewer) {
+      const [reviewerPerson] = await tx
+        .select({ name: employees.legalName })
+        .from(employees)
+        .where(
+          and(
+            eq(employees.organisationId, organisationId),
+            eq(employees.id, independentReviewer.employeeId),
+          ),
+        )
+        .limit(1);
+      await tx
+        .insert(notifications)
+        .values({
+          organisationId,
+          recipientUserId: actor.userId!,
+          type: "attendance.site_visit",
+          title: "Your site visit is awaiting review",
+          message: `${reviewerPerson?.name ?? "Your assigned reviewer"} will review your visit to ${input.destination.trim()}.`,
+          priority: "Normal",
+          deduplicationKey: `site-visit-receipt-${id}`,
+          link: { entityType: "site-visit", entityId: id, path: "/staff/me/attendance" },
           createdBy: actor.userId!,
           updatedBy: actor.userId!,
         } as typeof notifications.$inferInsert)
@@ -1813,6 +2023,7 @@ export async function updateSiteVisitProgressInDatabase(
           eq(siteVisitRequests.id, visitId),
           eq(siteVisitRequests.organisationId, organisationId),
           eq(siteVisitRequests.employeeId, actor.employeeId!),
+          isNull(siteVisitRequests.archivedAt),
         ),
       )
       .for("update")
@@ -1857,16 +2068,69 @@ export async function updateSiteVisitProgressInDatabase(
         status: "Pending",
         requestedAt: at.toISOString(),
       };
-      const reviewers = await tx
-        .select({ id: users.id })
-        .from(users)
+      const [savedAssignment] = await tx
+        .select({ id: hrIndependentReviewAssignments.id })
+        .from(hrIndependentReviewAssignments)
         .where(
           and(
-            eq(users.organisationId, organisationId),
-            eq(users.status, "Active"),
-            sql`EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=${users.id} AND ur.organisation_id=${organisationId} AND r.code='HR')`,
+            eq(hrIndependentReviewAssignments.organisationId, organisationId),
+            eq(hrIndependentReviewAssignments.module, "Visit"),
+            eq(hrIndependentReviewAssignments.requestId, visitId),
+            isNull(hrIndependentReviewAssignments.archivedAt),
           ),
+        )
+        .limit(1);
+      let independentReviewer: { employeeId: string; userId: string } | null = null;
+      let reviewerUnavailable = false;
+      if (savedAssignment) {
+        try {
+          independentReviewer = await assignedIndependentHrReviewer(
+            organisationId,
+            "Visit",
+            visitId,
+            visit.employeeId,
+            tx,
+          );
+          if (!independentReviewer)
+            throw new Error(
+              "This visit has an invalid reviewer assignment. Ask an administrator to correct it.",
+            );
+        } catch (error) {
+          if (!(error instanceof Error) || !/inactive|no longer active/.test(error.message))
+            throw error;
+          reviewerUnavailable = true;
+        }
+      } else {
+        independentReviewer = await independentReviewerForHrEmployee(
+          organisationId,
+          visit.employeeId,
+          tx,
         );
+      }
+      if (independentReviewer)
+        await assignIndependentHrReviewer(
+          organisationId,
+          "Visit",
+          visitId,
+          visit.employeeId,
+          independentReviewer.employeeId,
+          actor.userId,
+          tx,
+        );
+      const reviewers = reviewerUnavailable
+        ? []
+        : independentReviewer
+          ? [{ id: independentReviewer.userId }]
+          : await tx
+              .select({ id: users.id })
+              .from(users)
+              .where(
+                and(
+                  eq(users.organisationId, organisationId),
+                  eq(users.status, "Active"),
+                  sql`EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=${users.id} AND ur.organisation_id=${organisationId} AND r.code='HR')`,
+                ),
+              );
       for (const reviewer of reviewers) {
         if (reviewer.id === actor.userId) continue;
         await tx
@@ -1882,8 +2146,43 @@ export async function updateSiteVisitProgressInDatabase(
             link: {
               entityType: "site-visit",
               entityId: visitId,
-              path: `/staff/attendance#section=site-visits&visit=${visitId}`,
+              path: independentReviewer
+                ? `/staff/independent-visit-reviews#review=${visitId}`
+                : `/staff/attendance#section=site-visits&visit=${visitId}`,
             },
+            createdBy: actor.userId!,
+            updatedBy: actor.userId!,
+          } as typeof notifications.$inferInsert)
+          .onConflictDoNothing();
+      }
+      if (independentReviewer || reviewerUnavailable) {
+        const [reviewerPerson] = independentReviewer
+          ? await tx
+              .select({ name: employees.legalName })
+              .from(employees)
+              .where(
+                and(
+                  eq(employees.organisationId, organisationId),
+                  eq(employees.id, independentReviewer.employeeId),
+                ),
+              )
+              .limit(1)
+          : [];
+        await tx
+          .insert(notifications)
+          .values({
+            organisationId,
+            recipientUserId: actor.userId!,
+            type: "attendance.site_visit",
+            title: reviewerUnavailable
+              ? "Your visit extension needs reviewer reassignment"
+              : "Your visit extension is awaiting review",
+            message: reviewerUnavailable
+              ? "Your assigned reviewer is no longer active. An administrator needs to reassign this review before a decision can be made."
+              : `${reviewerPerson?.name ?? "Your assigned reviewer"} will review your request to extend the visit until ${input.endTime}.`,
+            priority: "Normal",
+            deduplicationKey: `site-visit-extension-receipt-${visitId}-${at.toISOString()}`,
+            link: { entityType: "site-visit", entityId: visitId, path: "/staff/me/attendance" },
             createdBy: actor.userId!,
             updatedBy: actor.userId!,
           } as typeof notifications.$inferInsert)
@@ -1920,7 +2219,6 @@ export async function decideSiteVisitInDatabase(
   notes: string | undefined,
   actor: AuditActorContext,
 ): Promise<void> {
-  if (actor.activeRole !== "HR") throw new Error("Only HR can review site visits.");
   if (decision === "reject" && !notes?.trim())
     throw new Error("Explain why the site visit is rejected.");
   const db = getDatabaseClient();
@@ -1932,6 +2230,7 @@ export async function decideSiteVisitInDatabase(
         and(
           eq(siteVisitRequests.organisationId, organisationId),
           eq(siteVisitRequests.id, visitId),
+          isNull(siteVisitRequests.archivedAt),
         ),
       )
       .for("update")
@@ -1941,6 +2240,23 @@ export async function decideSiteVisitInDatabase(
       ["Approved", "Completed"].includes(visit.status);
     if (!visit || (visit.status !== "Pending HR" && !extensionReview))
       throw new Error("This site visit is no longer awaiting review.");
+    const independentReviewer = await assignedIndependentHrReviewer(
+      organisationId,
+      "Visit",
+      visitId,
+      visit.employeeId,
+      tx,
+    );
+    if (independentReviewer) {
+      if (!actorIsIndependentHrReviewer(actor, visit.employeeId, independentReviewer))
+        throw new Error("Only the assigned independent reviewer can decide this site visit.");
+    } else {
+      if (await independentReviewerForHrEmployee(organisationId, visit.employeeId, tx))
+        throw new Error(
+          "This HR visit needs an independent reviewer assignment before a decision.",
+        );
+      if (actor.activeRole !== "HR") throw new Error("Only HR can review site visits.");
+    }
     if (visit.employeeId === actor.employeeId)
       throw new Error("You cannot approve your own site visit.");
     await tx
@@ -2013,6 +2329,57 @@ export async function decideSiteVisitInDatabase(
       riskLevel: "High",
     } as typeof auditEvents.$inferInsert);
   });
+}
+
+/** A narrow review inbox; it never exposes the general HR attendance roster. */
+export async function listAssignedIndependentSiteVisitsInDatabase(
+  organisationId: string,
+  actor: AuditActorContext,
+) {
+  if (!actor.employeeId || actor.activeRole === "Super Admin") return [];
+  const db = getDatabaseClient();
+  return db
+    .select({
+      id: siteVisitRequests.id,
+      employeeId: siteVisitRequests.employeeId,
+      employeeName: employees.legalName,
+      date: siteVisitRequests.date,
+      startTime: siteVisitRequests.startTime,
+      endTime: siteVisitRequests.endTime,
+      origin: siteVisitRequests.origin,
+      destination: siteVisitRequests.destination,
+      purpose: siteVisitRequests.purpose,
+      status: siteVisitRequests.status,
+      details: siteVisitRequests.details,
+      hrNotes: siteVisitRequests.hrNotes,
+      recordVersion: siteVisitRequests.recordVersion,
+    })
+    .from(siteVisitRequests)
+    .innerJoin(
+      hrIndependentReviewAssignments,
+      and(
+        eq(hrIndependentReviewAssignments.organisationId, organisationId),
+        eq(hrIndependentReviewAssignments.module, "Visit"),
+        eq(hrIndependentReviewAssignments.requestId, siteVisitRequests.id),
+        eq(hrIndependentReviewAssignments.reviewerEmployeeId, actor.employeeId),
+        isNull(hrIndependentReviewAssignments.archivedAt),
+      ),
+    )
+    .innerJoin(
+      employees,
+      and(
+        eq(employees.id, siteVisitRequests.employeeId),
+        eq(employees.organisationId, organisationId),
+      ),
+    )
+    .where(
+      and(
+        eq(siteVisitRequests.organisationId, organisationId),
+        isNull(siteVisitRequests.archivedAt),
+      ),
+    )
+    .orderBy(desc(siteVisitRequests.date), desc(siteVisitRequests.createdAt))
+    .limit(200);
 }
 
 export async function cancelSiteVisitInDatabase(
@@ -2406,6 +2773,36 @@ export async function listAttendanceForActor(organisationId: string, actor: Audi
   } else if (!["Employee", "Accounts", "IT", "Travel Admin"].includes(actor.activeRole ?? "")) {
     throw new Error("You do not have attendance access.");
   }
+  const privileged = actor.activeRole === "HR" || actor.activeRole === "Super Admin";
+  const correctionAssignments = await db
+    .select({
+      requestId: hrIndependentReviewAssignments.requestId,
+      reviewerEmployeeId: hrIndependentReviewAssignments.reviewerEmployeeId,
+    })
+    .from(hrIndependentReviewAssignments)
+    .where(
+      and(
+        eq(hrIndependentReviewAssignments.organisationId, organisationId),
+        eq(hrIndependentReviewAssignments.module, "Attendance Correction"),
+        ...(!privileged
+          ? [eq(hrIndependentReviewAssignments.reviewerEmployeeId, actor.employeeId)]
+          : []),
+        isNull(hrIndependentReviewAssignments.archivedAt),
+      ),
+    );
+  const assignedCorrectionIds = correctionAssignments.map((item) => item.requestId);
+  const assignedRecords = assignedCorrectionIds.length
+    ? await db
+        .select({ attendanceRecordId: attendanceCorrections.attendanceRecordId })
+        .from(attendanceCorrections)
+        .where(
+          and(
+            eq(attendanceCorrections.organisationId, organisationId),
+            inArray(attendanceCorrections.id, assignedCorrectionIds),
+          ),
+        )
+    : [];
+  const assignedRecordIds = assignedRecords.map((item) => item.attendanceRecordId);
   if (!employeeIds.length)
     return {
       timezone,
@@ -2424,7 +2821,10 @@ export async function listAttendanceForActor(organisationId: string, actor: Audi
       .where(
         and(
           eq(attendanceRecords.organisationId, organisationId),
-          inArray(attendanceRecords.employeeId, employeeIds),
+          or(
+            inArray(attendanceRecords.employeeId, employeeIds),
+            ...(assignedRecordIds.length ? [inArray(attendanceRecords.id, assignedRecordIds)] : []),
+          ),
         ),
       )
       .orderBy(desc(attendanceRecords.date)),
@@ -2434,7 +2834,12 @@ export async function listAttendanceForActor(organisationId: string, actor: Audi
       .where(
         and(
           eq(attendanceCorrections.organisationId, organisationId),
-          inArray(attendanceCorrections.employeeId, employeeIds),
+          or(
+            inArray(attendanceCorrections.employeeId, employeeIds),
+            ...(assignedCorrectionIds.length
+              ? [inArray(attendanceCorrections.id, assignedCorrectionIds)]
+              : []),
+          ),
         ),
       )
       .orderBy(desc(attendanceCorrections.createdAt)),
@@ -2474,7 +2879,16 @@ export async function listAttendanceForActor(organisationId: string, actor: Audi
         }
       : null,
     records: applyOfficeCredits(records, await officeCredits(organisationId, employeeIds)),
-    corrections,
+    corrections: corrections.map((item) => ({
+      ...item,
+      ...(correctionAssignments.find((row) => row.requestId === item.id)
+        ? {
+            independentReviewerEmployeeId: correctionAssignments.find(
+              (row) => row.requestId === item.id,
+            )!.reviewerEmployeeId,
+          }
+        : {}),
+    })),
     siteVisits: visits,
     exceptions,
     policy: policy[0] ?? null,

@@ -10,6 +10,14 @@ export function isSupervisorOptionalPosition(position: string): boolean {
   return isCeoPosition(title) || title === "country manager" || title === "country manager oman";
 }
 
+/** A supervisor-free executive's attendance correction goes straight to HR. */
+export function correctionNeedsDirectHrReview(
+  position: string,
+  lineManagerId: string | null | undefined,
+): boolean {
+  return !lineManagerId && isSupervisorOptionalPosition(position);
+}
+
 export function validateCeoSupervisor(position: string, supervisor?: string | null): void {
   if (isCeoPosition(position) && supervisor)
     throw new Error("The CEO has no supervisor. Clear the supervisor before saving.");

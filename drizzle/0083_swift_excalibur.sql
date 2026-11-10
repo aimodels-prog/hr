@@ -1,0 +1,2 @@
+ALTER TABLE "hr_independent_review_assignments" DROP CONSTRAINT "hr_independent_review_module_valid";--> statement-breakpoint
+ALTER TABLE "hr_independent_review_assignments" ADD CONSTRAINT "hr_independent_review_module_valid" CHECK ("hr_independent_review_assignments"."module" IN ('Leave','Timesheet','Attendance Correction','Overtime','Training','Visit','Time Away','Document','Training Certificate','Employment Confirmation'));

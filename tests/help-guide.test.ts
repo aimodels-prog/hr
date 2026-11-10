@@ -81,7 +81,8 @@ test("Finance duties stay out of employee and HR guides, search and direct-link 
       for (const id of financeIds) {
         assert.equal(
           articles.some((item) => item.id === id),
-          role === "Accounts" || role === "Super Admin",
+          role === "Accounts" ||
+            (role === "Super Admin" && ["hr-finance", "hr-payslip"].includes(id)),
           `${role}/${guide}: ${id}`,
         );
       }

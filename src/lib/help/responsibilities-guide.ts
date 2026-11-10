@@ -1,8 +1,8 @@
 import { article, type HelpArticle } from "./guide.ts";
 import type { Role } from "../data/types.ts";
 
-const manager: Role[] = ["Line Manager", "HR", "Super Admin"];
-const finance: Role[] = ["Accounts", "Super Admin"];
+const manager: Role[] = ["Line Manager", "HR"];
+const finance: Role[] = ["Accounts"];
 const assigned = (item: HelpArticle, roles: Role[]): HelpArticle => ({ ...item, roles });
 
 // These are employee responsibilities, shown only to the roles that perform them.
@@ -18,10 +18,10 @@ export const responsibilitiesGuide = [
       "/staff/requests",
       "manager approve leave overtime travel correction direct report supervisor return",
       [
-        "Select your Line Manager role where needed and open My Requests or Approvals.",
+        "Open Approvals in your active Line Manager or HR role. Waiting for me shows only decisions assigned to you.",
         "Open a request assigned to you and read its dates, details, evidence and outstanding stage.",
         "Approve it when correct, return it with a clear correction request where available, or decline with the required explanation.",
-        "Check the new status. Leave, timesheets and other requests can still need HR or Finance action after your review.",
+        "Check the new status in My decisions. A different HR or Finance reviewer may still be needed; an assigned HR supervisor completes ordinary leave and timesheets in one decision.",
       ],
       "Being named as supervisor is not enough on its own; the app also checks your approval access and the assignment.",
       [
@@ -47,7 +47,7 @@ export const responsibilitiesGuide = [
         "Return incorrect hours or details with a clear explanation, or complete your approval.",
         "Check that the sheet moves to the next required stage.",
       ],
-      "HR must also approve the timesheet before Finance uses it. Automatically filled attendance hours do not bypass review.",
+      "HR approval is required before Finance uses the timesheet. If HR is the named supervisor, one HR decision completes both reviews. Automatically filled attendance hours do not bypass review.",
       [
         "A task description is not a blanket requirement. Ask for information that is needed to resolve an actual issue.",
         "Longer attendance is not an approved overtime request.",

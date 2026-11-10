@@ -28,6 +28,8 @@ import { Route as StaffDocumentExpiryRouteImport } from './routes/staff/document
 import { Route as StaffDocumentsRouteImport } from './routes/staff/documents'
 import { Route as StaffFilesRouteImport } from './routes/staff/files'
 import { Route as StaffHelpRouteImport } from './routes/staff/help'
+import { Route as StaffIndependentRecordReviewsRouteImport } from './routes/staff/independent-record-reviews'
+import { Route as StaffIndependentVisitReviewsRouteImport } from './routes/staff/independent-visit-reviews'
 import { Route as StaffInterviewsRouteImport } from './routes/staff/interviews'
 import { Route as StaffLeaveRouteImport } from './routes/staff/leave'
 import { Route as StaffLeaveAdminRouteImport } from './routes/staff/leave-admin'
@@ -201,6 +203,18 @@ const StaffHelpRoute = StaffHelpRouteImport.update({
   path: '/help',
   getParentRoute: () => StaffRoute,
 } as any)
+const StaffIndependentRecordReviewsRoute =
+  StaffIndependentRecordReviewsRouteImport.update({
+    id: '/independent-record-reviews',
+    path: '/independent-record-reviews',
+    getParentRoute: () => StaffRoute,
+  } as any)
+const StaffIndependentVisitReviewsRoute =
+  StaffIndependentVisitReviewsRouteImport.update({
+    id: '/independent-visit-reviews',
+    path: '/independent-visit-reviews',
+    getParentRoute: () => StaffRoute,
+  } as any)
 const StaffInterviewsRoute = StaffInterviewsRouteImport.update({
   id: '/interviews',
   path: '/interviews',
@@ -623,6 +637,8 @@ export interface FileRoutesByFullPath {
   '/staff/documents': typeof StaffDocumentsRoute
   '/staff/files': typeof StaffFilesRoute
   '/staff/help': typeof StaffHelpRoute
+  '/staff/independent-record-reviews': typeof StaffIndependentRecordReviewsRoute
+  '/staff/independent-visit-reviews': typeof StaffIndependentVisitReviewsRoute
   '/staff/interviews': typeof StaffInterviewsRoute
   '/staff/leave': typeof StaffLeaveRoute
   '/staff/leave-admin': typeof StaffLeaveAdminRoute
@@ -718,6 +734,8 @@ export interface FileRoutesByTo {
   '/staff/documents': typeof StaffDocumentsRoute
   '/staff/files': typeof StaffFilesRoute
   '/staff/help': typeof StaffHelpRoute
+  '/staff/independent-record-reviews': typeof StaffIndependentRecordReviewsRoute
+  '/staff/independent-visit-reviews': typeof StaffIndependentVisitReviewsRoute
   '/staff/interviews': typeof StaffInterviewsRoute
   '/staff/leave': typeof StaffLeaveRoute
   '/staff/leave-admin': typeof StaffLeaveAdminRoute
@@ -811,6 +829,8 @@ export interface FileRoutesById {
   '/staff/documents': typeof StaffDocumentsRoute
   '/staff/files': typeof StaffFilesRoute
   '/staff/help': typeof StaffHelpRoute
+  '/staff/independent-record-reviews': typeof StaffIndependentRecordReviewsRoute
+  '/staff/independent-visit-reviews': typeof StaffIndependentVisitReviewsRoute
   '/staff/interviews': typeof StaffInterviewsRoute
   '/staff/leave': typeof StaffLeaveRoute
   '/staff/leave-admin': typeof StaffLeaveAdminRoute
@@ -911,6 +931,8 @@ export interface FileRouteTypes {
     | '/staff/documents'
     | '/staff/files'
     | '/staff/help'
+    | '/staff/independent-record-reviews'
+    | '/staff/independent-visit-reviews'
     | '/staff/interviews'
     | '/staff/leave'
     | '/staff/leave-admin'
@@ -1006,6 +1028,8 @@ export interface FileRouteTypes {
     | '/staff/documents'
     | '/staff/files'
     | '/staff/help'
+    | '/staff/independent-record-reviews'
+    | '/staff/independent-visit-reviews'
     | '/staff/interviews'
     | '/staff/leave'
     | '/staff/leave-admin'
@@ -1098,6 +1122,8 @@ export interface FileRouteTypes {
     | '/staff/documents'
     | '/staff/files'
     | '/staff/help'
+    | '/staff/independent-record-reviews'
+    | '/staff/independent-visit-reviews'
     | '/staff/interviews'
     | '/staff/leave'
     | '/staff/leave-admin'
@@ -1324,6 +1350,20 @@ declare module '@tanstack/react-router' {
       path: '/help'
       fullPath: '/staff/help'
       preLoaderRoute: typeof StaffHelpRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/independent-record-reviews': {
+      id: '/staff/independent-record-reviews'
+      path: '/independent-record-reviews'
+      fullPath: '/staff/independent-record-reviews'
+      preLoaderRoute: typeof StaffIndependentRecordReviewsRouteImport
+      parentRoute: typeof StaffRoute
+    }
+    '/staff/independent-visit-reviews': {
+      id: '/staff/independent-visit-reviews'
+      path: '/independent-visit-reviews'
+      fullPath: '/staff/independent-visit-reviews'
+      preLoaderRoute: typeof StaffIndependentVisitReviewsRouteImport
       parentRoute: typeof StaffRoute
     }
     '/staff/interviews': {
@@ -2034,6 +2074,8 @@ interface StaffRouteChildren {
   StaffDocumentsRoute: typeof StaffDocumentsRoute
   StaffFilesRoute: typeof StaffFilesRoute
   StaffHelpRoute: typeof StaffHelpRoute
+  StaffIndependentRecordReviewsRoute: typeof StaffIndependentRecordReviewsRoute
+  StaffIndependentVisitReviewsRoute: typeof StaffIndependentVisitReviewsRoute
   StaffInterviewsRoute: typeof StaffInterviewsRoute
   StaffLeaveRoute: typeof StaffLeaveRoute
   StaffLeaveAdminRoute: typeof StaffLeaveAdminRoute
@@ -2096,6 +2138,8 @@ const StaffRouteChildren: StaffRouteChildren = {
   StaffDocumentsRoute: StaffDocumentsRoute,
   StaffFilesRoute: StaffFilesRoute,
   StaffHelpRoute: StaffHelpRoute,
+  StaffIndependentRecordReviewsRoute: StaffIndependentRecordReviewsRoute,
+  StaffIndependentVisitReviewsRoute: StaffIndependentVisitReviewsRoute,
   StaffInterviewsRoute: StaffInterviewsRoute,
   StaffLeaveRoute: StaffLeaveRoute,
   StaffLeaveAdminRoute: StaffLeaveAdminRoute,

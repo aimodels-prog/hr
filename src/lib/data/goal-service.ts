@@ -267,7 +267,10 @@ export class GoalService {
   }
 
   getPendingGoalsForManager(context: ActorContext): EmployeeGoal[] {
-    if (context.actor.activeRole !== "Line Manager" || !context.actor.employeeId) {
+    if (
+      !["Line Manager", "HR"].includes(context.actor.activeRole ?? "") ||
+      !context.actor.employeeId
+    ) {
       this.deny(
         context,
         "view objective approvals",
@@ -837,7 +840,7 @@ export class GoalService {
   ): void {
     const employee = this.employeeService.getById(employeeId, SYSTEM_CONTEXT);
     if (
-      context.actor.activeRole === "Line Manager" &&
+      ["Line Manager", "HR"].includes(context.actor.activeRole ?? "") &&
       context.actor.employeeId &&
       employee?.lineManagerId === context.actor.employeeId &&
       context.actor.employeeId !== employeeId
@@ -857,7 +860,7 @@ export class GoalService {
     if (context.actor.employeeId === employeeId) return;
     const employee = this.employeeService.getById(employeeId, SYSTEM_CONTEXT);
     if (
-      context.actor.activeRole === "Line Manager" &&
+      ["Line Manager", "HR"].includes(context.actor.activeRole ?? "") &&
       context.actor.employeeId &&
       employee?.lineManagerId === context.actor.employeeId
     ) {

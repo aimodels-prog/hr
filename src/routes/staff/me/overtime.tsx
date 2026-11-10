@@ -277,7 +277,7 @@ function MyOvertimeRoute() {
         </Card>
 
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent>
+          <DialogContent className="max-h-[90dvh] w-[calc(100%-1.5rem)] overflow-y-auto rounded-xl p-4 sm:p-6">
             <DialogHeader>
               <DialogTitle>
                 {originalClaimId ? "Correct Approved Claim" : "New Overtime Claim"}
@@ -494,7 +494,7 @@ function MyOvertimeRoute() {
           </DialogContent>
         </Dialog>
         <Dialog open={Boolean(actualClaim)} onOpenChange={(open) => !open && setActualClaim(null)}>
-          <DialogContent>
+          <DialogContent className="max-h-[90dvh] w-[calc(100%-1.5rem)] overflow-y-auto rounded-xl p-4 sm:p-6">
             <DialogHeader>
               <DialogTitle>Confirm actual overtime</DialogTitle>
               <DialogDescription>

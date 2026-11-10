@@ -1,5 +1,5 @@
 import "@tanstack/react-start/server-only";
-import { requireEmployeeSupervisor } from "./supervisor-access.repository.server.ts";
+import { validateSupervisorAccount } from "./supervisor-access.repository.server.ts";
 import {
   APPROVED_OBJECTIVE_STATUSES,
   objectivesReadyForAppraisal,
@@ -79,6 +79,41 @@ async function visibleEmployeeIds(org: string, actor: AuditActorContext) {
       ),
     );
   return [actor.employeeId, ...reports.map((item) => item.id)];
+}
+
+/** Performance accepts an assigned HR supervisor without granting another global role. */
+async function requirePerformanceSupervisor(
+  tx: PerformanceTransaction,
+  org: string,
+  employeeId: string,
+) {
+  const [employee] = await tx
+    .select({ supervisorId: employees.lineManagerId })
+    .from(employees)
+    .where(
+      and(
+        eq(employees.organisationId, org),
+        eq(employees.id, employeeId),
+        isNull(employees.archivedAt),
+      ),
+    )
+    .limit(1);
+  const account = await validateSupervisorAccount(tx, org, employeeId, employee?.supervisorId);
+  const [access] = await tx
+    .select({ roleId: userRoles.roleId })
+    .from(userRoles)
+    .innerJoin(roles, eq(roles.id, userRoles.roleId))
+    .where(
+      and(
+        eq(userRoles.organisationId, org),
+        eq(userRoles.userId, account.userId),
+        inArray(roles.code, ["Line Manager", "HR"]),
+      ),
+    )
+    .limit(1);
+  if (!access)
+    throw new Error("Ask HR to assign a supervisor with Line Manager or HR approval access.");
+  return account;
 }
 
 export interface PerformanceSnapshot {
@@ -919,7 +954,9 @@ export async function actOnPerformanceReviewInDatabase(
       throw new Error("You cannot approve, finalise or correct your own performance review.");
     }
     const manager =
-      role(actor) === "Line Manager" && actor.employeeId === employee.managerId && !self;
+      ["Line Manager", "HR"].includes(role(actor)) &&
+      actor.employeeId === employee.managerId &&
+      !self;
     const updates: Record<string, unknown> = {
       updatedAt: new Date(),
       updatedBy: actor.userId,
@@ -933,7 +970,7 @@ export async function actOnPerformanceReviewInDatabase(
         throw new Error(
           "Your supervisor must approve objectives totalling 100% before self-assessment.",
         );
-      await requireEmployeeSupervisor(tx, org, review.employeeId);
+      await requirePerformanceSupervisor(tx, org, review.employeeId);
       const sections = mergeReviewAssessment(
         cycleSections(template, goals),
         action.sections,
@@ -1130,10 +1167,7 @@ export async function actOnPerformanceReviewInDatabase(
           link: {
             entityType: "performance-review",
             entityId: resultingId,
-            path:
-              action.type === "discussion" || action.type === "lock" || action.type === "correct"
-                ? `/staff/performance/reviews/${resultingId}`
-                : "/staff/performance/team",
+            path: `/staff/performance/reviews/${resultingId}`,
           },
           createdBy: actor.userId,
           updatedBy: actor.userId,
@@ -1170,7 +1204,7 @@ async function requireSelfOrManager(
   selfOnly = false,
 ) {
   if (actor.employeeId === employeeId) return;
-  if (selfOnly || role(actor) !== "Line Manager" || !actor.employeeId)
+  if (selfOnly || !["Line Manager", "HR"].includes(role(actor)) || !actor.employeeId)
     throw new Error("You are not authorised for this employee's objectives.");
   const [employee] = await tx
     .select({ managerId: employees.lineManagerId })
@@ -1425,7 +1459,7 @@ export async function submitGoalsInDatabase(
       .where(eq(employees.id, employeeId))
       .limit(1);
     if (!employee?.managerId) throw new Error("Assign a supervisor before submitting objectives.");
-    await requireEmployeeSupervisor(tx, org, employeeId);
+    await requirePerformanceSupervisor(tx, org, employeeId);
     const [manager] = await tx
       .select({ userId: users.id })
       .from(users)
@@ -1707,7 +1741,7 @@ export async function recordGoalProgressInDatabase(
     if (!goal || goal.status !== "Active")
       throw new Error("Only an active objective can be updated.");
     await requireSelfOrManager(tx, org, goal.employeeId, actor, true);
-    if (progressPercent === 100) await requireEmployeeSupervisor(tx, org, goal.employeeId);
+    if (progressPercent === 100) await requirePerformanceSupervisor(tx, org, goal.employeeId);
     if (evidenceFileId) {
       const [file] = await tx
         .select()

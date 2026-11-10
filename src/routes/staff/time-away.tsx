@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -82,17 +82,29 @@ function TimeAwayPage({
     queryFn: () => listTimeAwayFn({ data: { actor, date } }),
     enabled: timeAwayDate.safeParse(date).success,
   });
+  const canChooseEmployee = (query.data?.people.length ?? 0) > 1;
+  const selectedEmployeeId = canChooseEmployee
+    ? employeeId
+    : (query.data?.people[0]?.id ?? query.data?.selfId ?? employeeId);
+  const canReviewRow = useCallback(
+    (row: Row) =>
+      (row.independentReviewerEmployeeId
+        ? user.activeRole !== "Super Admin" && row.independentReviewerEmployeeId === user.employeeId
+        : user.activeRole === "HR") &&
+      row.employeeId !== query.data?.selfId &&
+      row.createdBy !== user.id,
+    [user.activeRole, user.employeeId, user.id, query.data?.selfId],
+  );
   useEffect(() => {
     if (initialReviewId && query.data?.rows.some((row) => row.id === initialReviewId)) {
       document.getElementById(`time-away-${initialReviewId}`)?.scrollIntoView({ block: "center" });
     }
-    if (!initialReviewId || openedReview.current || !query.data?.canReview) return;
+    if (!initialReviewId || openedReview.current || !query.data) return;
     const row = query.data.rows.find(
       (candidate) =>
         candidate.id === initialReviewId &&
         candidate.status === "Pending HR" &&
-        candidate.employeeId !== query.data.selfId &&
-        candidate.createdBy !== user.id,
+        canReviewRow(candidate),
     );
     if (!row) return;
     openedReview.current = true;
@@ -100,7 +112,7 @@ function TimeAwayPage({
     setAction("Approve");
     setTreatment("Paid time");
     setReviewNote("");
-  }, [initialReviewId, query.data, user.id]);
+  }, [initialReviewId, query.data, canReviewRow]);
   const run = async (task: () => Promise<void>) => {
     if (busy) return;
     setBusy(true);
@@ -123,9 +135,15 @@ function TimeAwayPage({
           </p>
         </div>
         <Button
-          disabled={!query.data}
+          disabled={!query.data || query.data.people.length === 0}
           onClick={() => {
-            setEmployeeId(query.data?.selfId ?? "");
+            setEmployeeId(
+              query.data?.people.length === 1
+                ? (query.data.people[0]?.id ?? "")
+                : user.activeRole === "Employee"
+                  ? (query.data?.selfId ?? "")
+                  : "",
+            );
             setStartTime("");
             setEndTime("");
             setNote("");
@@ -167,7 +185,11 @@ function TimeAwayPage({
         >
           <div className="flex flex-wrap justify-between gap-2">
             <h2 className="font-semibold">{row.name}</h2>
-            <span className="rounded-full bg-muted px-3 py-1 text-xs">{row.status}</span>
+            <span className="rounded-full bg-muted px-3 py-1 text-xs">
+              {row.status === "Pending HR" && row.independentReviewerName
+                ? `Awaiting ${row.independentReviewerName}`
+                : row.status}
+            </span>
           </div>
           <p className="text-sm">
             {row.startTime}–{row.endTime} · {timeAwayMinutes(row.startTime, row.endTime)} minutes
@@ -185,21 +207,19 @@ function TimeAwayPage({
           {row.reviewNote && <p className="text-sm">HR note: {row.reviewNote}</p>}
           {row.status === "Pending HR" && (
             <div className="flex flex-wrap gap-2">
-              {query.data.canReview &&
-                row.employeeId !== query.data.selfId &&
-                row.createdBy !== user.id && (
-                  <Button
-                    onClick={() => {
-                      setReview(row);
-                      setAction("Approve");
-                      setTreatment("Paid time");
-                      setReviewNote("");
-                    }}
-                  >
-                    Review
-                  </Button>
-                )}
-              {(query.data.canReview ||
+              {canReviewRow(row) && (
+                <Button
+                  onClick={() => {
+                    setReview(row);
+                    setAction("Approve");
+                    setTreatment("Paid time");
+                    setReviewNote("");
+                  }}
+                >
+                  Review
+                </Button>
+              )}
+              {(user.activeRole === "HR" ||
                 row.employeeId === query.data.selfId ||
                 row.createdBy === user.id) && (
                 <Button
@@ -230,17 +250,26 @@ function TimeAwayPage({
               For {date}. Enter the actual or planned departure and return times. HR will review it.
             </DialogDescription>
           </DialogHeader>
-          <Label>Employee</Label>
-          <SearchableSelect
-            value={employeeId}
-            onValueChange={setEmployeeId}
-            options={(query.data?.people ?? []).map((person) => ({
-              value: person.id,
-              label: person.name,
-              keywords: [person.email],
-            }))}
-            placeholder="Search employee"
-          />
+          {canChooseEmployee ? (
+            <div className="space-y-2">
+              <Label htmlFor="time-away-employee">Employee</Label>
+              <SearchableSelect
+                id="time-away-employee"
+                value={employeeId}
+                onValueChange={setEmployeeId}
+                options={(query.data?.people ?? []).map((person) => ({
+                  value: person.id,
+                  label: person.name,
+                  keywords: [person.email],
+                }))}
+                placeholder="Search employee"
+              />
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              For {query.data?.people[0]?.name ?? "yourself"}
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label htmlFor="away-start">Departure</Label>
@@ -281,11 +310,21 @@ function TimeAwayPage({
             onChange={(e) => setNote(e.target.value)}
           />
           <Button
-            disabled={busy || !employeeId || !startTime || !endTime || endTime <= startTime}
+            disabled={busy || !selectedEmployeeId || !startTime || !endTime || endTime <= startTime}
             onClick={() =>
               void run(async () => {
                 await recordTimeAwayFn({
-                  data: { actor, record: { employeeId, date, startTime, endTime, category, note } },
+                  data: {
+                    actor,
+                    record: {
+                      employeeId: selectedEmployeeId,
+                      date,
+                      startTime,
+                      endTime,
+                      category,
+                      note,
+                    },
+                  },
                 });
                 setOpen(false);
                 toast.success("Recorded — awaiting HR review");
@@ -304,7 +343,9 @@ function TimeAwayPage({
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{action === "Cancel" ? "Cancel this record?" : "HR review"}</DialogTitle>
+            <DialogTitle>
+              {action === "Cancel" ? "Cancel this record?" : "Review time away"}
+            </DialogTitle>
             <DialogDescription>
               {review?.name}: {review?.startTime}–{review?.endTime}. No automatic salary or leave
               deduction.

@@ -64,7 +64,7 @@ function TeamPerformancePage() {
   const [returning, setReturning] = useState<EmployeeGoal | null>(null);
   const [returnReason, setReturnReason] = useState("");
   void version;
-  const isManager = currentUser.activeRole === "Line Manager";
+  const canReviewAssigned = ["Line Manager", "HR"].includes(currentUser.activeRole);
   const reviews = performanceService
     .getReviewsForTeam(context)
     .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
@@ -73,11 +73,19 @@ function TeamPerformancePage() {
   const pendingGoals = goalService
     .getPendingGoalsForTeam(context)
     .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
+  const decisionGoals = pendingGoals.filter(
+    (goal) =>
+      canReviewAssigned &&
+      Boolean(currentUser.employeeId) &&
+      currentUser.employeeId !== goal.employeeId &&
+      employees.find((employee) => employee.id === goal.employeeId)?.lineManagerId ===
+        currentUser.employeeId,
+  );
   const allTeamGoals = goalService
     .getGoalsForTeam(context)
     .filter((row) => employeeFilter.matchesEmployee(row.employeeId));
   useEffect(() => {
-    if (!focusedGoalId || !pendingGoals.some((goal) => goal.id === focusedGoalId)) return;
+    if (!focusedGoalId || !decisionGoals.some((goal) => goal.id === focusedGoalId)) return;
     const frame = window.requestAnimationFrame(() =>
       document.getElementById(`approval-${focusedGoalId}`)?.scrollIntoView({
         behavior: "smooth",
@@ -85,7 +93,7 @@ function TeamPerformancePage() {
       }),
     );
     return () => window.cancelAnimationFrame(frame);
-  }, [focusedGoalId, pendingGoals]);
+  }, [focusedGoalId, decisionGoals]);
   const refresh = () => setVersion((value) => value + 1);
   const employeeName = (id: string) =>
     employees.find((employee) => employee.id === id)?.preferredName ||
@@ -122,9 +130,9 @@ function TeamPerformancePage() {
       <PageHeader
         title="Team Performance"
         description={
-          isManager
-            ? "Approve objectives, review progress and complete assessments for your direct reports."
-            : "Monitor objectives and reviews across VIA. Supervisors remain responsible for employee decisions."
+          canReviewAssigned
+            ? "Review objectives for your assigned employees and monitor team progress."
+            : "Monitor objectives and reviews across VIA. Assigned supervisors make employee decisions."
         }
       />
       <div className="grid gap-4 sm:grid-cols-3">
@@ -152,7 +160,7 @@ function TeamPerformancePage() {
         <Card>
           <CardContent className="p-5">
             <p className="text-sm text-muted-foreground">Objective decisions due</p>
-            <p className="mt-1 text-2xl font-semibold">{pendingGoals.length}</p>
+            <p className="mt-1 text-2xl font-semibold">{decisionGoals.length}</p>
           </CardContent>
         </Card>
       </div>
@@ -164,7 +172,7 @@ function TeamPerformancePage() {
         </TabsList>
         <TabsContent value="approvals" className="mt-6">
           <div className="grid gap-4 lg:grid-cols-2">
-            {pendingGoals.map((goal) => (
+            {decisionGoals.map((goal) => (
               <Card
                 key={goal.id}
                 id={`approval-${goal.id}`}
@@ -189,52 +197,36 @@ function TeamPerformancePage() {
                     <p className="mt-2 font-medium">Target</p>
                     <p className="text-muted-foreground">{goal.targetValue}</p>
                   </div>
-                  {isManager ? (
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          setReturning(goal);
-                          setReturnReason("");
-                        }}
-                      >
-                        Return for changes
-                      </Button>
-                      <Button
-                        onClick={() =>
-                          void perform(
-                            () =>
-                              goal.status === "Completion Pending"
-                                ? goalService.decideGoalAsync(
-                                    goal.id,
-                                    "complete",
-                                    undefined,
-                                    context,
-                                  )
-                                : goalService.decideGoalAsync(
-                                    goal.id,
-                                    "approve",
-                                    undefined,
-                                    context,
-                                  ),
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setReturning(goal);
+                        setReturnReason("");
+                      }}
+                    >
+                      Return for changes
+                    </Button>
+                    <Button
+                      onClick={() =>
+                        void perform(
+                          () =>
                             goal.status === "Completion Pending"
-                              ? "Completion confirmed"
-                              : "Objective approved",
-                          )
-                        }
-                      >
-                        {goal.status === "Completion Pending" ? "Confirm completion" : "Approve"}
-                      </Button>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      Awaiting action from the employee's assigned supervisor.
-                    </p>
-                  )}
+                              ? goalService.decideGoalAsync(goal.id, "complete", undefined, context)
+                              : goalService.decideGoalAsync(goal.id, "approve", undefined, context),
+                          goal.status === "Completion Pending"
+                            ? "Completion confirmed"
+                            : "Objective approved",
+                        )
+                      }
+                    >
+                      {goal.status === "Completion Pending" ? "Confirm completion" : "Approve"}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             ))}
-            {pendingGoals.length === 0 && (
+            {decisionGoals.length === 0 && (
               <Card className="lg:col-span-2">
                 <CardContent className="py-14 text-center text-muted-foreground">
                   <CheckCircle2 className="mx-auto mb-3 h-10 w-10 text-emerald-600" />

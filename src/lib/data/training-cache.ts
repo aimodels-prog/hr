@@ -74,6 +74,13 @@ export async function hydrateTrainingCache(context: ActorContext, canCommit = ()
     snapshot.requests.map((item) => ({
       ...item,
       employeeId: employeeMap.get(item.employeeId) ?? item.employeeId,
+      ...(item.independentReviewerEmployeeId
+        ? {
+            independentReviewerEmployeeId:
+              employeeMap.get(item.independentReviewerEmployeeId) ??
+              item.independentReviewerEmployeeId,
+          }
+        : {}),
     })),
   );
   storage.writeCollection("training_sessions", snapshot.sessions);

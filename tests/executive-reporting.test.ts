@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  correctionNeedsDirectHrReview,
   isCeoPosition,
   isSupervisorOptionalPosition,
   validateCeoSupervisor,
@@ -25,4 +26,8 @@ test("CEO has no supervisor, while the Country Manager may have none", () => {
   assert.equal(isSupervisorOptionalPosition("Country Manager Oman"), true);
   assert.equal(isSupervisorOptionalPosition("CEO"), true);
   assert.equal(isSupervisorOptionalPosition("CFO"), false);
+  assert.equal(correctionNeedsDirectHrReview("CEO", null), true);
+  assert.equal(correctionNeedsDirectHrReview("Country Manager Oman", undefined), true);
+  assert.equal(correctionNeedsDirectHrReview("Country Manager", "supervisor-id"), false);
+  assert.equal(correctionNeedsDirectHrReview("CFO", null), false);
 });

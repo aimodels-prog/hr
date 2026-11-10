@@ -56,6 +56,31 @@ function TimesheetListRoute() {
           settings.weeklyPeriodStartDay,
         ),
     );
+  const periodRows = periods
+    .map((period) => {
+      // The list remains read-only: opening the calendar creates an unopened period.
+      const existing = timesheetByPeriodId.get(period.id);
+      const timesheet =
+        existing ?? tsService.previewTimesheetSummary(currentUser.employeeId!, period);
+      if (!timesheet) return null;
+      const summary = tsService.getPeriodSummary(currentUser.employeeId!, period, existing);
+      const isUnder =
+        summary.workedHours < summary.requiredWorkHours &&
+        ["Draft", "Not Started", "Returned"].includes(timesheet.status);
+      const workTargetMet = meetsTimesheetWorkTarget(
+        summary.workedHours,
+        summary.requiredWorkHours,
+      );
+      const remoteWorkDays = countTimesheetRemoteWorkDays({
+        startDate: period.startDate,
+        endDate: period.endDate,
+        workingDays,
+        leaveRequests,
+        entries: "entries" in timesheet ? timesheet.entries : [],
+      });
+      return { period, timesheet, summary, isUnder, workTargetMet, remoteWorkDays };
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null);
 
   return (
     <RequirePermission permission="timesheet:view_self" resourceName="My Timesheets">
@@ -65,7 +90,99 @@ function TimesheetListRoute() {
           description="Review actual work and leave. Extra hours are shown, not treated as overtime. Submit once per month."
         />
 
-        <Card>
+        <section aria-label="Monthly timesheets" className="grid gap-3 sm:grid-cols-2 lg:hidden">
+          {periodRows.map(
+            ({ period, timesheet: ts, summary, isUnder, workTargetMet, remoteWorkDays }) => (
+              <Card key={period.id}>
+                <CardContent className="space-y-4 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <h2 className="font-semibold">{timesheetPeriodLabel(period)}</h2>
+                      {period.status === "Closed" && (
+                        <Badge variant="outline" className="mt-1">
+                          Closed
+                        </Badge>
+                      )}
+                    </div>
+                    <Badge
+                      variant={
+                        ts.status === "Approved" || ts.status === "Payroll Locked"
+                          ? "default"
+                          : ts.status === "Returned"
+                            ? "destructive"
+                            : "secondary"
+                      }
+                    >
+                      {ts.status}
+                    </Badge>
+                  </div>
+                  <dl className="grid grid-cols-2 gap-3 rounded-lg bg-muted/30 p-3 text-sm">
+                    <div>
+                      <dt className="text-xs text-muted-foreground">Total worked</dt>
+                      <dd
+                        className={
+                          workTargetMet
+                            ? "font-semibold text-emerald-700 dark:text-emerald-300"
+                            : isUnder
+                              ? "font-semibold text-destructive"
+                              : "font-semibold"
+                        }
+                      >
+                        {summary.workedHours} h
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-muted-foreground">Required work</dt>
+                      <dd className="font-semibold">{summary.requiredWorkHours} h</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-muted-foreground">Paid leave</dt>
+                      <dd className="font-semibold">{summary.paidLeaveHours} h</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-muted-foreground">Credited total</dt>
+                      <dd className="font-semibold">{summary.creditedHours} h</dd>
+                    </div>
+                  </dl>
+                  {(remoteWorkDays > 0 || summary.unpaidLeaveHours > 0) && (
+                    <p className="text-xs text-muted-foreground">
+                      {remoteWorkDays > 0 &&
+                        `${remoteWorkDays} remote work ${remoteWorkDays === 1 ? "day" : "days"}`}
+                      {remoteWorkDays > 0 && summary.unpaidLeaveHours > 0 && " · "}
+                      {summary.unpaidLeaveHours > 0 &&
+                        `${summary.unpaidLeaveHours} h unpaid leave (0 credit)`}
+                    </p>
+                  )}
+                  <Button
+                    asChild
+                    size="sm"
+                    className="w-full"
+                    variant={
+                      ["Draft", "Returned", "Not Started"].includes(ts.status)
+                        ? "default"
+                        : "outline"
+                    }
+                  >
+                    <Link to="/staff/me/timesheets/$periodId" params={{ periodId: period.id }}>
+                      {["Draft", "Returned", "Not Started"].includes(ts.status)
+                        ? "Open calendar"
+                        : "View calendar"}
+                    </Link>
+                  </Button>
+                </CardContent>
+              </Card>
+            ),
+          )}
+          {periodRows.length === 0 && (
+            <Card>
+              <CardContent className="p-5 text-sm text-muted-foreground">
+                No timesheet periods have been generated by HR yet.
+              </CardContent>
+            </Card>
+          )}
+        </section>
+
+        <Card className="hidden lg:block">
           <CardContent className="p-0">
             <Table>
               <TableHeader>
@@ -80,111 +197,89 @@ function TimesheetListRoute() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {periods.map((period) => {
-                  // Read-only: an existing timesheet is shown as-is; a period the employee has
-                  // never opened gets a computed preview only - opening $periodId is what
-                  // actually creates the record, not viewing this list.
-                  const existing = timesheetByPeriodId.get(period.id);
-                  const ts =
-                    existing ?? tsService.previewTimesheetSummary(currentUser.employeeId!, period);
-                  if (!ts) return null;
-                  const summary = tsService.getPeriodSummary(
-                    currentUser.employeeId!,
-                    period,
-                    existing,
-                  );
-                  const isUnder =
-                    summary.workedHours < summary.requiredWorkHours &&
-                    ["Draft", "Not Started", "Returned"].includes(ts.status);
-                  const workTargetMet = meetsTimesheetWorkTarget(
-                    summary.workedHours,
-                    summary.requiredWorkHours,
-                  );
-                  const remoteWorkDays = countTimesheetRemoteWorkDays({
-                    startDate: period.startDate,
-                    endDate: period.endDate,
-                    workingDays,
-                    leaveRequests,
-                    entries: "entries" in ts ? ts.entries : [],
-                  });
-
-                  return (
-                    <TableRow key={period.id}>
-                      <TableCell className="font-medium">
-                        {timesheetPeriodLabel(period)}
-                        {period.status === "Closed" && (
-                          <Badge variant="outline" className="ml-2">
-                            Closed
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            ts.status === "Approved" || ts.status === "Payroll Locked"
-                              ? "default"
-                              : ts.status === "Returned"
-                                ? "destructive"
-                                : "secondary"
-                          }
-                        >
-                          {ts.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <span
-                          className={
-                            workTargetMet
-                              ? "font-semibold text-emerald-700 dark:text-emerald-300"
-                              : isUnder
-                                ? "text-destructive font-medium"
-                                : ""
-                          }
-                        >
-                          {summary.workedHours} h
-                        </span>
-                        {remoteWorkDays > 0 && (
-                          <span className="block text-xs text-muted-foreground">
-                            {remoteWorkDays} remote work {remoteWorkDays === 1 ? "day" : "days"}
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {summary.paidLeaveHours} h
-                        {summary.unpaidLeaveHours > 0 && (
-                          <span className="block text-xs text-muted-foreground">
-                            {summary.unpaidLeaveHours} h unpaid (0 credit)
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell className="font-medium">{summary.creditedHours} h</TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {summary.requiredWorkHours} h
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Link to="/staff/me/timesheets/$periodId" params={{ periodId: period.id }}>
-                          <Button
+                {periodRows.map(
+                  ({ period, timesheet: ts, summary, isUnder, workTargetMet, remoteWorkDays }) => {
+                    return (
+                      <TableRow key={period.id}>
+                        <TableCell className="font-medium">
+                          {timesheetPeriodLabel(period)}
+                          {period.status === "Closed" && (
+                            <Badge variant="outline" className="ml-2">
+                              Closed
+                            </Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
                             variant={
-                              ts.status === "Draft" ||
-                              ts.status === "Returned" ||
-                              ts.status === "Not Started"
+                              ts.status === "Approved" || ts.status === "Payroll Locked"
                                 ? "default"
-                                : "outline"
+                                : ts.status === "Returned"
+                                  ? "destructive"
+                                  : "secondary"
                             }
-                            size="sm"
                           >
-                            {ts.status === "Not Started"
-                              ? "Open Calendar"
-                              : ts.status === "Draft" || ts.status === "Returned"
+                            {ts.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <span
+                            className={
+                              workTargetMet
+                                ? "font-semibold text-emerald-700 dark:text-emerald-300"
+                                : isUnder
+                                  ? "text-destructive font-medium"
+                                  : ""
+                            }
+                          >
+                            {summary.workedHours} h
+                          </span>
+                          {remoteWorkDays > 0 && (
+                            <span className="block text-xs text-muted-foreground">
+                              {remoteWorkDays} remote work {remoteWorkDays === 1 ? "day" : "days"}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {summary.paidLeaveHours} h
+                          {summary.unpaidLeaveHours > 0 && (
+                            <span className="block text-xs text-muted-foreground">
+                              {summary.unpaidLeaveHours} h unpaid (0 credit)
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="font-medium">{summary.creditedHours} h</TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {summary.requiredWorkHours} h
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Link
+                            to="/staff/me/timesheets/$periodId"
+                            params={{ periodId: period.id }}
+                          >
+                            <Button
+                              variant={
+                                ts.status === "Draft" ||
+                                ts.status === "Returned" ||
+                                ts.status === "Not Started"
+                                  ? "default"
+                                  : "outline"
+                              }
+                              size="sm"
+                            >
+                              {ts.status === "Not Started"
                                 ? "Open Calendar"
-                                : "View Calendar"}
-                          </Button>
-                        </Link>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-                {periods.length === 0 && (
+                                : ts.status === "Draft" || ts.status === "Returned"
+                                  ? "Open Calendar"
+                                  : "View Calendar"}
+                            </Button>
+                          </Link>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  },
+                )}
+                {periodRows.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                       No timesheet periods have been generated by HR yet.

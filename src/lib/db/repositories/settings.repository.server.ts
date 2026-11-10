@@ -1,13 +1,15 @@
 import "@tanstack/react-start/server-only";
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 
 import { getDatabaseClient } from "../client.ts";
 import { appSettings, organisations } from "../schema/organisation.ts";
+import { employees, users } from "../schema/employee.ts";
 import { auditEvents } from "../schema/system.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 import type { AppSettings } from "../../data/types.ts";
 import { syncWorkingHours } from "./working-hours.repository.server.ts";
+import { parseApprovalRoutingSettings } from "../../data/approval-routing-settings.ts";
 
 function mapAppSettings(
   settingsRow: typeof appSettings.$inferSelect,
@@ -34,6 +36,9 @@ function mapAppSettings(
       {}) as Record<string, string | null>,
     annualCarryExpiryMonthDay: (settingsRow.additionalSettings["annualCarryExpiryMonthDay"] ??
       null) as string | null,
+    approvalRouting: parseApprovalRoutingSettings(
+      settingsRow.additionalSettings["approvalRouting"],
+    ),
     leaveYearEnd: settingsRow.leaveYearEnd,
     documentReminderDays: settingsRow.documentReminderDays ?? [],
     employeeNumberFormat: settingsRow.employeeNumberFormat,
@@ -87,6 +92,66 @@ export async function saveAppSettings(
       throw new Error("Application settings have not been initialised.");
     }
     const previous = mapAppSettings(existing, existingOrg);
+    const approvalRouting = parseApprovalRoutingSettings(settings.approvalRouting);
+    const reviewerChanged =
+      approvalRouting.hrOwnRequestReviewerEmployeeId !==
+      parseApprovalRoutingSettings(previous.approvalRouting).hrOwnRequestReviewerEmployeeId;
+    if (reviewerChanged && !actor.roles?.includes("Super Admin"))
+      throw new Error("Only Super Admin can assign the independent reviewer for HR requests.");
+    if (reviewerChanged && actor.roles?.includes("HR"))
+      throw new Error("An HR team member cannot assign the reviewer for their own requests.");
+    if (reviewerChanged && approvalRouting.hrOwnRequestReviewerEmployeeId) {
+      if (approvalRouting.hrOwnRequestReviewerEmployeeId === actor.employeeId)
+        throw new Error("Choose a colleague other than yourself to review your own HR requests.");
+      const [reviewer] = await tx
+        .select({ id: employees.id })
+        .from(employees)
+        .innerJoin(
+          users,
+          and(
+            eq(users.organisationId, orgId),
+            eq(users.employeeId, employees.id),
+            eq(users.status, "Active"),
+            isNull(users.archivedAt),
+          ),
+        )
+        .where(
+          and(
+            eq(employees.organisationId, orgId),
+            eq(employees.id, approvalRouting.hrOwnRequestReviewerEmployeeId),
+            eq(employees.status, "Active"),
+            isNull(employees.archivedAt),
+          ),
+        )
+        .limit(1);
+      if (!reviewer)
+        throw new Error("Choose an active colleague with VIA HR access for independent review.");
+    }
+    if (approvalRouting.managerlessExecutiveAttendanceReviewerEmployeeId) {
+      const [attendanceReviewer] = await tx
+        .select({ id: employees.id })
+        .from(employees)
+        .innerJoin(
+          users,
+          and(
+            eq(users.organisationId, orgId),
+            eq(users.employeeId, employees.id),
+            eq(users.status, "Active"),
+            isNull(users.archivedAt),
+          ),
+        )
+        .where(
+          and(
+            eq(employees.organisationId, orgId),
+            eq(employees.id, approvalRouting.managerlessExecutiveAttendanceReviewerEmployeeId),
+            eq(employees.status, "Active"),
+            isNull(employees.archivedAt),
+          ),
+        )
+        .limit(1);
+      if (!attendanceReviewer)
+        throw new Error("Choose an active colleague for executive attendance review.");
+    }
 
     // Update organisation name
     await tx
@@ -113,6 +178,7 @@ export async function saveAppSettings(
           leaveIncludesWeekends: settings.leaveIncludesWeekends !== false,
           annualCarryExpiryDates: settings.annualCarryExpiryDates ?? {},
           annualCarryExpiryMonthDay: settings.annualCarryExpiryMonthDay ?? null,
+          approvalRouting,
         })}::jsonb`,
         leaveYearEnd: settings.leaveYearEnd,
         documentReminderDays: settings.documentReminderDays,

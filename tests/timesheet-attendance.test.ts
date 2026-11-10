@@ -11,7 +11,7 @@ import { VersionedStorageService } from "../src/lib/data/storage.ts";
 import { TimesheetService } from "../src/lib/data/timesheet-service.ts";
 import { recordedAttendanceHours } from "../src/lib/data/recorded-hours.ts";
 import type { TimesheetWithEntries } from "../src/lib/data/timesheet-types.ts";
-import type { ActorContext } from "../src/lib/data/types.ts";
+import type { ActorContext, Employee } from "../src/lib/data/types.ts";
 
 const employee: ActorContext = {
   actor: {
@@ -517,10 +517,7 @@ test("a meaningful variance explanation is persisted, audited, and permits appro
   const submitted = timesheets.submitTimesheet(saved.id, employee);
 
   assert.equal(submitted.attendanceReconciliationSnapshot?.unresolvedCount, 0);
-  assert.throws(
-    () => timesheets.approveTimesheet(submitted.id, hr),
-    /reason for completing the unavailable supervisor's review/,
-  );
+  assert.throws(() => timesheets.approveTimesheet(submitted.id, hr), /not authorised/);
   assert.equal(timesheets.approveTimesheet(submitted.id, manager).status, "Pending HR");
   assert.equal(timesheets.approveTimesheet(submitted.id, hr).status, "Approved");
   assert.equal(
@@ -531,6 +528,32 @@ test("a meaningful variance explanation is persisted, audited, and permits appro
     audit.list().some((event) => event.action === "timesheet_access_denied"),
     true,
   );
+});
+
+test("assigned HR supervisor completes a timesheet in one decision", () => {
+  const { attendance, storage, timesheets, period } = harness();
+  storage.writeCollection(
+    "employees",
+    storage
+      .readCollection<Employee>("employees")
+      .map((person) =>
+        person.id === "employee-omar" ? { ...person, lineManagerId: "employee-rana" } : person,
+      ),
+  );
+  addAttendance(attendance, "2026-08-17");
+  const sheet = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
+  addProjectHours(sheet, "2026-08-17", 8);
+  const saved = timesheets.saveTimesheetDraft(sheet, employee);
+  const submitted = timesheets.submitTimesheet(saved.id, employee);
+  const superAdmin: ActorContext = {
+    actor: { ...hr.actor, activeRole: "Super Admin", roles: ["Employee", "HR", "Super Admin"] },
+  };
+  assert.throws(() => timesheets.approveTimesheet(submitted.id, superAdmin), /not authorised/);
+  const approved = timesheets.approveTimesheet(submitted.id, hr);
+  assert.equal(approved.status, "Approved");
+  assert.equal(approved.supervisorReviewedBy, hr.actor.userId);
+  assert.equal(approved.approvedBy, hr.actor.userId);
+  assert.throws(() => timesheets.approveTimesheet(submitted.id, hr), /awaiting/);
 });
 
 test("a new attendance correction after submission is recalculated before manager approval", () => {

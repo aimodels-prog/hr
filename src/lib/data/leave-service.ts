@@ -27,11 +27,23 @@ import { SettingsService } from "./settings-service.ts";
 import { siteVisitLocalNow } from "./site-visit.ts";
 import { leaveNoticeAssessment, validateLeaveNoticeException } from "./leave-notice.ts";
 import { getLeaveEligibility, isOmaniNationality } from "./leave-eligibility.ts";
+import { isSupervisorOptionalPosition } from "./executive-reporting.ts";
 
 // Recognises the different labels a policy's approvalChain might use for the line-manager
 // step, matching the same tolerance approveRequest already applies when locating that step.
 function isManagerRoleName(role: string): boolean {
   return role === "Line Manager" || role === "Supervisor" || role === "Manager";
+}
+
+/** Leadership without a supervisor goes straight to HR, never to a generic manager queue. */
+function hasHrOnlyExecutiveLeaveRoute(employee?: Employee | null): boolean {
+  return Boolean(
+    employee &&
+    !employee.lineManagerId &&
+    employee.status === "Active" &&
+    employee.employmentConfirmationStatus === "Confirmed" &&
+    isSupervisorOptionalPosition(employee.position),
+  );
 }
 
 export class LeaveService {
@@ -100,6 +112,9 @@ export class LeaveService {
       snapshot.requests.map((request) => ({
         ...request,
         employeeId: mapEmployee(request.employeeId),
+        ...(request.independentReviewerEmployeeId
+          ? { independentReviewerEmployeeId: mapEmployee(request.independentReviewerEmployeeId) }
+          : {}),
         ...(request.handoverContactId
           ? { handoverContactId: mapEmployee(request.handoverContactId) }
           : {}),
@@ -170,6 +185,18 @@ export class LeaveService {
     const activeRole = context.actor.activeRole ?? context.actor.roles[0];
     if (context.actor.employeeId === employeeId) return;
     if (activeRole && ["HR", "Super Admin"].includes(activeRole)) return;
+    if (
+      context.actor.employeeId &&
+      this.requestRepo
+        .list()
+        .some(
+          (request) =>
+            request.employeeId === employeeId &&
+            request.independentReviewerEmployeeId === context.actor.employeeId &&
+            request.status === "Pending HR",
+        )
+    )
+      return;
     if (activeRole === "Line Manager" && context.actor.employeeId) {
       const employee = new EmployeeService().getById(employeeId, SYSTEM_CONTEXT);
       if (employee?.lineManagerId === context.actor.employeeId) return;
@@ -199,7 +226,8 @@ export class LeaveService {
     const isSpecialReviewer =
       req.status === "Pending HR" &&
       Boolean(context.actor.employeeId) &&
-      (req.policySnapshot.specialRequest?.countryManagerEmployeeId === context.actor.employeeId ||
+      (req.independentReviewerEmployeeId === context.actor.employeeId ||
+        req.policySnapshot.specialRequest?.countryManagerEmployeeId === context.actor.employeeId ||
         req.policySnapshot.noticeException?.countryManagerEmployeeId === context.actor.employeeId);
 
     if (!isOwner && !isHrOrAdmin && !isLineManager && !isSpecialReviewer) {
@@ -727,6 +755,7 @@ export class LeaveService {
         .filter(
           (request) =>
             request.employeeId === context.actor.employeeId ||
+            request.independentReviewerEmployeeId === context.actor.employeeId ||
             reportIds.has(request.employeeId) ||
             (request.status === "Pending HR" &&
               (request.policySnapshot.specialRequest?.countryManagerEmployeeId ===
@@ -739,7 +768,11 @@ export class LeaveService {
     return context.actor.employeeId
       ? this.requestRepo
           .list()
-          .filter((request) => request.employeeId === context.actor.employeeId)
+          .filter(
+            (request) =>
+              request.employeeId === context.actor.employeeId ||
+              request.independentReviewerEmployeeId === context.actor.employeeId,
+          )
           .map((request) => this.presentRequest(request))
       : [];
   }
@@ -790,6 +823,40 @@ export class LeaveService {
       );
   }
 
+  getPendingRequestsForCountryManager(context: ActorContext): LeaveRequest[] {
+    const employeeId = context.actor.employeeId;
+    if (!employeeId || context.actor.activeRole === "Super Admin") return [];
+    return this.requestRepo
+      .list()
+      .filter(
+        (request) =>
+          request.status === "Pending HR" &&
+          request.employeeId !== employeeId &&
+          (request.policySnapshot.specialRequest?.countryManagerEmployeeId === employeeId ||
+            request.policySnapshot.noticeException?.countryManagerEmployeeId === employeeId) &&
+          request.chainApprovals.some(
+            (step) => step.role === "Country Manager" && step.status === "Pending",
+          ),
+      )
+      .map((request) => this.presentRequest(request));
+  }
+
+  getPendingRequestsForIndependentReviewer(context: ActorContext): LeaveRequest[] {
+    const employeeId = context.actor.employeeId;
+    if (!employeeId || context.actor.activeRole === "Super Admin") return [];
+    return this.requestRepo
+      .list()
+      .filter(
+        (request) =>
+          ["Pending HR", "Amendment Pending HR", "Cancellation Pending"].includes(request.status) &&
+          request.employeeId !== employeeId &&
+          request.independentReviewerEmployeeId === employeeId &&
+          (request.status !== "Pending HR" ||
+            request.chainApprovals.some((step) => step.role === "HR" && step.status === "Pending")),
+      )
+      .map((request) => this.presentRequest(request));
+  }
+
   getPendingRequestsForHr(context: ActorContext): LeaveRequest[] {
     if (context.actor.activeRole !== "HR" && context.actor.activeRole !== "Super Admin") {
       this.denyAccess(
@@ -803,7 +870,9 @@ export class LeaveService {
       .list()
       .filter(
         (r) =>
-          (r.status === "Pending HR" &&
+          (!r.independentReviewerEmployeeId ||
+            r.independentReviewerEmployeeId === context.actor.employeeId) &&
+          ((r.status === "Pending HR" &&
             !(
               r.policySnapshot.specialRequest &&
               (context.actor.activeRole !== "HR" ||
@@ -815,10 +884,10 @@ export class LeaveService {
               r.policySnapshot.noticeException &&
               !r.chainApprovals.some((step) => step.role === "HR" && step.status === "Pending")
             )) ||
-          r.status === "Pending Super Admin" ||
-          r.status === "Cancellation Pending" ||
-          r.status === "Amendment Pending Line Manager" ||
-          r.status === "Amendment Pending HR",
+            r.status === "Pending Super Admin" ||
+            r.status === "Cancellation Pending" ||
+            r.status === "Amendment Pending Line Manager" ||
+            r.status === "Amendment Pending HR"),
       );
   }
 
@@ -919,6 +988,16 @@ export class LeaveService {
       throw new Error("Switch to your assigned HR or Line Manager role to decide leave.");
     const req = this.requestRepo.getById(requestId);
     if (!req) throw new Error("Request not found");
+    const independentReviewer = Boolean(
+      req.independentReviewerEmployeeId &&
+      req.independentReviewerEmployeeId === context.actor.employeeId &&
+      context.actor.employeeId !== req.employeeId &&
+      context.actor.userId,
+    );
+    if (req.independentReviewerEmployeeId && !independentReviewer)
+      throw new Error("Only the assigned independent reviewer can decide this leave request.");
+    if (independentReviewer && req.policySnapshot.specialRequest)
+      throw new Error("Special leave allocation must be completed in the live application.");
 
     if (req.status !== "Cancellation Pending") {
       const policy = this.policyRepo.getById(req.policyId);
@@ -938,7 +1017,30 @@ export class LeaveService {
       return this.approveAmendment(req, context);
     }
 
-    if (req.status === "Pending HR" && req.policySnapshot.noticeException) {
+    if (
+      req.status === "Pending HR" &&
+      req.policySnapshot.specialRequest &&
+      req.chainApprovals.some(
+        (item) => item.role === "Country Manager" && item.status === "Pending",
+      )
+    ) {
+      if (
+        context.actor.employeeId === req.employeeId ||
+        context.actor.employeeId !== req.policySnapshot.specialRequest.countryManagerEmployeeId
+      )
+        throw new Error("You are not the assigned Country Manager for this request.");
+      const step = req.chainApprovals.find(
+        (item) => item.role === "Country Manager" && item.status === "Pending",
+      )!;
+      step.status = "Approved";
+      step.approvedBy = context.actor.userId;
+      step.date = new Date().toISOString();
+      const updated = this.requestRepo.update(req.id, req, context);
+      this.notifySubmission(updated, context);
+      return updated;
+    }
+
+    if (req.status === "Pending HR" && req.policySnapshot.noticeException && !independentReviewer) {
       if (context.actor.employeeId === req.employeeId)
         throw new Error("You cannot approve your own leave request.");
       const role =
@@ -965,6 +1067,8 @@ export class LeaveService {
     }
 
     if (req.status === "Pending Line Manager") {
+      if (context.actor.employeeId === req.employeeId)
+        throw new Error("You cannot approve your own leave request.");
       const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
       const isAssignedManager =
         Boolean(context.actor.employeeId) && employee?.lineManagerId === context.actor.employeeId;
@@ -990,6 +1094,21 @@ export class LeaveService {
         step.date = new Date().toISOString();
       }
 
+      if (
+        step &&
+        context.actor.activeRole === "HR" &&
+        isAssignedManager &&
+        !req.policySnapshot.noticeException &&
+        !req.policySnapshot.specialRequest &&
+        req.chainApprovals.every(
+          (item) => item.status !== "Pending" || ["HR", "Super Admin"].includes(item.role),
+        )
+      ) {
+        req.chainApprovals = req.chainApprovals.filter(
+          (item) => !(item.status === "Pending" && ["HR", "Super Admin"].includes(item.role)),
+        );
+      }
+
       // Honor the policy's configured approval chain: only move to an HR step if one is
       // actually next in this request's chain (some policies are manager-only, single-step
       // approvals) - otherwise this manager approval is the final decision.
@@ -1010,7 +1129,7 @@ export class LeaveService {
     }
 
     if (req.status === "Pending HR" || req.status === "Pending Super Admin") {
-      if (context.actor.activeRole !== "HR") {
+      if (context.actor.activeRole !== "HR" && !independentReviewer) {
         this.denyAccess(
           "Final leave approval denied",
           req.id,
@@ -1041,7 +1160,7 @@ export class LeaveService {
     }
 
     if (req.status === "Cancellation Pending") {
-      if (context.actor.activeRole !== "HR") {
+      if (context.actor.activeRole !== "HR" && !independentReviewer) {
         this.denyAccess(
           "Leave cancellation approval denied",
           req.id,
@@ -1084,12 +1203,44 @@ export class LeaveService {
       throw new Error("Switch to your assigned HR or Line Manager role to decide leave.");
     const req = this.requestRepo.getById(requestId);
     if (!req) throw new Error("Request not found");
+    const independentReviewer = Boolean(
+      req.independentReviewerEmployeeId &&
+      req.independentReviewerEmployeeId === context.actor.employeeId &&
+      context.actor.employeeId !== req.employeeId &&
+      context.actor.userId,
+    );
+    if (req.independentReviewerEmployeeId && !independentReviewer)
+      throw new Error("Only the assigned independent reviewer can decide this leave request.");
 
     if (req.status === "Amendment Pending Line Manager" || req.status === "Amendment Pending HR") {
       return this.rejectAmendment(req, reason, context);
     }
 
-    if (req.status === "Pending HR" && req.policySnapshot.noticeException) {
+    if (
+      req.status === "Pending HR" &&
+      req.policySnapshot.specialRequest &&
+      req.chainApprovals.some(
+        (item) => item.role === "Country Manager" && item.status === "Pending",
+      )
+    ) {
+      if (
+        context.actor.employeeId === req.employeeId ||
+        context.actor.employeeId !== req.policySnapshot.specialRequest.countryManagerEmployeeId
+      )
+        throw new Error("You are not the assigned Country Manager for this request.");
+      if (reason.trim().length < 3) throw new Error("A reason is required to reject a request.");
+      const step = req.chainApprovals.find(
+        (item) => item.role === "Country Manager" && item.status === "Pending",
+      )!;
+      step.status = "Declined";
+      step.approvedBy = context.actor.userId;
+      step.date = new Date().toISOString();
+      req.status = "Declined";
+      req.refusalReason = reason.trim();
+      return this.requestRepo.update(req.id, req, context);
+    }
+
+    if (req.status === "Pending HR" && req.policySnapshot.noticeException && !independentReviewer) {
       if (context.actor.employeeId === req.employeeId)
         throw new Error("You cannot decide your own leave request.");
       const role =
@@ -1131,7 +1282,7 @@ export class LeaveService {
       req.status === "Pending Super Admin" ||
       req.status === "Cancellation Pending"
     ) {
-      if (context.actor.activeRole !== "HR") {
+      if (context.actor.activeRole !== "HR" && !independentReviewer) {
         this.denyAccess(
           "Final leave decision denied",
           req.id,
@@ -1553,14 +1704,20 @@ export class LeaveService {
       : undefined;
     if (noticeException) status = "Pending HR";
 
+    const executiveHrOnly =
+      chainIncludesManager && !noticeException && hasHrOnlyExecutiveLeaveRoute(requester);
+    if (executiveHrOnly) status = "Pending HR";
+
     // Built from the policy's own configured chain rather than a hardcoded two-step sequence,
     // so a manager-only policy (e.g. Compensation Off) stays a single approval and an HR-only
     // policy (e.g. Resignation) never waits on a line-manager step that was never meant to exist.
     const chainApprovals: LeaveRequest["chainApprovals"] = noticeException
       ? ["Country Manager", "HR", "Line Manager"].map((role) => ({ role, status: "Pending" }))
-      : policy.approvalChain.map((role) => ({ role, status: "Pending" }));
+      : executiveHrOnly
+        ? [{ role: "HR", status: "Pending" }]
+        : policy.approvalChain.map((role) => ({ role, status: "Pending" }));
 
-    if (chainIncludesManager && !requester?.lineManagerId) {
+    if (chainIncludesManager && !requester?.lineManagerId && !executiveHrOnly) {
       throw new Error(
         "Your supervisor has not been assigned. Ask HR to update your reporting line before requesting leave.",
       );
@@ -1940,18 +2097,25 @@ export class LeaveService {
       );
     if (overlapping) throw new Error("The proposed dates overlap another active leave request.");
 
-    const chainApprovals = policy.approvalChain.map((role) => ({
-      role,
-      status: "Pending" as const,
-    }));
     const startsWithManager = isManagerRoleName(policy.approvalChain[0] ?? "");
     const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
-    if (startsWithManager && !employee?.lineManagerId) {
+    const executiveHrOnly =
+      startsWithManager &&
+      !req.policySnapshot.noticeException &&
+      !req.policySnapshot.specialRequest &&
+      hasHrOnlyExecutiveLeaveRoute(employee);
+    if (startsWithManager && !employee?.lineManagerId && !executiveHrOnly) {
       throw new Error(
         "Your supervisor has not been assigned. Ask HR to update your reporting line.",
       );
     }
-    req.status = startsWithManager ? "Amendment Pending Line Manager" : "Amendment Pending HR";
+    const chainApprovals = executiveHrOnly
+      ? [{ role: "HR", status: "Pending" as const }]
+      : policy.approvalChain.map((role) => ({ role, status: "Pending" as const }));
+    req.status =
+      startsWithManager && !executiveHrOnly
+        ? "Amendment Pending Line Manager"
+        : "Amendment Pending HR";
     req.pendingAmendment = {
       proposedStartDate,
       proposedEndDate,
@@ -1971,6 +2135,8 @@ export class LeaveService {
     const amendment = req.pendingAmendment;
     if (!amendment) throw new Error("The proposed leave change could not be found.");
     if (req.status === "Amendment Pending Line Manager") {
+      if (context.actor.employeeId === req.employeeId)
+        throw new Error("You cannot approve your own leave date change.");
       const employee = new EmployeeService().getById(req.employeeId, SYSTEM_CONTEXT);
       const isManager =
         Boolean(context.actor.employeeId) && employee?.lineManagerId === context.actor.employeeId;
@@ -1994,6 +2160,20 @@ export class LeaveService {
         step.approvedBy = context.actor.userId;
         step.date = new Date().toISOString();
       }
+      if (
+        step &&
+        context.actor.activeRole === "HR" &&
+        isManager &&
+        !req.policySnapshot.noticeException &&
+        !req.policySnapshot.specialRequest &&
+        amendment.chainApprovals.every(
+          (item) => item.status !== "Pending" || ["HR", "Super Admin"].includes(item.role),
+        )
+      ) {
+        amendment.chainApprovals = amendment.chainApprovals.filter(
+          (item) => !(item.status === "Pending" && ["HR", "Super Admin"].includes(item.role)),
+        );
+      }
       const hasHrStep = amendment.chainApprovals.some(
         (item) => ["HR", "Super Admin"].includes(item.role) && item.status === "Pending",
       );
@@ -2005,7 +2185,10 @@ export class LeaveService {
       }
       return this.finalizeAmendment(req, context);
     }
-    if (!["HR", "Super Admin"].includes(context.actor.activeRole ?? "")) {
+    if (
+      !["HR", "Super Admin"].includes(context.actor.activeRole ?? "") &&
+      req.independentReviewerEmployeeId !== context.actor.employeeId
+    ) {
       this.denyAccess(
         "Leave amendment approval denied",
         req.id,
@@ -2192,7 +2375,10 @@ export class LeaveService {
           context,
         );
       }
-    } else if (!["HR", "Super Admin"].includes(context.actor.activeRole ?? "")) {
+    } else if (
+      !["HR", "Super Admin"].includes(context.actor.activeRole ?? "") &&
+      req.independentReviewerEmployeeId !== context.actor.employeeId
+    ) {
       this.denyAccess(
         "Leave amendment rejection denied",
         req.id,
@@ -2695,8 +2881,14 @@ export class LeaveService {
 
   /** HR-only choices for final special-leave allocation; PostgreSQL rechecks every balance. */
   getSpecialAllocationSources(employeeId: string, context: ActorContext) {
-    if (context.actor.activeRole !== "HR")
-      throw new Error("Only HR can allocate special leave balances.");
+    if (
+      context.actor.activeRole !== "HR" &&
+      !this.getPendingRequestsForIndependentReviewer(context).some(
+        (request) =>
+          request.employeeId === employeeId && Boolean(request.policySnapshot.specialRequest),
+      )
+    )
+      throw new Error("Only the assigned reviewer can allocate special leave balances.");
     const policies = new Map(
       this.getEligiblePolicies(employeeId, context).map((policy) => [policy.id, policy]),
     );

@@ -135,6 +135,9 @@ export function DevRoleSwitcher() {
                 {initials}
               </AvatarFallback>
             </Avatar>
+            <span className="max-w-[6rem] truncate text-[11px] font-semibold sm:hidden">
+              {activeRole}
+            </span>
             <div className="hidden min-w-0 text-left sm:block">
               <span className="block max-w-[110px] truncate text-xs font-semibold leading-none text-foreground">
                 {displayName}

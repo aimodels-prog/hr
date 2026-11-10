@@ -634,6 +634,7 @@ function TimesheetEntryRoute() {
                   <Link
                     to="/staff/request-detail/$module/$requestId"
                     params={{ module: "Leave", requestId: request.id }}
+                    search={{}}
                     className="font-medium text-primary underline"
                   >
                     {leaveDisplayType(request)} · {request.status}
@@ -645,6 +646,7 @@ function TimesheetEntryRoute() {
                   <Link
                     to="/staff/request-detail/$module/$requestId"
                     params={{ module: "Visits", requestId: visit.databaseId ?? visit.id }}
+                    search={{}}
                     className="font-medium text-primary underline"
                   >
                     Visit to {visit.destination} · {visit.status}
@@ -659,6 +661,7 @@ function TimesheetEntryRoute() {
                       module: "Attendance corrections",
                       requestId: correction.databaseId ?? correction.id,
                     }}
+                    search={{}}
                     className="font-medium text-primary underline"
                   >
                     {correction.correctionType} · {correction.status}

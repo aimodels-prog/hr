@@ -10,6 +10,7 @@ import { MemoryStorageDriver } from "../src/lib/data/storage-driver.ts";
 import { VersionedStorageService } from "../src/lib/data/storage.ts";
 import { calculateTravelVariancePercent, TravelService } from "../src/lib/data/travel-service.ts";
 import { PayrollService } from "../src/lib/data/payroll-service.ts";
+import { SettingsService } from "../src/lib/data/settings-service.ts";
 import type { Employee } from "../src/lib/data/types.ts";
 import type { FileRepository, SaveFileInput } from "../src/lib/data/file-repository.ts";
 import type { ActorContext, FileMetadata } from "../src/lib/data/types.ts";
@@ -250,21 +251,26 @@ test("travel variance remains finite when the authorised estimate is zero", () =
 
 test("a traveller cannot approve their own request for HR or Accounts", async () => {
   const { travel } = harness();
-  // employee-yusuf is Super Admin in seed data; submit as themselves.
+  const travellerWithAdminRole: ActorContext = {
+    actor: { ...superAdmin.actor, employeeId: "employee-omar" },
+  };
   const req = await travel.submitRequest(
     {
-      employeeId: "employee-yusuf",
+      employeeId: "employee-omar",
       purpose: "Conference",
       destination: "London, UK",
       startDate: "2020-01-10",
       endDate: "2020-01-12",
       currency: "OMR",
     },
-    superAdmin,
+    travellerWithAdminRole,
   );
-  assert.throws(() => travel.hrApprove(req.id, true, "", superAdmin), /cannot review your own/);
   assert.throws(
-    () => travel.accountsApprove(req.id, true, "", superAdmin),
+    () => travel.hrApprove(req.id, true, "", travellerWithAdminRole),
+    /cannot review your own/,
+  );
+  assert.throws(
+    () => travel.accountsApprove(req.id, true, "", travellerWithAdminRole),
     /cannot review your own/,
   );
 });
@@ -272,7 +278,9 @@ test("a traveller cannot approve their own request for HR or Accounts", async ()
 test("rejecting requires a reason from both HR and Accounts", async () => {
   const { travel } = harness();
   const req = await submitBasicRequest(travel);
+  travel.managerApprove(req.id, true, "Business need confirmed", manager);
   assert.throws(() => travel.hrApprove(req.id, false, "", hr), /detailed reason/);
+  travel.hrApprove(req.id, true, "Policy checked", hr);
   assert.throws(() => travel.accountsApprove(req.id, false, "  ", accounts), /detailed reason/);
 });
 
@@ -299,6 +307,118 @@ test("a request only reaches Pre-authorised once the supervisor, HR and Accounts
     currency: "OMR",
     capturedAt: afterAccounts.preAuthorisedAt,
   });
+});
+
+test("a managerless CEO trip waits for Finance, with supervisor and HR marked not required", async () => {
+  const { travel, storage } = harness();
+  const employees = storage.readCollection<Employee>("employees");
+  storage.writeCollection(
+    "employees",
+    employees.map((person) =>
+      person.id === "employee-yusuf"
+        ? { ...person, position: "CEO", lineManagerId: undefined }
+        : person,
+    ),
+  );
+  const request = await travel.submitRequest(
+    {
+      employeeId: "employee-yusuf",
+      purpose: "Client conference",
+      destination: "Dubai, UAE",
+      startDate: "2020-02-10",
+      endDate: "2020-02-12",
+      currency: "OMR",
+    },
+    superAdmin,
+  );
+  assert.deepEqual(request.approvalRoute, {
+    kind: "Managerless Executive",
+    reviewerRole: "Accounts",
+    notifyHr: true,
+  });
+  assert.equal(request.managerApprovalStatus, "Not Required");
+  assert.equal(request.hrApprovalStatus, "Not Required");
+  assert.equal(request.accountsApprovalStatus, "Pending");
+  assert.throws(() => travel.hrApprove(request.id, true, "", hr), /Invalid state/);
+  const approved = travel.accountsApprove(request.id, true, "Within budget", accounts);
+  assert.equal(approved.status, "Pre-authorised");
+  assert.equal(approved.accountsApprovedBy, accounts.actor.userId);
+  assert.equal(approved.hrApprovedBy, undefined);
+  assert.equal(approved.managerApprovedBy, undefined);
+});
+
+test("HR staff travel uses the configured independent reviewer in Employee mode before Finance", async () => {
+  const { travel } = harness();
+  const settingsService = new SettingsService();
+  const previous = settingsService.getAppSettingsSync();
+  await settingsService.saveAppSettings(
+    {
+      ...previous,
+      approvalRouting: {
+        ...previous.approvalRouting!,
+        hrOwnRequestReviewerEmployeeId: "employee-yusuf",
+      },
+    },
+    superAdmin,
+  );
+  try {
+    const request = await travel.submitRequest(
+      {
+        employeeId: "employee-rana",
+        purpose: "HR conference",
+        destination: "Salalah, Oman",
+        startDate: "2020-03-10",
+        endDate: "2020-03-12",
+        currency: "OMR",
+      },
+      hr,
+    );
+    assert.equal(request.approvalRoute?.kind, "HR Own Travel");
+    assert.equal(request.hrApprovalStatus, "Not Required");
+    assert.equal(request.managerApprovalStatus, "Pending");
+    assert.throws(() => travel.hrApprove(request.id, true, "", hr), /cannot review your own/);
+    assert.throws(
+      () => travel.managerApprove(request.id, true, "", superAdmin),
+      /assigned trip reviewer/,
+    );
+    const reviewerInEmployeeMode: ActorContext = {
+      actor: { ...superAdmin.actor, activeRole: "Employee" },
+    };
+    const afterReviewer = travel.managerApprove(
+      request.id,
+      true,
+      "Conference justified",
+      reviewerInEmployeeMode,
+    );
+    assert.equal(afterReviewer.status, "Pending HR and Accounts");
+    assert.equal(afterReviewer.managerApprovedBy, superAdmin.actor.userId);
+    const afterFinance = travel.accountsApprove(request.id, true, "Costs approved", accounts);
+    assert.equal(afterFinance.status, "Pre-authorised");
+    assert.equal(afterFinance.hrApprovedBy, undefined);
+  } finally {
+    await settingsService.saveAppSettings(previous, superAdmin);
+  }
+});
+
+test("an assigned HR supervisor completes the supervisor and HR travel reviews once", async () => {
+  const { travel } = harness();
+  const req = await submitBasicRequest(travel);
+  const hrStandIn: ActorContext = {
+    actor: {
+      ...manager.actor,
+      activeRole: "HR",
+      roles: ["Employee", "HR"],
+    },
+  };
+  const reviewed = travel.managerApprove(req.id, true, "Business trip confirmed", hrStandIn);
+  assert.equal(reviewed.managerApprovalStatus, "Approved");
+  assert.equal(reviewed.hrApprovalStatus, "Approved");
+  assert.equal(reviewed.hrApprovedBy, hrStandIn.actor.userId);
+  assert.equal(reviewed.status, "Pending HR and Accounts");
+  assert.equal(
+    travel.accountsApprove(req.id, true, "Budget confirmed", accounts).status,
+    "Pre-authorised",
+  );
 });
 
 test("expense lines cannot change the currency of the pre-authorised trip", async () => {

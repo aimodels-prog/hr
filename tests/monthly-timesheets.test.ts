@@ -178,7 +178,10 @@ test("daily hours are saved inside one monthly sheet and the same sheet goes thr
   const saved = service.saveTimesheetDraft(sheet, employee);
   assert.equal(saved.totalHours, saved.expectedHours);
   assert.equal(service.submitTimesheet(saved.id, employee).status, "Pending Manager");
-  assert.throws(() => service.approveTimesheet(saved.id, hr), /supervisor|assigned/i);
+  assert.throws(
+    () => service.approveTimesheet(saved.id, hr),
+    /not authorised|supervisor|assigned/i,
+  );
   assert.equal(service.approveTimesheet(saved.id, manager).status, "Pending HR");
   assert.equal(service.approveTimesheet(saved.id, hr).status, "Approved");
   assert.equal(storage.readCollection<TimesheetWithEntries>("timesheets").length, 1);

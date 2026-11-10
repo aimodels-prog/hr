@@ -12,6 +12,7 @@ import type { FileRepository, SaveFileInput } from "../src/lib/data/file-reposit
 import { LifecycleTaskService } from "../src/lib/data/lifecycle-task-service.ts";
 import { NotificationService } from "../src/lib/data/notification-service.ts";
 import { OffboardingService } from "../src/lib/data/offboarding-service.ts";
+import { TaskService } from "../src/lib/data/task-service.ts";
 import { initializeSeedData } from "../src/lib/data/seed-service.ts";
 import { MemoryStorageDriver } from "../src/lib/data/storage-driver.ts";
 import { VersionedStorageService } from "../src/lib/data/storage.ts";
@@ -106,6 +107,55 @@ async function addEmployee(
   );
   return employee;
 }
+
+test("HR assigned as supervisor can complete unassigned manager offboarding work", async () => {
+  setup();
+  const employee = await addEmployee(new EmployeeService());
+  const service = new OffboardingService();
+  const offboardingCase = service.startCase(
+    employee.id,
+    "Resignation",
+    "2026-09-01",
+    "2026-09-30",
+    false,
+    undefined,
+    hr,
+  );
+  const managerTask = offboardingCase.tasks.find((task) => task.ownerRole === "Line Manager")!;
+  assert.equal(managerTask.assignedUserId, undefined);
+  assert.ok(
+    new TaskService()
+      .getMyTasks({ userId: hr.actor.userId, employeeId: hr.actor.employeeId, activeRole: "HR" })
+      .some((task) => task.sourceId === managerTask.id),
+  );
+  await assert.rejects(
+    service.updateTaskStatus(
+      offboardingCase.id,
+      managerTask.id,
+      "Completed",
+      actor("user-other", "employee-other", "HR"),
+    ),
+    /assigned to another person or role/i,
+  );
+  await assert.rejects(
+    service.updateTaskStatus(
+      offboardingCase.id,
+      managerTask.id,
+      "Waived",
+      superAdmin,
+      undefined,
+      "Supervisor work was not required",
+    ),
+    /Only HR can waive/i,
+  );
+  const completed = await service.updateTaskStatus(
+    offboardingCase.id,
+    managerTask.id,
+    "Completed",
+    hr,
+  );
+  assert.equal(completed.tasks.find((task) => task.id === managerTask.id)?.status, "Completed");
+});
 
 test("startCase rejects invalid or out-of-order dates", async () => {
   setup();
@@ -404,6 +454,11 @@ test("a departing employee holding HR, Accounts or Super Admin cannot approve th
     () => offboardingService.grantLegalClearance(c.id, selfAsHr),
     /cannot confirm legal\/document clearance on your own/i,
   );
+  assert.throws(
+    () => offboardingService.grantFinancialClearance(c.id, superAdmin),
+    /Only Accounts/i,
+  );
+  assert.throws(() => offboardingService.grantLegalClearance(c.id, superAdmin), /Only HR/i);
 
   // Legitimate, unrelated actors can still grant clearance normally.
   offboardingService.grantFinancialClearance(c.id, accounts);

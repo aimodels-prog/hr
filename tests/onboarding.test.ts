@@ -5,7 +5,9 @@ import { AuditService } from "../src/lib/data/audit-service.ts";
 import { configureApplicationDataServices } from "../src/lib/data/application-data.ts";
 import { NotificationService } from "../src/lib/data/notification-service.ts";
 import { OnboardingService } from "../src/lib/data/onboarding-service.ts";
+import { TaskService } from "../src/lib/data/task-service.ts";
 import type {
+  OnboardingCase,
   OnboardingTemplate,
   OnboardingTemplateTask,
 } from "../src/lib/data/onboarding-types.ts";
@@ -209,6 +211,63 @@ test("each active role sees only its relevant onboarding work", () => {
     actor("user-super", "employee-super", "Super Admin"),
   );
   assert.equal(superAdminTasks.length, onboardingCase.tasks.length);
+});
+
+test("HR assigned as supervisor can complete an unassigned manager onboarding task, but not another named owner's task", async () => {
+  const { service, storage } = setup();
+  storage.writeCollection<Employee>(
+    "employees",
+    storage
+      .readCollection<Employee>("employees")
+      .map((employee) =>
+        employee.id === "employee-new" ? { ...employee, lineManagerId: "employee-rana" } : employee,
+      ),
+  );
+  const created = service.createCaseForEmployee("employee-new", hr, {
+    templateId: "tmpl-default",
+  });
+  const managerTask = created.tasks.find((task) => task.ownerRole === "Line Manager")!;
+  const replaceAssignment = (assignedUserId?: string) => {
+    storage.writeCollection<OnboardingCase>(
+      "onboardingCases",
+      storage.readCollection<OnboardingCase>("onboardingCases").map((item) =>
+        item.id === created.id
+          ? {
+              ...item,
+              tasks: item.tasks.map((task) => {
+                if (task.id !== managerTask.id) return task;
+                const next = { ...task };
+                if (assignedUserId) next.assignedUserId = assignedUserId;
+                else delete next.assignedUserId;
+                return next;
+              }),
+            }
+          : item,
+      ),
+    );
+  };
+  replaceAssignment("user-layla");
+  await assert.rejects(
+    service.updateTaskStatus(created.id, managerTask.id, "Completed", hr),
+    /assigned to another person or role/i,
+  );
+  replaceAssignment();
+  assert.ok(
+    new TaskService()
+      .getMyTasks({ userId: hr.actor.userId, employeeId: hr.actor.employeeId, activeRole: "HR" })
+      .some((task) => task.sourceId === managerTask.id),
+  );
+  await assert.rejects(
+    service.updateTaskStatus(
+      created.id,
+      managerTask.id,
+      "Completed",
+      actor("user-other", "employee-other", "HR"),
+    ),
+    /assigned to another person or role/i,
+  );
+  const completed = await service.updateTaskStatus(created.id, managerTask.id, "Completed", hr);
+  assert.equal(completed.tasks.find((task) => task.id === managerTask.id)?.status, "Completed");
 });
 
 test("Line Manager and Employee access is scoped to the actual relationship, not just a shared owner role", async () => {

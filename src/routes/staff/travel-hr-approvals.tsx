@@ -86,11 +86,16 @@ function HrTravelApprovalsContent() {
       !r.participants?.some((participant) => participant.decidedBy === currentUser.id) &&
       employeeFilter.matchesEmployee(r.employeeId) &&
       r.hrApprovalStatus === "Pending" &&
-      r.managerApprovalStatus === "Approved" &&
+      ["Approved", "Not Required"].includes(r.managerApprovalStatus) &&
+      (r.approvalRoute?.kind === "Managerless Executive"
+        ? r.approvalRoute.reviewerRole === "HR" && r.accountsApprovalStatus === "Not Required"
+        : r.approvalRoute?.kind !== "HR Own Travel") &&
       r.status === "Pending HR and Accounts",
   );
   const processed = requests.filter(
-    (r) => employeeFilter.matchesEmployee(r.employeeId) && r.hrApprovalStatus !== "Pending",
+    (r) =>
+      employeeFilter.matchesEmployee(r.employeeId) &&
+      ["Approved", "Rejected"].includes(r.hrApprovalStatus),
   );
 
   useEffect(() => {

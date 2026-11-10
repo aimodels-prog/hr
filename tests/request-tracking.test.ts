@@ -1,6 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { toTrackedRequest, type RequestRow } from "../src/lib/data/request-tracking.ts";
+import {
+  isApprovalTask,
+  toTrackedRequest,
+  type RequestRow,
+} from "../src/lib/data/request-tracking.ts";
+import type { AppTask } from "../src/lib/data/task-service.ts";
+
+test("approval decisions stay separate from personal tasks and reminders", () => {
+  const task = (id: string, sourceType = "leave-request", title = "Review request") =>
+    ({ id, sourceType, title }) as AppTask;
+  assert.equal(isApprovalTask(task("leave-hr-1")), true);
+  assert.equal(isApprovalTask(task("timesheet-manager-1", "timesheet")), true);
+  assert.equal(isApprovalTask(task("document-verify-1", "employee-document")), true);
+  assert.equal(isApprovalTask(task("employment-hr-1", "employee")), true);
+  assert.equal(isApprovalTask(task("travel-booking-accounts-1", "travel-request")), true);
+  assert.equal(isApprovalTask(task("offboarding-financial-1", "offboarding-case")), true);
+  assert.equal(isApprovalTask(task("offboarding-legal-1", "offboarding-case")), true);
+  assert.equal(isApprovalTask(task("offboarding-finalise-1", "offboarding-case")), true);
+  assert.equal(isApprovalTask(task("independent-hr-review-Leave-1", "leave-request")), true);
+  assert.equal(isApprovalTask(task("timesheet-self-1", "timesheet", "Submit timesheet")), false);
+  assert.equal(isApprovalTask(task("document-replace-1", "employee-document")), false);
+  assert.equal(isApprovalTask(task("travel-expenses-1", "travel-request")), false);
+});
 
 const base: RequestRow = {
   id: "request-1",
@@ -38,6 +60,116 @@ test("request tracking names earlier approvers while showing the outstanding rev
   assert.ok(tracked.events.some((event) => event.label === "Roshana (HR) approved"));
 });
 
+test("executive travel shows only the actual next reviewer, not skipped stages", () => {
+  const tracked = toTrackedRequest({
+    ...base,
+    manager_name: null,
+    metadata: {
+      manager: "Not Required",
+      hr: "Not Required",
+      finance: "Pending",
+      approvalRoute: {
+        kind: "Managerless Executive",
+        reviewerRole: "Accounts",
+        notifyHr: true,
+      },
+    },
+  });
+  assert.equal(tracked.waitingFor, "Finance");
+  assert.equal(tracked.status, "Awaiting Finance");
+  assert.deepEqual(tracked.approvedBy, []);
+});
+
+test("executive group travel names the participants' pending supervisors", () => {
+  const tracked = toTrackedRequest({
+    ...base,
+    manager_name: null,
+    metadata: {
+      manager: "Pending",
+      hr: "Not Required",
+      finance: "Pending",
+      pendingParticipantManagers: "Roshana, Tanaz",
+      approvalRoute: { kind: "Managerless Executive", reviewerRole: "Accounts" },
+    },
+  });
+  assert.equal(tracked.waitingFor, "Roshana, Tanaz");
+  assert.equal(tracked.status, "Awaiting Roshana, Tanaz");
+});
+
+test("HR employee requests identify their assigned independent reviewer by name", () => {
+  for (const module of ["Leave", "Timesheets", "Attendance corrections", "Overtime", "Training"]) {
+    const tracked = toTrackedRequest({
+      ...base,
+      module,
+      status: "Pending HR",
+      metadata: { independentReviewerName: "Riccardo" },
+    });
+    assert.equal(tracked.waitingFor, "Riccardo");
+    assert.equal(tracked.status, "Awaiting Riccardo");
+    assert.match(tracked.nextStep, /Riccardo/);
+  }
+});
+
+test("sensitive HR-owned records name their assigned reviewer at each pending stage", () => {
+  for (const [module, status] of [
+    ["Documents", "Pending Verification"],
+    ["Training certificates", "Pending HR"],
+    ["Profile updates", "Pending HR Review"],
+  ] as const) {
+    const tracked = toTrackedRequest({
+      ...base,
+      module,
+      status,
+      metadata: { independentReviewerName: "Riccardo" },
+    });
+    assert.equal(tracked.waitingFor, "Riccardo");
+    assert.equal(tracked.status, "Awaiting Riccardo");
+    assert.match(tracked.nextStep, /Riccardo/);
+  }
+});
+
+test("HR employee travel names its independent reviewer before Finance", () => {
+  const tracked = toTrackedRequest({
+    ...base,
+    manager_name: null,
+    metadata: {
+      manager: "Pending",
+      hr: "Not Required",
+      finance: "Pending",
+      independentReviewerName: "Riccardo",
+      approvalRoute: { kind: "HR Own Travel", reviewerEmployeeId: "employee-riccardo" },
+    },
+  });
+  assert.equal(tracked.waitingFor, "Riccardo");
+  assert.equal(tracked.status, "Awaiting Riccardo");
+  const shared = toTrackedRequest({
+    ...base,
+    manager_name: null,
+    metadata: {
+      manager: "Pending",
+      managerBy: "riccardo-user",
+      hr: "Not Required",
+      finance: "Pending",
+      independentReviewerName: "Riccardo",
+      pendingParticipantManagers: "Roshana",
+      approvalRoute: { kind: "HR Own Travel", reviewerEmployeeId: "employee-riccardo" },
+    },
+  });
+  assert.equal(shared.waitingFor, "Roshana");
+});
+
+test("approved visit with a pending extension stays in the waiting queue", () => {
+  const tracked = toTrackedRequest({
+    ...base,
+    module: "Visits",
+    status: "Extension Pending",
+    metadata: { extensionPending: true, independentReviewerName: "Riccardo" },
+  });
+  assert.equal(tracked.group, "Waiting");
+  assert.equal(tracked.waitingFor, "Riccardo");
+  assert.equal(tracked.status, "Extension awaiting Riccardo");
+});
+
 test("older leave records keep their recorded approval chain without inventing a decision", () => {
   const tracked = toTrackedRequest(
     {
@@ -65,6 +197,57 @@ test("older leave records keep their recorded approval chain without inventing a
   assert.equal(
     tracked.events.some((event) => event.label.includes("HR: Approved")),
     false,
+  );
+});
+
+test("special leave names the Country Manager before HR when that review is still pending", () => {
+  const tracked = toTrackedRequest({
+    ...base,
+    module: "Leave",
+    status: "Pending HR",
+    metadata: {
+      specialRequest: true,
+      countryManagerName: "Riccardo",
+      chain: [
+        { role: "Line Manager", status: "Approved" },
+        { role: "Country Manager", status: "Pending" },
+        { role: "HR", status: "Pending" },
+      ],
+    },
+  });
+  assert.equal(tracked.waitingFor, "Riccardo");
+  assert.match(tracked.nextStep, /Waiting for Riccardo/);
+});
+
+test("short-notice leave names both reviewers until each has decided", () => {
+  const request = {
+    ...base,
+    module: "Leave",
+    status: "Pending HR",
+    metadata: {
+      noticeException: true,
+      countryManagerName: "Riccardo",
+      chain: [
+        { role: "Country Manager", status: "Pending" },
+        { role: "HR", status: "Pending" },
+        { role: "Line Manager", status: "Pending" },
+      ],
+    },
+  };
+  assert.equal(toTrackedRequest(request).waitingFor, "Riccardo and HR");
+  assert.equal(
+    toTrackedRequest({
+      ...request,
+      metadata: {
+        ...request.metadata,
+        chain: [
+          { role: "Country Manager", status: "Approved" },
+          { role: "HR", status: "Pending" },
+          { role: "Line Manager", status: "Pending" },
+        ],
+      },
+    }).waitingFor,
+    "HR",
   );
 });
 
@@ -126,6 +309,73 @@ test("a legacy leave stage is not lost when a later stage has an audit event", (
   );
   assert.equal(tracked.events.filter((event) => event.label.includes("Riccardo")).length, 1);
   assert.equal(tracked.events.filter((event) => event.label.includes("Roshana")).length, 1);
+});
+
+test("one HR stand-in decision is shown once despite manager and HR stage stamps", () => {
+  const at = "2026-11-02T09:00:00.000Z";
+  for (const module of ["Timesheets", "Attendance corrections"]) {
+    const tracked = toTrackedRequest(
+      {
+        ...base,
+        module,
+        status: "Approved",
+        metadata: {
+          managerAt: at,
+          managerBy: "hr-user",
+          hrAt: at,
+          hrBy: "hr-user",
+          approvedAt: at,
+          approvedBy: "hr-user",
+        },
+      },
+      [{ actorId: "hr-user", actorName: "Roshana", role: "HR", outcome: "Approved", at }],
+      { "hr-user": "Roshana" },
+    );
+    assert.deepEqual(tracked.approvedBy, ["Roshana"]);
+    assert.equal(
+      tracked.events.filter((event) => /decision|approved/i.test(event.label)).length,
+      1,
+    );
+    assert.equal(
+      tracked.events.find((event) => event.label.includes("Roshana"))?.label,
+      "Roshana (HR) approved",
+    );
+  }
+});
+
+test("separate manager and HR decisions remain two visible approvals", () => {
+  const tracked = toTrackedRequest(
+    {
+      ...base,
+      module: "Attendance corrections",
+      status: "Approved",
+      metadata: {
+        managerAt: "2026-11-01T09:00:00.000Z",
+        managerBy: "manager-user",
+        hrAt: "2026-11-02T09:00:00.000Z",
+        hrBy: "hr-user",
+      },
+    },
+    [
+      {
+        actorId: "manager-user",
+        actorName: "Riccardo",
+        role: "Line Manager",
+        outcome: "Approved",
+        at: "2026-11-01T09:00:00.000Z",
+      },
+      {
+        actorId: "hr-user",
+        actorName: "Roshana",
+        role: "HR",
+        outcome: "Approved",
+        at: "2026-11-02T09:00:00.000Z",
+      },
+    ],
+    { "manager-user": "Riccardo", "hr-user": "Roshana" },
+  );
+  assert.deepEqual(tracked.approvedBy, ["Riccardo", "Roshana"]);
+  assert.equal(tracked.events.filter((event) => /approved/i.test(event.label)).length, 2);
 });
 
 test("an approved record remains visible with a clear final state", () => {

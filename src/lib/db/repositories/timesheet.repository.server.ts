@@ -3,7 +3,7 @@ import { requireEmployeeSupervisor } from "./supervisor-access.repository.server
 import { syncWorkingHours } from "./working-hours.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 
 import { getDatabaseClient } from "../client.ts";
 import {
@@ -18,6 +18,7 @@ import { appSettings, organisations } from "../schema/organisation.ts";
 import { isAttendanceTracked, readAttendanceTracking } from "../../data/attendance-tracking.ts";
 import { recordedWorkingHours } from "../../data/recorded-hours.ts";
 import { effectiveDailyWorkHours } from "../../data/timesheet-work-hours.ts";
+import { timesheetDecisionSnapshot } from "../../data/timesheet-decision-snapshot.ts";
 import {
   isConfiguredTimesheetPeriod,
   timesheetPeriodsInRange,
@@ -41,6 +42,13 @@ import {
   timesheets,
 } from "../schema/time.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
+import { hrIndependentReviewAssignments } from "../schema/hr-independent-review.ts";
+import {
+  actorIsIndependentHrReviewer,
+  assignIndependentHrReviewer,
+  assignedIndependentHrReviewer,
+  reviewerForExistingOrNewHrRequest,
+} from "./independent-hr-review.repository.server.ts";
 
 const DEFAULT_SETTINGS = {
   periodFrequency: "Monthly" as const,
@@ -274,13 +282,24 @@ export async function submitTimesheetInDatabase(
       .from(employees)
       .where(and(eq(employees.organisationId, organisationId), eq(employees.id, sheet.employeeId)))
       .limit(1);
-    if (!employee?.lineManagerId || employee.lineManagerId === employeeIdFromActor(actor))
+    const independentReviewer = await reviewerForExistingOrNewHrRequest(
+      organisationId,
+      "Timesheet",
+      timesheetId,
+      sheet.employeeId,
+      tx,
+    );
+    if (!employee) throw new Error("Employee profile not found.");
+    if (
+      !independentReviewer &&
+      (!employee?.lineManagerId || employee.lineManagerId === employeeIdFromActor(actor))
+    )
       throw new Error(
         "An active supervisor must be assigned before this timesheet can be submitted.",
       );
     if (employee.employmentConfirmationStatus !== "Confirmed")
       throw new Error("HR must confirm your employment details before you can submit a timesheet.");
-    await requireEmployeeSupervisor(tx, organisationId, sheet.employeeId);
+    if (!independentReviewer) await requireEmployeeSupervisor(tx, organisationId, sheet.employeeId);
     const [settings] = await tx
       .select()
       .from(timesheetSettings)
@@ -328,7 +347,7 @@ export async function submitTimesheetInDatabase(
     await tx
       .update(timesheets)
       .set({
-        status: "Pending Manager",
+        status: independentReviewer ? "Pending HR" : "Pending Manager",
         submittedAt: new Date().toISOString(),
         attendanceReconciliationSnapshot: snapshot,
         updatedAt: new Date(),
@@ -336,13 +355,23 @@ export async function submitTimesheetInDatabase(
         recordVersion: sql`${timesheets.recordVersion} + 1`,
       })
       .where(eq(timesheets.id, timesheetId));
+    if (independentReviewer)
+      await assignIndependentHrReviewer(
+        organisationId,
+        "Timesheet",
+        timesheetId,
+        sheet.employeeId,
+        independentReviewer.employeeId,
+        actor.userId,
+        tx,
+      );
     const [managerUser] = await tx
       .select({ id: users.id })
       .from(users)
       .where(
         and(
           eq(users.organisationId, organisationId),
-          eq(users.employeeId, employee.lineManagerId),
+          eq(users.employeeId, independentReviewer?.employeeId ?? employee.lineManagerId!),
           eq(users.status, "Active"),
         ),
       )
@@ -352,9 +381,11 @@ export async function submitTimesheetInDatabase(
       organisationId,
       managerUser?.id,
       {
-        title: "Timesheet awaiting your review",
+        title: independentReviewer
+          ? "Timesheet awaiting independent review"
+          : "Timesheet awaiting your review",
         message: `${employee.preferredName} submitted a timesheet for your review.`,
-        key: `timesheet-manager-${timesheetId}-${sheet.recordVersion + 1}`,
+        key: `timesheet-${independentReviewer ? "independent" : "manager"}-${timesheetId}-${sheet.recordVersion + 1}`,
         entityId: timesheetId,
         path: `/staff/timesheet-approvals/${timesheetId}`,
       },
@@ -371,7 +402,7 @@ export async function submitTimesheetInDatabase(
       module: "timesheets",
       entityType: "timesheet",
       entityId: timesheetId,
-      afterSummary: { status: "Pending Manager" },
+      afterSummary: { status: independentReviewer ? "Pending HR" : "Pending Manager" },
       reason: "Submitted timesheet for review",
       riskLevel: "Medium",
     } as typeof auditEvents.$inferInsert);
@@ -407,10 +438,28 @@ export async function decideTimesheetInDatabase(
       .limit(1);
     const manager = sheet.status === "Pending Manager";
     const hr = sheet.status === "Pending HR";
+    const assignedReviewer = await assignedIndependentHrReviewer(
+      organisationId,
+      "Timesheet",
+      timesheetId,
+      sheet.employeeId,
+      tx,
+    );
+    const independentReview = actorIsIndependentHrReviewer(
+      actor,
+      sheet.employeeId,
+      assignedReviewer,
+    );
+    const hrStandIn =
+      manager &&
+      actor.activeRole === "HR" &&
+      actor.employeeId === employee?.lineManagerId &&
+      actor.employeeId !== sheet.employeeId;
     if (
       (manager &&
+        !hrStandIn &&
         (actor.activeRole !== "Line Manager" || actor.employeeId !== employee?.lineManagerId)) ||
-      (hr && actor.activeRole !== "HR") ||
+      (hr && (assignedReviewer ? !independentReview : actor.activeRole !== "HR")) ||
       (!manager && !hr)
     )
       throw new Error("You are not the assigned timesheet approver.");
@@ -431,7 +480,7 @@ export async function decideTimesheetInDatabase(
     const next =
       decision === "return"
         ? "Returned"
-        : manager
+        : manager && !hrStandIn
           ? "Pending HR"
           : settings?.payrollLockBehaviour === "Automatic on Approval"
             ? "Payroll Locked"
@@ -468,6 +517,75 @@ export async function decideTimesheetInDatabase(
             hours: { [entry.workDate]: Number(entry.hours) },
             notes: entry.notes,
           }));
+    const masterIds = (field: string) => [
+      ...new Set(
+        workEntries.flatMap((entry: unknown) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+          const value = (entry as Record<string, unknown>)[field];
+          return typeof value === "string" &&
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+            ? [value]
+            : [];
+        }),
+      ),
+    ];
+    const projectIds = masterIds("projectId");
+    const costCentreIds = masterIds("costCentreId");
+    const activityIds = masterIds("activityCodeId");
+    const locationIds = [...new Set([...masterIds("locationId"), ...masterIds("locationCodeId")])];
+    const [projectNames, costCentreNames, activityNames, locationNames] = await Promise.all([
+      projectIds.length
+        ? tx
+            .select({ id: projects.id, name: projects.name })
+            .from(projects)
+            .where(
+              and(eq(projects.organisationId, organisationId), inArray(projects.id, projectIds)),
+            )
+        : Promise.resolve([]),
+      costCentreIds.length
+        ? tx
+            .select({ id: costCentres.id, name: costCentres.name })
+            .from(costCentres)
+            .where(
+              and(
+                eq(costCentres.organisationId, organisationId),
+                inArray(costCentres.id, costCentreIds),
+              ),
+            )
+        : Promise.resolve([]),
+      activityIds.length
+        ? tx
+            .select({ id: activityCodes.id, name: activityCodes.name })
+            .from(activityCodes)
+            .where(
+              and(
+                eq(activityCodes.organisationId, organisationId),
+                inArray(activityCodes.id, activityIds),
+              ),
+            )
+        : Promise.resolve([]),
+      locationIds.length
+        ? tx
+            .select({ id: locations.id, name: locations.name })
+            .from(locations)
+            .where(
+              and(eq(locations.organisationId, organisationId), inArray(locations.id, locationIds)),
+            )
+        : Promise.resolve([]),
+    ]);
+    const decisionSnapshot = timesheetDecisionSnapshot({
+      period: approvalPeriod,
+      expectedHours: absence.expectedWorkHours,
+      reconciliation,
+      workEntries,
+      absenceEntries: absence.entries,
+      names: {
+        projects: Object.fromEntries(projectNames.map((item) => [item.id, item.name])),
+        costCentres: Object.fromEntries(costCentreNames.map((item) => [item.id, item.name])),
+        activities: Object.fromEntries(activityNames.map((item) => [item.id, item.name])),
+        locations: Object.fromEntries(locationNames.map((item) => [item.id, item.name])),
+      },
+    });
     await tx
       .update(timesheets)
       .set({
@@ -565,7 +683,9 @@ export async function decideTimesheetInDatabase(
       entityId: timesheetId,
       afterSummary: {
         status: next,
-        hrReviewRequired: manager && decision === "approve",
+        hrReviewRequired: next === "Pending HR",
+        ...(hrStandIn ? { hrStandIn: true } : {}),
+        decisionSnapshot,
       },
       reason: notes?.trim() ?? `Timesheet ${decision}d`,
       riskLevel: "High",
@@ -603,6 +723,36 @@ export async function listTimesheetSnapshotForActor(
   } else if (!["HR", "Accounts", "Super Admin"].includes(activeRole)) {
     throw new Error("You are not authorised to view timesheets.");
   }
+  const privileged = ["HR", "Accounts", "Super Admin"].includes(activeRole);
+  const independentAssignments =
+    privileged || actor.employeeId
+      ? await db
+          .select({
+            requestId: hrIndependentReviewAssignments.requestId,
+            requesterEmployeeId: hrIndependentReviewAssignments.requesterEmployeeId,
+            reviewerEmployeeId: hrIndependentReviewAssignments.reviewerEmployeeId,
+          })
+          .from(hrIndependentReviewAssignments)
+          .where(
+            and(
+              eq(hrIndependentReviewAssignments.organisationId, organisationId),
+              eq(hrIndependentReviewAssignments.module, "Timesheet"),
+              ...(!privileged && actor.employeeId
+                ? [eq(hrIndependentReviewAssignments.reviewerEmployeeId, actor.employeeId)]
+                : []),
+              isNull(hrIndependentReviewAssignments.archivedAt),
+            ),
+          )
+      : [];
+  const assignedIds = independentAssignments.map((item) => item.requestId);
+  const calendarEmployeeIds = employeeIds
+    ? [
+        ...new Set([
+          ...employeeIds,
+          ...independentAssignments.map((item) => item.requesterEmployeeId),
+        ]),
+      ]
+    : undefined;
 
   const [settingsRow] = await db
     .select()
@@ -645,7 +795,10 @@ export async function listTimesheetSnapshotForActor(
             employeeIds
               ? and(
                   eq(timesheets.organisationId, organisationId),
-                  inArray(timesheets.employeeId, employeeIds),
+                  or(
+                    inArray(timesheets.employeeId, employeeIds),
+                    ...(assignedIds.length ? [inArray(timesheets.id, assignedIds)] : []),
+                  ),
                   sql`${timesheets.archivedAt} IS NULL`,
                 )
               : and(
@@ -686,7 +839,7 @@ export async function listTimesheetSnapshotForActor(
       .where(
         and(
           eq(employees.organisationId, organisationId),
-          ...(employeeIds ? [inArray(employees.id, employeeIds)] : []),
+          ...(calendarEmployeeIds ? [inArray(employees.id, calendarEmployeeIds)] : []),
         ),
       ),
     db
@@ -697,7 +850,7 @@ export async function listTimesheetSnapshotForActor(
           eq(leaveRequests.organisationId, organisationId),
           inArray(leaveRequests.status, [...EFFECTIVE_LEAVE_STATUSES]),
           sql`${leaveRequests.archivedAt} IS NULL`,
-          ...(employeeIds ? [inArray(leaveRequests.employeeId, employeeIds)] : []),
+          ...(calendarEmployeeIds ? [inArray(leaveRequests.employeeId, calendarEmployeeIds)] : []),
         ),
       ),
     db
@@ -764,6 +917,13 @@ export async function listTimesheetSnapshotForActor(
     timesheets: sheetRows.map((item) => ({
       ...compatibleRecord(item),
       employeeId: item.employeeId,
+      ...(independentAssignments.find((row) => row.requestId === item.id)
+        ? {
+            independentReviewerEmployeeId: independentAssignments.find(
+              (row) => row.requestId === item.id,
+            )!.reviewerEmployeeId,
+          }
+        : {}),
       periodId: item.periodId,
       status: item.status,
       expectedHours: calendars.get(item.id)?.expectedWorkHours ?? Number(item.expectedHours),

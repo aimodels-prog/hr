@@ -49,7 +49,7 @@ function AttendanceCorrectionsRoute() {
   const [revision, setRevision] = useState(0);
   const [selected, setSelected] = useState<AttendanceCorrection | null>(null);
   const [reviewMode, setReviewMode] = useState<"manager" | "hr">("manager");
-  const [activeTab, setActiveTab] = useState("manager");
+  const [activeTab, setActiveTab] = useState(currentUser.activeRole === "HR" ? "hr" : "manager");
   const openedFocusedCorrection = useRef<string | null>(null);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
@@ -67,35 +67,62 @@ function AttendanceCorrectionsRoute() {
       active = false;
     };
   }, [actorContext, attendanceService]);
-  const employees = employeeService.getEmployees(actorContext);
+  const employees = employeeService.getDirectoryEmployees(actorContext);
   const records = attendanceService.getRecordsForContext(actorContext);
-  const canManagerReview = ["Line Manager", "HR", "Super Admin"].includes(currentUser.activeRole);
-  const canHrReview = currentUser.can("attendance:manage_all");
+  const visibleCorrections = attendanceService.getCorrectionsForContext(actorContext);
+  const canManagerReview = ["Line Manager", "HR"].includes(currentUser.activeRole);
+  const hasIndependentReview = visibleCorrections.some(
+    (item) =>
+      item.independentReviewerEmployeeId === currentUser.employeeId && item.status === "Pending HR",
+  );
+  const canHrReview = currentUser.activeRole === "HR" || hasIndependentReview;
+  useEffect(() => {
+    if (!canManagerReview && canHrReview) setActiveTab("hr");
+  }, [canManagerReview, canHrReview]);
+  const assignedReportIds = useMemo(
+    () =>
+      new Set(
+        employeeService
+          .getEmployees(actorContext)
+          .filter(
+            (employee) =>
+              employee.lineManagerId === currentUser.employeeId &&
+              employee.id !== currentUser.employeeId,
+          )
+          .map((employee) => employee.id),
+      ),
+    [actorContext, currentUser.employeeId, employeeService],
+  );
   const managerCorrections = canManagerReview
     ? (canHrReview
-        ? attendanceService.getAllCorrections(actorContext)
+        ? attendanceService
+            .getAllCorrections(actorContext)
+            .filter((item) => assignedReportIds.has(item.employeeId))
         : attendanceService.getCorrectionsForDirectReports(actorContext)
       ).filter((item) => item.status === "Pending Manager")
     : [];
   const hrCorrections = canHrReview
-    ? attendanceService
-        .getAllCorrections(actorContext)
-        .filter((item) => item.status === "Pending HR")
+    ? visibleCorrections.filter(
+        (item) =>
+          item.status === "Pending HR" &&
+          (item.independentReviewerEmployeeId
+            ? item.independentReviewerEmployeeId === currentUser.employeeId
+            : currentUser.activeRole === "HR"),
+      )
     : [];
-  const visibleCorrections = attendanceService.getCorrectionsForContext(actorContext);
   const history = visibleCorrections
     .filter((item) => ["Approved", "Rejected"].includes(item.status))
     .slice(0, 30);
 
   useEffect(() => {
     if (!focusedCorrectionId || openedFocusedCorrection.current === focusedCorrectionId) return;
-    const available = attendanceService.getAllCorrections(actorContext);
+    const available = visibleCorrections;
     const hr = canHrReview
       ? available.find((item) => item.id === focusedCorrectionId && item.status === "Pending HR")
       : undefined;
     const manager = canManagerReview
       ? (canHrReview
-          ? available
+          ? available.filter((item) => assignedReportIds.has(item.employeeId))
           : attendanceService.getCorrectionsForDirectReports(actorContext)
         ).find((item) => item.id === focusedCorrectionId && item.status === "Pending Manager")
       : undefined;
@@ -113,6 +140,8 @@ function AttendanceCorrectionsRoute() {
     canManagerReview,
     focusedCorrectionId,
     revision,
+    assignedReportIds,
+    visibleCorrections,
   ]);
 
   const openReview = (correction: AttendanceCorrection, mode: "manager" | "hr") => {
@@ -266,105 +295,110 @@ function AttendanceCorrectionsRoute() {
     </Card>
   );
 
-  return (
+  const approvalContent = (
+    <div className="mx-auto flex max-w-7xl flex-col gap-6 pb-10" data-revision={revision}>
+      <PageHeader
+        title="Attendance Corrections"
+        description="Original punches remain immutable until the controlled approval flow is complete."
+      />
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList>
+          {canManagerReview && (
+            <TabsTrigger value="manager">My team ({managerCorrections.length})</TabsTrigger>
+          )}
+          {canHrReview && (
+            <TabsTrigger value="hr">HR Finalisation ({hrCorrections.length})</TabsTrigger>
+          )}
+          <TabsTrigger value="history">Decision History</TabsTrigger>
+        </TabsList>
+        {canManagerReview && (
+          <TabsContent value="manager">
+            {correctionTable(managerCorrections, "manager")}
+          </TabsContent>
+        )}
+        {canHrReview && (
+          <TabsContent value="hr">{correctionTable(hrCorrections, "hr")}</TabsContent>
+        )}
+        <TabsContent value="history">{correctionTable(history, "history")}</TabsContent>
+      </Tabs>
+
+      <Dialog
+        open={Boolean(selected)}
+        onOpenChange={(open) => !open && !saving && setSelected(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {reviewMode === "manager" ? "Team correction" : "HR final decision"}
+            </DialogTitle>
+            <DialogDescription>
+              {reviewMode === "manager"
+                ? canHrReview
+                  ? "You are the assigned supervisor. Your HR decision will finish this review."
+                  : "Review the correction, then send it to HR or reject it with a reason."
+                : "Approval applies the proposed punches and recalculates worked hours."}
+            </DialogDescription>
+          </DialogHeader>
+          {selected && (
+            <div className="space-y-3">
+              <div className="grid gap-3 rounded-lg border bg-muted/20 p-4 text-sm sm:grid-cols-2">
+                <div>
+                  <span className="block text-xs text-muted-foreground">Original</span>
+                  {selected.originalClockIn ?? "?"}–{selected.originalClockOut ?? "?"}
+                </div>
+                <div>
+                  <span className="block text-xs text-muted-foreground">Proposed</span>
+                  {selected.proposedClockIn ?? "?"}–{selected.proposedClockOut ?? "?"}
+                </div>
+                <div className="sm:col-span-2">
+                  <span className="block text-xs text-muted-foreground">
+                    Employee justification
+                  </span>
+                  {selected.explanation}
+                </div>
+                {selected.managerNotes && (
+                  <div className="sm:col-span-2">
+                    <span className="block text-xs text-muted-foreground">Manager notes</span>
+                    {selected.managerNotes}
+                  </div>
+                )}
+              </div>
+              <Textarea
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+                placeholder="Required decision notes"
+              />
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="destructive"
+              disabled={saving || notes.trim().length < 3}
+              onClick={() => decide(false)}
+            >
+              <XCircle className="mr-2 h-4 w-4" /> Reject
+            </Button>
+            <Button disabled={saving || notes.trim().length < 3} onClick={() => decide(true)}>
+              {reviewMode === "manager" ? (
+                <FileCheck2 className="mr-2 h-4 w-4" />
+              ) : (
+                <CheckCircle2 className="mr-2 h-4 w-4" />
+              )}
+              {reviewMode === "manager" && !canHrReview ? "Send to HR" : "Approve & Apply"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+  return hasIndependentReview && currentUser.activeRole !== "Super Admin" ? (
+    approvalContent
+  ) : (
     <RequirePermission
       permission="attendance:approve_direct_reports"
       resourceName="Attendance Corrections"
     >
-      <div className="mx-auto flex max-w-7xl flex-col gap-6 pb-10" data-revision={revision}>
-        <PageHeader
-          title="Attendance Corrections"
-          description="Original punches remain immutable until the controlled approval flow is complete."
-        />
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList>
-            {canManagerReview && (
-              <TabsTrigger value="manager">
-                {canHrReview ? "Supervisor Recovery" : "My Team"} ({managerCorrections.length})
-              </TabsTrigger>
-            )}
-            {canHrReview && (
-              <TabsTrigger value="hr">HR Finalisation ({hrCorrections.length})</TabsTrigger>
-            )}
-            <TabsTrigger value="history">Decision History</TabsTrigger>
-          </TabsList>
-          {canManagerReview && (
-            <TabsContent value="manager">
-              {correctionTable(managerCorrections, "manager")}
-            </TabsContent>
-          )}
-          {canHrReview && (
-            <TabsContent value="hr">{correctionTable(hrCorrections, "hr")}</TabsContent>
-          )}
-          <TabsContent value="history">{correctionTable(history, "history")}</TabsContent>
-        </Tabs>
-
-        <Dialog
-          open={Boolean(selected)}
-          onOpenChange={(open) => !open && !saving && setSelected(null)}
-        >
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>
-                {reviewMode === "manager" ? "Manager Review" : "HR Final Decision"}
-              </DialogTitle>
-              <DialogDescription>
-                {reviewMode === "manager"
-                  ? "Endorse the correction for HR or reject it with a reason."
-                  : "Approval applies the proposed punches and recalculates worked hours."}
-              </DialogDescription>
-            </DialogHeader>
-            {selected && (
-              <div className="space-y-3">
-                <div className="grid gap-3 rounded-lg border bg-muted/20 p-4 text-sm sm:grid-cols-2">
-                  <div>
-                    <span className="block text-xs text-muted-foreground">Original</span>
-                    {selected.originalClockIn ?? "?"}–{selected.originalClockOut ?? "?"}
-                  </div>
-                  <div>
-                    <span className="block text-xs text-muted-foreground">Proposed</span>
-                    {selected.proposedClockIn ?? "?"}–{selected.proposedClockOut ?? "?"}
-                  </div>
-                  <div className="sm:col-span-2">
-                    <span className="block text-xs text-muted-foreground">
-                      Employee justification
-                    </span>
-                    {selected.explanation}
-                  </div>
-                  {selected.managerNotes && (
-                    <div className="sm:col-span-2">
-                      <span className="block text-xs text-muted-foreground">Manager notes</span>
-                      {selected.managerNotes}
-                    </div>
-                  )}
-                </div>
-                <Textarea
-                  value={notes}
-                  onChange={(event) => setNotes(event.target.value)}
-                  placeholder="Required decision notes"
-                />
-              </div>
-            )}
-            <DialogFooter>
-              <Button
-                variant="destructive"
-                disabled={saving || notes.trim().length < 3}
-                onClick={() => decide(false)}
-              >
-                <XCircle className="mr-2 h-4 w-4" /> Reject
-              </Button>
-              <Button disabled={saving || notes.trim().length < 3} onClick={() => decide(true)}>
-                {reviewMode === "manager" ? (
-                  <FileCheck2 className="mr-2 h-4 w-4" />
-                ) : (
-                  <CheckCircle2 className="mr-2 h-4 w-4" />
-                )}
-                {reviewMode === "manager" ? "Endorse to HR" : "Approve & Apply"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
+      {approvalContent}
     </RequirePermission>
   );
 }

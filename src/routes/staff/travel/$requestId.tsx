@@ -46,6 +46,8 @@ function TravelDetailRoute() {
   const travelService = useMemo(() => new TravelService(), []);
   const [receiptFiles, setReceiptFiles] = useState<Map<string, File>>(() => new Map());
   const [isSubmittingExpenses, setIsSubmittingExpenses] = useState(false);
+  const [reviewNote, setReviewNote] = useState("");
+  const [reviewBusy, setReviewBusy] = useState(false);
 
   const [request, setRequest] = useState<TravelRequest | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -101,10 +103,45 @@ function TravelDetailRoute() {
     setRequest(updated);
     toast.success("Trip cancelled");
   };
+  const canReviewHrOwnTrip =
+    request.approvalRoute?.kind === "HR Own Travel" &&
+    request.approvalRoute.reviewerEmployeeId === currentUser.employeeId &&
+    currentUser.activeRole !== "Super Admin" &&
+    request.status === "Pending HR and Accounts" &&
+    request.managerApprovalStatus === "Pending" &&
+    !request.managerApprovedBy;
+  const decideIndependentReview = async (approve: boolean) => {
+    if (reviewBusy) return;
+    if (!approve && reviewNote.trim().length < 3)
+      throw new Error("Please explain why you are declining this trip.");
+    setReviewBusy(true);
+    try {
+      await travelService.managerApproveAsync(
+        request.id,
+        approve,
+        reviewNote.trim(),
+        currentUser.getActorContext(),
+      );
+      const updated = await travelService.getRequestByIdAsync(
+        requestId,
+        currentUser.getActorContext(),
+      );
+      setRequest(updated);
+      setReviewNote("");
+      toast.success(approve ? "Trip review approved" : "Trip review declined");
+    } catch (error) {
+      if (approve)
+        toast.error(error instanceof Error ? error.message : "Could not save your decision.");
+      throw error;
+    } finally {
+      setReviewBusy(false);
+    }
+  };
 
   const getStatusIcon = (status: string) => {
     if (status === "Approved" || status === "Closed")
       return <CheckCircle2 className="w-5 h-5 text-emerald-600" />;
+    if (status === "Not Required") return <CheckCircle2 className="w-5 h-5 text-slate-400" />;
     if (status === "Rejected") return <XCircle className="w-5 h-5 text-destructive" />;
     return <Clock className="w-5 h-5 text-amber-500" />;
   };
@@ -288,6 +325,44 @@ function TravelDetailRoute() {
             </div>
           )}
 
+        {canReviewHrOwnTrip && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Your decision is needed</CardTitle>
+              <CardDescription>
+                You are the independent reviewer for this HR colleague’s trip. Finance reviews costs
+                after you and any travelling colleagues’ supervisors approve.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Textarea
+                value={reviewNote}
+                onChange={(event) => setReviewNote(event.target.value)}
+                placeholder="Add a note, or explain why you are declining"
+                aria-label="Trip review note"
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  disabled={reviewBusy}
+                  onClick={() => void decideIndependentReview(true).catch(() => undefined)}
+                >
+                  Approve trip
+                </Button>
+                <ConfirmAction
+                  title="Decline this trip?"
+                  description="The employee will see your reason and the request will stop."
+                  confirmLabel="Decline trip"
+                  onConfirm={() => decideIndependentReview(false)}
+                >
+                  <Button variant="outline" disabled={reviewBusy || reviewNote.trim().length < 3}>
+                    Decline
+                  </Button>
+                </ConfirmAction>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <TravelBookings
           trip={request}
           onChanged={() => {
@@ -320,10 +395,33 @@ function TravelDetailRoute() {
               <div className="flex items-start gap-4">
                 {getStatusIcon(request.managerApprovalStatus)}
                 <div>
-                  <div className="font-medium">Supervisor · Business need</div>
+                  <div className="font-medium">
+                    {request.approvalRoute?.kind === "Managerless Executive"
+                      ? "Colleagues’ supervisor reviews"
+                      : request.approvalRoute?.kind === "HR Own Travel"
+                        ? `Independent review · ${request.approvalRoute.reviewerName ?? "Assigned reviewer"}`
+                        : "Supervisor · Business need"}
+                  </div>
                   <div className="text-sm text-muted-foreground">
                     {request.managerApprovalStatus}
                   </div>
+                  {request.approvalRoute?.kind === "HR Own Travel" && request.managerApprovedBy && (
+                    <div className="text-sm text-emerald-700">
+                      {request.approvalRoute.reviewerName ?? "Independent reviewer"} approved.
+                    </div>
+                  )}
+                  {request.participants?.some(
+                    (participant) => participant.status === "Pending",
+                  ) && (
+                    <div className="text-sm text-muted-foreground">
+                      Awaiting supervisors for{" "}
+                      {request.participants
+                        .filter((participant) => participant.status === "Pending")
+                        .map((participant) => participant.name)
+                        .join(", ")}
+                      .
+                    </div>
+                  )}
                   {request.managerNotes && (
                     <div className="text-sm mt-1 bg-muted/50 p-2 rounded">
                       {request.managerNotes}
@@ -334,7 +432,16 @@ function TravelDetailRoute() {
               <div className="flex items-start gap-4">
                 {getStatusIcon(request.hrApprovalStatus)}
                 <div>
-                  <div className="font-medium">HR Policy & Dates</div>
+                  <div className="font-medium">
+                    {request.approvalRoute?.kind === "HR Own Travel"
+                      ? "HR review (not required for own request)"
+                      : request.approvalRoute?.kind === "Managerless Executive" &&
+                          request.approvalRoute.reviewerRole === "Accounts"
+                        ? request.approvalRoute.notifyHr
+                          ? "HR informed (no decision required)"
+                          : "HR review (not required)"
+                        : "HR Policy & Dates"}
+                  </div>
                   <div className="text-sm text-muted-foreground">{request.hrApprovalStatus}</div>
                   {request.hrApprovedAt && (
                     <div className="mt-1 text-xs text-muted-foreground">
@@ -350,7 +457,7 @@ function TravelDetailRoute() {
               <div className="flex items-start gap-4">
                 {getStatusIcon(request.accountsApprovalStatus)}
                 <div>
-                  <div className="font-medium">Accounts & Budgeting</div>
+                  <div className="font-medium">Finance & Budgeting</div>
                   <div className="text-sm text-muted-foreground">
                     {request.accountsApprovalStatus}
                   </div>

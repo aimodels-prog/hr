@@ -115,6 +115,98 @@ function harness() {
   return { service: new LeaveService(), audit, storage, files };
 }
 
+test("a named Country Manager can decide special leave in Employee role without general approval access", () => {
+  const { service, storage } = harness();
+  const policy = service.getPolicies().find((item) => item.type === "Annual");
+  assert.ok(policy);
+  const countryManager: ActorContext = {
+    actor: { ...manager.actor, activeRole: "Employee", roles: ["Employee"] },
+  };
+  const request: LeaveRequest = {
+    id: "named-country-manager-review",
+    createdAt: new Date().toISOString(),
+    createdBy: employee.actor.userId,
+    updatedAt: new Date().toISOString(),
+    updatedBy: employee.actor.userId,
+    recordVersion: 1,
+    employeeId: employee.actor.employeeId!,
+    policyId: policy.id,
+    startDate: "2027-01-04",
+    endDate: "2027-01-04",
+    isHalfDay: false,
+    workingDaysRequested: 1,
+    reason: "Family matter",
+    status: "Pending HR",
+    chainApprovals: [
+      { role: "Line Manager", status: "Approved", approvedBy: manager.actor.userId },
+      { role: "Country Manager", status: "Pending" },
+      { role: "HR", status: "Pending" },
+    ],
+    policySnapshot: {
+      name: policy.name,
+      type: policy.type,
+      isPaid: policy.isPaid,
+      baseEntitlementDays: policy.baseEntitlementDays,
+      accrualMode: policy.accrualMode,
+      specialRequest: {
+        reason: "Urgent family matter",
+        countryManagerEmployeeId: countryManager.actor.employeeId!,
+      },
+    },
+  };
+  storage.writeCollection("leave_requests", [
+    ...storage.readCollection<LeaveRequest>("leave_requests"),
+    request,
+  ]);
+
+  assert.ok(
+    service
+      .getPendingRequestsForCountryManager(countryManager)
+      .some((item) => item.id === request.id),
+  );
+  assert.ok(
+    !service.getPendingRequestsForCountryManager(superAdmin).some((item) => item.id === request.id),
+  );
+  assert.ok(!service.getRequests(countryManager).some((item) => item.id === request.id));
+  assert.throws(() => service.approveRequest(request.id, employee), /assigned Country Manager/);
+
+  const approved = service.approveRequest(request.id, countryManager);
+  assert.equal(
+    approved.chainApprovals.find((step) => step.role === "Country Manager")?.status,
+    "Approved",
+  );
+  assert.equal(approved.status, "Pending HR");
+  assert.ok(
+    !service
+      .getPendingRequestsForCountryManager(countryManager)
+      .some((item) => item.id === request.id),
+  );
+
+  const secondRequest: LeaveRequest = {
+    ...request,
+    id: "named-country-manager-decline",
+    chainApprovals: [
+      { role: "Line Manager", status: "Approved", approvedBy: manager.actor.userId },
+      { role: "Country Manager", status: "Pending" },
+      { role: "HR", status: "Pending" },
+    ],
+  };
+  storage.writeCollection("leave_requests", [
+    ...storage.readCollection<LeaveRequest>("leave_requests"),
+    secondRequest,
+  ]);
+  const declined = service.rejectRequest(
+    secondRequest.id,
+    "Unable to support these dates",
+    countryManager,
+  );
+  assert.equal(declined.status, "Declined");
+  assert.equal(
+    declined.chainApprovals.find((step) => step.role === "Country Manager")?.status,
+    "Declined",
+  );
+});
+
 test("Omani nationality accepts exact standard codes and names, not similar text", () => {
   for (const value of ["Omani", " oman ", "OM", "omn", "عماني", "عُماني", "عمانية", "عمان"]) {
     assert.equal(isOmaniNationality(value), true, value);
@@ -259,6 +351,223 @@ test("a covering colleague is required only for leave types marked as needing a 
       ),
     /A covering colleague is required/,
   );
+});
+
+test("an assigned HR supervisor completes ordinary leave and its amendment once", async () => {
+  const { service, storage } = harness();
+  storage.writeCollection(
+    "employees",
+    storage
+      .readCollection<Employee>("employees")
+      .map((item) =>
+        item.id === employee.actor.employeeId
+          ? { ...item, lineManagerId: hr.actor.employeeId }
+          : item,
+      ),
+  );
+  const policy = service.getPolicies().find((item) => item.type === "Annual")!;
+  service.updatePolicy(policy.id, { consumesBalance: false }, hr);
+  const first = new Date();
+  first.setUTCHours(0, 0, 0, 0);
+  first.setUTCDate(first.getUTCDate() + 120);
+  while (first.getUTCDay() !== 1) first.setUTCDate(first.getUTCDate() + 1);
+  const second = new Date(first);
+  second.setUTCDate(second.getUTCDate() + 7);
+  const firstDate = first.toISOString().slice(0, 10);
+  const secondDate = second.toISOString().slice(0, 10);
+  const request = await service.submitLeaveRequest(
+    {
+      employeeId: employee.actor.employeeId!,
+      policyId: policy.id,
+      startDate: firstDate,
+      endDate: firstDate,
+      reason: "Planned day away",
+      handoverContactId: manager.actor.employeeId,
+    },
+    employee,
+  );
+  assert.equal(request.status, "Pending Line Manager");
+  const approved = service.approveRequest(request.id, hr);
+  assert.equal(approved.status, "Approved");
+  assert.deepEqual(
+    approved.chainApprovals.map((step) => ({ role: step.role, approvedBy: step.approvedBy })),
+    [{ role: "Line Manager", approvedBy: hr.actor.userId }],
+  );
+  assert.throws(() => service.approveRequest(request.id, hr), /current state/);
+
+  const amendment = service.requestAmendment(
+    request.id,
+    secondDate,
+    secondDate,
+    "Moving the approved day",
+    employee,
+  );
+  assert.equal(amendment.status, "Amendment Pending Line Manager");
+  const changed = service.approveRequest(request.id, hr);
+  assert.equal(changed.status, "Approved");
+  assert.equal(changed.startDate, secondDate);
+  assert.equal(changed.amendmentHistory?.at(-1)?.outcome, "Approved");
+});
+
+test("a confirmed CEO without a supervisor sends ordinary leave and date changes straight to HR", async () => {
+  const { service, storage } = harness();
+  storage.writeCollection(
+    "employees",
+    storage.readCollection<Employee>("employees").map((item) =>
+      item.id === employee.actor.employeeId
+        ? {
+            ...item,
+            position: "CEO",
+            lineManagerId: undefined,
+            employmentConfirmationStatus: "Confirmed" as const,
+          }
+        : item,
+    ),
+  );
+  const policy = service.getPolicies().find((item) => item.type === "Annual")!;
+  service.updatePolicy(policy.id, { consumesBalance: false }, hr);
+  const first = new Date();
+  first.setUTCHours(0, 0, 0, 0);
+  first.setUTCDate(first.getUTCDate() + 120);
+  while (first.getUTCDay() !== 1) first.setUTCDate(first.getUTCDate() + 1);
+  const second = new Date(first);
+  second.setUTCDate(second.getUTCDate() + 7);
+  const firstDate = first.toISOString().slice(0, 10);
+  const secondDate = second.toISOString().slice(0, 10);
+
+  const request = await service.submitLeaveRequest(
+    {
+      employeeId: employee.actor.employeeId!,
+      policyId: policy.id,
+      startDate: firstDate,
+      endDate: firstDate,
+      handoverContactId: manager.actor.employeeId,
+    },
+    employee,
+  );
+  assert.equal(request.status, "Pending HR");
+  assert.deepEqual(
+    request.chainApprovals.map((step) => step.role),
+    ["HR"],
+  );
+  assert.ok(service.getPendingRequestsForHr(hr).some((item) => item.id === request.id));
+  assert.ok(!service.getPendingRequestsForManager(manager).some((item) => item.id === request.id));
+  assert.throws(
+    () => service.approveRequest(request.id, superAdmin),
+    /assigned HR or Line Manager/,
+  );
+  assert.equal(service.approveRequest(request.id, hr).status, "Approved");
+
+  const amendment = service.requestAmendment(
+    request.id,
+    secondDate,
+    secondDate,
+    "Moving the approved day",
+    employee,
+  );
+  assert.equal(amendment.status, "Amendment Pending HR");
+  assert.deepEqual(
+    amendment.pendingAmendment?.chainApprovals.map((step) => step.role),
+    ["HR"],
+  );
+  const changed = service.approveRequest(request.id, hr);
+  assert.equal(changed.status, "Approved");
+  assert.equal(changed.startDate, secondDate);
+  const cancellation = service.requestCancellation(
+    request.id,
+    "Plans changed after approval",
+    employee,
+  );
+  assert.equal(cancellation.status, "Cancellation Pending");
+  assert.ok(service.getPendingRequestsForHr(hr).some((item) => item.id === request.id));
+  assert.equal(service.approveRequest(request.id, hr).status, "Cancellation Approved");
+});
+
+test("a confirmed Country Manager without a supervisor sends ordinary leave straight to HR", async () => {
+  const { service, storage } = harness();
+  storage.writeCollection(
+    "employees",
+    storage.readCollection<Employee>("employees").map((item) =>
+      item.id === employee.actor.employeeId
+        ? {
+            ...item,
+            position: "Country Manager",
+            lineManagerId: undefined,
+            employmentConfirmationStatus: "Confirmed" as const,
+          }
+        : item,
+    ),
+  );
+  const policy = service.getPolicies().find((item) => item.type === "Annual")!;
+  service.updatePolicy(policy.id, { consumesBalance: false }, hr);
+  const day = new Date();
+  day.setUTCHours(0, 0, 0, 0);
+  day.setUTCDate(day.getUTCDate() + 120);
+  while (day.getUTCDay() !== 1) day.setUTCDate(day.getUTCDate() + 1);
+  const date = day.toISOString().slice(0, 10);
+  const request = await service.submitLeaveRequest(
+    {
+      employeeId: employee.actor.employeeId!,
+      policyId: policy.id,
+      startDate: date,
+      endDate: date,
+      handoverContactId: manager.actor.employeeId,
+    },
+    employee,
+  );
+  assert.equal(request.status, "Pending HR");
+  assert.deepEqual(
+    request.chainApprovals.map((step) => step.role),
+    ["HR"],
+  );
+});
+
+test("ordinary leave still requires a supervisor for other staff or unconfirmed executives", async () => {
+  const { service, storage } = harness();
+  const policy = service.getPolicies().find((item) => item.type === "Annual")!;
+  service.updatePolicy(policy.id, { consumesBalance: false }, hr);
+  const day = new Date();
+  day.setUTCHours(0, 0, 0, 0);
+  day.setUTCDate(day.getUTCDate() + 120);
+  while (day.getUTCDay() !== 1) day.setUTCDate(day.getUTCDate() + 1);
+  const date = day.toISOString().slice(0, 10);
+  const submit = () =>
+    service.submitLeaveRequest(
+      {
+        employeeId: employee.actor.employeeId!,
+        policyId: policy.id,
+        startDate: date,
+        endDate: date,
+        handoverContactId: manager.actor.employeeId,
+      },
+      employee,
+    );
+  storage.writeCollection(
+    "employees",
+    storage.readCollection<Employee>("employees").map((item) =>
+      item.id === employee.actor.employeeId
+        ? {
+            ...item,
+            lineManagerId: undefined,
+            employmentConfirmationStatus: "Confirmed" as const,
+          }
+        : item,
+    ),
+  );
+  await assert.rejects(submit(), /supervisor has not been assigned/);
+  storage.writeCollection(
+    "employees",
+    storage.readCollection<Employee>("employees").map((item) =>
+      item.id === employee.actor.employeeId
+        ? {
+            ...item,
+            position: "Country Manager",
+            employmentConfirmationStatus: "Pending HR Review" as const,
+          }
+        : item,
+    ),
+  );
+  await assert.rejects(submit(), /supervisor has not been assigned/);
 });
 
 test("short-notice annual leave goes to Country Manager and HR before the line manager", async () => {

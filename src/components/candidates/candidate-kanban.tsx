@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { Badge } from "@/components/ui/badge";
 import { ShieldAlert, Archive } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -102,7 +102,14 @@ export function CandidateKanban({
                   >
                     <div className="flex justify-between items-start mb-2">
                       <div className="font-medium text-sm flex items-center gap-1.5">
-                        {candidate.firstName} {candidate.lastName}
+                        <Link
+                          to="/staff/candidates/$candidateId"
+                          params={{ candidateId: candidate.id }}
+                          onClick={(event) => event.stopPropagation()}
+                          className="rounded-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {candidate.firstName} {candidate.lastName}
+                        </Link>
                         {candidate.doNotContact && (
                           <ShieldAlert className="h-3.5 w-3.5 text-destructive" />
                         )}
@@ -118,6 +125,25 @@ export function CandidateKanban({
                       </div>
                     )}
 
+                    <label className="mb-2 block text-xs text-muted-foreground">
+                      Move to stage
+                      <select
+                        aria-label={`Move ${candidate.firstName} ${candidate.lastName} to stage`}
+                        value={candidate.stage}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={(event) =>
+                          onStageChange(candidate.id, event.target.value as Candidate["stage"])
+                        }
+                        className="mt-1 h-9 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground"
+                      >
+                        {KANBAN_STAGES.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
                     <div className="flex items-center justify-between text-xs text-muted-foreground mt-2">
                       <span className="truncate max-w-[120px]">
                         {candidate.projectId
@@ -128,6 +154,7 @@ export function CandidateKanban({
                         variant="ghost"
                         size="icon"
                         className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                        aria-label={`Archive ${candidate.firstName} ${candidate.lastName}`}
                         onClick={(e) => {
                           e.stopPropagation();
                           onArchive(candidate);

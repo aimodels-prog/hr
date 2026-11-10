@@ -69,6 +69,26 @@ export function TravelBookings({
       cancelled = true;
     };
   }, [trip, canQueue, user.userId, user.workspaceEmail, user.activeRole, revision]);
+  useEffect(() => {
+    const focusBooking = () => {
+      const targetId = window.location.hash.slice(1);
+      if (!targetId.startsWith("booking-")) return;
+      const bookingId = targetId.slice("booking-".length);
+      const matchingBooking = trip
+        ? trip.bookings?.some((booking) => booking.id === bookingId)
+        : rows.some((row) => row.bookings.some((booking) => booking.id === bookingId));
+      if (!matchingBooking) return;
+      const target = document.getElementById(targetId);
+      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+      target?.focus({ preventScroll: true });
+    };
+    const frame = window.requestAnimationFrame(focusBooking);
+    window.addEventListener("hashchange", focusBooking);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("hashchange", focusBooking);
+    };
+  }, [trip, rows]);
   if (!trip && !canQueue) return null;
   const visible = trip
     ? [{ ...trip, bookings: trip.bookings ?? [], travellers: [] as string[] }]
@@ -76,8 +96,9 @@ export function TravelBookings({
   const canRequest =
     trip &&
     trip.employeeId === user.employeeId &&
-    trip.managerApprovalStatus === "Approved" &&
-    trip.hrApprovalStatus === "Approved" &&
+    (trip.approvalRoute && trip.approvalRoute.kind !== "Standard"
+      ? trip.status === "Pre-authorised"
+      : trip.managerApprovalStatus === "Approved" && trip.hrApprovalStatus === "Approved") &&
     ["Pending HR and Accounts", "Pre-authorised"].includes(trip.status);
   const change = async (
     requestId: string,
@@ -152,7 +173,12 @@ export function TravelBookings({
                 </p>
               )}
             {row.bookings.map((b) => (
-              <div key={b.id} className="rounded-lg border p-4 space-y-2">
+              <div
+                key={b.id}
+                id={`booking-${b.id}`}
+                tabIndex={-1}
+                className="scroll-mt-24 rounded-lg border p-4 space-y-2 target:border-primary target:bg-primary/5 target:ring-2 target:ring-primary/20 focus:outline-none"
+              >
                 <div className="flex flex-wrap justify-between gap-2">
                   <strong>{b.name}</strong>
                   <span>{b.status}</span>

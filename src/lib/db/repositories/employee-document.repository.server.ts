@@ -25,6 +25,14 @@ import {
   users,
 } from "../schema/employee.ts";
 import { auditEvents, notifications } from "../schema/system.ts";
+import { hrIndependentReviewAssignments } from "../schema/hr-independent-review.ts";
+import {
+  actorIsIndependentHrReviewer,
+  assignedIndependentHrReviewer,
+  assignIndependentHrReviewer,
+  employeeHasHrRole,
+  independentReviewerForHrEmployee,
+} from "./independent-hr-review.repository.server.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 
 const documentTypes = new Set<DocumentType>([
@@ -59,6 +67,23 @@ export async function listEmployeeDocumentsForActor(
   actor: AuditActorContext,
 ): Promise<EmployeeDocument[]> {
   const db = getDatabaseClient();
+  const assignedDocumentIds = new Set(
+    actor.activeRole === "Employee" && actor.employeeId
+      ? (
+          await db
+            .select({ id: hrIndependentReviewAssignments.requestId })
+            .from(hrIndependentReviewAssignments)
+            .where(
+              and(
+                eq(hrIndependentReviewAssignments.organisationId, organisationId),
+                eq(hrIndependentReviewAssignments.module, "Document"),
+                eq(hrIndependentReviewAssignments.reviewerEmployeeId, actor.employeeId),
+                isNull(hrIndependentReviewAssignments.archivedAt),
+              ),
+            )
+        ).map((assignment) => assignment.id)
+      : [],
+  );
   const rows = await db
     .select({ document: employeeDocuments, managerId: employees.lineManagerId })
     .from(employeeDocuments)
@@ -74,6 +99,7 @@ export async function listEmployeeDocumentsForActor(
     .filter(({ document, managerId }) => {
       if (actor.activeRole === "HR" || actor.activeRole === "Super Admin") return true;
       if (document.employeeId === actor.employeeId) return true;
+      if (assignedDocumentIds.has(document.id)) return true;
       if (
         ["visa", "work_permit"].includes(document.type) &&
         (!document.documentNumberEncrypted ||
@@ -154,9 +180,6 @@ export async function decideEmployeeDocumentInDatabase(
     visibility?: "Public" | "Restricted";
   },
 ): Promise<void> {
-  if (actor.activeRole !== "HR") {
-    throw new Error("Only HR can review employee documents.");
-  }
   if (decision === "reject" && (reason?.trim().length ?? 0) < 3) {
     throw new Error("Explain why the document is being rejected.");
   }
@@ -196,6 +219,20 @@ export async function decideEmployeeDocumentInDatabase(
     ) {
       throw new Error("This document is not awaiting review.");
     }
+    const hrOwner = await employeeHasHrRole(organisationId, document.employeeId, tx);
+    const assignedReviewer = await assignedIndependentHrReviewer(
+      organisationId,
+      "Document",
+      document.id,
+      document.employeeId,
+      tx,
+    );
+    if (
+      hrOwner || assignedReviewer
+        ? !actorIsIndependentHrReviewer(actor, document.employeeId, assignedReviewer)
+        : actor.activeRole !== "HR"
+    )
+      throw new Error("Only the assigned independent reviewer or HR can review this document.");
     if (
       isIdentityCorrection &&
       Object.entries(verifiedDetails ?? {}).some(
@@ -420,7 +457,7 @@ export async function decideEmployeeDocumentInDatabase(
               identitySourceDocumentId: document.id,
             }
           : {}),
-        ...(decision === "verify" ? { officialDetailsConfirmedByHr: true } : {}),
+        ...(decision === "verify" ? { officialDetailsConfirmedByReviewer: actor.displayName } : {}),
       },
       reason: decision === "reject" ? reason!.trim() : "Verified employee document",
       riskLevel: "High",
@@ -436,6 +473,7 @@ export async function decideEmployeeDocumentInDatabase(
           isNull(users.archivedAt),
         ),
       );
+    const reviewerLabel = assignedReviewer ? `${actor.displayName} (independent reviewer)` : "HR";
     for (const recipient of recipients)
       await tx
         .insert(notifications)
@@ -448,13 +486,13 @@ export async function decideEmployeeDocumentInDatabase(
           title: isIdentityCorrection
             ? "Your identity details were updated"
             : decision === "verify"
-              ? "HR verified your document"
+              ? "Your document was verified"
               : "Your document needs a replacement",
           message: isIdentityCorrection
-            ? "HR confirmed your profile identity using your approved passport or ID. Open your profile to check the updated details."
+            ? `${reviewerLabel} confirmed your profile identity using your approved passport or ID. Open your profile to check the updated details.`
             : decision === "verify"
-              ? `HR verified your ${document.dependantId ? "dependant's " : ""}${document.dependantDocumentKind ?? document.type} document. No further action is needed for this upload.`
-              : `HR could not verify your ${document.dependantId ? "dependant's " : ""}${document.dependantDocumentKind ?? document.type} document. Open Documents to read HR's explanation and upload a replacement.`,
+              ? `${reviewerLabel} verified your ${document.dependantId ? "dependant's " : ""}${document.dependantDocumentKind ?? document.type} document. No further action is needed for this upload.`
+              : `${reviewerLabel} returned your ${document.dependantId ? "dependant's " : ""}${document.dependantDocumentKind ?? document.type} document. Open Documents to read the explanation and upload a replacement.`,
           link: {
             entityType: "employee-document",
             entityId: document.id,
@@ -489,9 +527,28 @@ export async function readEmployeeDocumentInDatabase(
     )
     .limit(1);
   if (!row) throw new Error("Employee document not found.");
+  const assignedReview =
+    actor.activeRole === "Employee" &&
+    !!actor.employeeId &&
+    !!(
+      await db
+        .select({ id: hrIndependentReviewAssignments.id })
+        .from(hrIndependentReviewAssignments)
+        .where(
+          and(
+            eq(hrIndependentReviewAssignments.organisationId, organisationId),
+            eq(hrIndependentReviewAssignments.module, "Document"),
+            eq(hrIndependentReviewAssignments.requestId, row.document.id),
+            eq(hrIndependentReviewAssignments.reviewerEmployeeId, actor.employeeId),
+            isNull(hrIndependentReviewAssignments.archivedAt),
+          ),
+        )
+        .limit(1)
+    )[0];
   if (
     !["HR", "Super Admin"].includes(actor.activeRole) &&
     row.document.employeeId !== actor.employeeId &&
+    !assignedReview &&
     ["visa", "work_permit"].includes(row.document.type) &&
     (!row.document.documentNumberEncrypted ||
       !row.document.issueDate ||
@@ -503,6 +560,7 @@ export async function readEmployeeDocumentInDatabase(
     actor.activeRole === "HR" ||
     actor.activeRole === "Super Admin" ||
     row.document.employeeId === actor.employeeId ||
+    assignedReview ||
     (!row.document.dependantId &&
       actor.activeRole === "Accounts" &&
       row.document.type === "bank_evidence") ||
@@ -782,6 +840,21 @@ export async function uploadEmployeeDocumentToDatabase(
         createdBy: actor.userId,
         updatedBy: actor.userId,
       } as typeof employeeDocuments.$inferInsert);
+      const independentReviewer = await independentReviewerForHrEmployee(
+        organisationId,
+        input.employeeId,
+        tx,
+      );
+      if (independentReviewer)
+        await assignIndependentHrReviewer(
+          organisationId,
+          "Document",
+          documentId,
+          input.employeeId,
+          independentReviewer.employeeId,
+          actor.userId,
+          tx,
+        );
       await tx.insert(documentVersions).values({
         id: randomUUID(),
         organisationId,
@@ -821,23 +894,25 @@ export async function uploadEmployeeDocumentToDatabase(
         reason: "Uploaded an employee document",
         riskLevel: "High",
       } as typeof auditEvents.$inferInsert);
-      const reviewers = await tx
-        .selectDistinct({ id: users.id })
-        .from(users)
-        .innerJoin(
-          userRoles,
-          and(eq(userRoles.userId, users.id), eq(userRoles.organisationId, organisationId)),
-        )
-        .innerJoin(roles, eq(roles.id, userRoles.roleId))
-        .where(
-          and(
-            eq(users.organisationId, organisationId),
-            eq(users.status, "Active"),
-            isNull(users.archivedAt),
-            eq(roles.code, "HR"),
-            sql`${users.employeeId} <> ${input.employeeId}`,
-          ),
-        );
+      const reviewers = independentReviewer
+        ? [{ id: independentReviewer.userId }]
+        : await tx
+            .selectDistinct({ id: users.id })
+            .from(users)
+            .innerJoin(
+              userRoles,
+              and(eq(userRoles.userId, users.id), eq(userRoles.organisationId, organisationId)),
+            )
+            .innerJoin(roles, eq(roles.id, userRoles.roleId))
+            .where(
+              and(
+                eq(users.organisationId, organisationId),
+                eq(users.status, "Active"),
+                isNull(users.archivedAt),
+                eq(roles.code, "HR"),
+                sql`${users.employeeId} <> ${input.employeeId}`,
+              ),
+            );
       for (const reviewer of reviewers)
         await tx
           .insert(notifications)
@@ -850,7 +925,9 @@ export async function uploadEmployeeDocumentToDatabase(
             link: {
               entityType: "employee-document",
               entityId: documentId,
-              path: employeeDocumentLink(input.employeeId, documentId),
+              path: independentReviewer
+                ? `/staff/independent-record-reviews#review=${documentId}`
+                : employeeDocumentLink(input.employeeId, documentId),
             },
             deduplicationKey: `document-upload:${documentId}`,
             createdBy: actor.userId!,
@@ -1077,6 +1154,21 @@ export async function replaceEmployeeDocumentInDatabase(
         createdBy: actor.userId,
         updatedBy: actor.userId,
       } as typeof employeeDocuments.$inferInsert);
+      const independentReviewer = await independentReviewerForHrEmployee(
+        organisationId,
+        old.employeeId,
+        tx,
+      );
+      if (independentReviewer)
+        await assignIndependentHrReviewer(
+          organisationId,
+          "Document",
+          replacementId,
+          old.employeeId,
+          independentReviewer.employeeId,
+          actor.userId,
+          tx,
+        );
       if (old.status !== "Valid")
         await tx
           .update(employeeDocuments)
@@ -1108,23 +1200,25 @@ export async function replaceEmployeeDocumentInDatabase(
         createdBy: actor.userId,
         reason: input.reason.trim(),
       } as typeof documentVersions.$inferInsert);
-      const reviewers = await tx
-        .selectDistinct({ id: users.id })
-        .from(users)
-        .innerJoin(
-          userRoles,
-          and(eq(userRoles.userId, users.id), eq(userRoles.organisationId, organisationId)),
-        )
-        .innerJoin(roles, eq(roles.id, userRoles.roleId))
-        .where(
-          and(
-            eq(users.organisationId, organisationId),
-            eq(users.status, "Active"),
-            isNull(users.archivedAt),
-            eq(roles.code, "HR"),
-            sql`${users.employeeId} <> ${old.employeeId}`,
-          ),
-        );
+      const reviewers = independentReviewer
+        ? [{ id: independentReviewer.userId }]
+        : await tx
+            .selectDistinct({ id: users.id })
+            .from(users)
+            .innerJoin(
+              userRoles,
+              and(eq(userRoles.userId, users.id), eq(userRoles.organisationId, organisationId)),
+            )
+            .innerJoin(roles, eq(roles.id, userRoles.roleId))
+            .where(
+              and(
+                eq(users.organisationId, organisationId),
+                eq(users.status, "Active"),
+                isNull(users.archivedAt),
+                eq(roles.code, "HR"),
+                sql`${users.employeeId} <> ${old.employeeId}`,
+              ),
+            );
       for (const reviewer of reviewers)
         await tx
           .insert(notifications)
@@ -1138,7 +1232,9 @@ export async function replaceEmployeeDocumentInDatabase(
             link: {
               entityType: "employee-document",
               entityId: replacementId,
-              path: employeeDocumentLink(old.employeeId, replacementId),
+              path: independentReviewer
+                ? `/staff/independent-record-reviews#review=${replacementId}`
+                : employeeDocumentLink(old.employeeId, replacementId),
             },
             deduplicationKey: `document-replacement:${replacementId}`,
             createdBy: actor.userId!,

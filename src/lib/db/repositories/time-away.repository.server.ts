@@ -4,6 +4,13 @@ import { getDatabaseClient } from "../client.ts";
 import { timeAway } from "../schema/time-away.ts";
 import { employees, users, userRoles, roles } from "../schema/employee.ts";
 import { auditEvents, notifications } from "../schema/system.ts";
+import { hrIndependentReviewAssignments } from "../schema/hr-independent-review.ts";
+import {
+  actorIsIndependentHrReviewer,
+  assignIndependentHrReviewer,
+  assignedIndependentHrReviewer,
+  independentReviewerForHrEmployee,
+} from "./independent-hr-review.repository.server.ts";
 import {
   canRecordTimeAway,
   timeAwayDate,
@@ -33,19 +40,63 @@ export async function listTimeAway(org: string, date: string, actor: AuditActorC
     )
     .orderBy(employees.legalName);
   const rows = await db
-    .select({ record: timeAway, name: employees.legalName })
+    .select({
+      record: timeAway,
+      name: employees.legalName,
+      independentReviewerEmployeeId: hrIndependentReviewAssignments.reviewerEmployeeId,
+      independentReviewerName: sql<
+        string | null
+      >`(SELECT reviewer.legal_name FROM employees reviewer
+        WHERE reviewer.id=${hrIndependentReviewAssignments.reviewerEmployeeId}
+          AND reviewer.organisation_id=${org}::uuid)`,
+    })
     .from(timeAway)
     .innerJoin(
       employees,
       and(eq(employees.id, timeAway.employeeId), eq(employees.organisationId, org)),
     )
-    .where(and(eq(timeAway.organisationId, org), eq(timeAway.date, date), employeeScope(actor)))
+    .leftJoin(
+      hrIndependentReviewAssignments,
+      and(
+        eq(hrIndependentReviewAssignments.organisationId, org),
+        eq(hrIndependentReviewAssignments.module, "Time Away"),
+        eq(hrIndependentReviewAssignments.requestId, timeAway.id),
+        isNull(hrIndependentReviewAssignments.archivedAt),
+      ),
+    )
+    .where(
+      and(
+        eq(timeAway.organisationId, org),
+        eq(timeAway.date, date),
+        isNull(timeAway.archivedAt),
+        hr(actor)
+          ? undefined
+          : or(
+              employeeScope(actor),
+              eq(
+                hrIndependentReviewAssignments.reviewerEmployeeId,
+                actor.employeeId ?? "00000000-0000-0000-0000-000000000000",
+              ),
+            ),
+      ),
+    )
     .orderBy(desc(timeAway.createdAt));
   return {
     people,
-    rows: rows.map(({ record, name }) => ({ ...record, name })),
+    rows: rows.map(({ record, name, independentReviewerEmployeeId, independentReviewerName }) => ({
+      ...record,
+      name,
+      independentReviewerEmployeeId,
+      independentReviewerName,
+    })),
     selfId: actor.employeeId ?? null,
-    canReview: hr(actor),
+    canReview:
+      hr(actor) ||
+      rows.some(
+        (row) =>
+          row.independentReviewerEmployeeId === actor.employeeId &&
+          actor.activeRole !== "Super Admin",
+      ),
   };
 }
 export async function recordTimeAway(org: string, raw: unknown, actor: AuditActorContext) {
@@ -79,6 +130,7 @@ export async function recordTimeAway(org: string, raw: unknown, actor: AuditActo
           eq(timeAway.organisationId, org),
           eq(timeAway.employeeId, input.employeeId),
           eq(timeAway.date, input.date),
+          isNull(timeAway.archivedAt),
           inArray(timeAway.status, ["Pending HR", "Approved"]),
           sql`${timeAway.startTime} < ${input.endTime} AND ${timeAway.endTime} > ${input.startTime}`,
         ),
@@ -89,20 +141,40 @@ export async function recordTimeAway(org: string, raw: unknown, actor: AuditActo
       .values({ ...input, organisationId: org, createdBy: actor.userId!, updatedBy: actor.userId! })
       .returning();
     if (!record) throw new Error("Time away could not be saved.");
-    const reviewers = await tx
-      .selectDistinct({ id: users.id })
-      .from(users)
-      .innerJoin(userRoles, and(eq(userRoles.userId, users.id), eq(userRoles.organisationId, org)))
-      .innerJoin(roles, eq(roles.id, userRoles.roleId))
-      .where(
-        and(
-          eq(users.organisationId, org),
-          eq(users.status, "Active"),
-          eq(roles.code, "HR"),
-          sql`${users.id} <> ${actor.userId}::uuid`,
-          sql`${users.employeeId} IS DISTINCT FROM ${input.employeeId}::uuid`,
-        ),
+    const independentReviewer = await independentReviewerForHrEmployee(org, input.employeeId, tx);
+    if (independentReviewer?.userId === actor.userId)
+      throw new Error(
+        "The assigned reviewer cannot record this request on the employee's behalf. Ask another authorised person to record it.",
       );
+    if (independentReviewer)
+      await assignIndependentHrReviewer(
+        org,
+        "Time Away",
+        record.id,
+        input.employeeId,
+        independentReviewer.employeeId,
+        actor.userId,
+        tx,
+      );
+    const reviewers = independentReviewer
+      ? [{ id: independentReviewer.userId }]
+      : await tx
+          .selectDistinct({ id: users.id })
+          .from(users)
+          .innerJoin(
+            userRoles,
+            and(eq(userRoles.userId, users.id), eq(userRoles.organisationId, org)),
+          )
+          .innerJoin(roles, eq(roles.id, userRoles.roleId))
+          .where(
+            and(
+              eq(users.organisationId, org),
+              eq(users.status, "Active"),
+              eq(roles.code, "HR"),
+              sql`${users.id} <> ${actor.userId}::uuid`,
+              sql`${users.employeeId} IS DISTINCT FROM ${input.employeeId}::uuid`,
+            ),
+          );
     for (const reviewer of reviewers)
       await tx
         .insert(notifications)
@@ -110,7 +182,7 @@ export async function recordTimeAway(org: string, raw: unknown, actor: AuditActo
           organisationId: org,
           recipientUserId: reviewer.id,
           type: "time_away.submitted",
-          title: "Time away needs HR review",
+          title: independentReviewer ? "Time away needs your review" : "Time away needs HR review",
           message: `${person.legalName}: ${input.date}, ${input.startTime}–${input.endTime}. Review the record and choose how this time should be treated.`,
           link: {
             entityType: "time-away",
@@ -132,6 +204,18 @@ export async function recordTimeAway(org: string, raw: unknown, actor: AuditActo
           eq(users.status, "Active"),
         ),
       );
+    const [reviewerPerson] = independentReviewer
+      ? await tx
+          .select({ name: employees.legalName })
+          .from(employees)
+          .where(
+            and(
+              eq(employees.organisationId, org),
+              eq(employees.id, independentReviewer.employeeId),
+            ),
+          )
+          .limit(1)
+      : [];
     for (const owner of owners)
       await tx
         .insert(notifications)
@@ -139,8 +223,8 @@ export async function recordTimeAway(org: string, raw: unknown, actor: AuditActo
           organisationId: org,
           recipientUserId: owner.id,
           type: "time_away.request_recorded",
-          title: "Your time away is awaiting HR review",
-          message: `${input.date}, ${input.startTime}–${input.endTime} was recorded for you. Check the times in VIA HR. No pay or leave deduction has been made.`,
+          title: "Your time away is awaiting review",
+          message: `${input.date}, ${input.startTime}–${input.endTime} was recorded for you. ${reviewerPerson ? `${reviewerPerson.name} will review it.` : "HR will review it."} No pay or leave deduction has been made.`,
           link: {
             entityType: "time-away",
             entityId: record.id,
@@ -184,7 +268,13 @@ export async function decideTimeAway(
     const [record] = await tx
       .select()
       .from(timeAway)
-      .where(and(eq(timeAway.organisationId, org), eq(timeAway.id, input.id)))
+      .where(
+        and(
+          eq(timeAway.organisationId, org),
+          eq(timeAway.id, input.id),
+          isNull(timeAway.archivedAt),
+        ),
+      )
       .for("update");
     if (!record) throw new Error("Time-away record not found.");
     if (record.recordVersion !== input.version || record.status !== "Pending HR")
@@ -203,7 +293,23 @@ export async function decideTimeAway(
           throw new Error("You cannot cancel this record.");
       }
     } else {
-      if (!hr(actor)) throw new Error("Only HR can review time away.");
+      const independentReviewer = await assignedIndependentHrReviewer(
+        org,
+        "Time Away",
+        record.id,
+        record.employeeId,
+        tx,
+      );
+      if (independentReviewer) {
+        if (!actorIsIndependentHrReviewer(actor, record.employeeId, independentReviewer))
+          throw new Error("Only the assigned independent reviewer can decide this time away.");
+      } else {
+        if (await independentReviewerForHrEmployee(org, record.employeeId, tx))
+          throw new Error(
+            "This HR request needs an independent reviewer assignment before a decision.",
+          );
+        if (!hr(actor)) throw new Error("Only HR can review time away.");
+      }
       if (record.employeeId === actor.employeeId || record.createdBy === actor.userId)
         throw new Error("Another HR reviewer must review your own record.");
       if (
@@ -259,7 +365,7 @@ export async function decideTimeAway(
           recipientUserId: person.id,
           type: "time_away.decision",
           title: `Time away ${status.toLowerCase()}`,
-          message: `${record.date}, ${record.startTime}–${record.endTime}: ${status}${input.action === "Approve" ? ` as ${input.treatment}` : ""}. Open the record for details. No pay or leave deduction has been made automatically.`,
+          message: `${record.date}, ${record.startTime}–${record.endTime}: ${status}${input.action === "Approve" ? ` as ${input.treatment}` : ""} by ${actor.displayName}. Open the record for details. No pay or leave deduction has been made automatically.`,
           link: {
             entityType: "time-away",
             entityId: record.id,

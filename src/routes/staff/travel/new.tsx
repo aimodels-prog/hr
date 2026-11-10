@@ -22,6 +22,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
 import { TravelService } from "@/lib/data/travel-service";
+import { travelRequestNotes } from "@/lib/data/travel-request-notes";
 import { getMasterDataRepository, getProjectRepository } from "@/lib/data/master-data";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { Info, Paperclip } from "lucide-react";
@@ -62,13 +63,26 @@ function NewTravelRequestRoute() {
   const [estAccommodation, setEstAccommodation] = useState<number>(0);
   const [estPerDiem, setEstPerDiem] = useState<number>(0);
   const [estOther, setEstOther] = useState<number>(0);
+  const [needsCompanyBooking, setNeedsCompanyBooking] = useState<boolean | null>(null);
   const [notes, setNotes] = useState("");
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const total = estTransport + estAccommodation + estPerDiem + estOther;
 
+  const isFormValid = Boolean(
+    purpose.trim().length >= 3 &&
+    destination.trim().length >= 2 &&
+    startDate &&
+    endDate &&
+    endDate >= startDate &&
+    activeCurrencies.some((item) => item.code === currency) &&
+    needsCompanyBooking !== null &&
+    (!needsCompanyBooking || total > 0),
+  );
+
   const handleSubmit = async () => {
+    if (!isFormValid) return;
     setIsSubmitting(true);
     try {
       const actorContext = currentUser.getActorContext();
@@ -92,7 +106,7 @@ function NewTravelRequestRoute() {
           estAccommodation,
           estPerDiem,
           estOther,
-          notes,
+          notes: travelRequestNotes(needsCompanyBooking === true, notes),
         },
         actorContext,
         evidenceFile ?? undefined,
@@ -106,15 +120,6 @@ function NewTravelRequestRoute() {
     }
   };
 
-  const isFormValid = Boolean(
-    purpose.trim().length >= 3 &&
-    destination.trim().length >= 2 &&
-    startDate &&
-    endDate &&
-    endDate >= startDate &&
-    activeCurrencies.some((item) => item.code === currency),
-  );
-
   return (
     <RequirePermission permission="travel:request_self" resourceName="New Travel Request">
       <div className="flex flex-col gap-6 max-w-[800px] mx-auto pb-10">
@@ -127,9 +132,8 @@ function NewTravelRequestRoute() {
           <Info className="w-4 h-4 text-blue-600" />
           <AlertTitle>How approval works</AlertTitle>
           <AlertDescription>
-            Your supervisor reviews the business need first, followed by HR and Finance. Do not book
-            travel until all three reviews are complete. You can then request any car, flight or
-            hotel arrangements you need.
+            Your supervisor, HR and Finance review as needed. Wait for approval before booking.
+            Estimate any costs you expect, whether VIA arranges them or you claim them later.
           </AlertDescription>
         </Alert>
 
@@ -138,27 +142,6 @@ function NewTravelRequestRoute() {
             <CardTitle>Travel Details</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <details>
-              <summary className="cursor-pointer py-2 font-medium">
-                Add colleagues travelling with you
-              </summary>
-              <SearchablePeopleList
-                label="Search colleagues"
-                options={currentUser.allEmployees
-                  .filter((e) => e.id !== currentUser.employeeId && !e.archivedAt)
-                  .map((e) => ({
-                    value: e.id,
-                    label: e.preferredName,
-                    keywords: [e.department ?? ""],
-                  }))}
-                selected={participantIds}
-                onToggle={(id, checked) =>
-                  setParticipantIds((ids) =>
-                    checked ? [...new Set([...ids, id])] : ids.filter((v) => v !== id),
-                  )
-                }
-              />
-            </details>
             <div className="space-y-2">
               <label className="text-sm font-medium">Business Purpose</label>
               <Input
@@ -189,145 +172,230 @@ function NewTravelRequestRoute() {
                 <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
               </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Project Allocation</label>
-                <Select value={projectId} onValueChange={setProjectId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select Project" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">None / Corporate</SelectItem>
-                    {activeProjects.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            <details className="rounded-lg border px-3 py-2">
+              <summary className="min-h-9 cursor-pointer py-2 font-medium text-primary">
+                Add colleagues travelling with you{" "}
+                {participantIds.length > 0 ? `(${participantIds.length})` : "(optional)"}
+              </summary>
+              <SearchablePeopleList
+                label="Search colleagues"
+                options={currentUser.allEmployees
+                  .filter((e) => e.id !== currentUser.employeeId && !e.archivedAt)
+                  .map((e) => ({
+                    value: e.id,
+                    label: e.preferredName,
+                    keywords: [e.department ?? ""],
+                  }))}
+                selected={participantIds}
+                onToggle={(id, checked) =>
+                  setParticipantIds((ids) =>
+                    checked ? [...new Set([...ids, id])] : ids.filter((v) => v !== id),
+                  )
+                }
+              />
+            </details>
+            <details className="rounded-lg border px-3 py-2">
+              <summary className="min-h-9 cursor-pointer py-2 font-medium text-primary">
+                Project and cost centre (optional)
+              </summary>
+              <div className="grid grid-cols-1 gap-4 pb-2 pt-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Project Allocation</label>
+                  <Select value={projectId} onValueChange={setProjectId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select Project" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None / Corporate</SelectItem>
+                      {activeProjects.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Cost Centre</label>
+                  <Select value={costCentreId} onValueChange={setCostCentreId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select Cost Centre" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No cost centre selected</SelectItem>
+                      {activeCostCentres.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Cost Centre</label>
-                <Select value={costCentreId} onValueChange={setCostCentreId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select Cost Centre" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No cost centre selected</SelectItem>
-                    {activeCostCentres.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+            </details>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Financial Estimates</CardTitle>
+            <CardTitle>Booking and costs</CardTitle>
             <CardDescription>
-              Provide your best estimate. You will submit actual expenses after the trip.
+              Tell us whether VIA needs to arrange travel and estimate any costs. Actual receipts
+              are submitted after the trip.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2 max-w-[200px]">
-              <label className="text-sm font-medium">Currency</label>
-              <Select value={currency} onValueChange={setCurrency}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {activeCurrencies.map((item) => (
-                    <SelectItem key={item.id} value={item.code!}>
-                      {item.code} {item.symbol ? `(${item.symbol})` : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-semibold">
+                Will VIA need to arrange a car, flight or hotel? <span aria-hidden="true">*</span>
+              </legend>
+              <div className="flex flex-wrap gap-3">
+                {[true, false].map((answer) => (
+                  <label
+                    key={String(answer)}
+                    className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-4 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5"
+                  >
+                    <input
+                      type="radio"
+                      name="needs-company-booking"
+                      required
+                      checked={needsCompanyBooking === answer}
+                      onChange={() => {
+                        setNeedsCompanyBooking(answer);
+                      }}
+                    />
+                    {answer ? "Yes, VIA will arrange it" : "No, no booking needed"}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Transport (Flights, Train, etc)</label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.001"
-                  value={estTransport || ""}
-                  onChange={(e) => setEstTransport(parseFloat(e.target.value) || 0)}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Accommodation</label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.001"
-                  value={estAccommodation || ""}
-                  onChange={(e) => setEstAccommodation(parseFloat(e.target.value) || 0)}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Per Diem / Meals</label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.001"
-                  value={estPerDiem || ""}
-                  onChange={(e) => setEstPerDiem(parseFloat(e.target.value) || 0)}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Other Costs</label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.001"
-                  value={estOther || ""}
-                  onChange={(e) => setEstOther(parseFloat(e.target.value) || 0)}
-                />
-              </div>
-            </div>
+            {needsCompanyBooking !== null && (
+              <details
+                key={String(needsCompanyBooking)}
+                open={needsCompanyBooking || undefined}
+                className="rounded-lg border p-4"
+              >
+                <summary className="min-h-9 cursor-pointer font-medium text-primary">
+                  Estimated trip costs{" "}
+                  {needsCompanyBooking ? "(required)" : "(if you will claim expenses)"}
+                  {total > 0 ? ` · ${total.toLocaleString()} ${currency}` : ""}
+                </summary>
+                <div className="space-y-4 pt-3">
+                  <p className="text-sm text-muted-foreground">
+                    Include costs you expect VIA to book or reimburse. Finance uses the approved
+                    estimate to check actual receipts. If you expect to claim expenses, do not leave
+                    this at zero.
+                  </p>
+                  <div className="max-w-[200px] space-y-2">
+                    <label className="text-sm font-medium">Currency</label>
+                    <Select value={currency} onValueChange={setCurrency}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {activeCurrencies.map((item) => (
+                          <SelectItem key={item.id} value={item.code!}>
+                            {item.code} {item.symbol ? `(${item.symbol})` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Transport (Flights, Train, etc)</label>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        value={estTransport || ""}
+                        onChange={(e) => setEstTransport(parseFloat(e.target.value) || 0)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Accommodation</label>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        value={estAccommodation || ""}
+                        onChange={(e) => setEstAccommodation(parseFloat(e.target.value) || 0)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Per Diem / Meals</label>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        value={estPerDiem || ""}
+                        onChange={(e) => setEstPerDiem(parseFloat(e.target.value) || 0)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Other Costs</label>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        value={estOther || ""}
+                        onChange={(e) => setEstOther(parseFloat(e.target.value) || 0)}
+                      />
+                    </div>
+                  </div>
 
-            <div className="pt-4 border-t flex justify-between items-center mt-4">
-              <span className="text-lg font-medium">Total Estimate:</span>
-              <span className="text-2xl font-bold">
-                {total.toLocaleString()} {currency}
-              </span>
-            </div>
+                  <div className="pt-4 border-t flex justify-between items-center mt-4">
+                    <span className="text-lg font-medium">Estimated trip costs:</span>
+                    <span className="text-2xl font-bold">
+                      {total.toLocaleString()} {currency}
+                    </span>
+                  </div>
+                </div>
+              </details>
+            )}
+            {needsCompanyBooking && total <= 0 && (
+              <p className="text-sm text-destructive" role="status">
+                Add an estimated amount before sending this for approval.
+              </p>
+            )}
 
-            <div className="space-y-2 mt-4">
-              <label className="text-sm font-medium">Supporting Notes</label>
-              <Textarea
-                placeholder="Any links to intended flights, conference details, etc..."
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2 mt-4">
-              <label className="text-sm font-medium flex items-center gap-1">
-                <Paperclip className="w-3.5 h-3.5" /> Supporting Evidence (optional, PDF or image,
-                up to 10 MB)
-              </label>
-              <Input
-                type="file"
-                accept=".pdf,.jpg,.jpeg,.png"
-                onChange={(e) => {
-                  const file = e.target.files?.[0] ?? null;
-                  if (file && file.size > 10 * 1024 * 1024) {
-                    toast.error("Supporting evidence must be 10 MB or smaller.");
-                    e.currentTarget.value = "";
-                    setEvidenceFile(null);
-                    return;
-                  }
-                  setEvidenceFile(file);
-                }}
-              />
-            </div>
+            <details className="rounded-lg border px-3 py-2">
+              <summary className="min-h-9 cursor-pointer py-2 font-medium text-primary">
+                Supporting notes and files (optional)
+              </summary>
+              <div className="space-y-4 pb-2 pt-3">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Supporting Notes</label>
+                  <Textarea
+                    placeholder="Any links to intended flights, conference details, etc..."
+                    value={notes}
+                    maxLength={3900}
+                    onChange={(e) => setNotes(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-1 text-sm font-medium">
+                    <Paperclip className="h-3.5 w-3.5" /> Supporting Evidence (PDF or image, up to
+                    10 MB)
+                  </label>
+                  <Input
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] ?? null;
+                      if (file && file.size > 10 * 1024 * 1024) {
+                        toast.error("Supporting evidence must be 10 MB or smaller.");
+                        e.currentTarget.value = "";
+                        setEvidenceFile(null);
+                        return;
+                      }
+                      setEvidenceFile(file);
+                    }}
+                  />
+                </div>
+              </div>
+            </details>
           </CardContent>
           <CardFooter className="flex justify-between bg-muted/20 border-t py-4">
             <Button variant="outline" onClick={() => navigate({ to: "/staff/travel" })}>

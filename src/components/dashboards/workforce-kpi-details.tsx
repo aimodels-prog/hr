@@ -11,7 +11,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { WorkforceAnalytics } from "@/lib/data/workforce-analytics";
-import { approvalDestination } from "@/lib/data/approval-destinations";
 
 export type WorkforceKpi = "current" | "recorded" | "leave" | "approvals";
 
@@ -19,7 +18,7 @@ const titles: Record<WorkforceKpi, string> = {
   current: "Current employees",
   recorded: "Attendance recorded today",
   leave: "On leave today",
-  approvals: "Awaiting decisions",
+  approvals: "Pending across company",
 };
 
 export function WorkforceKpiDetails({
@@ -55,15 +54,13 @@ export function WorkforceKpiDetails({
           <div className="space-y-2">
             {data.priorities.approvals.length ? (
               data.priorities.approvals.map((item) => (
-                <Link
+                <div
                   key={item.name}
-                  to={approvalDestination(item.name)}
-                  onClick={onClose}
-                  className="flex min-h-12 items-center justify-between rounded-lg border px-4 py-3 text-sm hover:border-primary hover:bg-primary/5"
+                  className="flex min-h-12 items-center justify-between rounded-lg border px-4 py-3 text-sm"
                 >
                   <span>{item.name}</span>
                   <span className="font-semibold tabular-nums">{item.count}</span>
-                </Link>
+                </div>
               ))
             ) : (
               <p className="py-6 text-center text-sm text-muted-foreground">
@@ -71,8 +68,8 @@ export function WorkforceKpiDetails({
               </p>
             )}
             <Button asChild variant="outline" className="mt-2 w-full">
-              <Link to="/staff/requests" search={{ view: "approvals" }} onClick={onClose}>
-                Open approvals assigned to me
+              <Link to="/staff/requests" search={{ view: "organisation" }} onClick={onClose}>
+                Browse employee requests
               </Link>
             </Button>
           </div>

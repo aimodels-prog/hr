@@ -11,6 +11,7 @@ import {
   exportAttendanceRecordsFromDatabase,
   importAttendanceRecordsInDatabase,
   listAttendanceForActor,
+  listAssignedIndependentSiteVisitsInDatabase,
   getMyLiveAttendance,
   readAttendanceCorrectionEvidenceInDatabase,
   requestSiteVisitInDatabase,
@@ -558,6 +559,13 @@ export const decideSiteVisitFn = createServerFn({ method: "POST" })
       v.actor,
     );
     return { ok: true };
+  });
+
+export const listAssignedIndependentSiteVisitsFn = createServerFn({ method: "POST" })
+  .validator((input) => Actor.parse(input))
+  .handler(async ({ data }) => {
+    const v = await verify(data);
+    return listAssignedIndependentSiteVisitsInDatabase(v.organisationId, v.actor);
   });
 
 export const updateSiteVisitProgressFn = createServerFn({ method: "POST" })

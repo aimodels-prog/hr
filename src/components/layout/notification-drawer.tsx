@@ -192,7 +192,7 @@ export function NotificationDrawer() {
         notif.link.entityType === "leave-request" &&
         notif.link.entityId
       ) {
-        destination = leaveRequestHistoryUrl(notif.link.entityId, currentUser.activeRole);
+        destination = leaveRequestHistoryUrl(notif.link.entityId);
       }
       if (
         (["employee-document", "document_expiry"].includes(notif.link.entityType ?? "") ||

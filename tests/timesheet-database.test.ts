@@ -215,6 +215,27 @@ test(
         await sql`SELECT status, approved_by FROM timesheets WHERE id = ${timesheetId}`;
       assert.equal(hrApproval?.status, "Approved");
       assert.equal(hrApproval?.approved_by, hrActor.userId);
+      const decisionAudits = await sql`
+        SELECT action, after_summary FROM audit_events
+        WHERE organisation_id = ${organisationId}
+          AND entity_type = 'timesheet'
+          AND entity_id = ${timesheetId}
+          AND action = 'approve'
+        ORDER BY created_at
+      `;
+      assert.equal(decisionAudits.length, 2, "manager and HR each preserve their own review");
+      for (const audit of decisionAudits) {
+        const decisionSnapshot = audit.after_summary.decisionSnapshot;
+        assert.equal(decisionSnapshot.version, 1);
+        assert.deepEqual(decisionSnapshot.period, { startDate, endDate });
+        assert.equal(decisionSnapshot.totals.workedHours, 40);
+        assert.equal(decisionSnapshot.workEntries[0].projectName, "Trade Operations");
+        assert.equal(
+          decisionSnapshot.workEntries[0].notes,
+          "Client delivery and operational coordination",
+        );
+        assert.equal(decisionSnapshot.truncated, false);
+      }
       await lockTimesheetForPayrollInDatabase(organisationId, timesheetId, hrActor);
       const correctionId = await reopenTimesheetInDatabase(
         organisationId,
@@ -245,6 +266,84 @@ test(
       assert.deepEqual(
         itSelfView.timesheets.map((sheet) => sheet.id),
         [correctionId],
+      );
+      await sql`UPDATE employees SET line_manager_id=${hrEmployeeId} WHERE id=${employeeId}`;
+      const standInStart = new Date(`${endDate}T00:00:00.000Z`);
+      standInStart.setUTCDate(standInStart.getUTCDate() + 1);
+      const standInEnd = new Date(standInStart);
+      standInEnd.setUTCDate(standInEnd.getUTCDate() + 6);
+      const standInStartDate = standInStart.toISOString().slice(0, 10);
+      const standInEndDate = standInEnd.toISOString().slice(0, 10);
+      await generateTimesheetPeriodsInDatabase(
+        organisationId,
+        standInStartDate,
+        standInEndDate,
+        hrActor,
+      );
+      const [standInPeriod] = await sql`
+        SELECT id FROM timesheet_periods
+        WHERE organisation_id=${organisationId} AND start_date=${standInStartDate}
+      `;
+      assert.ok(standInPeriod?.id);
+      const standInSheetId = await getOrCreateTimesheetInDatabase(
+        organisationId,
+        employeeId,
+        standInPeriod.id,
+        employeeActor,
+      );
+      const standInHours: Record<string, number> = {};
+      for (let offset = 0; offset < 5; offset += 1) {
+        const day = new Date(standInStart);
+        day.setUTCDate(day.getUTCDate() + offset);
+        const workDate = day.toISOString().slice(0, 10);
+        standInHours[workDate] = 8;
+        await sql`INSERT INTO attendance_records (id,organisation_id,employee_id,date,clock_in_at,clock_out_at,break_minutes,source,status,calculated_hours,created_by,updated_by) VALUES (${randomUUID()},${organisationId},${employeeId},${workDate},${`${workDate}T08:00:00.000Z`},${`${workDate}T17:00:00.000Z`},60,'Web','Present',8,${employeeUserId},${employeeUserId})`;
+      }
+      await saveTimesheetDraftInDatabase(
+        organisationId,
+        standInSheetId,
+        [
+          {
+            id: randomUUID(),
+            projectId,
+            costCentreId,
+            activityCodeId,
+            locationId,
+            hours: standInHours,
+            notes: "HR-supervised delivery",
+          },
+        ],
+        {},
+        employeeActor,
+      );
+      await submitTimesheetInDatabase(organisationId, standInSheetId, employeeActor);
+      await assert.rejects(
+        decideTimesheetInDatabase(
+          organisationId,
+          standInSheetId,
+          "approve",
+          undefined,
+          managerActor,
+        ),
+        /assigned timesheet approver/,
+      );
+      await decideTimesheetInDatabase(
+        organisationId,
+        standInSheetId,
+        "approve",
+        undefined,
+        hrActor,
+      );
+      const [standInApproval] = await sql`
+        SELECT status, supervisor_reviewed_by, approved_by
+        FROM timesheets WHERE id=${standInSheetId}
+      `;
+      assert.equal(standInApproval?.status, "Approved");
+      assert.equal(standInApproval?.supervisor_reviewed_by, hrUserId);
+      assert.equal(standInApproval?.approved_by, hrUserId);
+      await assert.rejects(
+        decideTimesheetInDatabase(organisationId, standInSheetId, "approve", undefined, hrActor),
+        /assigned timesheet approver/,
       );
       const workerAt = new Date(`${endDate}T12:00:00.000Z`);
       workerAt.setUTCDate(workerAt.getUTCDate() + 3);

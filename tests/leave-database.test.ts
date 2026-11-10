@@ -9,6 +9,7 @@ import {
   saveAppSettings,
 } from "../src/lib/db/repositories/settings.repository.server.ts";
 import { processLeaveUsageReminders } from "../src/lib/db/repositories/leave-reminder.repository.server.ts";
+import { listTasksForActorInDatabase } from "../src/lib/db/repositories/task.repository.server.ts";
 
 import {
   approveLeaveRequestInDatabase,
@@ -563,11 +564,29 @@ test(
         /assigned approver/,
       );
       const countryManagerActor = actor(colleagueUserId, colleagueEmployeeId, "Employee");
+      assert.ok(
+        (await listLeaveSnapshotForActor(organisationId, countryManagerActor)).requests.some(
+          (item) => item.id === specialId,
+        ),
+        "the named reviewer can load the request while using the Employee role",
+      );
+      assert.ok(
+        (await listTasksForActorInDatabase(organisationId, countryManagerActor)).some(
+          (task) => task.id === `leave-country-manager-${specialId}`,
+        ),
+        "the named reviewer can open the decision from their task inbox",
+      );
       await approveLeaveRequestInDatabase(
         organisationId,
         specialId,
         countryManagerActor,
         "approve",
+      );
+      assert.ok(
+        !(await listTasksForActorInDatabase(organisationId, countryManagerActor)).some(
+          (task) => task.id === `leave-country-manager-${specialId}`,
+        ),
+        "the review task closes after the Country Manager decides",
       );
       assert.equal(
         (await listLeaveSnapshotForActor(organisationId, hrActor)).requests.find(
@@ -701,6 +720,14 @@ test(
       };
       await assert.rejects(
         grantSickLeaveBackdatePermission(organisationId, permissionInput, employeeActor),
+        /Only HR/,
+      );
+      await assert.rejects(
+        grantSickLeaveBackdatePermission(organisationId, permissionInput, {
+          ...hrActor,
+          activeRole: "Super Admin",
+          roles: ["HR", "Super Admin"],
+        }),
         /Only HR/,
       );
       await assert.rejects(
@@ -862,6 +889,174 @@ test(
       const [workingWeek] =
         await sql`SELECT working_days_requested FROM leave_requests WHERE id=${workingWeekRequest}`;
       assert.equal(Number(workingWeek.working_days_requested), 5);
+
+      // HR is temporarily the assigned supervisor: one decision must complete ordinary leave.
+      await sql`UPDATE employees SET line_manager_id=${hrEmployeeId} WHERE id=${employeeId}`;
+      const standInDay = new Date(start);
+      standInDay.setUTCDate(standInDay.getUTCDate() + 35);
+      const standInNewDay = new Date(standInDay);
+      standInNewDay.setUTCDate(standInNewDay.getUTCDate() + 7);
+      const standInRequest = await createLeaveRequestInDatabase(
+        organisationId,
+        {
+          employeeId,
+          policyId: sickPolicyId,
+          startDate: isoDate(standInDay),
+          endDate: isoDate(standInDay),
+          reason: "Ordinary leave with HR as supervisor",
+        },
+        employeeActor,
+      );
+      await approveLeaveRequestInDatabase(organisationId, standInRequest, hrActor, "approve");
+      const [standInApproved] = await sql`
+        SELECT status, chain_approvals FROM leave_requests WHERE id=${standInRequest}
+      `;
+      assert.equal(standInApproved.status, "Approved");
+      assert.equal(standInApproved.chain_approvals.length, 1);
+      assert.equal(standInApproved.chain_approvals[0].approvedBy, hrUserId);
+      const [firstDecision] = await sql`
+        SELECT count(*)::int AS count FROM audit_events
+        WHERE organisation_id=${organisationId} AND entity_id=${standInRequest} AND action='approve'
+      `;
+      assert.equal(firstDecision.count, 1);
+      await requestLeaveChangeInDatabase(
+        organisationId,
+        standInRequest,
+        {
+          kind: "amend",
+          startDate: isoDate(standInNewDay),
+          endDate: isoDate(standInNewDay),
+          reason: "Move the planned day",
+        },
+        employeeActor,
+      );
+      await approveLeaveRequestInDatabase(organisationId, standInRequest, hrActor, "approve");
+      const [standInAmended] = await sql`
+        SELECT status, start_date, pending_amendment FROM leave_requests WHERE id=${standInRequest}
+      `;
+      assert.equal(standInAmended.status, "Approved");
+      assert.equal(standInAmended.start_date, isoDate(standInNewDay));
+      assert.equal(standInAmended.pending_amendment, null);
+      const [bothDecisions] = await sql`
+        SELECT count(*)::int AS count FROM audit_events
+        WHERE organisation_id=${organisationId} AND entity_id=${standInRequest} AND action='approve'
+      `;
+      assert.equal(bothDecisions.count, 2);
+
+      // A current CEO or Country Manager without a supervisor has one independent HR
+      // decision for ordinary leave. Other managerless staff must still be blocked.
+      const executiveDay = new Date(start);
+      executiveDay.setUTCDate(executiveDay.getUTCDate() + 98);
+      const movedExecutiveDay = new Date(executiveDay);
+      movedExecutiveDay.setUTCDate(movedExecutiveDay.getUTCDate() + 7);
+      const executiveYear = executiveDay.getUTCFullYear();
+      const executiveInput = (personId: string) => ({
+        employeeId: personId,
+        policyId: annualPolicyId,
+        startDate: isoDate(executiveDay),
+        endDate: isoDate(executiveDay),
+        reason: "Planned annual leave",
+        handoverContactId: employeeId,
+      });
+      await sql`UPDATE employees SET employment_confirmation_status='Confirmed',
+        profile_setup_status='Completed' WHERE id IN (${managerEmployeeId},${colleagueEmployeeId})`;
+      await assert.rejects(
+        createLeaveRequestInDatabase(
+          organisationId,
+          executiveInput(managerEmployeeId),
+          actor(managerUserId, managerEmployeeId, "Employee"),
+        ),
+        /assign a valid supervisor/,
+        "a managerless Coordinator cannot use the executive HR-only path",
+      );
+
+      const ceoPositionId = randomUUID();
+      await sql`INSERT INTO positions (id, organisation_id, name, code, is_active, order_index,
+        created_by, updated_by) VALUES (${ceoPositionId}, ${organisationId},
+        'CEO', 'CEO', true, 3, ${hrUserId}, ${hrUserId})`;
+      await sql`UPDATE employees SET position_id=${ceoPositionId} WHERE id=${managerEmployeeId}`;
+      await sql`UPDATE employees SET line_manager_id=NULL WHERE id=${colleagueEmployeeId}`;
+      for (const personId of [managerEmployeeId, colleagueEmployeeId]) {
+        await sql`INSERT INTO leave_balances (id, organisation_id, employee_id, policy_id,
+          leave_year, balance_days, created_by, updated_by)
+          VALUES (${randomUUID()}, ${organisationId}, ${personId}, ${annualPolicyId},
+            ${executiveYear}, 30, ${hrUserId}, ${hrUserId})
+          ON CONFLICT (employee_id, policy_id, leave_year)
+          DO UPDATE SET balance_days=30`;
+      }
+      const ceoActor = actor(managerUserId, managerEmployeeId, "Employee");
+      const ceoRequestId = await createLeaveRequestInDatabase(
+        organisationId,
+        executiveInput(managerEmployeeId),
+        ceoActor,
+      );
+      const countryManagerRequestId = await createLeaveRequestInDatabase(
+        organisationId,
+        executiveInput(colleagueEmployeeId),
+        countryManagerActor,
+      );
+      for (const requestId of [ceoRequestId, countryManagerRequestId]) {
+        const [row] =
+          await sql`SELECT status,chain_approvals FROM leave_requests WHERE id=${requestId}`;
+        assert.equal(row.status, "Pending HR");
+        assert.deepEqual(row.chain_approvals, [{ role: "HR", status: "Pending" }]);
+        assert.ok(
+          (await listTasksForActorInDatabase(organisationId, hrActor)).some(
+            (task) => task.id === `leave-hr-${requestId}`,
+          ),
+          "HR sees an actionable executive request",
+        );
+        const [notice] = await sql`SELECT title FROM notifications
+          WHERE link->>'entityId'=${requestId} AND recipient_user_id=${hrUserId}`;
+        assert.match(notice.title, /Executive leave awaiting HR review/);
+        await approveLeaveRequestInDatabase(organisationId, requestId, hrActor, "approve");
+        const [approved] =
+          await sql`SELECT status,chain_approvals FROM leave_requests WHERE id=${requestId}`;
+        assert.equal(approved.status, "Approved");
+        assert.equal(approved.chain_approvals.length, 1);
+        assert.equal(approved.chain_approvals[0].approvedBy, hrUserId);
+      }
+      await requestLeaveChangeInDatabase(
+        organisationId,
+        ceoRequestId,
+        {
+          kind: "amend",
+          startDate: isoDate(movedExecutiveDay),
+          endDate: isoDate(movedExecutiveDay),
+          reason: "Move the planned day",
+        },
+        ceoActor,
+      );
+      const [executiveAmendment] = await sql`
+        SELECT status,pending_amendment FROM leave_requests WHERE id=${ceoRequestId}
+      `;
+      assert.equal(executiveAmendment.status, "Amendment Pending HR");
+      assert.deepEqual(executiveAmendment.pending_amendment.chainApprovals, [
+        { role: "HR", status: "Pending" },
+      ]);
+      await approveLeaveRequestInDatabase(organisationId, ceoRequestId, hrActor, "approve");
+      const [executiveAmended] = await sql`
+        SELECT status,start_date,pending_amendment FROM leave_requests WHERE id=${ceoRequestId}
+      `;
+      assert.equal(executiveAmended.status, "Approved");
+      assert.equal(executiveAmended.start_date, isoDate(movedExecutiveDay));
+      assert.equal(executiveAmended.pending_amendment, null);
+      const specialExecutiveDay = new Date(movedExecutiveDay);
+      specialExecutiveDay.setUTCDate(specialExecutiveDay.getUTCDate() + 7);
+      await assert.rejects(
+        createLeaveRequestInDatabase(
+          organisationId,
+          {
+            ...executiveInput(managerEmployeeId),
+            startDate: isoDate(specialExecutiveDay),
+            endDate: isoDate(specialExecutiveDay),
+            specialRequestReason: "An exceptional executive leave request",
+          },
+          ceoActor,
+        ),
+        /independent approval arrangement/,
+        "the HR-only ordinary route must not bypass special approval safeguards",
+      );
     } finally {
       await sql.end();
     }

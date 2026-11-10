@@ -111,6 +111,59 @@ test(
         assert.equal(rows[0]!.count, 0);
       }
       assert.ok((await db`SELECT id FROM notifications WHERE organisation_id=${org}`).length > 0);
+
+      // HR's own record must be assigned to a named, configured colleague rather than
+      // becoming a self-approval or an open approval for every HR user.
+      await db`INSERT INTO user_roles (organisation_id,user_id,role_id,assigned_by,reason)
+        SELECT ${org},${hr},id,${hr},'HR review fixture' FROM roles WHERE code='HR' ON CONFLICT DO NOTHING`;
+      await db`INSERT INTO app_settings (organisation_id,timezone,base_currency,working_days,
+        standard_daily_hours,standard_weekly_hours,leave_year_start,leave_year_end,
+        document_reminder_days,employee_number_format,candidate_reference_format,
+        additional_settings,created_by,updated_by)
+        VALUES (${org},'UTC','OMR',ARRAY[1,2,3,4,5],8,40,'01-01','12-31',
+          ARRAY[30,7],'TEST-{####}','CAN-{####}',
+          ${JSON.stringify({ approvalRouting: { hrOwnRequestReviewerEmployeeId: manager } })}::jsonb,
+          ${hr},${hr})`;
+      const ownId = await recordTimeAway(
+        org,
+        { ...input, employeeId: hr, date: "2026-10-06" },
+        hrActor,
+      );
+      const assignment = await db`SELECT reviewer_employee_id FROM hr_independent_review_assignments
+        WHERE organisation_id=${org} AND module='Time Away' AND request_id=${ownId}`;
+      assert.equal(assignment[0]?.reviewer_employee_id, manager);
+      const reviewerRows = await listTimeAway(org, "2026-10-06", {
+        ...managerActor,
+        activeRole: "Employee",
+      });
+      assert.equal(
+        reviewerRows.rows.some((row) => row.id === ownId),
+        true,
+      );
+      await assert.rejects(
+        decideTimeAway(
+          org,
+          { id: ownId, version: 1, action: "Approve", treatment: "Paid time", note: "" },
+          hrActor,
+        ),
+        /assigned independent reviewer/,
+      );
+      await assert.rejects(
+        decideTimeAway(
+          org,
+          { id: ownId, version: 1, action: "Approve", treatment: "Paid time", note: "" },
+          { ...managerActor, activeRole: "Super Admin" },
+        ),
+        /assigned independent reviewer/,
+      );
+      await decideTimeAway(
+        org,
+        { id: ownId, version: 1, action: "Approve", treatment: "Paid time", note: "" },
+        { ...managerActor, activeRole: "Employee" },
+      );
+      const ownStatus = await db`SELECT status,reviewed_by FROM time_away WHERE id=${ownId}`;
+      assert.equal(ownStatus[0]?.status, "Approved");
+      assert.equal(ownStatus[0]?.reviewed_by, manager);
     } finally {
       // Keep this uniquely named fixture in the isolated test database: audit history is append-only.
       await db.end();

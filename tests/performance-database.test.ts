@@ -367,6 +367,53 @@ test(
           await assert.rejects(addGoal(otherCycle, 100), /not included/);
         },
       );
+      await t.test(
+        "an assigned HR supervisor reviews objectives and appraisal without switching roles",
+        async () => {
+          await sql`update employees set line_manager_id=${ids.hr} where id=${ids.employee}`;
+          try {
+            const cycle = await createCycle();
+            const goal = await addGoal(cycle, 100);
+            await submitGoalsInDatabase(ids.org!, ids.employee!, cycle, employeeActor);
+            await assert.rejects(
+              decideGoalInDatabase(ids.org!, goal, "approve", undefined, managerActor),
+              /assigned supervisor/i,
+            );
+            await decideGoalInDatabase(ids.org!, goal, "approve", undefined, hrActor);
+            await submitSelf(cycle);
+            let review = await getReview(cycle);
+            assert.equal(review.status, "Manager Review Pending");
+            await actOnPerformanceReviewInDatabase(
+              ids.org!,
+              review.id,
+              review.recordVersion,
+              {
+                type: "manager",
+                sections: assessedSections(review.sections, "manager"),
+                summary: "The employee delivered consistently strong results for the whole period.",
+                developmentPlan: "Develop broader planning skills in the coming review period.",
+              },
+              hrActor,
+            );
+            review = await getReview(cycle);
+            assert.equal(review.status, "Discussion Pending");
+            await actOnPerformanceReviewInDatabase(
+              ids.org!,
+              review.id,
+              review.recordVersion,
+              {
+                type: "discussion",
+                heldAt: "2026-09-01T08:00:00.000Z",
+                notes: "We discussed the results and agreed on the next development priorities.",
+              },
+              hrActor,
+            );
+            assert.equal((await getReview(cycle)).status, "Acknowledgement Pending");
+          } finally {
+            await sql`update employees set line_manager_id=${ids.manager} where id=${ids.employee}`;
+          }
+        },
+      );
       const cycleId = await savePerformanceCycleInDatabase(
         ids.org!,
         {

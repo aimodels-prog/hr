@@ -13,6 +13,8 @@ import { leaveWorkingDates } from "../../data/leave-working-days.ts";
 import { allocateSpecialUnpaidDates } from "../../data/special-leave.ts";
 import { validateSickPayTiers } from "../../data/sick-leave-payroll.ts";
 import { getLeaveEligibility, isOmaniNationality } from "../../data/leave-eligibility.ts";
+import { isSupervisorOptionalPosition } from "../../data/executive-reporting.ts";
+import { canReadLeaveAttachment } from "../../data/leave-attachment-access.ts";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 
 import type {
@@ -37,7 +39,15 @@ import { departments, positions, publicHolidays } from "../schema/master-data.ts
 import { appSettings, organisations } from "../schema/organisation.ts";
 import { auditEvents, notifications } from "../schema/system.ts";
 import { roles, userRoles, users } from "../schema/employee.ts";
+import { hrIndependentReviewAssignments } from "../schema/hr-independent-review.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
+import {
+  actorIsIndependentHrReviewer,
+  assignIndependentHrReviewer,
+  assignedIndependentHrReviewer,
+  independentReviewerForHrEmployee,
+  reviewerForExistingOrNewHrRequest,
+} from "./independent-hr-review.repository.server.ts";
 
 function payrollSafeLeaveSnapshot(
   snapshot: LeaveRequest["policySnapshot"],
@@ -247,6 +257,30 @@ export async function listLeaveSnapshotForActor(
     .from(leavePolicies)
     .where(and(eq(leavePolicies.organisationId, organisationId), isNull(leavePolicies.archivedAt)))
     .orderBy(asc(leavePolicies.name));
+  const independentAssignments =
+    privileged || actor.employeeId
+      ? await db
+          .select({
+            requestId: hrIndependentReviewAssignments.requestId,
+            reviewerEmployeeId: hrIndependentReviewAssignments.reviewerEmployeeId,
+            requesterEmployeeId: hrIndependentReviewAssignments.requesterEmployeeId,
+          })
+          .from(hrIndependentReviewAssignments)
+          .where(
+            and(
+              eq(hrIndependentReviewAssignments.organisationId, organisationId),
+              eq(hrIndependentReviewAssignments.module, "Leave"),
+              ...(!privileged && actor.employeeId
+                ? [eq(hrIndependentReviewAssignments.reviewerEmployeeId, actor.employeeId)]
+                : []),
+              isNull(hrIndependentReviewAssignments.archivedAt),
+            ),
+          )
+      : [];
+  const independentlyAssignedIds = independentAssignments.map((item) => item.requestId);
+  const balanceEmployeeIds = [
+    ...new Set([...employeeIds, ...independentAssignments.map((item) => item.requesterEmployeeId)]),
+  ];
   if (!employeeIds.length) {
     return {
       policies: policyRows.map(mapPolicy),
@@ -266,10 +300,28 @@ export async function listLeaveSnapshotForActor(
           actor.activeRole === "Line Manager" && actor.employeeId
             ? or(
                 inArray(leaveRequests.employeeId, employeeIds),
+                ...(independentlyAssignedIds.length
+                  ? [inArray(leaveRequests.id, independentlyAssignedIds)]
+                  : []),
                 sql`${leaveRequests.policySnapshot}->'specialRequest'->>'countryManagerEmployeeId' = ${actor.employeeId}`,
                 sql`${leaveRequests.policySnapshot}->'noticeException'->>'countryManagerEmployeeId' = ${actor.employeeId}`,
               )
-            : inArray(leaveRequests.employeeId, employeeIds),
+            : actor.activeRole === "Employee" && actor.employeeId
+              ? or(
+                  inArray(leaveRequests.employeeId, employeeIds),
+                  ...(independentlyAssignedIds.length
+                    ? [inArray(leaveRequests.id, independentlyAssignedIds)]
+                    : []),
+                  and(
+                    eq(leaveRequests.status, "Pending HR"),
+                    sql`${leaveRequests.chainApprovals} @> '[{"role":"Country Manager","status":"Pending"}]'::jsonb`,
+                    or(
+                      sql`${leaveRequests.policySnapshot}->'specialRequest'->>'countryManagerEmployeeId' = ${actor.employeeId}`,
+                      sql`${leaveRequests.policySnapshot}->'noticeException'->>'countryManagerEmployeeId' = ${actor.employeeId}`,
+                    ),
+                  ),
+                )
+              : inArray(leaveRequests.employeeId, employeeIds),
           ...(payrollReader
             ? [inArray(leaveRequests.status, ["Approved", "Taken", "Cancellation Pending"])]
             : []),
@@ -294,7 +346,7 @@ export async function listLeaveSnapshotForActor(
       .where(
         and(
           eq(leaveBalances.organisationId, organisationId),
-          inArray(leaveBalances.employeeId, employeeIds),
+          inArray(leaveBalances.employeeId, balanceEmployeeIds),
           isNull(leaveBalances.archivedAt),
         ),
       ),
@@ -304,7 +356,7 @@ export async function listLeaveSnapshotForActor(
       .where(
         and(
           eq(employeeLeaveEntitlementOverrides.organisationId, organisationId),
-          inArray(employeeLeaveEntitlementOverrides.employeeId, employeeIds),
+          inArray(employeeLeaveEntitlementOverrides.employeeId, balanceEmployeeIds),
           isNull(employeeLeaveEntitlementOverrides.archivedAt),
         ),
       ),
@@ -390,6 +442,13 @@ export async function listLeaveSnapshotForActor(
     requests: requestRows.map((row) => ({
       ...recordFields(row),
       employeeId: row.employeeId,
+      ...(independentAssignments.find((item) => item.requestId === row.id)
+        ? {
+            independentReviewerEmployeeId: independentAssignments.find(
+              (item) => item.requestId === row.id,
+            )!.reviewerEmployeeId,
+          }
+        : {}),
       ...(requestPeopleById.get(row.employeeId)?.name
         ? { requesterName: requestPeopleById.get(row.employeeId)!.name }
         : {}),
@@ -502,16 +561,48 @@ export async function readLeaveAttachmentInDatabase(
     )
     .limit(1);
   if (!row?.fileId) throw new Error("This leave request has no supporting attachment.");
+  const [independentAssignment] = await db
+    .select({
+      reviewerEmployeeId: hrIndependentReviewAssignments.reviewerEmployeeId,
+    })
+    .from(hrIndependentReviewAssignments)
+    .where(
+      and(
+        eq(hrIndependentReviewAssignments.organisationId, organisationId),
+        eq(hrIndependentReviewAssignments.module, "Leave"),
+        eq(hrIndependentReviewAssignments.requestId, requestId),
+        isNull(hrIndependentReviewAssignments.archivedAt),
+      ),
+    )
+    .limit(1);
+  const [historicalDecision] = actor.userId
+    ? await db
+        .select({ id: auditEvents.id })
+        .from(auditEvents)
+        .where(
+          and(
+            eq(auditEvents.organisationId, organisationId),
+            eq(auditEvents.entityType, "leave-request"),
+            eq(auditEvents.entityId, requestId),
+            eq(auditEvents.actorUserId, actor.userId),
+            sql`${auditEvents.action} ~* '^(approve|decline|reject|return)$'`,
+          ),
+        )
+        .limit(1)
+    : [];
   const snapshot = row.policySnapshot as LeaveRequest["policySnapshot"];
-  const allowed =
-    row.employeeId === actor.employeeId ||
-    (actor.activeRole === "Line Manager" && row.lineManagerId === actor.employeeId) ||
-    (row.status === "Pending HR" &&
-      actor.employeeId ===
-        (snapshot.specialRequest?.countryManagerEmployeeId ??
-          snapshot.noticeException?.countryManagerEmployeeId)) ||
-    actor.activeRole === "HR" ||
-    actor.activeRole === "Super Admin";
+  const allowed = canReadLeaveAttachment({
+    requesterEmployeeId: row.employeeId,
+    actorEmployeeId: actor.employeeId,
+    actorRole: actor.activeRole,
+    assignedReviewerEmployeeId: independentAssignment?.reviewerEmployeeId,
+    currentLineManagerEmployeeId: row.lineManagerId,
+    specialReviewerEmployeeId:
+      snapshot.specialRequest?.countryManagerEmployeeId ??
+      snapshot.noticeException?.countryManagerEmployeeId,
+    pendingHrReview: row.status === "Pending HR",
+    actorMadeDecision: Boolean(historicalDecision),
+  });
   if (!allowed) throw new Error("You do not have permission to open this leave attachment.");
   return readObjectFile(
     organisationId,
@@ -528,8 +619,7 @@ export async function grantSickLeaveBackdatePermission(
 ) {
   const grantedBy = actor.userId;
   if (!grantedBy) throw new Error("Sign in before granting permission.");
-  if (!["HR", "Super Admin"].includes(actor.activeRole ?? ""))
-    throw new Error("Only HR can authorise backdated sick leave.");
+  if (actor.activeRole !== "HR") throw new Error("Only HR can authorise backdated sick leave.");
   if (actor.employeeId === input.employeeId)
     throw new Error("Another HR colleague must authorise your own backdated sick leave.");
   if (input.reason.trim().length < 5) throw new Error("Record the reason for this permission.");
@@ -653,6 +743,8 @@ export async function createLeaveRequestInDatabase(
       .select({
         id: employees.id,
         lineManagerId: employees.lineManagerId,
+        positionName: positions.name,
+        positionIsActive: positions.isActive,
         locationId: employees.locationId,
         preferredName: employees.preferredName,
         legalName: employees.legalName,
@@ -664,7 +756,17 @@ export async function createLeaveRequestInDatabase(
         employmentConfirmationStatus: employees.employmentConfirmationStatus,
       })
       .from(employees)
-      .where(and(eq(employees.organisationId, organisationId), eq(employees.id, input.employeeId)))
+      .leftJoin(
+        positions,
+        and(eq(positions.id, employees.positionId), eq(positions.organisationId, organisationId)),
+      )
+      .where(
+        and(
+          eq(employees.organisationId, organisationId),
+          eq(employees.id, input.employeeId),
+          isNull(employees.archivedAt),
+        ),
+      )
       .limit(1);
     const [policy] = await tx
       .select()
@@ -679,6 +781,11 @@ export async function createLeaveRequestInDatabase(
       .limit(1);
     if (!employee || !policy || ["Inactive", "Archived"].includes(employee.status))
       throw new Error("The employee or leave policy is not available.");
+    const independentReviewer = await independentReviewerForHrEmployee(
+      organisationId,
+      employee.id,
+      tx,
+    );
     if (employee.employmentConfirmationStatus !== "Confirmed")
       throw new Error("HR must confirm your employment details before you can request leave.");
     if (input.endDate < input.startDate)
@@ -693,9 +800,16 @@ export async function createLeaveRequestInDatabase(
       throw new Error(`Supporting evidence is required for ${policy.name}.`);
     if (policy.requiresHandoverContact && !input.handoverContactId)
       throw new Error(`Select a covering colleague for ${policy.name}.`);
-    if (!employee.lineManagerId || employee.lineManagerId === employee.id)
-      throw new Error("Ask HR to assign a valid supervisor before requesting leave.");
-    await requireEmployeeSupervisor(tx, organisationId, employee.id);
+    const executiveHrOnly =
+      employee.lineManagerId === null &&
+      employee.status === "Active" &&
+      employee.positionIsActive === true &&
+      isSupervisorOptionalPosition(employee.positionName ?? "");
+    if (!executiveHrOnly && !independentReviewer) {
+      if (!employee.lineManagerId || employee.lineManagerId === employee.id)
+        throw new Error("Ask HR to assign a valid supervisor before requesting leave.");
+      await requireEmployeeSupervisor(tx, organisationId, employee.id);
+    }
     if (input.handoverContactId) {
       const [handover] = await tx
         .select({ id: employees.id })
@@ -930,12 +1044,16 @@ export async function createLeaveRequestInDatabase(
           input.startDate,
           siteVisitLocalNow(settings.timezone).date,
         );
+    if (executiveHrOnly && !independentReviewer && (notice || specialRequested))
+      throw new Error(
+        "Special or short-notice executive leave needs an independent approval arrangement. Ask HR for help.",
+      );
     if (notice && !input.noticeExceptionReason?.trim() && !input.specialRequestReason?.trim())
       throw new Error(
         `This leave normally requires ${notice.requiredDays} days' notice. Choose the special request option and explain why shorter notice is needed.`,
       );
     const countryManagers =
-      notice || specialRequested
+      (notice || specialRequested) && !independentReviewer
         ? await tx
             .select({
               employeeId: employees.id,
@@ -973,15 +1091,23 @@ export async function createLeaveRequestInDatabase(
         item.workEmail.toLowerCase() === designatedEmail ||
         item.portalEmail.toLowerCase() === designatedEmail,
     );
-    if ((notice || specialRequested) && matchingCountryManagers.length !== 1)
+    if (
+      (notice || specialRequested) &&
+      !independentReviewer &&
+      matchingCountryManagers.length !== 1
+    )
       throw new Error(
         "Ask HR to confirm Riccardo's active Country Manager account for special leave approvals.",
       );
     const countryManager = matchingCountryManagers[0];
-    if ((notice || specialRequested) && countryManager?.employeeId === employee.id)
+    if (
+      (notice || specialRequested) &&
+      !independentReviewer &&
+      countryManager?.employeeId === employee.id
+    )
       throw new Error("Ask HR to arrange an independent approver for your special leave request.");
     const hrRecipients =
-      notice || specialRequested
+      !independentReviewer && (notice || specialRequested || executiveHrOnly)
         ? await tx
             .selectDistinct({ id: users.id })
             .from(users)
@@ -991,28 +1117,40 @@ export async function createLeaveRequestInDatabase(
               and(
                 eq(users.organisationId, organisationId),
                 eq(users.status, "Active"),
+                isNull(users.archivedAt),
                 eq(roles.code, "HR"),
                 sql`${users.employeeId} <> ${employee.id}`,
               ),
             )
         : [];
-    if ((notice || specialRequested) && !hrRecipients.length)
-      throw new Error("Ask HR to activate an HR approver before sending a special leave request.");
+    if (
+      !independentReviewer &&
+      (notice || specialRequested || executiveHrOnly) &&
+      !hrRecipients.length
+    )
+      throw new Error(
+        executiveHrOnly
+          ? "Ask HR to activate an independent HR approver before requesting leave."
+          : "Ask HR to activate an HR approver before sending a special leave request.",
+      );
     const noticeException =
       notice && !specialRequested
         ? {
             ...notice,
             reason: validateLeaveNoticeException(input.noticeExceptionReason),
-            countryManagerEmployeeId: countryManager!.employeeId,
+            countryManagerEmployeeId: (independentReviewer ?? countryManager)!.employeeId,
           }
         : undefined;
     const specialRequest = specialRequested
       ? {
           reason: validateLeaveNoticeException(input.specialRequestReason),
-          countryManagerEmployeeId: countryManager!.employeeId,
+          countryManagerEmployeeId: (independentReviewer ?? countryManager)!.employeeId,
         }
       : undefined;
-    const status = noticeException ? "Pending HR" : "Pending Line Manager";
+    const status =
+      independentReviewer || noticeException || executiveHrOnly
+        ? "Pending HR"
+        : "Pending Line Manager";
     await tx.insert(leaveRequests).values({
       id: requestId,
       organisationId,
@@ -1026,22 +1164,26 @@ export async function createLeaveRequestInDatabase(
       handoverContactId: input.handoverContactId,
       attachmentFileId: input.attachmentFileId,
       status,
-      chainApprovals: specialRequest
-        ? [
-            { role: "Line Manager", status: "Pending" },
-            { role: "Country Manager", status: "Pending" },
-            { role: "HR", status: "Pending" },
-          ]
-        : noticeException
+      chainApprovals: independentReviewer
+        ? [{ role: "HR", status: "Pending" }]
+        : specialRequest
           ? [
+              { role: "Line Manager", status: "Pending" },
               { role: "Country Manager", status: "Pending" },
               { role: "HR", status: "Pending" },
-              { role: "Line Manager", status: "Pending" },
             ]
-          : [
-              { role: "Line Manager", status: "Pending" },
-              { role: "HR", status: "Pending" },
-            ],
+          : noticeException
+            ? [
+                { role: "Country Manager", status: "Pending" },
+                { role: "HR", status: "Pending" },
+                { role: "Line Manager", status: "Pending" },
+              ]
+            : executiveHrOnly
+              ? [{ role: "HR", status: "Pending" }]
+              : [
+                  { role: "Line Manager", status: "Pending" },
+                  { role: "HR", status: "Pending" },
+                ],
       policySnapshot: {
         workingDates,
         payTiers: validateSickPayTiers(policy.payTiers),
@@ -1062,6 +1204,16 @@ export async function createLeaveRequestInDatabase(
       createdBy: actor.userId,
       updatedBy: actor.userId,
     } as typeof leaveRequests.$inferInsert);
+    if (independentReviewer)
+      await assignIndependentHrReviewer(
+        organisationId,
+        "Leave",
+        requestId,
+        employee.id,
+        independentReviewer.employeeId,
+        actor.userId,
+        tx,
+      );
     if (backdatePermission)
       await tx
         .update(sickLeaveBackdatePermissions)
@@ -1092,6 +1244,29 @@ export async function createLeaveRequestInDatabase(
           : "Submitted a leave request",
       riskLevel: "Medium",
     } as typeof auditEvents.$inferInsert);
+    if (independentReviewer) {
+      await tx
+        .insert(notifications)
+        .values({
+          organisationId,
+          recipientUserId: independentReviewer.userId,
+          type: "leave_approval",
+          title: "Leave awaiting your independent review",
+          message: `${employee.preferredName || employee.legalName} requested ${days} day(s) of ${policy.name}: ${input.startDate} to ${input.endDate}.`,
+          priority: "High",
+          status: "Unread",
+          deduplicationKey: `leave-independent-${requestId}-${independentReviewer.userId}`,
+          link: {
+            entityType: "leave-request",
+            entityId: requestId,
+            path: "/staff/leave-approvals",
+          },
+          createdBy: actor.userId,
+          updatedBy: actor.userId,
+        } as typeof notifications.$inferInsert)
+        .onConflictDoNothing();
+      return requestId;
+    }
     if (noticeException) {
       const recipients = new Set([countryManager!.userId, ...hrRecipients.map((item) => item.id)]);
       for (const recipientUserId of recipients) {
@@ -1118,7 +1293,34 @@ export async function createLeaveRequestInDatabase(
       }
       return requestId;
     }
+    if (executiveHrOnly) {
+      for (const recipient of hrRecipients) {
+        await tx
+          .insert(notifications)
+          .values({
+            organisationId,
+            recipientUserId: recipient.id,
+            type: "leave_approval",
+            title: "Executive leave awaiting HR review",
+            message: `${employee.preferredName || employee.legalName} requested ${days} day(s) of ${policy.name}: ${input.startDate} to ${input.endDate}. HR is the sole approver because this position has no supervisor.`,
+            priority: "High",
+            status: "Unread",
+            deduplicationKey: `leave-executive-${requestId}-${recipient.id}`,
+            link: {
+              entityType: "leave-request",
+              entityId: requestId,
+              path: "/staff/leave-approvals",
+            },
+            createdBy: actor.userId,
+            updatedBy: actor.userId,
+          } as typeof notifications.$inferInsert)
+          .onConflictDoNothing();
+      }
+      return requestId;
+    }
     const recipientEmployeeId = employee.lineManagerId;
+    if (!recipientEmployeeId)
+      throw new Error("Ask HR to assign a valid supervisor before requesting leave.");
     const [recipient] = await tx
       .select({ id: users.id })
       .from(users)
@@ -1267,13 +1469,25 @@ export async function approveLeaveRequestInDatabase(
       request.status === "Pending HR" &&
       Boolean(noticeException) &&
       (request.chainApprovals as LeaveRequest["chainApprovals"]).some(
-        (step) => step.role === "Country Manager",
+        (step) => step.role === "Country Manager" && step.status === "Pending",
       );
     const managerStage =
       request.status === "Pending Line Manager" ||
       request.status === "Amendment Pending Line Manager";
     const hrStage =
       request.status === "Pending HR" || request.status === "Amendment Pending HR" || cancellation;
+    const assignedReviewer = await assignedIndependentHrReviewer(
+      organisationId,
+      "Leave",
+      request.id,
+      request.employeeId,
+      tx,
+    );
+    const independentReview = actorIsIndependentHrReviewer(
+      actor,
+      request.employeeId,
+      assignedReviewer,
+    );
     // An HR employee may also be the assigned line manager while using the HR view.
     // Identity, not the currently selected UI role, determines this stage.
     const isManager = Boolean(actor.employeeId) && actor.employeeId === employee?.lineManagerId;
@@ -1291,14 +1505,18 @@ export async function approveLeaveRequestInDatabase(
       : undefined;
     if (
       (specialCountryStage && actor.employeeId !== specialRequest?.countryManagerEmployeeId) ||
-      (specialHrStage && role !== "HR") ||
+      (specialHrStage && (assignedReviewer ? !independentReview : role !== "HR")) ||
       (Boolean(specialRequest) &&
         request.status === "Pending HR" &&
         !specialCountryStage &&
         !specialHrStage) ||
       (specialStage && !pendingSpecialStep) ||
       (!specialStage && managerStage && !isManager) ||
-      (!specialStage && !specialCountryStage && !specialHrStage && hrStage && role !== "HR") ||
+      (!specialStage &&
+        !specialCountryStage &&
+        !specialHrStage &&
+        hrStage &&
+        (assignedReviewer ? !independentReview : role !== "HR")) ||
       (!specialStage && !managerStage && !hrStage)
     )
       throw new Error("You are not the assigned approver for this leave request.");
@@ -1346,7 +1564,7 @@ export async function approveLeaveRequestInDatabase(
       decisionMaker?.preferredName?.trim() ||
       decisionMaker?.displayName?.trim() ||
       "Approver";
-    const decisionMakerLabel = `${decisionMakerName} (${currentStep?.role ?? role})`;
+    const decisionMakerLabel = `${decisionMakerName} (${managerStage && isManager && role === "HR" && !specialRequest && !noticeException ? "HR, assigned supervisor" : (currentStep?.role ?? role)})`;
     // A cancellation is a new decision about an already-approved request. Preserve the
     // original approval chain instead of rewriting the HR approval as a cancellation decision.
     if (currentStep && !cancellation) {
@@ -1354,6 +1572,26 @@ export async function approveLeaveRequestInDatabase(
       currentStep.approvedBy = actorUserId;
       currentStep.date = new Date().toISOString();
     }
+    // When HR is the named supervisor, one HR decision completes an ordinary request.
+    // Never silently skip the Country Manager or other special-approval stages.
+    const pendingAfterManager = chainApprovals.filter((step) => step.status === "Pending");
+    const hrStandIn = role === "HR" && isManager && managerStage;
+    const managerDecisionIsFinal =
+      decision === "approve" &&
+      managerStage &&
+      Boolean(currentStep) &&
+      !noticeException &&
+      !specialRequest &&
+      (pendingAfterManager.length === 0 ||
+        (hrStandIn &&
+          pendingAfterManager.every((step) => ["HR", "Super Admin"].includes(step.role))));
+    if (managerDecisionIsFinal && hrStandIn)
+      for (let index = chainApprovals.length - 1; index >= 0; index -= 1)
+        if (
+          chainApprovals[index]?.status === "Pending" &&
+          ["HR", "Super Admin"].includes(chainApprovals[index]!.role)
+        )
+          chainApprovals.splice(index, 1);
     let nextStatus: (typeof leaveRequests.$inferSelect)["status"];
     let requestUpdateExtras: Partial<typeof leaveRequests.$inferInsert> = {};
     if (decision === "decline") {
@@ -1395,7 +1633,7 @@ export async function approveLeaveRequestInDatabase(
       )
         ? "Pending HR"
         : "Pending Line Manager";
-    } else if (managerStage && (!noticeException || amendment)) {
+    } else if (managerStage && (!noticeException || amendment) && !managerDecisionIsFinal) {
       nextStatus = amendment ? "Amendment Pending HR" : "Pending HR";
       if (amendment && pendingAmendment) {
         pendingAmendment.chainApprovals = chainApprovals;
@@ -1404,7 +1642,7 @@ export async function approveLeaveRequestInDatabase(
     } else {
       nextStatus = cancellation ? "Cancellation Approved" : "Approved";
       if (specialRequest && !cancellation && !amendment) {
-        if (!specialHrStage || !specialAllocation)
+        if ((!specialHrStage && !independentReview) || !specialAllocation)
           throw new Error(
             "HR must choose the balance deductions and pay treatment before final approval.",
           );
@@ -1664,7 +1902,7 @@ export async function approveLeaveRequestInDatabase(
             ? `Cancellation approved: ${request.cancellationReason ?? "Employee request"}`
             : amendment
               ? `Leave dates changed: ${pendingAmendment?.reason ?? "Employee request"}`
-              : `${policy.name} approved by HR`,
+              : `${policy.name} approved by ${decisionMakerLabel}`,
           referenceId: request.id,
           actorUserId: actor.userId,
           createdBy: actor.userId,
@@ -2230,6 +2468,16 @@ export async function requestLeaveChangeInDatabase(
       .limit(1);
     if (!row || row.request.employeeId !== actor.employeeId)
       throw new Error("You can only change your own leave request.");
+    const independentReviewer =
+      action.kind === "withdraw"
+        ? null
+        : await reviewerForExistingOrNewHrRequest(
+            organisationId,
+            "Leave",
+            requestId,
+            row.request.employeeId,
+            tx,
+          );
     let status: (typeof leaveRequests.$inferSelect)["status"];
     let values: Partial<typeof leaveRequests.$inferInsert>;
     if (action.kind === "withdraw") {
@@ -2328,8 +2576,29 @@ export async function requestLeaveChangeInDatabase(
         })
       )
         throw new Error("The proposed dates overlap another leave request.");
-      status = "Amendment Pending Line Manager";
-      await requireEmployeeSupervisor(tx, organisationId, row.request.employeeId);
+      const [currentPosition] = await tx
+        .select({ name: positions.name, isActive: positions.isActive })
+        .from(positions)
+        .where(
+          and(
+            eq(positions.organisationId, organisationId),
+            eq(positions.id, row.employee.positionId),
+          ),
+        )
+        .limit(1);
+      const executiveHrOnly =
+        row.employee.lineManagerId === null &&
+        row.employee.status === "Active" &&
+        row.employee.employmentConfirmationStatus === "Confirmed" &&
+        row.employee.archivedAt === null &&
+        currentPosition?.isActive === true &&
+        isSupervisorOptionalPosition(currentPosition.name);
+      status =
+        executiveHrOnly || independentReviewer
+          ? "Amendment Pending HR"
+          : "Amendment Pending Line Manager";
+      if (!executiveHrOnly && !independentReviewer)
+        await requireEmployeeSupervisor(tx, organisationId, row.request.employeeId);
       values = {
         status,
         pendingAmendment: {
@@ -2340,10 +2609,13 @@ export async function requestLeaveChangeInDatabase(
           reason: action.reason.trim(),
           requestedAt: new Date().toISOString(),
           requestedBy: actor.userId,
-          chainApprovals: [
-            { role: "Line Manager", status: "Pending" },
-            { role: "HR", status: "Pending" },
-          ],
+          chainApprovals:
+            executiveHrOnly || independentReviewer
+              ? [{ role: "HR", status: "Pending" }]
+              : [
+                  { role: "Line Manager", status: "Pending" },
+                  { role: "HR", status: "Pending" },
+                ],
         },
       };
     }
@@ -2356,10 +2628,23 @@ export async function requestLeaveChangeInDatabase(
         recordVersion: sql`${leaveRequests.recordVersion} + 1`,
       })
       .where(and(eq(leaveRequests.id, requestId), eq(leaveRequests.status, row.request.status)));
+    if (independentReviewer) {
+      await assignIndependentHrReviewer(
+        organisationId,
+        "Leave",
+        requestId,
+        row.request.employeeId,
+        independentReviewer.employeeId,
+        actor.userId,
+        tx,
+      );
+    }
     const recipientEmployeeId =
       status === "Cancellation Pending" ? row.request.employeeId : row.employee.lineManagerId;
     let recipients: string[] = [];
-    if (status === "Cancellation Pending") {
+    if (independentReviewer) {
+      recipients = [independentReviewer.userId];
+    } else if (status === "Cancellation Pending" || status === "Amendment Pending HR") {
       recipients = (
         await tx
           .select({ id: users.id })
@@ -2370,10 +2655,14 @@ export async function requestLeaveChangeInDatabase(
             and(
               eq(users.organisationId, organisationId),
               eq(users.status, "Active"),
+              isNull(users.archivedAt),
               eq(roles.code, "HR"),
+              sql`${users.employeeId} <> ${row.employee.id}`,
             ),
           )
       ).map((item) => item.id);
+      if (!recipients.length)
+        throw new Error("Ask HR to activate an independent HR reviewer before changing leave.");
     } else if (status === "Amendment Pending Line Manager" && recipientEmployeeId) {
       recipients = (
         await tx
@@ -2398,7 +2687,9 @@ export async function requestLeaveChangeInDatabase(
           title:
             status === "Cancellation Pending"
               ? "Leave cancellation awaiting HR review"
-              : "Leave date change awaiting your review",
+              : status === "Amendment Pending HR"
+                ? "Executive leave date change awaiting HR review"
+                : "Leave date change awaiting your review",
           message: `A change to leave from ${row.request.startDate} to ${row.request.endDate} needs review.`,
           priority: "High",
           status: "Unread",

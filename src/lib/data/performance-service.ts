@@ -514,7 +514,10 @@ export class PerformanceService {
   }
 
   getReviewsForManager(context: ActorContext): PerformanceReview[] {
-    if (context.actor.activeRole !== "Line Manager" || !context.actor.employeeId) {
+    if (
+      !["Line Manager", "HR"].includes(context.actor.activeRole ?? "") ||
+      !context.actor.employeeId
+    ) {
       this.deny(context, "view team performance reviews", "performance-review", "all");
     }
     const reportIds = new Set(
@@ -634,7 +637,8 @@ export class PerformanceService {
     moderationComment: string,
     context: ActorContext,
   ): PerformanceReview {
-    this.requireManageAll(context, "moderate performance reviews", reviewId);
+    if (context.actor.activeRole !== "HR")
+      this.deny(context, "moderate performance reviews", "performance-review", reviewId);
     const review = this.requireReview(reviewId);
     if (context.actor.employeeId === review.employeeId)
       throw new Error("You cannot moderate your own performance review.");
@@ -721,7 +725,8 @@ export class PerformanceService {
   }
 
   lockReview(reviewId: string, context: ActorContext): PerformanceReview {
-    this.requireManageAll(context, "lock performance reviews", reviewId);
+    if (context.actor.activeRole !== "HR")
+      this.deny(context, "lock performance reviews", "performance-review", reviewId);
     const review = this.requireReview(reviewId);
     if (context.actor.employeeId === review.employeeId)
       throw new Error("You cannot finalise your own performance review.");
@@ -1091,7 +1096,7 @@ export class PerformanceService {
     if (context.actor.userId === "system" || context.actor.employeeId === employeeId) return;
     const employee = this.employeeService.getById(employeeId, SYSTEM_CONTEXT);
     if (
-      context.actor.activeRole === "Line Manager" &&
+      ["Line Manager", "HR"].includes(context.actor.activeRole ?? "") &&
       context.actor.employeeId &&
       employee?.lineManagerId === context.actor.employeeId
     ) {
@@ -1110,7 +1115,7 @@ export class PerformanceService {
   ): void {
     const employee = this.employeeService.getById(employeeId, SYSTEM_CONTEXT);
     if (
-      context.actor.activeRole === "Line Manager" &&
+      ["Line Manager", "HR"].includes(context.actor.activeRole ?? "") &&
       context.actor.employeeId &&
       employee?.lineManagerId === context.actor.employeeId &&
       context.actor.employeeId !== employeeId
@@ -1197,11 +1202,7 @@ export class PerformanceService {
   ): void {
     const { storage } = getApplicationDataServices();
     for (const user of storage.readCollection<User>("users")) {
-      if (
-        user.status !== "Active" ||
-        !user.roles.some((role) => role === "HR" || role === "Super Admin")
-      )
-        continue;
+      if (user.status !== "Active" || !user.roles.includes("HR")) continue;
       this.notifyUser(user.id, title, message, path, `${key}-${user.id}`, context);
     }
   }

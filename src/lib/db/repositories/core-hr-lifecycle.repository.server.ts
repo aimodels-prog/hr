@@ -3,6 +3,14 @@ import { syncEmployeeAttendanceTracking } from "./attendance-tracking.repository
 import { assignSupervisorApprovalAccess } from "./supervisor-access.repository.server.ts";
 import { isHrOwnedSetupTask } from "../../data/hr-owned-fields.ts";
 import { assertOffboardingCaseActive } from "../../data/offboarding-policy.ts";
+import { isSupervisorOptionalPosition } from "../../data/executive-reporting.ts";
+import {
+  actorIsIndependentHrReviewer,
+  assignedIndependentHrReviewer,
+  assignIndependentHrReviewer,
+  employeeHasHrRole,
+  reviewerForEmploymentReviewCycle,
+} from "./independent-hr-review.repository.server.ts";
 
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
@@ -1205,7 +1213,8 @@ async function updateOnboardingTaskInTransaction(
       row.task.selfServiceFormKey === "document_upload" &&
       MANAGER_ROLES.includes(actor.activeRole)) ||
     (row.task.ownerRole === "Line Manager" &&
-      actor.activeRole === "Line Manager" &&
+      !row.task.assignedUserId &&
+      ["Line Manager", "HR"].includes(actor.activeRole) &&
       row.employee.lineManagerId === actor.employeeId) ||
     (row.task.ownerRole === actor.activeRole &&
       !["Employee", "Line Manager"].includes(row.task.ownerRole)) ||
@@ -1524,8 +1533,6 @@ export async function saveOnboardingSelfServiceInDatabase(
       .limit(1);
     if (!row || row.lifecycle.status !== "In Progress")
       throw new Error("Active onboarding could not be found.");
-    if (input.kind === "employment_details" && row.employee.id === actor.employeeId)
-      throw new Error("Another HR colleague must complete your employment details.");
     if (input.kind !== "employment_details" && row.employee.id !== actor.employeeId)
       throw new Error("You can submit onboarding information only for your own record.");
     if (
@@ -1543,7 +1550,7 @@ export async function saveOnboardingSelfServiceInDatabase(
         details.legalName.trim().length < 2 ||
         details.preferredName.trim().length < 1 ||
         !/^\d{4}-\d{2}-\d{2}$/.test(details.startDate) ||
-        !managerEmail.endsWith("@via-int.com")
+        (managerEmail && !managerEmail.endsWith("@via-int.com"))
       )
         throw new Error("Complete your employment details and enter your supervisor's VIA email.");
       const [[department], [position], [location], [employmentType], [manager]] = await Promise.all(
@@ -1619,6 +1626,8 @@ export async function saveOnboardingSelfServiceInDatabase(
         throw new Error("Select your confirmed employment details before continuing.");
       if (position.departmentId && position.departmentId !== department.id)
         throw new Error("The selected position does not belong to the selected department.");
+      if (!managerEmail && !isSupervisorOptionalPosition(position.name))
+        throw new Error("Select an active supervisor for this position.");
       if (manager?.id === row.employee.id)
         throw new Error("You cannot select yourself as your supervisor.");
       await tx
@@ -1649,6 +1658,40 @@ export async function saveOnboardingSelfServiceInDatabase(
         })
         .where(eq(employees.id, row.employee.id));
 
+      // Keep each resubmission in the employee's own approval history. The generic
+      // onboarding-task audit uses the task ID and cannot be joined to this record.
+      await tx
+        .insert(auditEvents)
+        .values(
+          auditValues(
+            organisationId,
+            actor,
+            "submit",
+            "employee-employment-details",
+            row.employee.id,
+            "Employment details submitted for review",
+            { status: "Pending HR Review" },
+          ),
+        );
+
+      const independentReviewer = await reviewerForEmploymentReviewCycle(
+        organisationId,
+        row.employee.id,
+        row.employee.employmentConfirmationStatus,
+        actor,
+        tx,
+      );
+      if (independentReviewer)
+        await assignIndependentHrReviewer(
+          organisationId,
+          "Employment Confirmation",
+          row.employee.id,
+          row.employee.id,
+          independentReviewer.employeeId,
+          actor.userId,
+          tx,
+        );
+
       await tx
         .update(onboardingCases)
         .set({
@@ -1662,18 +1705,20 @@ export async function saveOnboardingSelfServiceInDatabase(
         })
         .where(eq(onboardingCases.id, input.caseId));
 
-      const reviewers = await tx
-        .selectDistinct({ userId: users.id })
-        .from(users)
-        .innerJoin(userRoles, eq(userRoles.userId, users.id))
-        .innerJoin(roles, eq(roles.id, userRoles.roleId))
-        .where(
-          and(
-            eq(users.organisationId, organisationId),
-            eq(users.status, "Active"),
-            eq(roles.code, "HR"),
-          ),
-        );
+      const reviewers = independentReviewer
+        ? [{ userId: independentReviewer.userId }]
+        : await tx
+            .selectDistinct({ userId: users.id })
+            .from(users)
+            .innerJoin(userRoles, eq(userRoles.userId, users.id))
+            .innerJoin(roles, eq(roles.id, userRoles.roleId))
+            .where(
+              and(
+                eq(users.organisationId, organisationId),
+                eq(users.status, "Active"),
+                eq(roles.code, "HR"),
+              ),
+            );
       for (const reviewer of reviewers) {
         if (reviewer.userId === actor.userId) continue;
         await tx
@@ -1690,7 +1735,9 @@ export async function saveOnboardingSelfServiceInDatabase(
             link: {
               entityType: "employee",
               entityId: row.employee.id,
-              path: `/staff/employees/${row.employee.id}`,
+              path: independentReviewer
+                ? `/staff/independent-record-reviews#review=${row.employee.id}`
+                : `/staff/employees/${row.employee.id}`,
             },
             createdBy: actor.userId,
             updatedBy: actor.userId,
@@ -1958,7 +2005,6 @@ export async function decideEmploymentDetailsInDatabase(
   },
   actor: AuditActorContext,
 ): Promise<void> {
-  if (actor.activeRole !== "HR") throw new Error("Only HR can confirm employment details.");
   if (actor.employeeId === input.employeeId)
     throw new Error("You cannot confirm your own employment details.");
   if (input.decision === "Changes Requested" && input.note.trim().length < 3)
@@ -1979,6 +2025,20 @@ export async function decideEmploymentDetailsInDatabase(
       .limit(1)
       .for("update");
     if (!employee) throw new Error("Employee not found.");
+    const hrOwner = await employeeHasHrRole(organisationId, employee.id, tx);
+    const assignedReviewer = await assignedIndependentHrReviewer(
+      organisationId,
+      "Employment Confirmation",
+      employee.id,
+      employee.id,
+      tx,
+    );
+    if (
+      hrOwner || assignedReviewer
+        ? !actorIsIndependentHrReviewer(actor, employee.id, assignedReviewer)
+        : actor.activeRole !== "HR"
+    )
+      throw new Error("Only the assigned independent reviewer or HR can confirm these details.");
     if (employee.employmentConfirmationStatus !== "Pending HR Review")
       throw new Error("These employment details are no longer awaiting confirmation.");
     const proposed = employee.proposedEmploymentDetails;
@@ -1998,7 +2058,7 @@ export async function decideEmploymentDetailsInDatabase(
           )
           .limit(1),
         tx
-          .select({ id: positions.id, departmentId: positions.departmentId })
+          .select({ id: positions.id, name: positions.name, departmentId: positions.departmentId })
           .from(positions)
           .where(
             and(
@@ -2059,10 +2119,93 @@ export async function decideEmploymentDetailsInDatabase(
         .limit(1);
       confirmedManagerId = manager?.id ?? null;
     }
-    if (input.decision === "Confirmed" && !confirmedManagerId)
-      throw new Error("Assign an active supervisor before confirming these employment details.");
+    if (input.decision === "Confirmed" && !confirmedManagerId) {
+      const [position] = await tx
+        .select({ name: positions.name })
+        .from(positions)
+        .where(
+          and(eq(positions.organisationId, organisationId), eq(positions.id, proposed.positionId)),
+        )
+        .limit(1);
+      if (!position || !isSupervisorOptionalPosition(position.name))
+        throw new Error("Assign an active supervisor before confirming these employment details.");
+    }
     if (confirmedManagerId === employee.id)
       throw new Error("An employee cannot be their own supervisor.");
+
+    const [
+      [snapshotDepartment],
+      [snapshotPosition],
+      [snapshotLocation],
+      [snapshotType],
+      [snapshotManager],
+    ] = await Promise.all([
+      tx
+        .select({ name: departments.name })
+        .from(departments)
+        .where(
+          and(
+            eq(departments.organisationId, organisationId),
+            eq(departments.id, proposed.departmentId),
+          ),
+        )
+        .limit(1),
+      tx
+        .select({ name: positions.name })
+        .from(positions)
+        .where(
+          and(eq(positions.organisationId, organisationId), eq(positions.id, proposed.positionId)),
+        )
+        .limit(1),
+      tx
+        .select({ name: locations.name })
+        .from(locations)
+        .where(
+          and(eq(locations.organisationId, organisationId), eq(locations.id, proposed.locationId)),
+        )
+        .limit(1),
+      tx
+        .select({ name: employmentTypes.name })
+        .from(employmentTypes)
+        .where(
+          and(
+            eq(employmentTypes.organisationId, organisationId),
+            eq(employmentTypes.id, proposed.employmentTypeId),
+          ),
+        )
+        .limit(1),
+      confirmedManagerId
+        ? tx
+            .select({ legalName: employees.legalName, preferredName: employees.preferredName })
+            .from(employees)
+            .where(
+              and(
+                eq(employees.organisationId, organisationId),
+                eq(employees.id, confirmedManagerId),
+              ),
+            )
+            .limit(1)
+        : Promise.resolve([]),
+    ]);
+    const employmentDecisionSnapshot = {
+      version: 1,
+      kind: "Employment Confirmation",
+      employment: {
+        legalName: proposed.legalName,
+        preferredName: proposed.preferredName,
+        staffEntryType: proposed.staffEntryType,
+        startDate: proposed.startDate,
+        departmentName: snapshotDepartment?.name ?? "Name unavailable at review",
+        positionName: snapshotPosition?.name ?? "Name unavailable at review",
+        locationName: snapshotLocation?.name ?? "Name unavailable at review",
+        employmentTypeName: snapshotType?.name ?? "Name unavailable at review",
+        supervisorName: snapshotManager
+          ? snapshotManager.preferredName || snapshotManager.legalName
+          : "No supervisor",
+        supervisorEmail: proposed.lineManagerEmail,
+        visaRequired: proposed.visaRequired,
+      },
+    };
     if (input.decision === "Confirmed" && confirmedManagerId) {
       await assignSupervisorApprovalAccess(
         tx,
@@ -2217,7 +2360,7 @@ export async function decideEmploymentDetailsInDatabase(
       .from(users)
       .where(and(eq(users.organisationId, organisationId), eq(users.employeeId, employee.id)))
       .limit(1);
-    if (employeeUser && input.decision === "Confirmed") {
+    if (employeeUser) {
       await tx.insert(notifications).values({
         organisationId,
         recipientUserId: employeeUser.id,
@@ -2231,7 +2374,7 @@ export async function decideEmploymentDetailsInDatabase(
             : "Employment details need an update",
         message:
           input.decision === "Confirmed"
-            ? "HR confirmed your VIA employment information."
+            ? `${actor.displayName} confirmed your VIA employment information.`
             : input.note.trim(),
         priority: input.decision === "Confirmed" ? "Normal" : "High",
         status: "Unread",
@@ -2253,12 +2396,14 @@ export async function decideEmploymentDetailsInDatabase(
         input.decision === "Confirmed" ? "confirm" : "request-changes",
         "employee-employment-details",
         employee.id,
-        input.note.trim() || "Employment details confirmed by HR",
+        input.note.trim() || `Employment details confirmed by ${actor.displayName}`,
         {
           previousStatus: employee.employmentConfirmationStatus,
           status: input.decision,
+          submittedDetails: proposed,
           submittedStartDate: proposed.startDate,
           submittedLineManagerId: confirmedManagerId,
+          decisionSnapshot: employmentDecisionSnapshot,
         },
       ),
     );
@@ -2593,7 +2738,8 @@ export async function updateOffboardingTaskInDatabase(
       explicitlyAssigned ||
       (row.task.ownerRole === "Employee" && row.employee.id === actor.employeeId) ||
       (row.task.ownerRole === "Line Manager" &&
-        actor.activeRole === "Line Manager" &&
+        !row.task.assignedUserId &&
+        ["Line Manager", "HR"].includes(actor.activeRole) &&
         row.employee.lineManagerId === actor.employeeId) ||
       (row.task.ownerRole === actor.activeRole &&
         !["Employee", "Line Manager"].includes(row.task.ownerRole)) ||

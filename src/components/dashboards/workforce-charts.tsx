@@ -521,12 +521,12 @@ export default function WorkforceCharts({
                       onClick: () => setDashboardDetail("leave"),
                     },
                     {
-                      label: "Awaiting decisions",
+                      label: "Pending across company",
                       onClick: () => setDashboardDetail("approvals"),
                       value: String(
                         data.priorities.approvals.reduce((sum, item) => sum + item.count, 0),
                       ),
-                      note: "Current approval and verification stages",
+                      note: "All reviewers and teams, not only HR",
                     },
                   ]
                 : [

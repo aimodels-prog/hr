@@ -5,6 +5,10 @@ import { REQUEST_GROUPS, REQUEST_MODULES, isApprovalTask } from "../data/request
 import { resolveOrganisationIdForActor, verifyServerActorRole } from "../db/utils.server.ts";
 import { listTrackedRequests } from "../db/repositories/request-tracking.repository.server.ts";
 import { listTasksForActorInDatabase } from "../db/repositories/task.repository.server.ts";
+import { listTravelRequestsForActor } from "../db/repositories/travel.repository.server.ts";
+import { and, eq, isNull } from "drizzle-orm";
+import { getDatabaseClient } from "../db/client.ts";
+import { hrIndependentReviewAssignments } from "../db/schema/hr-independent-review.ts";
 const Actor = z.object({
   actorId: z.string().min(1),
   actorEmail: z.string().email().optional(),
@@ -62,7 +66,7 @@ export const getTrackedRequestDetailFn = createServerFn({ method: "GET" })
     };
     const scopes: Array<"my" | "reviewed" | "organisation"> = [
       ...(verified.actor.employeeId ? (["my"] as const) : []),
-      ...(["HR", "Line Manager", "Accounts", "Travel Admin"].includes(
+      ...(["HR", "Line Manager", "Accounts", "Travel Admin", "Employee"].includes(
         verified.actor.activeRole ?? "",
       )
         ? (["reviewed"] as const)
@@ -77,12 +81,57 @@ export const getTrackedRequestDetailFn = createServerFn({ method: "GET" })
         scope,
       });
       const request = result.rows[0];
-      if (request)
+      if (request) {
+        // A reviewer may reopen the full trip only while the travel repository
+        // independently confirms their access. A historical decision alone does
+        // not grant access to a trip after its reviewer is reassigned.
+        const canReadOriginalTravel =
+          !request.archivedAt &&
+          scope === "reviewed" &&
+          request.module === "Travel" &&
+          (await listTravelRequestsForActor(verified.organisationId, verified.actor)).some(
+            (trip) => trip.id === request.id,
+          );
+        const sensitiveModule = request.actionUrl.startsWith("/staff/independent-record-reviews")
+          ? request.module === "Documents"
+            ? "Document"
+            : request.module === "Training certificates"
+              ? "Training Certificate"
+              : request.module === "Profile updates"
+                ? "Employment Confirmation"
+                : null
+          : null;
+        const canReadAssignedSensitive =
+          !request.archivedAt &&
+          scope === "reviewed" &&
+          verified.actor.activeRole === "Employee" &&
+          !!verified.actor.employeeId &&
+          !!sensitiveModule &&
+          !!(
+            await getDatabaseClient()
+              .select({ id: hrIndependentReviewAssignments.id })
+              .from(hrIndependentReviewAssignments)
+              .where(
+                and(
+                  eq(hrIndependentReviewAssignments.organisationId, verified.organisationId),
+                  eq(hrIndependentReviewAssignments.module, sensitiveModule),
+                  eq(hrIndependentReviewAssignments.requestId, request.id),
+                  eq(hrIndependentReviewAssignments.reviewerEmployeeId, verified.actor.employeeId),
+                  isNull(hrIndependentReviewAssignments.archivedAt),
+                ),
+              )
+              .limit(1)
+          )[0];
         return {
           request,
           canOpenOriginal:
-            !request.archivedAt && (scope !== "reviewed" || verified.actor.activeRole === "HR"),
+            !request.archivedAt &&
+            (scope !== "reviewed" ||
+              verified.actor.activeRole === "HR" ||
+              canReadOriginalTravel ||
+              canReadAssignedSensitive),
         };
+      }
     }
     throw new Error("This request is not available to your account.");
   });

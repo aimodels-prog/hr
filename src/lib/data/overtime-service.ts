@@ -84,6 +84,13 @@ export class OvertimeService {
       claims.map((claim) => ({
         ...claim,
         employeeId: relation.get(claim.employeeId) ?? claim.employeeId,
+        ...(claim.independentReviewerEmployeeId
+          ? {
+              independentReviewerEmployeeId:
+                relation.get(claim.independentReviewerEmployeeId) ??
+                claim.independentReviewerEmployeeId,
+            }
+          : {}),
         ...(claim.projectId ? { projectId: relation.get(claim.projectId) ?? claim.projectId } : {}),
         costCentreId: relation.get(claim.costCentreId) ?? claim.costCentreId,
         activityCodeId: relation.get(claim.activityCodeId) ?? claim.activityCodeId,
@@ -114,7 +121,11 @@ export class OvertimeService {
   }
 
   private isManagerOf(employeeId: string, context: ActorContext): boolean {
-    if (context.actor.activeRole !== "Line Manager" || !context.actor.employeeId) return false;
+    if (
+      !["Line Manager", "HR"].includes(context.actor.activeRole ?? "") ||
+      !context.actor.employeeId
+    )
+      return false;
     return (
       new EmployeeService().getById(employeeId, SYSTEM_CONTEXT)?.lineManagerId ===
       context.actor.employeeId
@@ -140,6 +151,12 @@ export class OvertimeService {
   /** The manager queue for Overtime Approvals: own direct reports, or everything for HR/Accounts/Super Admin. */
   getClaimsForDirectReports(context: ActorContext): OvertimeClaim[] {
     if (this.hasAdminOrPayrollView(context)) return this.claimRepo.list();
+    const independent = context.actor.employeeId
+      ? this.claimRepo
+          .list()
+          .filter((claim) => claim.independentReviewerEmployeeId === context.actor.employeeId)
+      : [];
+    if (context.actor.activeRole === "Employee") return independent;
     if (context.actor.activeRole !== "Line Manager" || !context.actor.employeeId) {
       this.denyAccess(context, "review team overtime claims", "direct-reports");
     }
@@ -147,7 +164,13 @@ export class OvertimeService {
       .getEmployees(SYSTEM_CONTEXT)
       .filter((employee) => employee.lineManagerId === context.actor.employeeId)
       .map((employee) => employee.id);
-    return this.claimRepo.list().filter((claim) => directReportIds.includes(claim.employeeId));
+    return this.claimRepo
+      .list()
+      .filter(
+        (claim) =>
+          directReportIds.includes(claim.employeeId) ||
+          claim.independentReviewerEmployeeId === context.actor.employeeId,
+      );
   }
 
   /**
@@ -661,11 +684,24 @@ export class OvertimeService {
       context,
       "approve this overtime claim",
     );
-    if (claim.status !== "Pending Manager") throw new Error("Invalid status");
-
-    claim.status = "Pending HR";
+    if (!["Pending Manager", "Pending Pre-authorisation"].includes(claim.status))
+      throw new Error("Invalid status");
+    const preAuthorisation = claim.status === "Pending Pre-authorisation";
+    const hrStandIn = !preAuthorisation && context.actor.activeRole === "HR";
+    claim.status = preAuthorisation ? "Pre-authorised" : hrStandIn ? "Approved" : "Pending HR";
+    if (preAuthorisation) {
+      claim.authorisedHours = claim.hours;
+      claim.preAuthorisedAt = new Date().toISOString();
+      claim.preAuthorisedBy = context.actor.userId;
+    }
+    if (hrStandIn) {
+      claim.hrNotes = "HR approved as the assigned supervisor.";
+      claim.approvedAt = new Date().toISOString();
+      claim.approvedBy = context.actor.userId;
+    }
     const updated = this.claimRepo.update(claim.id, claim, context);
-    this.notifyHr(updated, context);
+    if (updated.status === "Pending HR") this.notifyHr(updated, context);
+    else this.notifyDecision(updated, context);
     return updated;
   }
 
@@ -676,7 +712,8 @@ export class OvertimeService {
       this.denyAccess(context, "reject your own overtime claim", claim.id);
     }
     this.requireApproveDirectReportOrAdmin(claim.employeeId, context, "reject this overtime claim");
-    if (claim.status !== "Pending Manager") throw new Error("Invalid status");
+    if (!["Pending Manager", "Pending Pre-authorisation"].includes(claim.status))
+      throw new Error("Invalid status");
     if (!reason) throw new Error("Rejection reason required.");
 
     claim.status = "Rejected";
@@ -884,7 +921,8 @@ export class OvertimeService {
     if (
       !isSelf &&
       !this.hasAdminOrPayrollView(context) &&
-      !this.isManagerOf(claim.employeeId, context)
+      !this.isManagerOf(claim.employeeId, context) &&
+      claim.independentReviewerEmployeeId !== context.actor.employeeId
     ) {
       this.denyAccess(context, "view this claim's evidence", claimId);
     }
@@ -1052,13 +1090,24 @@ export class OvertimeService {
       notifService.create(
         {
           recipientUserId: employeeUser.id,
-          type: claim.status === "Approved" ? "Success" : "Warning",
+          type:
+            claim.status === "Approved"
+              ? "Success"
+              : claim.status === "Pre-authorised"
+                ? "Info"
+                : "Warning",
           title:
-            claim.status === "Approved" ? "Overtime claim approved" : "Overtime claim rejected",
+            claim.status === "Approved"
+              ? "Overtime claim approved"
+              : claim.status === "Pre-authorised"
+                ? "Planned overtime pre-authorised"
+                : "Overtime claim rejected",
           message:
             claim.status === "Approved"
               ? `Your ${claim.hours}h overtime claim for ${claim.date} was approved.`
-              : `Your ${claim.hours}h overtime claim for ${claim.date} was rejected. ${claim.managerNotes || claim.hrNotes || ""}`.trim(),
+              : claim.status === "Pre-authorised"
+                ? "Your supervisor approved the planned overtime. Confirm the actual hours after the work date."
+                : `Your ${claim.hours}h overtime claim for ${claim.date} was rejected. ${claim.managerNotes || claim.hrNotes || ""}`.trim(),
           priority: "Normal",
           status: "Unread",
           deduplicationKey: `overtime-decision-${claim.id}-${claim.status}`,
@@ -1076,20 +1125,7 @@ export class OvertimeService {
     // Checked against the actor's currently active role, not the full set of roles they have
     // ever been granted - a dual-role manager/employee who switched to Employee mode must not
     // retain manager-level overtime approval just because a manager role is still assigned.
-    const permissions = context.actor.activeRole
-      ? getRolePermissions(context.actor.activeRole)
-      : new Set<Permission>();
-
-    if (permissions.has("overtime:admin_all")) {
-      return;
-    }
-
-    if (permissions.has("overtime:approve_direct_reports") && context.actor.employeeId) {
-      const employee = new EmployeeService().getById(employeeId, SYSTEM_CONTEXT);
-      if (employee?.lineManagerId === context.actor.employeeId) {
-        return;
-      }
-    }
+    if (this.isManagerOf(employeeId, context)) return;
 
     this.denyAccess(context, action, employeeId);
   }
@@ -1098,7 +1134,7 @@ export class OvertimeService {
     const permissions = context.actor.activeRole
       ? getRolePermissions(context.actor.activeRole)
       : new Set<Permission>();
-    if (permissions.has("overtime:admin_all")) {
+    if (context.actor.activeRole === "HR" && permissions.has("overtime:admin_all")) {
       return;
     }
     this.denyAccess(context, action, "overtime-verification");

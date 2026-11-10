@@ -146,7 +146,7 @@ function PayrollPeriodsContent() {
       </Card>
 
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Create Payroll Period</DialogTitle>
           </DialogHeader>
@@ -158,7 +158,7 @@ function PayrollPeriodsContent() {
                 onChange={(e) => setNewPeriod({ ...newPeriod, name: e.target.value })}
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1">
                 <label className="font-medium">Start Date</label>
                 <Input

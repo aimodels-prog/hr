@@ -265,6 +265,27 @@ test(
           assert.equal((await decisions(self.id)).length, 0);
         },
       );
+
+      await t.test("assigned HR stand-in completes one correction decision", async () => {
+        await query`UPDATE employees SET line_manager_id=${hr.employeeId!} WHERE id=${employee.employeeId!}`;
+        const item = await fixture("Pending Manager");
+        await assert.rejects(decide(item, "approve", otherHr), /assigned/);
+        await assert.rejects(
+          decide(item, "approve", { ...hr, activeRole: "Super Admin" }),
+          /assigned/,
+        );
+        await decide(item, "approve", hr);
+        const saved = await correction(item.id);
+        assert.equal(saved.status, "Approved");
+        assert.equal(saved.manager_reviewed_by, hr.userId);
+        assert.equal(saved.hr_reviewed_by, hr.userId);
+        assert.equal((await record(item.recordId)).status, "Corrected");
+        assert.equal((await decisions(item.id)).length, 1);
+        await assert.rejects(
+          decide({ ...item, version: item.version + 1 }, "approve", hr),
+          /changed|decided/,
+        );
+      });
     } finally {
       await query.end();
       await closeDatabaseConnection();

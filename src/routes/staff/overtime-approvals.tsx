@@ -41,6 +41,15 @@ export const Route = createFileRoute("/staff/overtime-approvals")({
 });
 
 function OvertimeApprovalsRoute() {
+  const currentUser = useCurrentUser();
+  const assigned = new OvertimeService()
+    .getClaimsForDirectReports(currentUser.getActorContext())
+    .some(
+      (claim) =>
+        claim.independentReviewerEmployeeId === currentUser.employeeId &&
+        ["Pending HR", "Pending Pre-authorisation"].includes(claim.status),
+    );
+  if (assigned && currentUser.activeRole !== "Super Admin") return <OvertimeApprovalsContent />;
   return (
     <RequireRole roles={["Line Manager", "HR"]} resourceName="Team Overtime Approvals">
       <OvertimeApprovalsContent />
@@ -56,13 +65,18 @@ function OvertimeApprovalsContent() {
   const otService = useMemo(() => new OvertimeService(), []);
   const empService = useMemo(() => new EmployeeService(), []);
   const actorContext = currentUser.getActorContext();
-  const canVerify = currentUser.activeRole === "HR";
-  const [activeTab, setActiveTab] = useState(canVerify ? "hr" : "manager");
-
   const [claims, setClaims] = useState<OvertimeClaim[]>(() =>
     otService.getClaimsForDirectReports(actorContext),
   );
-  const allEmployees = empService.getEmployees(actorContext);
+  const canVerify =
+    currentUser.activeRole === "HR" ||
+    claims.some(
+      (claim) =>
+        claim.independentReviewerEmployeeId === currentUser.employeeId &&
+        claim.status === "Pending HR",
+    );
+  const [activeTab, setActiveTab] = useState(canVerify ? "hr" : "manager");
+  const allEmployees = empService.getDirectoryEmployees(actorContext);
 
   const refresh = () => setClaims(otService.getClaimsForDirectReports(actorContext));
 
@@ -81,9 +95,17 @@ function OvertimeApprovalsContent() {
   const pendingManager = claims.filter(
     (c) =>
       (c.status === "Pending Manager" || c.status === "Pending Pre-authorisation") &&
-      myDirectReports.includes(c.employeeId),
+      (myDirectReports.includes(c.employeeId) ||
+        c.independentReviewerEmployeeId === currentUser.employeeId),
   );
-  const pendingHr = claims.filter((c) => c.status === "Pending HR");
+  const pendingHr = claims.filter(
+    (c) =>
+      c.status === "Pending HR" &&
+      c.employeeId !== currentUser.employeeId &&
+      (c.independentReviewerEmployeeId
+        ? c.independentReviewerEmployeeId === currentUser.employeeId
+        : currentUser.activeRole === "HR"),
+  );
   useEffect(() => {
     if (!focusedClaimId || openedFocusedClaim.current === focusedClaimId) return;
     const hr = canVerify ? pendingHr.find((claim) => claim.id === focusedClaimId) : undefined;
@@ -105,7 +127,7 @@ function OvertimeApprovalsContent() {
     }
   }, [canVerify, focusedClaimId, pendingHr, pendingManager]);
   const recordableEmployees = allEmployees.filter((employee) =>
-    canVerify
+    currentUser.activeRole === "HR"
       ? !["Inactive", "Archived"].includes(employee.status)
       : myDirectReports.includes(employee.id),
   );
@@ -133,7 +155,9 @@ function OvertimeApprovalsContent() {
       toast.success(
         claim?.status === "Pending Pre-authorisation"
           ? "Planned overtime pre-authorised."
-          : "Overtime claim approved.",
+          : currentUser.activeRole === "HR"
+            ? "Overtime approved."
+            : "Sent to HR for final verification.",
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to approve claim");
@@ -188,22 +212,32 @@ function OvertimeApprovalsContent() {
         title="Team Overtime Approvals"
         description="Review overtime requests from your direct reports, and complete HR verification where required."
         actions={
-          <Button onClick={() => setRecordOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" /> Record for Employee
-          </Button>
+          ["HR", "Line Manager"].includes(currentUser.activeRole) ? (
+            <Button onClick={() => setRecordOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" /> Record for Employee
+            </Button>
+          ) : undefined
         }
       />
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
-          <TabsTrigger value="manager">My Team ({pendingManager.length})</TabsTrigger>
+          <TabsTrigger value="manager">
+            {currentUser.activeRole === "Employee" ? "Pre-approval" : "My Team"} (
+            {pendingManager.length})
+          </TabsTrigger>
           {canVerify && <TabsTrigger value="hr">HR Verification ({pendingHr.length})</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="manager">
           <Card>
-            <CardContent className="p-0">
-              <Table>
+            <CardContent
+              className="overflow-x-auto p-0"
+              role="region"
+              aria-label="Team overtime requests"
+              tabIndex={0}
+            >
+              <Table className="min-w-[780px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Employee</TableHead>
@@ -266,7 +300,12 @@ function OvertimeApprovalsContent() {
                             <XCircle className="w-4 h-4 mr-1" /> Reject
                           </Button>
                           <Button size="sm" onClick={() => handleApprove(c.id)}>
-                            <CheckCircle className="w-4 h-4 mr-1" /> Approve
+                            <CheckCircle className="w-4 h-4 mr-1" />
+                            {c.status === "Pending Pre-authorisation"
+                              ? "Pre-authorise"
+                              : currentUser.activeRole === "HR"
+                                ? "Approve & verify"
+                                : "Approve"}
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -288,8 +327,13 @@ function OvertimeApprovalsContent() {
         {canVerify && (
           <TabsContent value="hr">
             <Card>
-              <CardContent className="p-0">
-                <Table>
+              <CardContent
+                className="overflow-x-auto p-0"
+                role="region"
+                aria-label="HR overtime verification"
+                tabIndex={0}
+              >
+                <Table className="min-w-[780px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Employee</TableHead>

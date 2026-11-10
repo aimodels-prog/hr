@@ -3,12 +3,6 @@ import { useCallback, useEffect, useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  PageSections as Tabs,
-  SectionPanel as TabsContent,
-  SectionNavigation as TabsList,
-  SectionLink as TabsTrigger,
-} from "@/components/ui/page-sections";
 import { Check, X, AlertTriangle, Info, Paperclip, Search, CalendarDays } from "lucide-react";
 import {
   Dialog,
@@ -39,6 +33,22 @@ export const Route = createFileRoute("/staff/leave-approvals")({
 });
 
 function LeaveApprovalsRoute() {
+  const currentUser = useCurrentUser();
+  if (currentUser.activeRole === "Super Admin")
+    return (
+      <main className="mx-auto max-w-[1280px] space-y-4 pb-10">
+        <h1 className="text-2xl font-bold tracking-tight">Leave Approvals</h1>
+        <p role="alert" className="rounded-xl border bg-card p-4 text-sm">
+          Super Admin can view request status, but cannot approve leave. Switch to your HR or Line
+          Manager role if you are assigned to review a request.
+        </p>
+      </main>
+    );
+
+  // The named Country Manager reviews special leave by identity, not by a general
+  // manager or HR grant. The queue and decision endpoint both enforce that identity.
+  if (currentUser.activeRole === "Employee") return <LeaveApprovalsContent />;
+
   return (
     <RequirePermission permission="leave:approve_direct_reports" resourceName="Leave Approvals">
       <LeaveApprovalsContent />
@@ -54,7 +64,9 @@ function LeaveApprovalsContent() {
   const empService = useMemo(() => new EmployeeService(), []);
   const directoryEmployees = empService.getDirectoryEmployees(currentUser.getActorContext());
 
-  const canCompleteHrReview = currentUser.activeRole === "HR";
+  const canCompleteHrReview =
+    currentUser.activeRole === "HR" ||
+    leaveService.getPendingRequestsForIndependentReviewer(currentUser.getActorContext()).length > 0;
   // Assuming anyone can be a manager if they have direct reports.
 
   const policies = leaveService.getPolicies();
@@ -62,7 +74,6 @@ function LeaveApprovalsContent() {
   const [managerQueue, setManagerQueue] = useState<LeaveRequest[]>([]);
   const [adminQueue, setAdminQueue] = useState<LeaveRequest[]>([]);
   const [specialQueue, setSpecialQueue] = useState<LeaveRequest[]>([]);
-  const [selectedSection, setSelectedSection] = useState(canCompleteHrReview ? "admin" : "manager");
   const [searchQuery, setSearchQuery] = useState("");
   const [decidingRequestId, setDecidingRequestId] = useState<string | null>(null);
 
@@ -77,8 +88,22 @@ function LeaveApprovalsContent() {
   const [remainingPay, setRemainingPay] = useState<"Paid" | "Unpaid" | "">("");
 
   const loadData = useCallback(() => {
+    if (currentUser.activeRole === "Super Admin") {
+      setSpecialQueue([]);
+      setManagerQueue([]);
+      setAdminQueue([]);
+      return;
+    }
     setSpecialQueue(
-      leaveService.getRequests(currentUser.getActorContext()).filter((request) => {
+      (currentUser.activeRole === "Employee"
+        ? leaveService.getPendingRequestsForCountryManager(currentUser.getActorContext())
+        : leaveService.getRequests(currentUser.getActorContext())
+      ).filter((request) => {
+        if (
+          request.independentReviewerEmployeeId &&
+          request.independentReviewerEmployeeId !== currentUser.employeeId
+        )
+          return false;
         if (
           request.status !== "Pending HR" ||
           (!request.policySnapshot.noticeException && !request.policySnapshot.specialRequest)
@@ -105,7 +130,7 @@ function LeaveApprovalsContent() {
       }),
     );
     if (currentUser.employeeId) {
-      if (currentUser.roles.includes("Line Manager") || currentUser.activeRole === "Line Manager") {
+      if (currentUser.activeRole === "Line Manager" || currentUser.activeRole === "HR") {
         setManagerQueue(leaveService.getPendingRequestsForManager(currentUser.getActorContext()));
       } else {
         setManagerQueue([]);
@@ -113,52 +138,38 @@ function LeaveApprovalsContent() {
     }
     if (canCompleteHrReview) {
       setAdminQueue(
-        leaveService
-          .getPendingRequestsForHr(currentUser.getActorContext())
-          .filter(
-            (request) =>
-              ["Pending HR", "Amendment Pending HR", "Cancellation Pending"].includes(
-                request.status,
-              ) &&
-              !(request.status === "Pending HR" && request.policySnapshot.noticeException) &&
-              !(
-                request.status === "Pending HR" &&
-                request.policySnapshot.specialRequest &&
-                (currentUser.activeRole !== "HR" ||
-                  request.chainApprovals.some(
-                    (step) => step.role === "Country Manager" && step.status === "Pending",
-                  ))
-              ),
-          ),
+        (currentUser.activeRole === "HR"
+          ? leaveService.getPendingRequestsForHr(currentUser.getActorContext())
+          : leaveService.getPendingRequestsForIndependentReviewer(currentUser.getActorContext())
+        ).filter(
+          (request) =>
+            ["Pending HR", "Amendment Pending HR", "Cancellation Pending"].includes(
+              request.status,
+            ) &&
+            !(
+              request.status === "Pending HR" &&
+              request.policySnapshot.noticeException &&
+              request.independentReviewerEmployeeId !== currentUser.employeeId
+            ) &&
+            !(
+              request.status === "Pending HR" &&
+              request.policySnapshot.specialRequest &&
+              request.independentReviewerEmployeeId !== currentUser.employeeId &&
+              (currentUser.activeRole !== "HR" ||
+                request.chainApprovals.some(
+                  (step) => step.role === "Country Manager" && step.status === "Pending",
+                ))
+            ),
+        ),
       );
+    } else {
+      setAdminQueue([]);
     }
   }, [canCompleteHrReview, currentUser, leaveService]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
-
-  useEffect(() => {
-    setSelectedSection((current) =>
-      specialQueue.length > 0
-        ? "special"
-        : current === "special"
-          ? canCompleteHrReview
-            ? "admin"
-            : "manager"
-          : current,
-    );
-  }, [specialQueue.length, canCompleteHrReview]);
-
-  useEffect(() => {
-    if (!focusedRequestId) return;
-    if (specialQueue.some((request) => request.id === focusedRequestId))
-      setSelectedSection("special");
-    else if (adminQueue.some((request) => request.id === focusedRequestId))
-      setSelectedSection("admin");
-    else if (managerQueue.some((request) => request.id === focusedRequestId))
-      setSelectedSection("manager");
-  }, [adminQueue, focusedRequestId, managerQueue, specialQueue]);
 
   useEffect(() => {
     if (!focusedRequestId) return;
@@ -169,7 +180,7 @@ function LeaveApprovalsContent() {
       });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [focusedRequestId, selectedSection, adminQueue, managerQueue, specialQueue]);
+  }, [focusedRequestId, adminQueue, managerQueue, specialQueue]);
 
   const handleApprove = async (req: LeaveRequest) => {
     if (decidingRequestId) return;
@@ -195,9 +206,14 @@ function LeaveApprovalsContent() {
         currentUser.getActorContext(),
       );
       toast.success(
-        req.policySnapshot.noticeException && req.status === "Pending HR"
-          ? "Your special review was recorded. The request will reach the line manager after both special reviewers approve."
-          : "Leave request approved.",
+        req.policySnapshot.specialRequest &&
+          req.chainApprovals.some(
+            (step) => step.role === "Country Manager" && step.status === "Pending",
+          )
+          ? "Your review was recorded. HR will make the final decision."
+          : req.policySnapshot.noticeException && req.status === "Pending HR"
+            ? "Your special review was recorded. The request will reach the line manager after both special reviewers approve."
+            : "Leave request approved.",
       );
       loadData();
     } catch (error: unknown) {
@@ -267,41 +283,34 @@ function LeaveApprovalsContent() {
     }
   };
 
-  const renderQueue = (requests: LeaveRequest[], isFinal: boolean) => {
+  const matchesSearch = (request: LeaveRequest) => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
-    const visibleRequests = requests.filter((request) => {
-      if (!normalizedQuery) return true;
-      const employee = directoryEmployees.find((item) => item.id === request.employeeId);
-      const policy = policies.find((item) => item.id === request.policyId);
-      return [
-        employee?.preferredName,
-        request.requesterName,
-        policy?.name,
-        request.reason,
-        request.startDate,
-        request.endDate,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-        .includes(normalizedQuery);
-    });
-    if (visibleRequests.length === 0) {
-      return (
-        <div className="rounded-2xl border bg-card px-5 py-14 text-center shadow-sm">
-          <Check className="mx-auto mb-3 size-9 text-emerald-600/70" aria-hidden="true" />
-          <p className="font-semibold">
-            {requests.length ? "No requests match your search" : "All caught up"}
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {requests.length
-              ? "Try another name, leave type or date."
-              : "There are no leave requests waiting in this queue."}
-          </p>
-        </div>
-      );
-    }
+    if (!normalizedQuery) return true;
+    const employee = directoryEmployees.find((item) => item.id === request.employeeId);
+    const policy = policies.find((item) => item.id === request.policyId);
+    return [
+      employee?.preferredName,
+      request.requesterName,
+      request.id,
+      request.lineManagerName,
+      policy?.name,
+      request.reason,
+      request.startDate,
+      request.endDate,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(normalizedQuery);
+  };
+  const visibleSpecialQueue = specialQueue.filter(matchesSearch);
+  const visibleAdminQueue = adminQueue.filter(matchesSearch);
+  const visibleManagerQueue = managerQueue.filter(matchesSearch);
+  const pendingCount = specialQueue.length + adminQueue.length + managerQueue.length;
+  const visibleCount =
+    visibleSpecialQueue.length + visibleAdminQueue.length + visibleManagerQueue.length;
 
+  const renderQueue = (visibleRequests: LeaveRequest[], isFinal: boolean) => {
     return (
       <div className="space-y-3">
         {[...visibleRequests]
@@ -357,6 +366,15 @@ function LeaveApprovalsContent() {
                             Line manager: {req.lineManagerName}
                           </p>
                         )}
+                        {!req.policySnapshot.specialRequest &&
+                          !req.policySnapshot.noticeException &&
+                          req.status === "Pending HR" &&
+                          req.chainApprovals.length === 1 &&
+                          req.chainApprovals[0]?.role === "HR" && (
+                            <p className="mt-1 text-xs text-primary">
+                              HR is the only approver for this request.
+                            </p>
+                          )}
                       </div>
                     </div>
                     <Badge
@@ -372,10 +390,14 @@ function LeaveApprovalsContent() {
                 <CardContent className="p-5 pt-5">
                   {isSpecial && (
                     <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
-                      <strong>Special leave - line manager, then Riccardo, then HR</strong>
+                      <strong>
+                        {req.independentReviewerEmployeeId
+                          ? "Special leave - independent review"
+                          : "Special leave - line manager, then Country Manager, then HR"}
+                      </strong>
                       <p className="mt-1">
-                        This request may cross leave years or exceed the ordinary allowance. HR
-                        decides the balance deductions and pay treatment at final approval.
+                        This request may cross leave years or exceed the ordinary allowance. The
+                        final reviewer decides balance deductions and pay treatment.
                       </p>
                       <p className="mt-2 whitespace-pre-wrap">
                         {req.policySnapshot.specialRequest?.reason}
@@ -385,15 +407,19 @@ function LeaveApprovalsContent() {
                   {req.policySnapshot.noticeException && !req.pendingAmendment && (
                     <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
                       <strong>
-                        {req.status === "Pending Line Manager"
-                          ? `Special reviews complete — ${req.lineManagerName || "assigned manager"} decides next`
-                          : "Short-notice exception — Country Manager and HR review first"}
+                        {req.independentReviewerEmployeeId
+                          ? "Short-notice exception - independent review"
+                          : req.status === "Pending Line Manager"
+                            ? `Special reviews complete — ${req.lineManagerName || "assigned manager"} decides next`
+                            : "Short-notice exception — Country Manager and HR review first"}
                       </strong>
                       <p className="mt-1">
                         {req.policySnapshot.noticeException.actualDays} of{" "}
                         {req.policySnapshot.noticeException.requiredDays} required calendar days'
-                        notice. Riccardo and HR must both approve before{" "}
-                        {req.lineManagerName || "the assigned manager"} can decide.
+                        notice.{" "}
+                        {req.independentReviewerEmployeeId
+                          ? "The named independent reviewer decides this request."
+                          : `Country Manager and HR review before ${req.lineManagerName || "the assigned manager"} decides.`}
                       </p>
                       <p className="mt-2 whitespace-pre-wrap">
                         {req.policySnapshot.noticeException.reason}
@@ -555,61 +581,56 @@ function LeaveApprovalsContent() {
             type="search"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Search employee, leave type or date"
+            placeholder="Employee, leave type, date or reference"
             className="h-10 pl-9"
           />
         </div>
       </div>
 
-      <Tabs value={selectedSection} onValueChange={setSelectedSection} className="w-full">
-        <TabsList>
-          {specialQueue.length > 0 && (
-            <TabsTrigger value="special" className="flex gap-2">
-              Special approvals
-              <Badge variant="destructive" className="ml-1">
-                {specialQueue.length}
-              </Badge>
-            </TabsTrigger>
+      {pendingCount === 0 ? (
+        <div className="rounded-2xl border bg-card px-5 py-14 text-center shadow-sm">
+          <Check className="mx-auto mb-3 size-9 text-emerald-600/70" aria-hidden="true" />
+          <p className="font-semibold">All caught up</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            There are no leave requests waiting for your decision.
+          </p>
+        </div>
+      ) : visibleCount === 0 ? (
+        <div className="rounded-2xl border bg-card px-5 py-14 text-center shadow-sm">
+          <Search className="mx-auto mb-3 size-9 text-muted-foreground" aria-hidden="true" />
+          <p className="font-semibold">No requests match your search</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Try another name, leave type or date.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-7">
+          {visibleSpecialQueue.length > 0 && (
+            <section aria-label="Special approvals" className="space-y-3">
+              <h2 className="flex items-center gap-2 text-base font-semibold">
+                Special approvals <Badge variant="destructive">{visibleSpecialQueue.length}</Badge>
+              </h2>
+              {renderQueue(visibleSpecialQueue, false)}
+            </section>
           )}
-          <TabsTrigger value="manager" className="flex gap-2">
-            My Team
-            {managerQueue.length > 0 && (
-              <Badge variant="secondary" className="ml-1">
-                {managerQueue.length}
-              </Badge>
-            )}
-          </TabsTrigger>
-          {canCompleteHrReview && (
-            <TabsTrigger value="admin" className="flex gap-2">
-              HR Confirmation
-              {adminQueue.length > 0 && (
-                <Badge variant="secondary" className="ml-1">
-                  {adminQueue.length}
-                </Badge>
-              )}
-            </TabsTrigger>
+          {visibleAdminQueue.length > 0 && (
+            <section aria-label="HR confirmation" className="space-y-3">
+              <h2 className="flex items-center gap-2 text-base font-semibold">
+                HR confirmation <Badge variant="secondary">{visibleAdminQueue.length}</Badge>
+              </h2>
+              {renderQueue(visibleAdminQueue, true)}
+            </section>
           )}
-        </TabsList>
-
-        {specialQueue.length > 0 && (
-          <TabsContent value="special" className="space-y-3">
-            <h2 className="text-base font-semibold">Special approvals</h2>
-            {renderQueue(specialQueue, false)}
-          </TabsContent>
-        )}
-
-        <TabsContent value="manager" className="space-y-3">
-          <h2 className="text-base font-semibold">My team</h2>
-          {renderQueue(managerQueue, false)}
-        </TabsContent>
-
-        {canCompleteHrReview && (
-          <TabsContent value="admin" className="space-y-3">
-            <h2 className="text-base font-semibold">HR confirmation</h2>
-            {renderQueue(adminQueue, true)}
-          </TabsContent>
-        )}
-      </Tabs>
+          {visibleManagerQueue.length > 0 && (
+            <section aria-label="My team" className="space-y-3">
+              <h2 className="flex items-center gap-2 text-base font-semibold">
+                My team <Badge variant="secondary">{visibleManagerQueue.length}</Badge>
+              </h2>
+              {renderQueue(visibleManagerQueue, canCompleteHrReview)}
+            </section>
+          )}
+        </div>
+      )}
 
       <Dialog
         open={Boolean(allocationRequest)}

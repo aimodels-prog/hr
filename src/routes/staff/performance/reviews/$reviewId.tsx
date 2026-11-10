@@ -69,10 +69,10 @@ function PerformanceReviewPage() {
   const isEmployee = currentUser.employeeId === review.employeeId;
   const isManager =
     !isEmployee &&
-    currentUser.activeRole === "Line Manager" &&
+    ["Line Manager", "HR"].includes(currentUser.activeRole) &&
     currentUser.employeeId === employee.lineManagerId;
-  const isHr =
-    !isEmployee && (currentUser.activeRole === "HR" || currentUser.activeRole === "Super Admin");
+  const isHr = !isEmployee && currentUser.activeRole === "HR";
+  const canCorrectLocked = !isEmployee && ["HR", "Super Admin"].includes(currentUser.activeRole);
   const showManagerAssessment =
     !isEmployee ||
     template.employeeCanSeeManagerRatings ||
@@ -117,7 +117,7 @@ function PerformanceReviewPage() {
           navigate({
             to: isManager
               ? "/staff/performance/team"
-              : isHr
+              : canCorrectLocked
                 ? "/staff/performance/cycles"
                 : "/staff/me/performance",
           })
@@ -489,7 +489,7 @@ function PerformanceReviewPage() {
           </Button>
         </ActionCard>
       )}
-      {isHr && review.status === "Locked" && (
+      {canCorrectLocked && review.status === "Locked" && (
         <ActionCard
           icon={<Lock className="h-5 w-5" />}
           title="Correct a locked review"

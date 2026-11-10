@@ -1,5 +1,5 @@
 import type { AppTask } from "./task-service.ts";
-import type { Notification, Role } from "./types.ts";
+import type { Notification } from "./types.ts";
 
 const FOCUSABLE_APPROVAL_PATHS = new Set([
   "/staff/leave-approvals",
@@ -27,9 +27,8 @@ export function focusedApprovalId(hash: string): string | null {
   return new URLSearchParams(hash.replace(/^#/, "")).get("review");
 }
 
-export function leaveRequestHistoryUrl(requestId: string, activeRole: Role): string {
-  const path = activeRole === "HR" ? "/staff/leave-admin" : "/staff/me/leave-balances";
-  return `${path}#request=${encodeURIComponent(requestId)}`;
+export function leaveRequestHistoryUrl(requestId: string): string {
+  return `/staff/request-detail/Leave/${encodeURIComponent(requestId)}`;
 }
 
 export function isApprovalNotification(
@@ -49,6 +48,18 @@ export function approvalTaskForNotification(
   const link = notification.link;
   if (!link || !isApprovalNotification(notification)) return undefined;
   const entityType = link.entityType;
+  // A trip may have several arrangements awaiting Finance. Never replace an exact
+  // booking notification with the first task for that trip.
+  const bookingHash = link.path?.split("#", 2)[1];
+  if (entityType === "travel-request" && bookingHash?.startsWith("booking-")) {
+    const bookingId = bookingHash.slice("booking-".length);
+    return tasks.find(
+      (task) =>
+        task.id === `travel-booking-accounts-${bookingId}` &&
+        task.sourceId === link.entityId &&
+        task.sourceType === entityType,
+    );
+  }
   return tasks.find(
     (task) =>
       task.sourceId === link.entityId &&

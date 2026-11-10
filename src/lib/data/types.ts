@@ -917,6 +917,7 @@ export interface AppSettings extends BaseRecord {
   leaveIncludesWeekends?: boolean | undefined;
   annualCarryExpiryDates?: Record<string, string | null> | undefined;
   annualCarryExpiryMonthDay?: string | null | undefined;
+  approvalRouting?: import("./approval-routing-settings.ts").ApprovalRoutingSettings | undefined;
   leaveYearEnd: string;
   documentReminderDays: number[];
   employeeNumberFormat: string;

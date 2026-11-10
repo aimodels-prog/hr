@@ -12,7 +12,7 @@ import { NotificationService } from "../src/lib/data/notification-service.ts";
 import { initializeSeedData } from "../src/lib/data/seed-service.ts";
 import { MemoryStorageDriver } from "../src/lib/data/storage-driver.ts";
 import { VersionedStorageService } from "../src/lib/data/storage.ts";
-import type { ActorContext, FileMetadata } from "../src/lib/data/types.ts";
+import type { ActorContext, Employee, FileMetadata } from "../src/lib/data/types.ts";
 
 const employee: ActorContext = {
   actor: {
@@ -250,6 +250,39 @@ test("a correction decision keeps the version originally opened by the reviewer"
     service.getAllCorrections(hr).find((item) => item.id === opened.id)?.status,
     "Pending HR",
   );
+});
+
+test("assigned HR supervisor finalises a correction without a second approval", async () => {
+  const { service, storage } = harnessWithClock(() => new Date("2026-08-24T12:00:00Z"));
+  storage.writeCollection(
+    "employees",
+    storage
+      .readCollection<Employee>("employees")
+      .map((person) =>
+        person.id === "employee-omar" ? { ...person, lineManagerId: "employee-rana" } : person,
+      ),
+  );
+  const record = seedRecord(service, "2026-08-24");
+  const opened = await service.requestCorrection(
+    record.id,
+    "09:00",
+    "17:30",
+    "Correct the clock-out time",
+    employee,
+  );
+  const superAdmin: ActorContext = {
+    actor: { ...hr.actor, activeRole: "Super Admin", roles: ["Employee", "HR", "Super Admin"] },
+  };
+  assert.throws(
+    () => service.managerApproveCorrection(opened.id, superAdmin, "Review complete"),
+    /not authorised/,
+  );
+  const approved = service.managerApproveCorrection(opened.id, hr, "Review complete");
+  assert.equal(approved.status, "Approved");
+  assert.equal(approved.managerReviewedBy, hr.actor.userId);
+  assert.equal(approved.hrReviewedBy, hr.actor.userId);
+  assert.equal(service.getAllRecords(hr).find((item) => item.id === record.id)?.clockOut, "17:30");
+  assert.throws(() => service.hrFinaliseCorrection(opened.id, true, "Again", hr), /awaiting HR/);
 });
 
 test("only HR/Super Admin can export attendance CSV, and the export is audited", () => {

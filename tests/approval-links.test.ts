@@ -35,12 +35,8 @@ test("approval links focus the exact request without changing direct detail link
   );
 });
 
-test("resolved leave notifications open the exact history for HR or the employee", () => {
-  assert.equal(leaveRequestHistoryUrl("leave-1", "HR"), "/staff/leave-admin#request=leave-1");
-  assert.equal(
-    leaveRequestHistoryUrl("leave-1", "Employee"),
-    "/staff/me/leave-balances#request=leave-1",
-  );
+test("resolved leave notifications open an authorised exact request detail", () => {
+  assert.equal(leaveRequestHistoryUrl("leave-1"), "/staff/request-detail/Leave/leave-1");
 });
 
 test("notifications match only the recipient's assigned approval task", () => {
@@ -66,4 +62,32 @@ test("notifications match only the recipient's assigned approval task", () => {
     ),
     undefined,
   );
+});
+
+test("booking notifications identify the exact arrangement on a shared trip", () => {
+  const first = {
+    ...task,
+    id: "travel-booking-accounts-booking-1",
+    sourceType: "travel-request",
+    sourceId: "trip-1",
+    actionUrl: "/staff/travel/trip-1#booking-booking-1",
+  } satisfies AppTask;
+  const second = {
+    ...first,
+    id: "travel-booking-accounts-booking-2",
+    actionUrl: "/staff/travel/trip-1#booking-booking-2",
+  } satisfies AppTask;
+  const notice = {
+    type: "Travel",
+    title: "Travel arrangement needs Finance approval",
+    message: "Review the car arrangement.",
+    link: {
+      entityType: "travel-request",
+      entityId: "trip-1",
+      path: "/staff/travel/trip-1#booking-booking-2",
+    },
+  };
+  assert.equal(approvalTaskForNotification(notice, [first, second]), second);
+  assert.equal(approvalTaskForNotification(notice, [first]), undefined);
+  assert.equal(approvalActionUrl(second), second.actionUrl);
 });

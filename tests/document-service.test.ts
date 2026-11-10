@@ -30,6 +30,15 @@ const hr: ActorContext = {
     roles: ["Employee", "HR"],
   },
 };
+const superAdmin: ActorContext = {
+  actor: {
+    userId: "user-admin",
+    employeeId: "employee-admin",
+    displayName: "Administrator",
+    activeRole: "Super Admin",
+    roles: ["Employee", "Super Admin"],
+  },
+};
 
 function fakeFileRepository(): FileRepository {
   const files = new Map<string, { metadata: FileMetadata; blob: Blob }>();
@@ -263,6 +272,11 @@ test("rejected replacement preserves approved document and corrected submission 
   assert.equal(corrected.status, "Pending Verification");
   assert.throws(() => documents.verifyDocument(revision.id, hr), /not pending/);
   assert.throws(() => documents.verifyDocument(corrected.id, employee), /Only HR/);
+  assert.throws(() => documents.verifyDocument(corrected.id, superAdmin), /Only HR/);
+  assert.throws(
+    () => documents.rejectDocument(corrected.id, "Needs correction", superAdmin),
+    /Only HR/,
+  );
   documents.verifyDocument(corrected.id, hr);
   assert.equal(
     documents.getDocumentRepository(SYSTEM_CONTEXT).getById(original.id)?.replacedById,

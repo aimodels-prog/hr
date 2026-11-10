@@ -1,4 +1,5 @@
 import type { AppTask } from "./task-service.ts";
+import type { RequestDecisionSnapshot } from "./request-decision-snapshot.ts";
 
 export const REQUEST_MODULES = [
   "Leave",
@@ -39,6 +40,7 @@ export const STATUS_GROUPS: Record<string, string[]> = {
     "Pre-authorised - Awaiting Actual",
     "Valid",
     "Verified",
+    "Confirmed",
     "Accepted",
     "Approved for Interview",
   ],
@@ -66,6 +68,8 @@ export interface RequestEvent {
   at: string;
   comment?: string | undefined;
   statusAfter?: string | undefined;
+  snapshot?: RequestDecisionSnapshot | undefined;
+  snapshotUnavailable?: boolean | undefined;
 }
 export interface RequestDecision {
   actorId?: string | undefined;
@@ -75,10 +79,28 @@ export interface RequestDecision {
   at: string;
   comment?: string | undefined;
   statusAfter?: string | undefined;
+  snapshot?: RequestDecisionSnapshot | undefined;
+  snapshotUnavailable?: boolean | undefined;
 }
 export interface RequestSubmission {
   actorName: string;
   at: string;
+}
+export function requestDecisionOutcome(action: string): RequestDecision["outcome"] {
+  const name = action.toLowerCase();
+  return /reject|declin/.test(name)
+    ? "Rejected"
+    : /return|request-changes/.test(name)
+      ? "Returned"
+      : /reopen/.test(name)
+        ? "Reopened"
+        : /moderate/.test(name)
+          ? "Moderated"
+          : /lock/.test(name)
+            ? "Locked"
+            : /close/.test(name)
+              ? "Closed"
+              : "Approved";
 }
 export interface TrackedRequest {
   id: string;
@@ -125,8 +147,19 @@ export function toTrackedRequest(
   submissions: RequestSubmission[] = [],
 ): TrackedRequest {
   const archivedAt = row.archived_at ?? null;
-  const group = archivedAt ? "Closed" : requestGroup(row.status);
   const meta = row.metadata ?? {};
+  const group = archivedAt
+    ? "Closed"
+    : row.module === "Visits" && meta["extensionPending"] === true
+      ? "Waiting"
+      : requestGroup(row.status);
+  const approvalRoute =
+    meta["approvalRoute"] && typeof meta["approvalRoute"] === "object"
+      ? (meta["approvalRoute"] as Record<string, unknown>)
+      : {};
+  const executiveTravel =
+    row.module === "Travel" && approvalRoute["kind"] === "Managerless Executive";
+  const hrOwnTravel = row.module === "Travel" && approvalRoute["kind"] === "HR Own Travel";
   const manager = row.manager_name
     ? `${row.manager_name} — Line Manager`
     : "Line Manager not assigned — HR must check";
@@ -139,6 +172,50 @@ export function toTrackedRequest(
     nextStep = "Complete or correct the request, then submit it.";
   } else if (group === "Waiting") {
     waitingFor = /Manager|Supervisor/.test(row.status) ? manager : "HR";
+    if (
+      [
+        "Leave",
+        "Timesheets",
+        "Attendance corrections",
+        "Overtime",
+        "Training",
+        "Visits",
+        "Time Away",
+        "Documents",
+        "Training certificates",
+        "Profile updates",
+      ].includes(row.module) &&
+      [
+        "Pending HR",
+        "Pending Pre-authorisation",
+        "Pending Verification",
+        "Pending HR Review",
+      ].includes(row.status) &&
+      text(meta["independentReviewerName"])
+    ) {
+      waitingFor = text(meta["independentReviewerName"])!;
+    }
+    if (row.module === "Leave" && row.status === "Pending HR") {
+      const chain = Array.isArray(meta["chain"]) ? meta["chain"] : [];
+      const countryManagerPending = chain.some(
+        (step) =>
+          step &&
+          typeof step === "object" &&
+          step.role === "Country Manager" &&
+          step.status === "Pending",
+      );
+      const hrPending = chain.some(
+        (step) =>
+          step && typeof step === "object" && step.role === "HR" && step.status === "Pending",
+      );
+      if (countryManagerPending) {
+        const countryManager = text(meta["countryManagerName"]) ?? "Country Manager";
+        waitingFor =
+          meta["noticeException"] === true && hrPending
+            ? `${countryManager} and HR`
+            : countryManager;
+      }
+    }
     if (row.module === "Offers")
       waitingFor =
         text(meta["approver"]) ?? "Assigned offer approver not available — HR must check";
@@ -147,12 +224,25 @@ export function toTrackedRequest(
       waitingFor = "HR — legacy approval stage needs review";
     if (row.status === "Pending Super Admin Closure") waitingFor = "Finance";
     if (row.module === "Travel" && row.status === "Pending HR and Accounts") {
-      const pending = [
-        meta["manager"] === "Pending" ? manager : null,
-        meta["hr"] === "Pending" ? "HR" : null,
-        meta["finance"] === "Pending" ? "Finance" : null,
-      ].filter(Boolean);
-      waitingFor = pending.join("; ") || "HR — check outstanding travel stage";
+      waitingFor =
+        meta["manager"] === "Pending"
+          ? executiveTravel
+            ? (text(meta["pendingParticipantManagers"]) ?? "Participant supervisors")
+            : hrOwnTravel
+              ? [
+                  meta["managerBy"]
+                    ? null
+                    : (text(meta["independentReviewerName"]) ?? "Independent reviewer"),
+                  text(meta["pendingParticipantManagers"]),
+                ]
+                  .filter(Boolean)
+                  .join("; ") || "Independent reviewer"
+              : manager
+          : meta["hr"] === "Pending"
+            ? "HR"
+            : meta["finance"] === "Pending"
+              ? "Finance"
+              : "HR — check outstanding travel stage";
     }
     if (
       ["Self Assessment Pending", "Acknowledgement Pending", "Objectives Pending"].includes(
@@ -161,7 +251,7 @@ export function toTrackedRequest(
     )
       waitingFor = "Employee";
     if (row.status === "Awaiting Delivery") waitingFor = "HR / delivery service";
-    nextStep = `Waiting for ${waitingFor}. A notification does not itself count as approval.`;
+    nextStep = `Waiting for ${waitingFor} to review this request.`;
   } else if (
     row.module === "Applications" &&
     ["Shortlisted", "Interviewing", "On Hold", "Offered"].includes(row.status)
@@ -182,8 +272,8 @@ export function toTrackedRequest(
     nextStep = "Confirm the actual overtime worked.";
   }
   if (row.module === "Visits" && meta["extensionPending"] === true) {
-    waitingFor = "HR — visit extension";
-    nextStep = "The original visit is approved; the extension still needs HR review.";
+    waitingFor = text(meta["independentReviewerName"]) ?? "HR";
+    nextStep = `The original visit is approved. ${waitingFor} needs to review the extension.`;
   }
 
   if (group === "Approved" && waitingFor === "No approval pending") {
@@ -222,23 +312,29 @@ export function toTrackedRequest(
         at: decision.at,
         ...(decision.comment ? { comment: decision.comment } : {}),
         ...(decision.statusAfter ? { statusAfter: decision.statusAfter } : {}),
+        ...(decision.snapshot ? { snapshot: decision.snapshot } : {}),
+        ...(decision.snapshotUnavailable ? { snapshotUnavailable: true } : {}),
       });
     }
   }
-  const hasDecisionNear = (at: string | undefined, role?: string) =>
-    Boolean(
-      at &&
-      decisions.some(
-        (decision) =>
-          (!role || decision.role === role) &&
-          Math.abs(Date.parse(decision.at) - Date.parse(at)) < 60_000,
-      ),
+  const hasDecisionNear = (at: string | undefined, role?: string, actorKey?: string) => {
+    if (!at) return false;
+    const stageActorId = actorKey ? text(meta[actorKey]) : undefined;
+    const stageActorName = stageActorId ? reviewerNames[stageActorId] : undefined;
+    return decisions.some(
+      (decision) =>
+        Math.abs(Date.parse(decision.at) - Date.parse(at)) < 60_000 &&
+        (!role ||
+          decision.role === role ||
+          (stageActorId && decision.actorId === stageActorId) ||
+          (stageActorName && decision.actorName === stageActorName)),
     );
-  if (!hasDecisionNear(text(meta["managerAt"]), "Line Manager"))
+  };
+  if (!hasDecisionNear(text(meta["managerAt"]), "Line Manager", "managerBy"))
     event("managerAt", "Line Manager decision recorded", "managerComment", "managerBy");
-  if (!hasDecisionNear(text(meta["hrAt"]), "HR"))
+  if (!hasDecisionNear(text(meta["hrAt"]), "HR", "hrBy"))
     event("hrAt", "HR decision recorded", "hrComment", "hrBy");
-  if (!hasDecisionNear(text(meta["financeAt"]), "Accounts"))
+  if (!hasDecisionNear(text(meta["financeAt"]), "Accounts", "financeBy"))
     event("financeAt", "Finance decision recorded", undefined, "financeBy");
   if (!hasDecisionNear(text(meta["approvedAt"])))
     event("approvedAt", "Approval recorded", undefined, "approvedBy");
@@ -313,9 +409,21 @@ export function toTrackedRequest(
     archivedAt,
     status: archivedAt
       ? `Archived (last status: ${row.status})`
-      : row.status === "Pending Super Admin Closure"
-        ? "Awaiting Finance closure"
-        : row.status,
+      : row.module === "Visits" && meta["extensionPending"] === true
+        ? `Extension awaiting ${waitingFor}`
+        : row.status === "Pending Super Admin Closure"
+          ? "Awaiting Finance closure"
+          : text(meta["independentReviewerName"]) &&
+              [
+                "Pending HR",
+                "Pending Pre-authorisation",
+                "Pending Verification",
+                "Pending HR Review",
+              ].includes(row.status)
+            ? `Awaiting ${text(meta["independentReviewerName"])}`
+            : (executiveTravel || hrOwnTravel) && row.status === "Pending HR and Accounts"
+              ? `Awaiting ${waitingFor}`
+              : row.status,
     group,
     waitingFor,
     nextStep,
@@ -330,7 +438,7 @@ export function toTrackedRequest(
 /** Only decision work, not reminders to attend a course, prepare payroll or submit a form. */
 export function isApprovalTask(task: AppTask): boolean {
   return (
-    /^(leave-(manager|hr|country-manager)-|timesheet-(manager|hr)-|attendance-(manager|hr)-|time-away-hr-|overtime-(manager|hr)-|training-(manager|hr|verify)-|site-visit-hr-|travel-(manager|hr|accounts|close)-|performance-(manager|hr)-|document-verify-|offer-approval-|goal-manager-|referral-hr-)/.test(
+    /^(leave-(manager|hr|country-manager)-|timesheet-(manager|hr)-|attendance-(manager|hr)-|time-away-hr-|overtime-(manager|hr)-|training-(manager|hr|verify)-|site-visit-hr-|travel-(manager|hr|accounts|close)-|travel-booking-accounts-|performance-(manager|hr)-|document-verify-|employment-hr-|offer-approval-|goal-manager-|referral-hr-|offboarding-(financial|legal|finalise)-|independent-hr-review-)/.test(
       task.id,
     ) ||
     (task.sourceType === "payroll-period" && task.title === "Approve payroll period")

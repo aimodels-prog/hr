@@ -34,6 +34,33 @@ test("travel labels show the current approval stage", () => {
   );
 });
 
+test("HR-owned travel labels the independent reviewer and pending participant supervisors", () => {
+  const request = {
+    status: "Pending HR and Accounts" as const,
+    managerApprovalStatus: "Pending" as const,
+    hrApprovalStatus: "Not Required" as const,
+    accountsApprovalStatus: "Pending" as const,
+    approvalRoute: {
+      kind: "HR Own Travel" as const,
+      reviewerEmployeeId: "reviewer-1",
+      reviewerName: "Riccardo",
+    },
+    participants: [
+      {
+        employeeId: "colleague-1",
+        name: "Colleague",
+        managerId: "manager-1",
+        status: "Pending" as const,
+      },
+    ],
+  };
+  assert.equal(travelStatusLabel(request), "Awaiting Riccardo and colleagues’ supervisors");
+  assert.equal(
+    travelStatusLabel({ ...request, managerApprovedBy: "reviewer-user-1" }),
+    "Awaiting travelling colleagues’ supervisors",
+  );
+});
+
 test("travel resolves a database-backed currency selected by its code", () => {
   const id = "00000000-0000-4000-8000-000000000001";
   assert.equal(resolveTravelDatabaseId([{ id, code: "OMR" }], "OMR", "currencies"), id);
