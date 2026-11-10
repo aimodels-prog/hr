@@ -13,7 +13,7 @@ async function asRole(page: Page, userId: string, activeRole: string, path = "/s
   });
 }
 
-test("HR navigation is grouped, searchable and has one home for each page", async ({ page }) => {
+test("HR navigation keeps original modules visible and searchable", async ({ page }) => {
   await asRole(page, "user-rana", "HR");
   const nav = page.getByRole("navigation", { name: "Main navigation", exact: true });
   for (const group of [
@@ -33,9 +33,12 @@ test("HR navigation is grouped, searchable and has one home for each page", asyn
   await nav.getByRole("button", { name: "HR", exact: true }).click();
   await expect(nav.getByRole("link", { name: "HR Approvals", exact: true })).toBeVisible();
   await expect(nav.getByRole("button", { name: "My Work", exact: true })).toHaveCount(0);
+  await nav.getByRole("button", { name: "Time & Leave", exact: true }).click();
+  await expect(nav.getByRole("link", { name: "Time Away", exact: true })).toBeVisible();
+  await expect(nav.getByRole("link", { name: "Visit Approvals", exact: true })).toBeVisible();
   await nav.getByRole("button", { name: "Recruitment", exact: true }).click();
   await expect(nav.getByRole("link", { name: "Candidate Pool", exact: true })).toBeVisible();
-  await expect(nav.getByRole("link", { name: "Offers", exact: true })).toHaveCount(0);
+  await expect(nav.getByRole("link", { name: "Offers", exact: true })).toBeVisible();
   await expect(nav.getByRole("link", { name: "Offer approvals", exact: true })).toHaveCount(0);
   const search = page.getByRole("textbox", { name: "Search menu" });
   await search.fill("offers");
@@ -246,6 +249,8 @@ test("HR and employee workspaces have separate menus and working request views",
   await page.getByRole("button", { name: "My employee workspace", exact: true }).click();
   const nav = page.getByRole("navigation", { name: "Main navigation", exact: true });
   await expect(nav.getByRole("button", { name: "My Work", exact: true })).toBeVisible();
+  await nav.getByRole("button", { name: "My Work", exact: true }).click();
+  await expect(nav.getByRole("link", { name: "Time Away", exact: true })).toBeVisible();
   await expect(nav.getByRole("button", { name: "My Details", exact: true })).toBeVisible();
   await expect(nav.getByRole("button", { name: "Recruitment", exact: true })).toHaveCount(0);
   await page.getByRole("textbox", { name: "Search menu" }).fill("upload passport");
