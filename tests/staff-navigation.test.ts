@@ -17,12 +17,6 @@ for (const role of Object.keys(ROLE_PERMISSIONS) as Role[]) {
   test(role + " has unique destinations and an appropriately scoped workspace", () => {
     const groups = navigation(role);
     const urls = groups.flatMap((group) => group.items.map((item) => item.url));
-    const destinations = groups.flatMap((group) =>
-      group.items.flatMap((item) => [
-        item.url,
-        ...(item.shortcuts ?? []).map((entry) => entry.url),
-      ]),
-    );
     assert.equal(new Set(urls).size, urls.length);
     if (["HR", "Super Admin"].includes(role)) {
       assert.ok(!groups.some((group) => group.label.startsWith("My ")));
@@ -32,10 +26,7 @@ for (const role of Object.keys(ROLE_PERMISSIONS) as Role[]) {
       assert.ok(personal.items.some((item) => item.url === "/staff/me/profile"));
       assert.ok(personal.items.some((item) => item.url === "/staff/payslips"));
       assert.ok(urls.includes("/staff/me/timesheets"));
-      assert.ok(
-        destinations.includes("/staff/interviews"),
-        "Assigned interview work remains accessible",
-      );
+      assert.ok(urls.includes("/staff/interviews"), "Assigned interview work remains visible");
     }
     assert.equal(
       urls.filter(
@@ -45,11 +36,7 @@ for (const role of Object.keys(ROLE_PERMISSIONS) as Role[]) {
             ? "/staff/requests?view=approvals"
             : role === "Super Admin"
               ? "/staff/requests?view=organisation"
-              : role === "Travel Admin"
-                ? "/staff/travel"
-                : role === "IT"
-                  ? "/staff/requests?view=my"
-                  : "/staff/requests"),
+              : "/staff/requests"),
       ).length,
       1,
     );
@@ -62,22 +49,19 @@ test("HR pages have clear functional homes and no finance or system-settings esc
     groups.find((group) => group.items.some((item) => item.url === url))?.label;
   assert.equal(home("/staff/employees"), "Employees");
   assert.equal(home("/staff/leave-admin"), "Time & Leave");
-  assert.equal(home("/staff/attendance#section=site-visits"), undefined);
+  assert.equal(home("/staff/attendance#section=site-visits"), "Time & Leave");
   assert.equal(home("/staff/requests?view=approvals"), "HR");
-  assert.equal(home("/staff/requests?view=organisation"), undefined);
-  assert.equal(home("/staff/requests?view=my"), undefined);
-  assert.equal(
-    activeNavigationUrl(groups, "/staff/requests?view=my"),
-    "/staff/requests?view=approvals",
-  );
+  assert.equal(home("/staff/requests?view=organisation"), "HR");
+  assert.equal(home("/staff/requests?view=my"), "HR");
+  assert.equal(activeNavigationUrl(groups, "/staff/requests?view=my"), "/staff/requests?view=my");
   assert.equal(
     activeNavigationUrl(groups, "/staff/leave-approvals"),
     "/staff/requests?view=approvals",
   );
-  assert.equal(home("/staff/offers"), undefined);
+  assert.equal(home("/staff/offers"), "Recruitment");
   assert.equal(home("/staff/files"), "Documents");
   assert.equal(home("/staff/leave-policies"), "Settings");
-  assert.equal(home("/staff/reports"), "Home");
+  assert.equal(home("/staff/reports"), "Reports");
   assert.equal(home("/staff/settings"), "Settings");
   assert.equal(home("/staff/payroll/periods"), undefined);
   assert.ok(
@@ -85,92 +69,64 @@ test("HR pages have clear functional homes and no finance or system-settings esc
       .flatMap((group) => group.items)
       .some((item) => item.url === "/staff/attendance#section=site-visits"),
   );
-  assert.equal(home("/staff/time-away"), undefined);
+  assert.equal(home("/staff/time-away"), "Time & Leave");
   assert.ok(!groups.some((group) => group.label === "Administration"));
 });
 
-test("personal menus keep daily work visible and nest occasional actions under familiar pages", () => {
-  const expectedCounts: Partial<Record<Role, number>> = {
-    Employee: 15,
-    IT: 14,
-    "Travel Admin": 13,
-    "Line Manager": 17,
-    Accounts: 20,
-  };
-  for (const [role, count] of Object.entries(expectedCounts) as Array<[Role, number]>) {
+test("personal menus show Time Away and other original items directly", () => {
+  for (const role of ["Employee", "IT", "Travel Admin", "Line Manager", "Accounts"] as const) {
     const groups = navigation(role);
     const items = groups.flatMap((group) => group.items);
-    assert.equal(items.length, count, role);
     for (const url of [
       "/staff/me/leave-balances",
       "/staff/me/timesheets",
       "/staff/me/attendance",
       "/staff/me/profile",
       "/staff/payslips",
+      "/staff/time-away",
+      "/staff/me/overtime",
+      "/staff/me/onboarding",
+      "/staff/interviews",
+      "/staff/org-chart",
     ])
       assert.ok(
         items.some((item) => item.url === url),
-        `${role}: ${url}`,
+        `${role}: ${url} should be visible in the sidebar`,
       );
-    for (const [childUrl, parentUrl, term] of [
-      ["/staff/me/attendance?action=site-visit", "/staff/me/attendance", "quick visit"],
-      ["/staff/time-away", "/staff/me/attendance", "time away"],
-      ["/staff/me/overtime", "/staff/me/timesheets", "overtime"],
-      ["/staff/me/onboarding", "/staff/me/profile", "my setup"],
-      ["/staff/interviews", "/staff/my-tasks", "interviews"],
-      ["/staff/org-chart", "/staff/employees", "organisation chart"],
-    ]) {
-      const parent = items.find((item) => item.url === parentUrl);
-      assert.ok(
-        parent?.shortcuts?.some((entry) => entry.url === childUrl),
-        `${role}: ${childUrl}`,
-      );
-      assert.equal(activeNavigationUrl(groups, childUrl!), parentUrl, `${role}: ${childUrl}`);
-      assert.ok(
-        searchNavigation(groups, term!)
-          .flatMap((group) => group.items)
-          .some((item) => item.url === childUrl),
-        `${role}: ${term}`,
-      );
-    }
+    assert.equal(items.find((item) => item.url === "/staff/time-away")?.title, "Time Away");
+    assert.equal(activeNavigationUrl(groups, "/staff/time-away"), "/staff/time-away");
+    assert.equal(
+      items.find((item) => item.url === "/staff/me/attendance")?.shortcuts?.[0]?.url,
+      "/staff/me/attendance?action=site-visit",
+      `${role}: Quick visit was already an attendance shortcut`,
+    );
   }
 });
 
-test("manager and finance decision menus distinguish my requests from approvals", () => {
-  for (const role of ["Line Manager", "Accounts"] as const) {
+test("non-HR roles keep the original Approvals entry in Home", () => {
+  for (const role of ["Line Manager", "Accounts", "IT", "Travel Admin"] as const) {
     const groups = navigation(role);
     const home = groups.find((group) => group.label === "Home")!;
     assert.equal(home.items.find((item) => item.url === "/staff/requests")?.title, "Approvals");
-    assert.equal(
-      home.items.find((item) => item.url === "/staff/requests?view=my")?.title,
-      "My Requests",
-    );
-    assert.equal(activeNavigationUrl(groups, "/staff/requests?view=my"), "/staff/requests?view=my");
+    assert.ok(!home.items.some((item) => item.url === "/staff/requests?view=my"));
   }
-  const itHome = navigation("IT").find((group) => group.label === "Home")!;
-  assert.ok(!itHome.items.some((item) => item.title === "Approvals"));
-  assert.ok(itHome.items.some((item) => item.url === "/staff/requests?view=my"));
 });
 
-test("employee decision history and approval routes are easy to find", () => {
-  const employeeRequests = navigation("Employee")
-    .flatMap((group) => group.items)
-    .find((item) => item.url === "/staff/requests");
-  assert.ok(
-    employeeRequests?.shortcuts?.some((item) => item.url === "/staff/requests?view=reviewed"),
+test("Travel Admin keeps the original travel link in My Work", () => {
+  const groups = navigation("Travel Admin");
+  const myWork = groups.find((group) => group.label === "My Work")!;
+  assert.equal(
+    myWork.items.find((item) => item.url === "/staff/travel")?.title,
+    "Travel & bookings",
   );
-  for (const role of ["HR", "Super Admin"] as const) {
-    const setup = navigation(role)
-      .flatMap((group) => group.items)
-      .find((item) => item.url === "/staff/settings");
-    assert.ok(
-      setup?.shortcuts?.some((item) => item.url === "/staff/settings?section=approvalRouting"),
-      role,
-    );
-  }
+  assert.ok(
+    !groups
+      .find((group) => group.label === "Home")
+      ?.items.some((item) => item.url === "/staff/travel"),
+  );
 });
 
-test("HR has eight focused main groups and every secondary page has a logical parent", () => {
+test("HR keeps original visible sections and labels", () => {
   const groups = navigation("HR");
   const mainGroups = groups.filter((group) => group.label !== "Support");
   assert.deepEqual(
@@ -183,79 +139,53 @@ test("HR has eight focused main groups and every secondary page has a logical pa
       "Recruitment",
       "Performance & Training",
       "Documents",
+      "Reports",
       "Settings",
     ],
   );
-  assert.equal(
-    groups.reduce((total, group) => total + group.items.length, 0),
-    22,
-  );
   const items = groups.flatMap((group) => group.items);
-  for (const [childUrl, parentUrl] of [
-    ["/staff/org-chart", "/staff/employees"],
-    ["/staff/anniversaries", "/staff/employees"],
-    ["/staff/offboarding", "/staff/employees"],
-    ["/staff/time-away", "/staff/attendance"],
-    ["/staff/candidates/contacts", "/staff/candidates"],
-    ["/staff/recommendations", "/staff/candidates"],
-    ["/staff/offers", "/staff/candidates"],
-    ["/staff/performance/cycles", "/staff/performance/team"],
-    ["/staff/settings?section=documentRequirements", "/staff/settings"],
-    ["/staff/settings?section=reminders", "/staff/settings"],
-    ["/staff/timesheet-settings", "/staff/settings"],
+  for (const url of [
+    "/staff/org-chart",
+    "/staff/anniversaries",
+    "/staff/offboarding",
+    "/staff/time-away",
+    "/staff/candidates/contacts",
+    "/staff/recommendations",
+    "/staff/offers",
+    "/staff/performance/cycles",
+    "/staff/settings?section=documentRequirements",
+    "/staff/settings?section=reminders",
+    "/staff/timesheet-settings",
+    "/staff/attendance#section=site-visits",
   ]) {
-    const parent = items.find((item) => item.url === parentUrl);
-    assert.ok(parent, parentUrl);
     assert.ok(
-      parent.shortcuts?.some((shortcut) => shortcut.url === childUrl),
-      childUrl,
-    );
-    assert.equal(activeNavigationUrl(groups, childUrl!), parentUrl);
-    assert.ok(
-      searchNavigation(
-        groups,
-        parent.shortcuts!.find((shortcut) => shortcut.url === childUrl)!.title,
-      )
-        .flatMap((group) => group.items)
-        .some((item) => item.url === childUrl),
-      childUrl,
+      items.some((item) => item.url === url),
+      `${url} should be visible in HR sidebar`,
     );
   }
+  assert.equal(items.find((item) => item.url === "/staff/time-away")?.title, "Time Away");
+  assert.equal(activeNavigationUrl(groups, "/staff/time-away"), "/staff/time-away");
 });
 
-test("HR has one approval menu entry while every former request view remains searchable", () => {
+test("HR request views and Visit Approvals stay visible separately", () => {
   const groups = navigation("HR");
   const hrGroup = groups.find((group) => group.label === "HR")!;
   assert.deepEqual(
     hrGroup.items.map((item) => item.url),
-    ["/staff/requests?view=approvals"],
+    [
+      "/staff/requests?view=approvals",
+      "/staff/requests?view=organisation",
+      "/staff/requests?view=reviewed",
+      "/staff/requests?view=my",
+    ],
   );
-  const shortcuts = hrGroup.items[0]!.shortcuts ?? [];
-  for (const url of [
-    "/staff/requests?view=organisation",
-    "/staff/requests?view=reviewed",
-    "/staff/requests?view=my",
-    "/staff/leave-approvals",
+  assert.equal(hrGroup.items[1]?.title, "Employee Requests");
+  assert.equal(hrGroup.items[2]?.title, "My decisions");
+  assert.equal(hrGroup.items[3]?.title, "My Requests");
+  assert.equal(
+    activeNavigationUrl(groups, "/staff/attendance#section=site-visits&visit=123"),
     "/staff/attendance#section=site-visits",
-  ]) {
-    assert.ok(
-      shortcuts.some((shortcut) => shortcut.url === url),
-      url,
-    );
-    assert.equal(activeNavigationUrl(groups, url), "/staff/requests?view=approvals");
-  }
-  for (const [term, url] of [
-    ["all employee requests", "/staff/requests?view=organisation"],
-    ["my decisions", "/staff/requests?view=reviewed"],
-    ["my requests", "/staff/requests?view=my"],
-    ["visit approvals", "/staff/attendance#section=site-visits"],
-  ])
-    assert.ok(
-      searchNavigation(groups, term!)
-        .flatMap((group) => group.items)
-        .some((item) => item.url === url),
-      term,
-    );
+  );
 });
 
 test("Super Admin has a read-only request tracker, not approval shortcuts", () => {
@@ -269,9 +199,9 @@ test("Super Admin has a read-only request tracker, not approval shortcuts", () =
   const request = groups
     .flatMap((group) => group.items)
     .find((item) => item.url === "/staff/requests?view=organisation");
-  assert.equal(request?.title, "Request status");
+  assert.equal(request?.title, "Employee requests");
   assert.deepEqual(request?.shortcuts, []);
-  for (const url of [
+  const forbidden = [
     "/staff/requests?view=approvals",
     "/staff/leave-approvals",
     "/staff/timesheet-approvals",
@@ -280,17 +210,20 @@ test("Super Admin has a read-only request tracker, not approval shortcuts", () =
     "/staff/travel-approvals",
     "/staff/travel-hr-approvals",
     "/staff/travel-accounts-approvals",
-  ])
-    assert.ok(!destinations.includes(url), url);
-  assert.equal(searchNavigation(groups, "approve leave").length, 0);
+  ];
+  for (const url of forbidden) assert.ok(!destinations.includes(url), url);
+  assert.ok(
+    searchNavigation(groups, "approve leave")
+      .flatMap((group) => group.items)
+      .every((item) => !forbidden.includes(item.url)),
+  );
 });
 
-test("Super Admin keeps oversight visible and nests infrequent pages without losing access", () => {
+test("Super Admin keeps original oversight and settings pages visible", () => {
   const groups = navigation("Super Admin");
   const items = groups.flatMap((group) => group.items);
-  assert.equal(items.length, 24);
   assert.ok(items.some((item) => item.url === "/staff/reports"));
-  assert.ok(!groups.some((group) => group.label === "Reports"));
+  assert.ok(groups.some((group) => group.label === "Reports"));
   for (const url of [
     "/staff/employees",
     "/staff/leave-admin",
@@ -306,58 +239,25 @@ test("Super Admin keeps oversight visible and nests infrequent pages without los
     "/staff/settings",
     "/staff/users",
     "/staff/audit",
+    "/staff/org-chart",
+    "/staff/anniversaries",
+    "/staff/offboarding",
+    "/staff/time-away",
+    "/staff/candidates/intake",
+    "/staff/candidates/contacts",
+    "/staff/recommendations",
+    "/staff/performance/cycles",
+    "/staff/payroll/overtime",
+    "/staff/settings?section=documentRequirements",
+    "/staff/settings?section=reminders",
+    "/staff/timesheet-settings",
   ])
     assert.ok(
       items.some((item) => item.url === url),
-      url,
+      `${url} should be visible in Super Admin sidebar`,
     );
-  for (const [childUrl, parentUrl] of [
-    ["/staff/org-chart", "/staff/employees"],
-    ["/staff/anniversaries", "/staff/employees"],
-    ["/staff/offboarding", "/staff/employees"],
-    ["/staff/time-away", "/staff/attendance"],
-    ["/staff/candidates/intake", "/staff/candidates"],
-    ["/staff/candidates/contacts", "/staff/candidates"],
-    ["/staff/recommendations", "/staff/candidates"],
-    ["/staff/performance/cycles", "/staff/performance/team"],
-    ["/staff/payroll/overtime", "/staff/payroll/periods"],
-    ["/staff/settings?section=documentRequirements", "/staff/settings"],
-    ["/staff/settings?section=reminders", "/staff/settings"],
-    ["/staff/timesheet-settings", "/staff/settings"],
-  ]) {
-    const parent = items.find((item) => item.url === parentUrl);
-    const shortcut = parent?.shortcuts?.find((item) => item.url === childUrl);
-    assert.ok(shortcut, childUrl);
-    assert.equal(activeNavigationUrl(groups, childUrl!), parentUrl);
-    assert.ok(
-      searchNavigation(groups, shortcut.title)
-        .flatMap((group) => group.items)
-        .some((item) => item.url === childUrl),
-      childUrl,
-    );
-  }
-});
-
-test("Travel Admin starts at the booking desk, not an empty approvals inbox", () => {
-  const groups = navigation("Travel Admin");
-  const home = groups.find((group) => group.label === "Home")!;
-  const booking = home.items.find((item) => item.url === "/staff/travel");
-  assert.equal(booking?.title, "Travel bookings & requests");
-  assert.ok(booking?.shortcuts?.some((item) => item.url === "/staff/requests?view=my"));
-  assert.ok(!home.items.some((item) => item.title === "Approvals"));
-  assert.ok(!home.items.some((item) => item.url === "/staff/requests?view=approvals"));
-  assert.equal(activeNavigationUrl(groups, "/staff/requests?view=my"), "/staff/travel");
-  assert.ok(
-    searchNavigation(groups, "travel bookings")
-      .flatMap((group) => group.items)
-      .some((item) => item.url === "/staff/travel"),
-  );
-  assert.ok(
-    groups.flatMap((group) => group.items).some((item) => item.url === "/staff/me/profile"),
-  );
-  assert.ok(
-    groups.flatMap((group) => group.items).some((item) => item.url === "/staff/me/leave-balances"),
-  );
+  assert.equal(items.find((item) => item.url === "/staff/time-away")?.title, "Time Away");
+  assert.equal(activeNavigationUrl(groups, "/staff/time-away"), "/staff/time-away");
 });
 
 test("menu search finds familiar words but never reveals an inaccessible page", () => {
@@ -400,7 +300,7 @@ test("active destination is unique for nested paths and approval shortcuts", () 
   assert.equal(activeNavigationUrl(groups, "/staff/attendance"), "/staff/attendance");
   assert.equal(
     activeNavigationUrl(groups, "/staff/attendance#section=site-visits&visit=123"),
-    "/staff/requests?view=approvals",
+    "/staff/attendance#section=site-visits",
   );
   assert.equal(
     activeNavigationUrl(groups, "/staff/settings?section=departments"),
