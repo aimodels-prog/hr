@@ -44,6 +44,11 @@ test("careers links use readable references and keep old job links usable", asyn
   await page.locator('input[name="location"]').fill("Muscat");
   await page.locator('input[name="yearsOfExperience"]').fill("15");
   await page.locator('input[name="noticePeriod"]').fill("30 days");
+  await page.locator('input[name="currentCompany"]').fill("Not currently employed");
+  await page.locator('input[name="currentTitle"]').fill("Job seeker");
+  await page.locator('select[name="workEligibility"]').selectOption("Need employer sponsorship");
+  await page.locator('input[name="currentSalary"]').fill("0");
+  await page.locator('input[name="salaryExpectation"]').fill("OMR 1,800–2,000");
   const screeningAnswers = page.locator('textarea[name^="screeningAnswers."]');
   for (let index = 0; index < (await screeningAnswers.count()); index += 1) {
     await screeningAnswers.nth(index).fill("Relevant experience");
@@ -122,6 +127,11 @@ test("careers links use readable references and keep old job links usable", asyn
     await page.locator('input[name="location"]').fill("Muscat");
     await page.locator('input[name="yearsOfExperience"]').fill("10");
     await page.locator('input[name="noticePeriod"]').fill("30 days");
+    await page.locator('input[name="currentCompany"]').fill("Self-employed");
+    await page.locator('input[name="currentTitle"]').fill("Logistics Consultant");
+    await page.locator('select[name="workEligibility"]').selectOption("Need employer sponsorship");
+    await page.locator('input[name="currentSalary"]').fill("1500");
+    await page.locator('input[name="salaryExpectation"]').fill("OMR 2,000 monthly");
     const questions = page.locator('textarea[name^="screeningAnswers."]');
     for (let index = 0; index < (await questions.count()); index += 1) {
       await questions.nth(index).fill("Relevant experience");

@@ -19,6 +19,7 @@ import {
   type ProductionCvExtractionResult,
 } from "../../integrations/cv-processing.server.ts";
 import { validatePublicCv } from "../../recruitment/public-application-validation.server.ts";
+import { isValidCurrentSalaryOmr } from "../../recruitment/current-salary.ts";
 import { getDatabaseClient } from "../client.ts";
 import { decryptSensitiveJson, encryptSensitiveJson } from "../encryption.server.ts";
 import { deleteObjectFile, readObjectFile, saveObjectFile } from "../object-storage.server.ts";
@@ -703,6 +704,8 @@ export async function finaliseCandidateCvIntakeInDatabase(
       location: string;
       currentCompany?: string;
       currentTitle?: string;
+      currentSalary: string;
+      expectedSalary: string;
       yearsOfExperience: number;
       skills?: string[];
       education?: string[];
@@ -724,6 +727,10 @@ export async function finaliseCandidateCvIntakeInDatabase(
   const phone = input.candidate.phone.trim();
   if (!input.candidate.firstName.trim() || !input.candidate.lastName.trim() || !email || !phone)
     throw new Error("Name, email and phone number are required.");
+  if (!isValidCurrentSalaryOmr(input.candidate.currentSalary))
+    throw new Error("Enter the candidate's current monthly salary in OMR (0 if not earning).");
+  if (!input.candidate.expectedSalary?.trim())
+    throw new Error("Enter the candidate's expected monthly salary.");
   if (!Number.isInteger(input.candidate.yearsOfExperience) || input.candidate.yearsOfExperience < 0)
     throw new Error("Years of experience must be zero or greater.");
   const db = getDatabaseClient();
@@ -779,6 +786,8 @@ export async function finaliseCandidateCvIntakeInDatabase(
           location: input.candidate.location.trim(),
           currentCompany: input.candidate.currentCompany?.trim() || null,
           currentTitle: input.candidate.currentTitle?.trim() || null,
+          currentSalaryEncrypted: encryptSensitiveJson(input.candidate.currentSalary.trim()),
+          expectedSalaryEncrypted: encryptSensitiveJson(input.candidate.expectedSalary.trim()),
           yearsOfExperience: input.candidate.yearsOfExperience,
           skills: input.candidate.skills ?? [],
           education: input.candidate.education ?? [],
@@ -820,6 +829,8 @@ export async function finaliseCandidateCvIntakeInDatabase(
         location: input.candidate.location.trim(),
         currentCompany: input.candidate.currentCompany?.trim(),
         currentTitle: input.candidate.currentTitle?.trim(),
+        currentSalaryEncrypted: encryptSensitiveJson(input.candidate.currentSalary.trim()),
+        expectedSalaryEncrypted: encryptSensitiveJson(input.candidate.expectedSalary.trim()),
         yearsOfExperience: input.candidate.yearsOfExperience,
         stage: vacancyId ? "Applied" : "Sourced",
         doNotContact: false,
@@ -872,6 +883,7 @@ export async function finaliseCandidateCvIntakeInDatabase(
           status: "New",
           cvFileId: cv.fileId,
           noticePeriod: "To be confirmed",
+          salaryExpectationEncrypted: encryptSensitiveJson(input.candidate.expectedSalary.trim()),
           screeningAnswers: [],
           source: cv.source,
           consentGiven: true,

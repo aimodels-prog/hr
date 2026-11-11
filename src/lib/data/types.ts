@@ -461,6 +461,9 @@ export interface CandidateCvRecord extends BaseRecord {
   notes?: string | undefined;
   reviewedAt?: string | undefined;
   reviewedByUserId?: RecordId | undefined;
+  /** First recorded HR access to the original CV (preview or download). */
+  firstOpenedAt?: string | undefined;
+  firstOpenedBy?: string | undefined;
   recommendationPending?: boolean | undefined;
   recommendationId?: RecordId | undefined;
 }
@@ -642,6 +645,8 @@ export interface CandidateApplication extends BaseRecord {
   vacancyId: RecordId;
   status: ApplicationStatus;
   cvFileId: RecordId;
+  firstCvOpenedAt?: string | undefined;
+  firstCvOpenedBy?: string | undefined;
   coverNote?: string | undefined;
   noticePeriod: string;
   salaryExpectation?: string | undefined;

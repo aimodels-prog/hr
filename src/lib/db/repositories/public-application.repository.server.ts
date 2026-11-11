@@ -17,6 +17,8 @@ import {
 } from "../schema/recruitment.ts";
 import { users } from "../schema/employee.ts";
 import { auditEvents, backgroundJobs, notifications } from "../schema/system.ts";
+import { isValidCurrentSalaryOmr } from "../../recruitment/current-salary.ts";
+import { isValidExistingVisa, isValidWorkEligibility } from "../../recruitment/work-eligibility.ts";
 
 export interface PublicApplicationInput {
   vacancyId: string;
@@ -26,11 +28,14 @@ export interface PublicApplicationInput {
   phone: string;
   nationality?: string | undefined;
   location: string;
-  currentCompany?: string | undefined;
-  currentTitle?: string | undefined;
+  currentCompany: string;
+  currentTitle: string;
   yearsOfExperience: number;
   noticePeriod: string;
-  salaryExpectation?: string | undefined;
+  workEligibility: string;
+  visaStatus?: "Own Visa" | "Company Visa" | "Freelance Visa" | "Other" | undefined;
+  currentSalary: string;
+  salaryExpectation: string;
   screeningAnswers: { question: string; answer: string }[];
   coverNote?: string | undefined;
   consent: boolean;
@@ -58,10 +63,37 @@ export async function submitPublicApplicationToDatabase(
   organisationId: string,
   input: PublicApplicationInput,
 ): Promise<{ referenceId: string; candidateId: string; applicationId: string; jobId: string }> {
-  const db = getDatabaseClient();
   const email = input.email.trim().toLowerCase();
   const phone = normalizePhone(input.phone);
   if (!phone) throw new Error("Enter a valid phone number.");
+  const currentCompany = input.currentCompany?.trim();
+  const currentTitle = input.currentTitle?.trim();
+  const salaryExpectation = input.salaryExpectation?.trim();
+  const currentSalary = input.currentSalary?.trim();
+  if (!currentSalary || !isValidCurrentSalaryOmr(currentSalary)) {
+    throw new Error("Enter your current monthly salary in OMR, or 0 if you are not earning.");
+  }
+  if (!isValidWorkEligibility(input.workEligibility)) {
+    throw new Error("Select your work visa status.");
+  }
+  if (
+    (input.workEligibility === "Valid Oman work visa" && !isValidExistingVisa(input.visaStatus)) ||
+    (input.workEligibility !== "Valid Oman work visa" && input.visaStatus)
+  ) {
+    throw new Error("Select visa details only when you already hold an Oman work visa.");
+  }
+  const visaStatus =
+    input.workEligibility === "Omani citizen"
+      ? "Omani (No Visa Required)"
+      : input.workEligibility === "Need employer sponsorship"
+        ? "Requires Sponsorship"
+        : input.workEligibility === "Valid Oman work visa"
+          ? input.visaStatus
+          : null;
+  if (!currentCompany || !currentTitle || !salaryExpectation) {
+    throw new Error("Current company, current title and monthly salary expectation are required.");
+  }
+  const db = getDatabaseClient();
   const [vacancy] = await db
     .select()
     .from(vacancies)
@@ -149,16 +181,17 @@ export async function submitPublicApplicationToDatabase(
             email,
             phone,
             nationality: input.nationality?.trim() || null,
+            workEligibility: input.workEligibility,
+            visaStatus,
             location: input.location.trim(),
-            currentCompany: input.currentCompany?.trim() || null,
-            currentTitle: input.currentTitle?.trim() || null,
+            currentCompany,
+            currentTitle,
             yearsOfExperience: input.yearsOfExperience,
             stage: "Applied",
             source: "Careers Portal",
             noticePeriod: input.noticePeriod.trim(),
-            expectedSalaryEncrypted: input.salaryExpectation
-              ? encryptSensitiveJson(input.salaryExpectation.trim())
-              : null,
+            currentSalaryEncrypted: encryptSensitiveJson(currentSalary),
+            expectedSalaryEncrypted: encryptSensitiveJson(salaryExpectation),
             cvFileId: documentId,
             consentStatus: input.consent ? "Confirmed" : "Privacy Notice Sent",
             consentUpdatedAt: new Date().toISOString(),
@@ -176,16 +209,17 @@ export async function submitPublicApplicationToDatabase(
           email,
           phone,
           nationality: input.nationality?.trim() || null,
+          workEligibility: input.workEligibility,
+          visaStatus,
           location: input.location.trim(),
-          currentCompany: input.currentCompany?.trim() || null,
-          currentTitle: input.currentTitle?.trim() || null,
+          currentCompany,
+          currentTitle,
           yearsOfExperience: input.yearsOfExperience,
           stage: "Applied",
           source: "Careers Portal",
           noticePeriod: input.noticePeriod.trim(),
-          expectedSalaryEncrypted: input.salaryExpectation
-            ? encryptSensitiveJson(input.salaryExpectation.trim())
-            : null,
+          currentSalaryEncrypted: encryptSensitiveJson(currentSalary),
+          expectedSalaryEncrypted: encryptSensitiveJson(salaryExpectation),
           cvFileId: documentId,
           consentStatus: input.consent ? "Confirmed" : "Privacy Notice Sent",
           consentUpdatedAt: new Date().toISOString(),
@@ -204,9 +238,7 @@ export async function submitPublicApplicationToDatabase(
         cvFileId: documentId,
         coverNote: input.coverNote?.trim() || null,
         noticePeriod: input.noticePeriod.trim(),
-        salaryExpectationEncrypted: input.salaryExpectation
-          ? encryptSensitiveJson(input.salaryExpectation.trim())
-          : null,
+        salaryExpectationEncrypted: encryptSensitiveJson(salaryExpectation),
         screeningAnswers: input.screeningAnswers,
         source: "Careers Portal",
         consentGiven: input.consent,

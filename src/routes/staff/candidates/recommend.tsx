@@ -31,6 +31,7 @@ import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { CandidateService } from "@/lib/data/candidate-service";
 import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
 import { VacancyService } from "@/lib/data/vacancy-service";
+import { isValidCurrentSalaryOmr } from "@/lib/recruitment/current-salary";
 import type { Candidate, CandidateCvRecord } from "@/lib/data/types";
 import { toast } from "sonner";
 
@@ -60,6 +61,11 @@ const formSchema = z
     location: z.string().min(1, "Location is required"),
     currentCompany: z.string().optional(),
     currentTitle: z.string().optional(),
+    currentSalary: z
+      .string()
+      .trim()
+      .refine(isValidCurrentSalaryOmr, "Enter current monthly salary in OMR (0 if not earning)"),
+    expectedSalary: z.string().trim().min(1, "Enter expected monthly salary").max(200),
     yearsOfExperience: z.number().min(0, "Must be zero or more"),
     recommenderType: z.enum([
       "Agency",
@@ -125,6 +131,8 @@ function RecommendCandidate() {
       location: linkedIntake?.extractedFields.location || "",
       currentCompany: linkedIntake?.extractedFields.currentCompany || "",
       currentTitle: linkedIntake?.extractedFields.currentTitle || "",
+      currentSalary: "",
+      expectedSalary: "",
       yearsOfExperience: linkedIntake?.extractedFields.yearsOfExperience || 0,
       recommenderType: "Employee Referral",
       recommenderName: "",
@@ -197,6 +205,8 @@ function RecommendCandidate() {
             location: values.location,
             ...(values.currentCompany ? { currentCompany: values.currentCompany } : {}),
             ...(values.currentTitle ? { currentTitle: values.currentTitle } : {}),
+            currentSalary: values.currentSalary,
+            expectedSalary: values.expectedSalary,
             yearsOfExperience: values.yearsOfExperience,
             ...(intake.extractedFields.skills ? { skills: intake.extractedFields.skills } : {}),
             ...(intake.extractedFields.education
@@ -511,6 +521,36 @@ function RecommendCandidate() {
                     <FormLabel>Current Title</FormLabel>
                     <FormControl>
                       <Input {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="currentSalary"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Current Salary (Monthly, OMR) *</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        inputMode="decimal"
+                        placeholder="e.g. 1500; 0 if not earning"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="expectedSalary"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Expected Salary (Monthly) *</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="e.g. OMR 1800-2000" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

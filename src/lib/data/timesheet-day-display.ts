@@ -45,7 +45,7 @@ export function formatSignedHours(hours: number): string {
   return `${rounded > 0 ? "+" : ""}${rounded} h`;
 }
 
-/** Count approved remote-work dates without adding fictitious worked or paid-leave hours. */
+/** Count approved remote-work dates independently of biometric attendance and paid leave. */
 export function countTimesheetRemoteWorkDays({
   startDate,
   endDate,

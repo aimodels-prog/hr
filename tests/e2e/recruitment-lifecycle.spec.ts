@@ -28,11 +28,13 @@ test("public application progresses through shortlist, interview, offer and onbo
     noticePeriod: "30 days",
     currentCompany: "Global Freight",
     currentTitle: "Logistics Manager",
+    currentSalary: "7000",
     salaryExpectation: "18000",
   };
   for (const [name, value] of Object.entries(fields)) {
     await page.locator(`input[name="${name}"]`).fill(value);
   }
+  await page.locator('select[name="workEligibility"]').selectOption("Need employer sponsorship");
   const textareas = page.locator("textarea");
   for (let index = 0; index < (await textareas.count()); index += 1) {
     await textareas.nth(index).fill("Yes, with evidence from regional logistics operations.");
@@ -124,8 +126,34 @@ test("public application progresses through shortlist, interview, offer and onbo
   expect(intake.cv.extractedFields.skills).toContain("logistics");
   expect(["Ready", "Needs Review"]).toContain(intake.application.preparationStatus);
 
+  await page.goto(`/staff/candidates/${intake.candidate.id}`);
+  await page.getByRole("link", { name: /^Applications \(/ }).click();
+  await page.getByRole("button", { name: "Mark not suitable" }).click();
+  await page
+    .getByLabel("Private HR remark")
+    .fill("Required role experience is not shown in this CV");
+  await page.getByRole("dialog").getByRole("button", { name: "Mark not suitable" }).click();
+  await expect(page.getByText("Not suitable", { exact: true }).first()).toBeVisible();
+  await page.getByRole("link", { name: /^Applications \(/ }).click();
+  await page.getByRole("button", { name: "Restore to review" }).click();
+
   await page.goto("/staff/vacancies");
   await page.getByText("Logistics Operations Lead", { exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Page sections" })
+    .getByRole("link", { name: /^Applications \(/ })
+    .click();
+  await page.getByRole("textbox", { name: "Search applications" }).fill(candidateEmail);
+  await page
+    .locator("#vacancy-application-list")
+    .getByRole("link", { name: candidateName, exact: true })
+    .click();
+  await expect(page.getByRole("link", { name: "Back to applications" })).toBeVisible();
+  await expect(page.getByText("Candidate 1 of 1")).toBeVisible();
+  await page.getByRole("link", { name: "Back to applications" }).click();
+  await expect(page.getByRole("textbox", { name: "Search applications" })).toHaveValue(
+    candidateEmail,
+  );
   await page
     .getByRole("navigation", { name: "Page sections" })
     .getByRole("link", { name: "CV analysis (optional)" })
@@ -161,6 +189,7 @@ test("public application progresses through shortlist, interview, offer and onbo
 
   await page.goto(`/staff/candidates/${intake.candidate.id}`);
   await expect(page.getByText("Candidate details")).toBeVisible();
+  await expect(page.getByText("Logistics Manager at Global Freight")).toBeVisible();
   await page.getByRole("link", { name: /^Applications \(/ }).click();
   await expect(page.getByText("Submitted answers")).toBeVisible();
   await expect(page.getByText("Salary expectation")).toBeVisible();
@@ -168,7 +197,11 @@ test("public application progresses through shortlist, interview, offer and onbo
   await expect(
     page.getByText("Yes, with evidence from regional logistics operations.").first(),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Download submitted CV" })).toBeVisible();
+  await page.getByRole("button", { name: "Preview CV" }).first().click();
+  await expect(page.getByRole("dialog", { name: /Browser-Candidate\.pdf/ })).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "Close" }).click();
+  await expect(page.getByText(/Opened by .* on/).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Download original" }).first()).toBeVisible();
   await page.getByRole("link", { name: /^Interviews \(/ }).click();
   const templateName = await page.evaluate(async (suffix) => {
     const actor = {

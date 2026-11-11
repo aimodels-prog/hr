@@ -33,10 +33,12 @@ test("CV ZIP exports portal uploads together with original bytes and protects ac
       noticePeriod: "30 days",
       currentCompany: "Test Company",
       currentTitle: "Manager",
+      currentSalary: "7000",
       salaryExpectation: "18000",
     };
     for (const [name, value] of Object.entries(fields))
       await page.locator(`input[name="${name}"]`).fill(value);
+    await page.locator('select[name="workEligibility"]').selectOption("Need employer sponsorship");
     const areas = page.locator("textarea");
     for (let item = 0; item < (await areas.count()); item++)
       await areas.nth(item).fill("Relevant professional experience with evidence.");

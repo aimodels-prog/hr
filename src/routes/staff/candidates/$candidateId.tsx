@@ -63,6 +63,9 @@ import {
 } from "@/components/ui/select";
 import { CandidateService } from "@/lib/data/candidate-service";
 import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
+import { CandidateCvActions } from "@/components/recruitment/candidate-cv-actions";
+import { setCandidateCvSuitabilityFn } from "@/lib/server-functions/candidate.server";
+import { readCandidateReviewQueue } from "@/lib/recruitment/candidate-review-queue";
 import { VacancyService } from "@/lib/data/vacancy-service";
 import { InterviewService } from "@/lib/data/interview-service";
 import {
@@ -80,7 +83,6 @@ import { InterviewDispositionActions } from "@/components/interviews/interview-d
 import { ScorecardForm } from "@/components/interviews/scorecard-form";
 import { AuditViewer } from "@/components/audit-viewer";
 import { ScoreBadge } from "@/components/score-badge";
-import { getApplicationDataServices } from "@/lib/data/application-data";
 import { getProjectRepository } from "@/lib/data/master-data";
 import { toast } from "sonner";
 import { useForm } from "react-hook-form";
@@ -184,6 +186,9 @@ function ProfileList({ label, values }: { label: string; values?: string[] | und
 }
 
 export const Route = createFileRoute("/staff/candidates/$candidateId")({
+  validateSearch: (search: Record<string, unknown>): { fromVacancy?: string } => ({
+    ...(typeof search["fromVacancy"] === "string" ? { fromVacancy: search["fromVacancy"] } : {}),
+  }),
   loader: ({ params }) => ({ candidateId: params.candidateId }),
   component: CandidateProfileWrapper,
 });
@@ -192,6 +197,7 @@ type DetailedCandidate = ReturnType<CandidateService["getDetailedCandidates"]>[n
 
 function CandidateProfileWrapper() {
   const { candidateId } = Route.useLoaderData();
+  const { fromVacancy } = Route.useSearch();
   const currentUser = useCurrentUser();
   const [candidateService] = useState(() => new CandidateService());
   const [candidate, setCandidate] = useState<DetailedCandidate | null>(null);
@@ -254,6 +260,7 @@ function CandidateProfileWrapper() {
       ) : candidate ? (
         <CandidateProfile
           candidate={candidate}
+          fromVacancy={fromVacancy}
           onRefresh={() => setReloadToken((value) => value + 1)}
         />
       ) : (
@@ -279,9 +286,11 @@ function CandidateProfileWrapper() {
 
 function CandidateProfile({
   candidate,
+  fromVacancy,
   onRefresh,
 }: {
   candidate: DetailedCandidate;
+  fromVacancy?: string | undefined;
   onRefresh: () => void;
 }) {
   const currentUser = useCurrentUser();
@@ -295,6 +304,21 @@ function CandidateProfile({
   const [scorecardService] = useState(() => new ScorecardService());
   const [offerService] = useState(() => new OfferService());
   const [empService] = useState(() => new EmployeeService());
+
+  const reviewQueue = fromVacancy ? readCandidateReviewQueue(fromVacancy) : null;
+  const reviewCandidateIds = reviewQueue?.candidateIds.includes(candidate.id)
+    ? reviewQueue.candidateIds
+    : fromVacancy
+      ? candidateService
+          .getApplicationRepository()
+          .list()
+          .filter((application) => application.vacancyId === fromVacancy)
+          .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+          .map((application) => application.candidateId)
+      : [];
+  const reviewIndex = reviewCandidateIds.indexOf(candidate.id);
+  const previousCandidateId = reviewIndex > 0 ? reviewCandidateIds[reviewIndex - 1] : undefined;
+  const nextCandidateId = reviewIndex >= 0 ? reviewCandidateIds[reviewIndex + 1] : undefined;
 
   const vacancies = useMemo(() => vacancyService.getVacancyRepository().list(), [vacancyService]);
   const panelUserById = new Map(
@@ -530,6 +554,9 @@ function CandidateProfile({
   });
 
   const [isRecDialogOpen, setIsRecDialogOpen] = useState(false);
+  const [reviewApplicationId, setReviewApplicationId] = useState<string | null>(null);
+  const [reviewRemark, setReviewRemark] = useState("");
+  const [reviewSaving, setReviewSaving] = useState(false);
   const recForm = useForm<z.infer<typeof recommendationFormSchema>>({
     resolver: zodResolver(recommendationFormSchema),
     defaultValues: {
@@ -646,44 +673,40 @@ function CandidateProfile({
     latestContact.contactedByUserId !== currentUser.userId &&
     Date.now() - new Date(latestContact.date).getTime() < 48 * 60 * 60 * 1000;
 
-  const downloadCv = async (fileId: string) => {
+  const saveNotSuitable = async (applicationId: string, decision: "not-suitable" | "restore") => {
+    const application = candidate.applications.find((item) => item.id === applicationId);
+    const vacancy = vacancies.find((item) => item.id === application?.vacancyId);
+    if (!application || !vacancy) return;
+    setReviewSaving(true);
     try {
-      const { files } = getApplicationDataServices();
-      const meta = await files.getMetadata(fileId);
-      const blob = await files.getBlob(fileId);
-      if (!meta || !blob) {
-        toast.error("File not found");
-        return;
-      }
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = meta.name;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (e) {
-      toast.error("Failed to download CV");
-    }
-  };
-
-  const downloadCandidateCv = async (cvRecordId: string) => {
-    try {
-      const { metadata, blob } = await candidatePoolService.getCvFile(cvRecordId, {
-        ...currentUser.getActorContext(),
-        reason: "Downloaded a candidate CV from the Candidate Pool",
+      await setCandidateCvSuitabilityFn({
+        data: {
+          actor: {
+            actorId: currentUser.userId,
+            ...(currentUser.workspaceEmail ? { actorEmail: currentUser.workspaceEmail } : {}),
+            activeRole: currentUser.activeRole,
+          },
+          vacancyId: vacancy.databaseId ?? vacancy.id,
+          candidateId: candidate.id,
+          decision,
+          remark: decision === "not-suitable" ? reviewRemark.trim() : "",
+        },
       });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = metadata.name;
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      await candidateService.hydrateCompatibilityCache(currentUser.getActorContext());
+      setReviewApplicationId(null);
+      setReviewRemark("");
+      toast.success(
+        decision === "not-suitable"
+          ? "Marked not suitable for this vacancy."
+          : "Candidate restored to review.",
+      );
+      refresh();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "The CV could not be downloaded.");
+      toast.error(
+        error instanceof Error ? error.message : "The review decision could not be saved.",
+      );
+    } finally {
+      setReviewSaving(false);
     }
   };
 
@@ -749,13 +772,73 @@ function CandidateProfile({
               </Button>
             </>
           )}
-          <Button asChild variant="ghost" size="icon">
-            <Link to="/staff/candidates">
-              <ArrowLeft className="h-4 w-4" />
-            </Link>
-          </Button>
+          {!fromVacancy && (
+            <Button asChild variant="ghost" size="icon">
+              <Link to="/staff/candidates" aria-label="Back to Candidate Pool">
+                <ArrowLeft className="h-4 w-4" />
+              </Link>
+            </Button>
+          )}
         </div>
       </div>
+
+      {fromVacancy && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="outline" size="sm" asChild>
+              <Link
+                to="/staff/vacancies/$vacancyId"
+                params={{ vacancyId: fromVacancy }}
+                hash="applications"
+              >
+                <ArrowLeft className="mr-2 h-4 w-4" /> Back to applications
+              </Link>
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              {vacancies.find((item) => item.id === fromVacancy)?.title ?? "Vacancy review"}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {reviewIndex >= 0 && (
+              <span className="mr-2 text-sm text-muted-foreground">
+                Candidate {reviewIndex + 1} of {reviewCandidateIds.length}
+              </span>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!previousCandidateId}
+              onClick={() => {
+                if (previousCandidateId)
+                  void navigate({
+                    to: "/staff/candidates/$candidateId",
+                    params: { candidateId: previousCandidateId },
+                    search: { fromVacancy },
+                    hash: "applications",
+                  });
+              }}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!nextCandidateId}
+              onClick={() => {
+                if (nextCandidateId)
+                  void navigate({
+                    to: "/staff/candidates/$candidateId",
+                    params: { candidateId: nextCandidateId },
+                    search: { fromVacancy },
+                    hash: "applications",
+                  });
+              }}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-6">
         <aside className="space-y-6">
@@ -868,7 +951,7 @@ function CandidateProfile({
                   <ProfileList label="Talent Pools" values={candidate.talentPools} />
                   <div>
                     <p className="text-xs font-medium text-muted-foreground">
-                      Availability & work eligibility
+                      Availability & work visa status
                     </p>
                     <p className="mt-1 text-sm font-medium">
                       {[candidate.availability, candidate.workEligibility]
@@ -1314,7 +1397,12 @@ function CandidateProfile({
                 </Card>
               ) : (
                 [...candidate.applications]
-                  .sort((first, second) => second.createdAt.localeCompare(first.createdAt))
+                  .sort(
+                    (first, second) =>
+                      Number(second.vacancyId === fromVacancy) -
+                        Number(first.vacancyId === fromVacancy) ||
+                      second.createdAt.localeCompare(first.createdAt),
+                  )
                   .map((app) => {
                     const vacancy = vacancies.find((v) => v.id === app.vacancyId);
                     const submittedCv = cvRecords.find((record) => record.applicationId === app.id);
@@ -1329,7 +1417,12 @@ function CandidateProfile({
                               Applied on {new Date(app.createdAt).toLocaleDateString()}
                             </CardDescription>
                           </div>
-                          <Badge>{app.status}</Badge>
+                          <Badge>
+                            {app.status === "Rejected" &&
+                            app.screeningDecision?.startsWith("Not suitable: ")
+                              ? "Not suitable"
+                              : app.status}
+                          </Badge>
                         </CardHeader>
                         <CardContent className="space-y-5">
                           <div className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
@@ -1413,18 +1506,39 @@ function CandidateProfile({
                             )}
                           </div>
 
-                          <div className="flex flex-wrap gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() =>
-                                submittedCv
-                                  ? downloadCandidateCv(submittedCv.id)
-                                  : downloadCv(app.cvFileId)
+                          <div className="flex flex-wrap items-center gap-2">
+                            <CandidateCvActions
+                              {...(submittedCv
+                                ? { cvRecordId: submittedCv.id }
+                                : { applicationId: app.id })}
+                              fileName={
+                                submittedCv?.originalFileName ??
+                                `Application CV (${app.referenceId})`
                               }
-                            >
-                              <FileText className="mr-2 h-4 w-4" /> Download submitted CV
-                            </Button>
+                              firstOpenedAt={app.firstCvOpenedAt ?? submittedCv?.firstOpenedAt}
+                              firstOpenedBy={app.firstCvOpenedBy ?? submittedCv?.firstOpenedBy}
+                            />
+                            {currentUser.can("recruitment:manage_candidates") &&
+                              ["New", "On Hold"].includes(app.status) && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setReviewApplicationId(app.id)}
+                                >
+                                  Mark not suitable
+                                </Button>
+                              )}
+                            {currentUser.can("recruitment:manage_candidates") &&
+                              app.status === "Rejected" &&
+                              app.screeningDecision?.startsWith("Not suitable: ") && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => void saveNotSuitable(app.id, "restore")}
+                                >
+                                  Restore to review
+                                </Button>
+                              )}
                             <Button variant="outline" size="sm" asChild>
                               <Link
                                 to="/staff/vacancies/$vacancyId"
@@ -1485,13 +1599,12 @@ function CandidateProfile({
                               Confirm Information
                             </Button>
                           )}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => downloadCandidateCv(record.id)}
-                          >
-                            <ArrowLeft className="mr-2 h-4 w-4 rotate-[270deg]" /> Download
-                          </Button>
+                          <CandidateCvActions
+                            cvRecordId={record.id}
+                            fileName={record.originalFileName}
+                            firstOpenedAt={record.firstOpenedAt}
+                            firstOpenedBy={record.firstOpenedBy}
+                          />
                         </div>
                       </div>
                     ))}
@@ -1514,13 +1627,12 @@ function CandidateProfile({
                               </p>
                             </div>
                           </div>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => downloadCv(app.cvFileId)}
-                          >
-                            <ArrowLeft className="mr-2 h-4 w-4 rotate-[270deg]" /> Download
-                          </Button>
+                          <CandidateCvActions
+                            applicationId={app.id}
+                            fileName={`Application CV (${app.referenceId})`}
+                            firstOpenedAt={app.firstCvOpenedAt}
+                            firstOpenedBy={app.firstCvOpenedBy}
+                          />
                         </div>
                       ))}
                     {cvRecords.length === 0 && candidate.applications.length === 0 && (
@@ -2514,6 +2626,48 @@ function CandidateProfile({
           </Tabs>
         </div>
       </div>
+      <Dialog
+        open={reviewApplicationId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setReviewApplicationId(null);
+            setReviewRemark("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Mark CV not suitable</DialogTitle>
+            <DialogDescription>
+              This moves only this application to Not suitable. Add a job-related reason for HR's
+              future review; no rejection email is sent automatically.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="cv-suitability-remark">Private HR remark</Label>
+            <Textarea
+              id="cv-suitability-remark"
+              value={reviewRemark}
+              maxLength={500}
+              onChange={(event) => setReviewRemark(event.target.value)}
+              placeholder="For example: required building-site supervision experience is not shown"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReviewApplicationId(null)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={reviewSaving || reviewRemark.trim().length < 5}
+              onClick={() =>
+                reviewApplicationId && void saveNotSuitable(reviewApplicationId, "not-suitable")
+              }
+            >
+              {reviewSaving ? "Saving..." : "Mark not suitable"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <InterviewDialog
         open={isInterviewDialogOpen}
         onOpenChange={setIsInterviewDialogOpen}

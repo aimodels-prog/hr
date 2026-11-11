@@ -1,6 +1,8 @@
 import "@tanstack/react-start/server-only";
 
 import * as z from "zod";
+import { isValidCurrentSalaryOmr } from "./current-salary.ts";
+import { EXISTING_VISA_OPTIONS, WORK_ELIGIBILITY_OPTIONS } from "./work-eligibility.ts";
 
 export const PublicApplicationSchema = z
   .object({
@@ -11,11 +13,14 @@ export const PublicApplicationSchema = z
     phone: z.string().trim().min(5).max(40),
     nationality: z.string().trim().max(100).optional(),
     location: z.string().trim().min(1).max(200),
-    currentCompany: z.string().trim().max(200).optional(),
-    currentTitle: z.string().trim().max(200).optional(),
+    currentCompany: z.string().trim().min(1).max(200),
+    currentTitle: z.string().trim().min(1).max(200),
     yearsOfExperience: z.number().int().min(0).max(80),
     noticePeriod: z.string().trim().min(1).max(200),
-    salaryExpectation: z.string().trim().max(200).optional(),
+    workEligibility: z.enum(WORK_ELIGIBILITY_OPTIONS),
+    visaStatus: z.enum(EXISTING_VISA_OPTIONS).optional(),
+    currentSalary: z.string().trim().refine(isValidCurrentSalaryOmr),
+    salaryExpectation: z.string().trim().min(1).max(200),
     screeningAnswers: z
       .array(z.object({ question: z.string().trim().min(1), answer: z.string().trim().min(1) }))
       .max(30),
@@ -25,7 +30,23 @@ export const PublicApplicationSchema = z
     mimeType: z.string().trim().max(150),
     fileBase64: z.string().min(1).max(14_000_000),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.workEligibility === "Valid Oman work visa" && !value.visaStatus) {
+      context.addIssue({
+        code: "custom",
+        path: ["visaStatus"],
+        message: "Select the type of Oman work visa you hold.",
+      });
+    }
+    if (value.workEligibility !== "Valid Oman work visa" && value.visaStatus) {
+      context.addIssue({
+        code: "custom",
+        path: ["visaStatus"],
+        message: "Visa details are only needed if you already hold a work visa.",
+      });
+    }
+  });
 
 export type PublicApplicationPayload = z.infer<typeof PublicApplicationSchema>;
 

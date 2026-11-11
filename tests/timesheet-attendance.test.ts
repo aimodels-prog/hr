@@ -328,7 +328,7 @@ test("paid leave credits configured eight work hours while unpaid leave covers a
   assert.equal(timesheets.submitTimesheet(sheet.id, employee).status, "Pending Manager");
 });
 
-test("approved remote work is visible but still needs actual work hours, not a biometric punch", () => {
+test("approved remote work fills a full scheduled day without a biometric punch or double count", () => {
   const { attendance, timesheets, period, storage } = harness();
   storage.writeCollection("leave_requests", [
     {
@@ -354,17 +354,20 @@ test("approved remote work is visible but still needs actual work hours, not a b
     addAttendance(attendance, date);
   const sheet = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
   const remote = sheet.entries.find((entry) => entry.isRemoteWork);
-  assert.equal(remote?.hours["2026-08-17"], 0);
+  assert.equal(remote?.hours["2026-08-17"], 8);
   assert.equal(remote?.hours["2026-08-22"], 0);
   assert.equal(sheet.expectedHours, 40);
   const before = timesheets.getPeriodSummary("employee-omar", period, sheet);
-  assert.equal(before.workedHours, 32);
+  assert.equal(before.workedHours, 40);
   assert.equal(before.paidLeaveHours, 0);
+  assert.equal(before.creditedHours, 40);
   const remoteDayBefore = timesheets
     .reconcileAttendance(sheet)
     .days.find((day) => day.date === "2026-08-17");
-  assert.equal(remoteDayBefore?.status, "Missing Timesheet");
+  assert.equal(remoteDayBefore?.status, "Matched");
   assert.equal(remoteDayBefore?.requiresExplanation, false);
+  assert.equal(remoteDayBefore?.attendanceHours, 0);
+  assert.equal(remoteDayBefore?.timesheetWorkHours, 8);
   const weekendBefore = timesheets
     .reconcileAttendance(sheet)
     .days.find((day) => day.date === "2026-08-22");
@@ -384,6 +387,28 @@ test("approved remote work is visible but still needs actual work hours, not a b
   assert.equal(summary.paidLeaveHours, 0);
   assert.equal(summary.workedHours, 40);
   assert.equal(timesheets.submitTimesheet(saved.id, employee).status, "Pending Manager");
+});
+
+test("half-day remote work and four office hours fill one day, not two", () => {
+  const { attendance, timesheets, period, storage } = harness();
+  storage.writeCollection("leave_requests", [
+    {
+      id: "half-remote-work",
+      employeeId: "employee-omar",
+      startDate: "2026-08-17",
+      endDate: "2026-08-17",
+      isHalfDay: true,
+      status: "Approved",
+      policySnapshot: { name: "Remote Work Day", type: "Remote", isPaid: true },
+    },
+  ]);
+  addAttendance(attendance, "2026-08-17", "14:00");
+  const sheet = timesheets.getOrCreateTimesheet("employee-omar", period.id, employee);
+  const day = timesheets.reconcileAttendance(sheet).days.find((row) => row.date === "2026-08-17");
+  assert.equal(day?.attendanceHours, 4);
+  assert.equal(day?.timesheetWorkHours, 8);
+  assert.equal(day?.status, "Matched");
+  assert.equal(timesheets.getPeriodSummary("employee-omar", period, sheet).creditedHours, 8);
 });
 
 test("a half-day leave and full punch show actual work without double-crediting leave", () => {

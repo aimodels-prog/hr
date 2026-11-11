@@ -444,7 +444,7 @@ function TimesheetEntryRoute() {
               <p className="mt-2 max-w-2xl">
                 Complete attendance can fill work hours automatically. Your scheduled break is
                 excluded. Green means the daily target is met, not that overtime is approved. Paid
-                leave adds credit; unpaid leave does not.
+                leave and approved remote work count toward the target; unpaid leave does not.
               </p>
             </details>
           </CardHeader>
@@ -635,7 +635,9 @@ function TimesheetEntryRoute() {
               )}
               {focusedHoliday && <p className="mt-2">Public holiday</p>}
               {focusedRemoteWork && (
-                <p className="mt-2">Remote Work approved. Actual working hours remain separate.</p>
+                <p className="mt-2">
+                  Approved remote work counts toward your scheduled work hours.
+                </p>
               )}
               {focusedLeaveRequests.map((request) => (
                 <p key={request.id} className="mt-2">

@@ -42,7 +42,10 @@ import {
   reviewAssignedOfferInDatabase,
   listAssignedOfferReviewsInDatabase,
 } from "../src/lib/db/repositories/recruitment-offer.repository.server.ts";
-import { listPanelInterviewReadSnapshot } from "../src/lib/db/repositories/recruitment-read.repository.server.ts";
+import {
+  listPanelInterviewReadSnapshot,
+  listRecruitmentReadSnapshot,
+} from "../src/lib/db/repositories/recruitment-read.repository.server.ts";
 import {
   calendarDateInZone,
   interviewSlotFromLocalTime,
@@ -135,8 +138,12 @@ test(
         email: `database.applicant.${unique}@example.test`,
         phone: `+97150${Math.floor(10_000_000 + Math.random() * 89_999_999)}`,
         location: "Dubai",
+        currentCompany: "Global Cargo",
+        currentTitle: "Logistics Manager",
         yearsOfExperience: 7,
         noticePeriod: "30 days",
+        workEligibility: "Need employer sponsorship",
+        currentSalary: "7000",
         salaryExpectation: "AED 18,000",
         screeningAnswers: [],
         consent: true,
@@ -185,6 +192,24 @@ test(
         SELECT salary_expectation_encrypted FROM candidate_applications WHERE id = ${result.applicationId}
       `;
       assert.ok(!String(ciphertext.salary_expectation_encrypted).includes("18,000"));
+      const [storedCandidate] = await sql`
+        SELECT current_company, current_title, current_salary_encrypted, expected_salary_encrypted
+        FROM candidates WHERE id = ${result.candidateId}
+      `;
+      assert.equal(storedCandidate.current_company, "Global Cargo");
+      assert.equal(storedCandidate.current_title, "Logistics Manager");
+      assert.ok(!String(storedCandidate.current_salary_encrypted).includes("7000"));
+      assert.ok(!String(storedCandidate.expected_salary_encrypted).includes("18,000"));
+      const hrSnapshot = await listRecruitmentReadSnapshot(String(vacancy.organisation_id));
+      const hrCandidate = hrSnapshot.candidates.find((item) => item.id === result.candidateId);
+      const hrApplication = hrSnapshot.applications.find(
+        (item) => item.id === result.applicationId,
+      );
+      assert.equal(hrCandidate?.currentCompany, "Global Cargo");
+      assert.equal(hrCandidate?.currentTitle, "Logistics Manager");
+      assert.equal(hrCandidate?.currentSalary, "7000");
+      assert.equal(hrCandidate?.expectedSalary, "AED 18,000");
+      assert.equal(hrApplication?.salaryExpectation, "AED 18,000");
 
       const [queuedJob] = await sql`
         SELECT bj.id, bj.status
@@ -233,6 +258,27 @@ test(
         activeRole: "HR" as const,
         roles: ["Employee", "HR"] as const,
       };
+      await sql`
+        INSERT INTO audit_events (
+          organisation_id, actor_user_id, actor_employee_id, actor_display_name,
+          active_role, actor_roles, action, module, entity_type, entity_id, reason, risk_level
+        ) VALUES (
+          ${vacancy.organisation_id}, ${hr.id}, ${hr.employee_id}, ${hr.display_name},
+          'HR', ARRAY['Employee', 'HR']::text[], 'candidate_cv_opened', 'recruitment',
+          'recruitment-document', ${file.id}, 'Opened CV preview', 'Medium'
+        )
+      `;
+      const openedSnapshot = await listRecruitmentReadSnapshot(String(vacancy.organisation_id));
+      const openedApplication = openedSnapshot.applications.find(
+        (item) => item.id === result.applicationId,
+      );
+      const openedCv = openedSnapshot.candidateCvRecords.find(
+        (item) => item.applicationId === result.applicationId,
+      );
+      assert.ok(openedApplication?.firstCvOpenedAt);
+      assert.equal(openedApplication.firstCvOpenedBy, String(hr.display_name));
+      assert.ok(openedCv?.firstOpenedAt);
+      assert.equal(openedCv.firstOpenedBy, String(hr.display_name));
       const directSelectionCandidateId = randomUUID();
       const directSelectionApplicationId = randomUUID();
       await sql`

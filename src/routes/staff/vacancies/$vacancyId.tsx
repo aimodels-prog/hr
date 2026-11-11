@@ -89,6 +89,10 @@ import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
 import { PreliminaryScoreExplanation } from "@/components/recruitment/preliminary-score-explanation";
 import { applicationList } from "@/lib/recruitment/application-lists";
 import {
+  readCandidateReviewQueue,
+  saveCandidateReviewQueue,
+} from "@/lib/recruitment/candidate-review-queue";
+import {
   setCandidateCvSuitabilityFn,
   selectCandidateForInterviewFn,
   shortlistCandidateApplicationFn,
@@ -191,6 +195,24 @@ function VacancyDetailRoute() {
   const [shortlistingCandidateId, setShortlistingCandidateId] = useState<string | null>(null);
   const [pipelineView, setPipelineView] = useState<"all" | "shortlisted" | "interview">("all");
   const [pipelineSearch, setPipelineSearch] = useState("");
+
+  useEffect(() => {
+    const saved = readCandidateReviewQueue(vacancy.id);
+    if (!saved) return;
+    setActiveTab("applications");
+    setApplicationSearch(saved.applicationSearch);
+    setApplicationSource(saved.applicationSource);
+    setApplicationView(saved.applicationView);
+    setApplicationSort(saved.applicationSort);
+    setPipelineView(saved.pipelineView);
+    setPipelineSearch(saved.pipelineSearch);
+    const timer = window.setTimeout(() => {
+      window.scrollTo({ top: saved.scrollY, behavior: "auto" });
+      const list = document.getElementById("vacancy-application-list");
+      if (list) list.scrollTop = saved.listScrollTop;
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [vacancy.id]);
 
   const serverActor = useMemo(
     () => ({
@@ -421,6 +443,22 @@ function VacancyDetailRoute() {
       .toLowerCase()
       .includes(reviewSearch.trim().toLowerCase());
   });
+
+  const rememberReviewQueue = (orderedIds: string[], tab: "pipeline" | "applications") => {
+    saveCandidateReviewQueue({
+      vacancyId: vacancy.id,
+      candidateIds: orderedIds,
+      tab,
+      applicationSearch,
+      applicationSource,
+      applicationView,
+      applicationSort,
+      pipelineView,
+      pipelineSearch,
+      scrollY: window.scrollY,
+      listScrollTop: document.getElementById("vacancy-application-list")?.scrollTop ?? 0,
+    });
+  };
 
   const form = useForm<z.infer<typeof transitionSchema>>({
     resolver: zodResolver(transitionSchema),
@@ -1157,12 +1195,25 @@ function VacancyDetailRoute() {
                           <Link
                             to="/staff/candidates/$candidateId"
                             params={{ candidateId: application.candidateId }}
+                            search={{ fromVacancy: vacancy.id }}
+                            hash="applications"
+                            onClick={() =>
+                              rememberReviewQueue(
+                                pipelineApplications.map((item) => item.candidateId),
+                                "pipeline",
+                              )
+                            }
                             className="font-medium hover:underline"
                           >
                             {candidate
                               ? `${candidate.firstName} ${candidate.lastName}`
                               : application.referenceId}
                           </Link>
+                          <p className="text-xs text-muted-foreground">
+                            {application.firstCvOpenedAt
+                              ? `CV opened by ${application.firstCvOpenedBy ?? "HR"}`
+                              : "No recorded CV open"}
+                          </p>
                           <p className="text-sm text-muted-foreground">
                             {application.referenceId} · {application.source}
                           </p>
@@ -1172,6 +1223,9 @@ function VacancyDetailRoute() {
                             <Badge>
                               {scheduled ? "Interview scheduled" : "Selected for interview"}
                             </Badge>
+                          ) : application.status === "Rejected" &&
+                            application.screeningDecision?.startsWith("Not suitable: ") ? (
+                            <Badge variant="secondary">Not suitable</Badge>
                           ) : (
                             <StatusBadge status={application.status} />
                           )}
@@ -1207,6 +1261,14 @@ function VacancyDetailRoute() {
                               <Link
                                 to="/staff/candidates/$candidateId"
                                 params={{ candidateId: application.candidateId }}
+                                search={{ fromVacancy: vacancy.id }}
+                                hash="applications"
+                                onClick={() =>
+                                  rememberReviewQueue(
+                                    pipelineApplications.map((item) => item.candidateId),
+                                    "pipeline",
+                                  )
+                                }
                               >
                                 {scheduled ? "View interview" : "Schedule interview"}
                               </Link>
@@ -1246,6 +1308,8 @@ function VacancyDetailRoute() {
                               <Link
                                 to="/staff/candidates/$candidateId"
                                 params={{ candidateId: item.candidateId }}
+                                search={{ fromVacancy: vacancy.id }}
+                                hash="interviews"
                               >
                                 {candidate
                                   ? `${candidate.firstName} ${candidate.lastName}`
@@ -1272,6 +1336,8 @@ function VacancyDetailRoute() {
                             <Link
                               to="/staff/candidates/$candidateId"
                               params={{ candidateId: interview.candidateId }}
+                              search={{ fromVacancy: vacancy.id }}
+                              hash="interviews"
                               className="font-medium hover:underline"
                             >
                               {candidate
@@ -1408,7 +1474,10 @@ function VacancyDetailRoute() {
                       <option value="name">Name A–Z</option>
                     </select>
                   </div>
-                  <div className="max-h-[30rem] divide-y overflow-y-auto">
+                  <div
+                    id="vacancy-application-list"
+                    className="max-h-[30rem] divide-y overflow-y-auto"
+                  >
                     {filteredApplications.length === 0 ? (
                       <p className="p-6 text-center text-sm text-muted-foreground">
                         No applications match these filters.
@@ -1434,12 +1503,25 @@ function VacancyDetailRoute() {
                               <Link
                                 to="/staff/candidates/$candidateId"
                                 params={{ candidateId: application.candidateId }}
+                                search={{ fromVacancy: vacancy.id }}
+                                hash="applications"
+                                onClick={() =>
+                                  rememberReviewQueue(
+                                    filteredApplications.map((item) => item.candidateId),
+                                    "applications",
+                                  )
+                                }
                                 className="font-medium hover:underline"
                               >
                                 {candidate
                                   ? `${candidate.firstName} ${candidate.lastName}`
                                   : application.referenceId}
                               </Link>
+                              <p className="text-xs text-muted-foreground">
+                                {application.firstCvOpenedAt
+                                  ? `CV opened by ${application.firstCvOpenedBy ?? "HR"}`
+                                  : "No recorded CV open"}
+                              </p>
                               <p className="text-xs text-muted-foreground">
                                 {application.source} · {candidate?.email ?? ""}
                                 {score !== undefined ? ` · Score ${score}/100` : " · Not assessed"}
@@ -1448,6 +1530,9 @@ function VacancyDetailRoute() {
                             <div className="flex items-center gap-2">
                               {selected ? (
                                 <Badge>Selected for interview</Badge>
+                              ) : application.status === "Rejected" &&
+                                application.screeningDecision?.startsWith("Not suitable: ") ? (
+                                <Badge variant="secondary">Not suitable</Badge>
                               ) : (
                                 <StatusBadge status={application.status} />
                               )}
@@ -1529,6 +1614,8 @@ function VacancyDetailRoute() {
                                 <Link
                                   to="/staff/candidates/$candidateId"
                                   params={{ candidateId: match.candidateId }}
+                                  search={{ fromVacancy: vacancy.id }}
+                                  hash="applications"
                                   className="font-medium hover:underline"
                                 >
                                   {candidate
@@ -1702,6 +1789,8 @@ function VacancyDetailRoute() {
                               <Link
                                 to="/staff/candidates/$candidateId"
                                 params={{ candidateId: run.candidateId }}
+                                search={{ fromVacancy: vacancy.id }}
+                                hash="applications"
                                 className="font-medium hover:underline"
                               >
                                 {candidate
@@ -1944,6 +2033,8 @@ function VacancyDetailRoute() {
                               <Link
                                 to="/staff/candidates/$candidateId"
                                 params={{ candidateId: candidate.id }}
+                                search={{ fromVacancy: vacancy.id }}
+                                hash="applications"
                                 className="font-medium hover:underline"
                               >
                                 {candidate.firstName} {candidate.lastName}

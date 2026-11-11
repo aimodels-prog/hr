@@ -379,6 +379,52 @@ test("a directly received CV is saved, extracted, duplicate-reviewed and added t
   assert.equal(intake.extractedFields.email, "fatma.hassan@example.com");
   assert.ok(intake.extractedFields.skills?.includes("logistics"));
 
+  assert.throws(
+    () =>
+      pool.finaliseCvIntake(
+        {
+          cvRecordId: intake.id,
+          candidate: {
+            firstName: "Fatma",
+            lastName: "Hassan",
+            email: "fatma.hassan@example.com",
+            phone: "+968 9911 2233",
+            location: "Muscat",
+            currentSalary: "",
+            expectedSalary: "OMR 1800",
+            yearsOfExperience: 6,
+          },
+          consentStatus: "Confirmed",
+        },
+        hr,
+      ),
+    /current monthly salary in OMR/,
+  );
+  assert.equal(storage.readCollection("candidates").length, 0);
+
+  assert.throws(
+    () =>
+      pool.finaliseCvIntake(
+        {
+          cvRecordId: intake.id,
+          candidate: {
+            firstName: "Fatma",
+            lastName: "Hassan",
+            email: "fatma.hassan@example.com",
+            phone: "+968 9911 2233",
+            location: "Muscat",
+            currentSalary: "1200",
+            expectedSalary: " ",
+            yearsOfExperience: 6,
+          },
+          consentStatus: "Confirmed",
+        },
+        hr,
+      ),
+    /expected monthly salary/,
+  );
+  assert.equal(storage.readCollection("candidates").length, 0);
+
   const finalised = pool.finaliseCvIntake(
     {
       cvRecordId: intake.id,
@@ -389,6 +435,8 @@ test("a directly received CV is saved, extracted, duplicate-reviewed and added t
         phone: intake.extractedFields.phone || "+968 9911 2233",
         location: "Muscat",
         currentTitle: "Logistics Coordinator",
+        currentSalary: "1200",
+        expectedSalary: "OMR 1800",
         yearsOfExperience: intake.extractedFields.yearsOfExperience || 6,
         skills: intake.extractedFields.skills,
         talentPools: ["Logistics", "Future Opportunities"],
@@ -398,6 +446,8 @@ test("a directly received CV is saved, extracted, duplicate-reviewed and added t
     hr,
   );
   assert.equal(finalised.candidate.email, "fatma.hassan@example.com");
+  assert.equal(finalised.candidate.currentSalary, "1200");
+  assert.equal(finalised.candidate.expectedSalary, "OMR 1800");
   assert.deepEqual(finalised.candidate.talentPools, ["Logistics", "Future Opportunities"]);
   assert.equal(finalised.cvRecord.processingStatus, "Ready");
   assert.equal(storage.readCollection("candidates").length, 1);
@@ -423,6 +473,8 @@ test("a directly received CV is saved, extracted, duplicate-reviewed and added t
             email: "fatma.hassan@example.com",
             phone: "+968 9911 2233",
             location: "Muscat",
+            currentSalary: "1200",
+            expectedSalary: "OMR 1800",
             yearsOfExperience: 6,
           },
           consentStatus: "Confirmed",
@@ -507,6 +559,8 @@ test("a CV intake can continue into a recommended candidate without uploading th
         phone: "+971 50 555 2222",
         location: "Dubai",
         currentTitle: "Procurement Coordinator",
+        currentSalary: "1300",
+        expectedSalary: "OMR 1700",
         yearsOfExperience: 5,
         skills: ["Procurement"],
       },
@@ -594,6 +648,8 @@ test("HR recommendation retains its source without changing the objective assess
         email: "nadia@example.com",
         phone: "+968 9900 1111",
         location: "Muscat",
+        currentSalary: "1800",
+        expectedSalary: "OMR 2200",
         yearsOfExperience: 8,
         skills: ["Supply chain"],
       },

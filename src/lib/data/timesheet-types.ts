@@ -104,7 +104,7 @@ export interface TimesheetEntry {
   /** Covers an approved absence but contributes no paid/credited hours. */
   isUnpaidLeave?: boolean;
   isHoliday?: boolean;
-  /** Approved work arrangement shown on the calendar; it is not credited work or leave. */
+  /** Approved work arrangement: scheduled work credit, not a biometric punch or leave. */
   isRemoteWork?: boolean;
 }
 

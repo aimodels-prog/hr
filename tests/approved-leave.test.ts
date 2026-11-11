@@ -61,7 +61,7 @@ test("a recorded working-date list prevents timesheets from labelling excluded d
     false,
   );
 });
-test("remote work and last-working-day markers are not leave or credited absence", () => {
+test("remote work counts as scheduled work, not leave or a credited absence", () => {
   const remote = { ...leave, policySnapshot: { name: "Remote Work Day", type: "Remote" } };
   const resignation = {
     ...leave,
@@ -81,11 +81,11 @@ test("remote work and last-working-day markers are not leave or credited absence
   assert.equal(result.expectedWorkHours, 8);
   assert.equal(result.entries.length, 1);
   assert.equal(result.entries[0]?.isRemoteWork, true);
-  assert.equal(result.entries[0]?.hours["2026-10-08"], 0);
-  assert.equal(result.entries[0]?.total, 0);
+  assert.equal(result.entries[0]?.hours["2026-10-08"], 8);
+  assert.equal(result.entries[0]?.total, 8);
 });
 
-test("approved October remote work is shown for ten dates without fabricating work hours", () => {
+test("approved October remote work fills scheduled hours without creating leave", () => {
   const dates = Array.from(
     { length: 31 },
     (_, index) => `2026-10-${String(index + 1).padStart(2, "0")}`,
@@ -115,7 +115,7 @@ test("approved October remote work is shown for ten dates without fabricating wo
   });
   const marker = result.entries.find((entry) => entry.isRemoteWork);
   assert.equal(Object.keys(marker?.hours ?? {}).length, 10);
-  assert.equal(marker?.total, 0);
+  assert.equal(marker?.total, 80);
   assert.equal(result.entries.filter((entry) => entry.isLeave).length, 0);
   assert.equal(result.expectedWorkHours, 168);
 });
@@ -220,8 +220,49 @@ test("historical leave keeps each recorded type and half-day while remote work s
       ["Half-day Leave", 4],
     ],
   );
-  assert.equal(result.entries.find((entry) => entry.isRemoteWork)?.hours["2026-10-21"], 0);
+  assert.equal(result.entries.find((entry) => entry.isRemoteWork)?.hours["2026-10-21"], 8);
   assert.equal(result.expectedWorkHours, 12);
+});
+
+test("half-day remote work is half the configured daily target", () => {
+  const result = timesheetAbsences({
+    dates: ["2026-10-08"],
+    workingDays: [4],
+    dailyHours: 7.5,
+    holidays: new Set(),
+    leave: [
+      {
+        ...leave,
+        startDate: "2026-10-08",
+        endDate: "2026-10-08",
+        isHalfDay: true,
+        policySnapshot: { name: "Remote Work", type: "Remote" },
+      },
+    ],
+  });
+  assert.equal(result.entries.find((entry) => entry.isRemoteWork)?.hours["2026-10-08"], 3.75);
+  assert.equal(result.expectedWorkHours, 7.5);
+});
+
+test("remote work and paid leave on the same date share one daily target", () => {
+  const result = timesheetAbsences({
+    dates: ["2026-10-08"],
+    workingDays: [4],
+    dailyHours: 8,
+    holidays: new Set(),
+    leave: [
+      { ...leave, startDate: "2026-10-08", endDate: "2026-10-08", isHalfDay: true },
+      {
+        ...leave,
+        startDate: "2026-10-08",
+        endDate: "2026-10-08",
+        policySnapshot: { name: "Remote Work", type: "Remote" },
+      },
+    ],
+  });
+  assert.equal(result.entries.find((entry) => entry.isRemoteWork)?.hours["2026-10-08"], 4);
+  assert.equal(result.entries.find((entry) => entry.isLeave)?.hours["2026-10-08"], 4);
+  assert.equal(result.expectedWorkHours, 4);
 });
 
 test("unpaid leave covers the day without creating paid leave credit", () => {

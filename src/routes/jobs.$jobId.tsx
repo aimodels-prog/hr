@@ -21,6 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -32,6 +33,13 @@ import { initializeApplicationData } from "@/lib/data/application-data";
 import type { Vacancy } from "@/lib/data/types";
 import { getSupportedCvMimeType } from "@/lib/data/cv-file-validation";
 import { findPublicVacancy } from "@/lib/data/public-vacancy-link";
+import { isValidCurrentSalaryOmr } from "@/lib/recruitment/current-salary";
+import {
+  EXISTING_VISA_OPTIONS,
+  isValidExistingVisa,
+  isValidWorkEligibility,
+  WORK_ELIGIBILITY_OPTIONS,
+} from "@/lib/recruitment/work-eligibility";
 
 export const Route = createFileRoute("/jobs/$jobId")({
   head: ({ params }) => {
@@ -51,27 +59,49 @@ export const Route = createFileRoute("/jobs/$jobId")({
   component: JobDetail,
 });
 
-const formSchema = z.object({
-  firstName: z.string().min(1, "First name is required"),
-  lastName: z.string().min(1, "Last name is required"),
-  email: z.string().email("Invalid email address"),
-  phone: z.string().min(5, "Valid phone number is required"),
-  nationality: z.string().optional(),
-  location: z.string().min(1, "Current location is required"),
-  currentCompany: z.string().optional(),
-  currentTitle: z.string().optional(),
-  yearsOfExperience: z.number().min(0),
-  noticePeriod: z.string().min(1, "Notice period is required"),
-  salaryExpectation: z.string().optional(),
-  coverNote: z.string().optional(),
-  screeningAnswers: z.array(
-    z.object({
-      question: z.string(),
-      answer: z.string().min(1, "This question requires an answer"),
-    }),
-  ),
-  consent: z.boolean().refine((value) => value, "You must agree to the privacy policy"),
-});
+const formSchema = z
+  .object({
+    firstName: z.string().min(1, "First name is required"),
+    lastName: z.string().min(1, "Last name is required"),
+    email: z.string().email("Invalid email address"),
+    phone: z.string().min(5, "Valid phone number is required"),
+    nationality: z.string().optional(),
+    location: z.string().min(1, "Current location is required"),
+    currentCompany: z.string().trim().min(1, "Current company is required").max(200),
+    currentTitle: z.string().trim().min(1, "Current title is required").max(200),
+    yearsOfExperience: z.number().min(0),
+    noticePeriod: z.string().min(1, "Notice period is required"),
+    workEligibility: z.string().refine(isValidWorkEligibility, "Select your work visa status"),
+    visaStatus: z.string().optional(),
+    currentSalary: z
+      .string()
+      .trim()
+      .refine(
+        isValidCurrentSalaryOmr,
+        "Enter your current monthly salary in OMR (0 if not earning)",
+      ),
+    salaryExpectation: z.string().trim().min(1, "Monthly salary expectation is required").max(200),
+    coverNote: z.string().optional(),
+    screeningAnswers: z.array(
+      z.object({
+        question: z.string(),
+        answer: z.string().min(1, "This question requires an answer"),
+      }),
+    ),
+    consent: z.boolean().refine((value) => value, "You must agree to the privacy policy"),
+  })
+  .superRefine((values, context) => {
+    if (
+      values.workEligibility === "Valid Oman work visa" &&
+      !isValidExistingVisa(values.visaStatus)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["visaStatus"],
+        message: "Select your current Oman work visa type",
+      });
+    }
+  });
 
 type FormValues = z.infer<typeof formSchema>;
 
@@ -123,6 +153,9 @@ function JobDetail() {
       currentTitle: "",
       yearsOfExperience: 0,
       noticePeriod: "",
+      workEligibility: "",
+      visaStatus: "",
+      currentSalary: "",
       salaryExpectation: "",
       coverNote: "",
       screeningAnswers: [],
@@ -228,11 +261,17 @@ function JobDetail() {
             phone: values.phone,
             nationality: values.nationality || undefined,
             location: values.location,
-            currentCompany: values.currentCompany || undefined,
-            currentTitle: values.currentTitle || undefined,
+            currentCompany: values.currentCompany,
+            currentTitle: values.currentTitle,
             yearsOfExperience: values.yearsOfExperience,
             noticePeriod: values.noticePeriod,
-            salaryExpectation: values.salaryExpectation || undefined,
+            workEligibility: values.workEligibility,
+            visaStatus:
+              values.workEligibility === "Valid Oman work visa"
+                ? values.visaStatus || undefined
+                : undefined,
+            currentSalary: values.currentSalary,
+            salaryExpectation: values.salaryExpectation,
             coverNote: values.coverNote || undefined,
             screeningAnswers: values.screeningAnswers,
             consent: values.consent,
@@ -473,16 +512,25 @@ function JobDetail() {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <FormField
                     control={form.control}
                     name="currentCompany"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Current Company</FormLabel>
+                        <FormLabel>
+                          Current Company <span className="text-destructive">*</span>
+                        </FormLabel>
                         <FormControl>
-                          <Input {...field} />
+                          <Input
+                            {...field}
+                            maxLength={200}
+                            placeholder="Company, self-employed, or not currently employed"
+                          />
                         </FormControl>
+                        <FormDescription>
+                          If you are not employed, enter “Not currently employed.”
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -492,10 +540,19 @@ function JobDetail() {
                     name="currentTitle"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Current Title</FormLabel>
+                        <FormLabel>
+                          Current Title <span className="text-destructive">*</span>
+                        </FormLabel>
                         <FormControl>
-                          <Input {...field} />
+                          <Input
+                            {...field}
+                            maxLength={200}
+                            placeholder="e.g. Logistics Manager or Job seeker"
+                          />
                         </FormControl>
+                        <FormDescription>
+                          If you are not employed, enter your most recent title or “Job seeker.”
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -504,17 +561,95 @@ function JobDetail() {
 
                 <FormField
                   control={form.control}
-                  name="salaryExpectation"
+                  name="workEligibility"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Salary Expectation (Monthly)</FormLabel>
+                      <FormLabel>
+                        Work Visa Status <span className="text-destructive">*</span>
+                      </FormLabel>
                       <FormControl>
-                        <Input {...field} />
+                        <select
+                          {...field}
+                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          onChange={(event) => {
+                            field.onChange(event);
+                            form.setValue("visaStatus", "");
+                          }}
+                        >
+                          <option value="">Select your visa situation</option>
+                          {WORK_ELIGIBILITY_OPTIONS.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
                       </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
+                {form.watch("workEligibility") === "Valid Oman work visa" && (
+                  <FormField
+                    control={form.control}
+                    name="visaStatus"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          Visa Type <span className="text-destructive">*</span>
+                        </FormLabel>
+                        <FormControl>
+                          <select
+                            {...field}
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            <option value="">Select visa type</option>
+                            {EXISTING_VISA_OPTIONS.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <FormField
+                    control={form.control}
+                    name="currentSalary"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          Current Salary (Monthly, OMR) <span className="text-destructive">*</span>
+                        </FormLabel>
+                        <FormControl>
+                          <Input {...field} inputMode="decimal" placeholder="e.g. 1500" />
+                        </FormControl>
+                        <FormDescription>Enter 0 if you are not currently earning.</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="salaryExpectation"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          Expected Salary (Monthly) <span className="text-destructive">*</span>
+                        </FormLabel>
+                        <FormControl>
+                          <Input {...field} maxLength={200} placeholder="e.g. OMR 1,800-2,000" />
+                        </FormControl>
+                        <FormDescription>Include the currency; a range is fine.</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
 
                 {screeningFields.map((field, index) => (
                   <FormField

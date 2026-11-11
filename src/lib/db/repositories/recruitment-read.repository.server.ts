@@ -43,6 +43,7 @@ import {
   shortlistSnapshots,
 } from "../schema/recruitment.ts";
 import { decryptSensitiveJson } from "../encryption.server.ts";
+import { auditEvents } from "../schema/system.ts";
 import { currentPreliminaryRules } from "../../recruitment/preliminary-evidence.ts";
 
 export interface RecruitmentReadSnapshot {
@@ -134,6 +135,7 @@ export async function listRecruitmentReadSnapshot(
     scorecardRows,
     decisionRows,
     offerRows,
+    cvOpenedRows,
   ] = await Promise.all([
     db
       .select()
@@ -224,7 +226,24 @@ export async function listRecruitmentReadSnapshot(
       .from(jobOffers)
       .where(eq(jobOffers.organisationId, organisationId))
       .orderBy(asc(jobOffers.createdAt)),
+    db
+      .selectDistinctOn([auditEvents.entityId], {
+        fileId: auditEvents.entityId,
+        occurredAt: auditEvents.occurredAt,
+        actorDisplayName: auditEvents.actorDisplayName,
+      })
+      .from(auditEvents)
+      .where(
+        and(
+          eq(auditEvents.organisationId, organisationId),
+          eq(auditEvents.module, "recruitment"),
+          eq(auditEvents.action, "candidate_cv_opened"),
+          eq(auditEvents.entityType, "recruitment-document"),
+        ),
+      )
+      .orderBy(auditEvents.entityId, asc(auditEvents.occurredAt)),
   ]);
+  const firstCvOpenByFileId = new Map(cvOpenedRows.map((row) => [row.fileId, row]));
   return {
     candidates: candidateRows.map((row) => ({
       ...base(row),
@@ -288,6 +307,12 @@ export async function listRecruitmentReadSnapshot(
       vacancyId: row.vacancyId,
       status: row.status,
       cvFileId: row.cvFileId,
+      ...(firstCvOpenByFileId.has(row.cvFileId)
+        ? {
+            firstCvOpenedAt: firstCvOpenByFileId.get(row.cvFileId)!.occurredAt,
+            firstCvOpenedBy: firstCvOpenByFileId.get(row.cvFileId)!.actorDisplayName,
+          }
+        : {}),
       ...(row.coverNote ? { coverNote: row.coverNote } : {}),
       noticePeriod: row.noticePeriod,
       ...(decryptOptional(row.salaryExpectationEncrypted)
@@ -319,6 +344,12 @@ export async function listRecruitmentReadSnapshot(
       ...(row.applicationId ? { applicationId: row.applicationId } : {}),
       ...(row.vacancyId ? { vacancyId: row.vacancyId } : {}),
       fileId: row.fileId,
+      ...(firstCvOpenByFileId.has(row.fileId)
+        ? {
+            firstOpenedAt: firstCvOpenByFileId.get(row.fileId)!.occurredAt,
+            firstOpenedBy: firstCvOpenByFileId.get(row.fileId)!.actorDisplayName,
+          }
+        : {}),
       originalFileName: row.originalFileName,
       source: row.source,
       receivedAt: row.receivedAt,

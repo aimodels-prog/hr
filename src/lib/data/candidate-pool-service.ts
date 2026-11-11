@@ -3,6 +3,7 @@ import {
   type CvExtractionProvider,
 } from "../integrations/cv-extraction.ts";
 import { getApplicationDataServices } from "./application-data.ts";
+import { isValidCurrentSalaryOmr } from "../recruitment/current-salary.ts";
 import { recordAccessDenied } from "./audit-service.ts";
 import { LocalRepository } from "./repository.ts";
 import type {
@@ -540,6 +541,8 @@ export class CandidatePoolService {
         location: string;
         currentCompany?: string;
         currentTitle?: string;
+        currentSalary: string;
+        expectedSalary: string;
         yearsOfExperience: number;
         skills?: string[];
         education?: string[];
@@ -566,6 +569,12 @@ export class CandidatePoolService {
     }
     if (!input.candidate.email.trim() || !input.candidate.phone.trim()) {
       throw new Error("Email and phone number are required for duplicate protection.");
+    }
+    if (!isValidCurrentSalaryOmr(input.candidate.currentSalary)) {
+      throw new Error("Enter the candidate's current monthly salary in OMR (0 if not earning).");
+    }
+    if (!input.candidate.expectedSalary?.trim()) {
+      throw new Error("Enter the candidate's expected monthly salary.");
     }
     if (
       !Number.isFinite(input.candidate.yearsOfExperience) ||
@@ -595,6 +604,8 @@ export class CandidatePoolService {
             location: input.candidate.location.trim(),
             currentCompany: input.candidate.currentCompany?.trim() || existing.currentCompany,
             currentTitle: input.candidate.currentTitle?.trim() || existing.currentTitle,
+            currentSalary: input.candidate.currentSalary.trim(),
+            expectedSalary: input.candidate.expectedSalary.trim(),
             yearsOfExperience: input.candidate.yearsOfExperience,
             skills: unique([...(existing.skills ?? []), ...(input.candidate.skills ?? [])]),
             education: unique([
@@ -638,6 +649,8 @@ export class CandidatePoolService {
             location: input.candidate.location.trim(),
             currentCompany: input.candidate.currentCompany?.trim(),
             currentTitle: input.candidate.currentTitle?.trim(),
+            currentSalary: input.candidate.currentSalary.trim(),
+            expectedSalary: input.candidate.expectedSalary.trim(),
             yearsOfExperience: input.candidate.yearsOfExperience,
             stage: input.vacancyId ? "Applied" : "Sourced",
             doNotContact: false,
@@ -683,6 +696,7 @@ export class CandidatePoolService {
               status: "New",
               cvFileId: cvRecord.fileId,
               noticePeriod: candidate.noticePeriod || "To be confirmed",
+              salaryExpectation: input.candidate.expectedSalary.trim(),
               screeningAnswers: [],
               source: cvRecord.source,
               consentGiven: true,

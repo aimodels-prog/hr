@@ -537,7 +537,8 @@ export class TimesheetService {
       .list()
       .filter((t) => t.employeeId === employeeId)
       .map((sheet) => {
-        if (!["Draft", "Returned"].includes(sheet.status)) return sheet;
+        if (!["Draft", "Returned", "Pending Manager", "Pending HR"].includes(sheet.status))
+          return sheet;
         const period = this.periodRepo.getById(sheet.periodId);
         if (!period) return sheet;
         const current = this.withApprovedAbsences(sheet, period);
@@ -708,11 +709,13 @@ export class TimesheetService {
         let manualHours = 0;
         let leaveHours = 0;
         let holidayHours = 0;
+        let remoteHours = 0;
         for (const entry of timesheet.entries) {
           const hours = entry.hours[date] ?? 0;
           if (entry.isLeave) leaveHours += hours;
           else if (entry.isHoliday) holidayHours += hours;
-          else if (!entry.isRemoteWork) manualHours += hours;
+          else if (entry.isRemoteWork) remoteHours += hours;
+          else manualHours += hours;
         }
         const fullAbsence = leaveHours + holidayHours >= settings.standardDailyHours;
         // Office exceptions are policy credits. Ordinary punches are actual work
@@ -729,11 +732,21 @@ export class TimesheetService {
         const completeAttendance = Boolean(
           record?.officeExceptionLabel || (record?.clockIn && record?.clockOut),
         );
-        const workHours = effectiveDailyWorkHours(
+        const actualWorkHours = effectiveDailyWorkHours(
           manualHours,
           attendanceHours,
           completeAttendance,
           fullAbsence,
+        );
+        // Remote work fills the scheduled target without adding a fictional
+        // biometric punch or double-counting separately entered work.
+        const availableWorkHours = Math.max(
+          0,
+          settings.standardDailyHours - leaveHours - holidayHours,
+        );
+        const workHours = Math.max(
+          actualWorkHours,
+          Math.min(availableWorkHours, attendanceHours + remoteHours),
         );
         const projectGap =
           manualHours > 0 && completeAttendance
@@ -1074,6 +1087,7 @@ export class TimesheetService {
 
     const dailyTotals: Record<string, number> = {};
     for (const entry of ts.entries) {
+      if (entry.isRemoteWork) continue; // Already covered by the effective daily work hours.
       for (const [date, hrs] of Object.entries(entry.hours)) {
         if (!dailyTotals[date]) dailyTotals[date] = 0;
         dailyTotals[date] += hrs || 0;
@@ -1306,10 +1320,14 @@ export class TimesheetService {
   }
 
   approveTimesheet(timesheetId: string, context: ActorContext): TimesheetWithEntries {
-    const ts = this.timesheetRepo.getById(timesheetId);
+    let ts = this.timesheetRepo.getById(timesheetId);
     if (!ts) throw new Error("Timesheet not found");
     if (ts.employeeId === context.actor.employeeId)
       throw new Error("You cannot approve your own timesheet.");
+
+    const period = this.periodRepo.getById(ts.periodId);
+    if (!period) throw new Error("Timesheet period was not found.");
+    ts = this.withApprovedAbsences(ts, period);
 
     if (ts.status === "Pending Manager") {
       this.requireDirectReport(ts.employeeId, context, "review this timesheet");

@@ -122,6 +122,27 @@ test(
           AND checksum = ${pdfChecksum}
       `;
       assert.equal(cache.count, 1, "identical CV bytes should reuse one extraction");
+      await assert.rejects(
+        finaliseCandidateCvIntakeInDatabase(
+          String(hr.organisation_id),
+          {
+            cvRecordId: result.cvRecordId,
+            candidate: {
+              firstName: "Worker",
+              lastName: "Test",
+              email: `worker.test.${randomUUID()}@example.test`,
+              phone: "+968 9000 0000",
+              location: "Muscat",
+              currentSalary: "",
+              expectedSalary: "OMR 1800",
+              yearsOfExperience: 4,
+            },
+            consentStatus: "Confirmed",
+          },
+          actor,
+        ),
+        /current monthly salary in OMR/,
+      );
       const finalised = await finaliseCandidateCvIntakeInDatabase(
         String(hr.organisation_id),
         {
@@ -132,6 +153,8 @@ test(
             email: `worker.test.${randomUUID()}@example.test`,
             phone: `+97150${Math.floor(10_000_000 + Math.random() * 89_999_999)}`,
             location: "Dubai",
+            currentSalary: "1200",
+            expectedSalary: "OMR 1800",
             yearsOfExperience: 4,
           },
           consentStatus: "Confirmed",
@@ -143,6 +166,13 @@ test(
       `;
       assert.equal(String(confirmed.candidate_id), finalised.candidateId);
       assert.equal(confirmed.processing_status, "Ready");
+      const [salary] = await sql`
+        SELECT current_salary_encrypted, expected_salary_encrypted
+        FROM candidates WHERE id = ${finalised.candidateId}
+      `;
+      assert.ok(salary.current_salary_encrypted);
+      assert.ok(salary.expected_salary_encrypted);
+      assert.ok(!String(salary.expected_salary_encrypted).includes("OMR 1800"));
     } finally {
       await sql.end();
     }

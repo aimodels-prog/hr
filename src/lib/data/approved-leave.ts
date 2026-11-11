@@ -171,7 +171,21 @@ export function timesheetAbsences(input: {
         isRemoteWork: true,
         notes: "Remote work",
       };
-      entry.hours[date] = 0;
+      // Remote work is scheduled work, not leave. Rest days and public
+      // holidays remain visible without adding work time.
+      const workingDay = input.workingDays.includes(new Date(`${date}T12:00:00Z`).getUTCDay());
+      const remoteFraction = Math.max(
+        ...input.leave
+          .filter((leave) => isApprovedRemoteWork(leave, date))
+          .map((leave) => (leave.isHalfDay ? 0.5 : 1)),
+      );
+      const availableFraction = Math.max(0, 1 - approvedLeaveFraction(input.leave, date));
+      const hours =
+        workingDay && !input.holidays.has(date)
+          ? input.dailyHours * Math.min(remoteFraction, availableFraction)
+          : 0;
+      entry.hours[date] = hours;
+      entry.total += hours;
       entries.set(key, entry);
     }
     if (!input.workingDays.includes(new Date(`${date}T12:00:00Z`).getUTCDay())) continue;

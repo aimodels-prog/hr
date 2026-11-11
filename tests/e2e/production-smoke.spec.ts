@@ -410,10 +410,12 @@ test("production release smoke covers health, secure CV intake and all five role
     noticePeriod: "30 days",
     currentCompany: "VIA Release Test",
     currentTitle: "Logistics Manager",
+    currentSalary: "7000",
     salaryExpectation: "18000",
   })) {
     await page.locator(`input[name="${name}"]`).fill(value);
   }
+  await page.locator('select[name="workEligibility"]').selectOption("Need employer sponsorship");
   const textareas = page.locator("textarea");
   for (let index = 0; index < (await textareas.count()); index += 1) {
     await textareas.nth(index).fill("Confirmed with evidence from international logistics work.");

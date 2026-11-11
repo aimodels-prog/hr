@@ -16,10 +16,18 @@ import {
   verifyServerActorRole,
 } from "../db/utils.server.ts";
 import { ROLE_VALUES } from "../data/types.ts";
-import { and, eq } from "drizzle-orm";
+import { isValidCurrentSalaryOmr } from "../recruitment/current-salary.ts";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { getDatabaseClient } from "../db/client.ts";
-import { candidateCvRecords } from "../db/schema/recruitment.ts";
+import {
+  candidateApplications,
+  candidateCvExtractions,
+  candidateCvRecords,
+  recruitmentDocuments,
+} from "../db/schema/recruitment.ts";
+import { auditEvents } from "../db/schema/system.ts";
 import { readObjectFile } from "../db/object-storage.server.ts";
+import { decryptSensitiveJson } from "../db/encryption.server.ts";
 import {
   addCandidateRecommendationInDatabase,
   exportCandidatesFromDatabase,
@@ -375,6 +383,134 @@ const CandidateCvDownload = z.object({
   reason: z.string().trim().min(3).max(500),
 });
 
+const CandidateCvAccess = z
+  .object({
+    actor: RecruitmentActor,
+    cvRecordId: z.string().uuid().optional(),
+    applicationId: z.string().uuid().optional(),
+    intent: z.enum(["preview", "download"]),
+  })
+  .strict()
+  .refine((value) => Boolean(value.cvRecordId) !== Boolean(value.applicationId), {
+    message: "Select one CV to open.",
+  });
+
+/** Only an authorised HR reviewer can access a CV. Each successful access is durable audit history. */
+export const accessCandidateCvFn = createServerFn({ method: "POST" })
+  .validator((input: z.infer<typeof CandidateCvAccess>) => CandidateCvAccess.parse(input))
+  .handler(async ({ data }) => {
+    const verified = await verifyRecruitmentActor(data.actor);
+    const db = getDatabaseClient();
+    const [record] = data.cvRecordId
+      ? await db
+          .select({ fileId: candidateCvRecords.fileId })
+          .from(candidateCvRecords)
+          .where(
+            and(
+              eq(candidateCvRecords.organisationId, verified.organisationId),
+              eq(candidateCvRecords.id, data.cvRecordId),
+            ),
+          )
+          .limit(1)
+      : await db
+          .select({ fileId: candidateApplications.cvFileId })
+          .from(candidateApplications)
+          .where(
+            and(
+              eq(candidateApplications.organisationId, verified.organisationId),
+              eq(candidateApplications.id, data.applicationId!),
+            ),
+          )
+          .limit(1);
+    if (!record) throw new Error("The CV was not found.");
+    const file = await readObjectFile(
+      verified.organisationId,
+      record.fileId,
+      verified.actor,
+      data.intent === "preview" ? "Previewed candidate CV" : "Downloaded candidate CV",
+    );
+    const wantsText =
+      data.intent === "preview" && !file.metadata.name.toLowerCase().endsWith(".pdf");
+    const [document] = wantsText
+      ? await db
+          .select({ checksum: recruitmentDocuments.checksum })
+          .from(recruitmentDocuments)
+          .where(
+            and(
+              eq(recruitmentDocuments.organisationId, verified.organisationId),
+              eq(recruitmentDocuments.id, record.fileId),
+            ),
+          )
+          .limit(1)
+      : [];
+    const [preparedText] = document?.checksum
+      ? await db
+          .select({ semanticTextEncrypted: candidateCvExtractions.semanticTextEncrypted })
+          .from(candidateCvExtractions)
+          .where(
+            and(
+              eq(candidateCvExtractions.organisationId, verified.organisationId),
+              eq(candidateCvExtractions.checksum, document.checksum),
+            ),
+          )
+          .orderBy(desc(candidateCvExtractions.createdAt))
+          .limit(1)
+      : [];
+    let extractedText: string | undefined;
+    if (preparedText?.semanticTextEncrypted) {
+      try {
+        extractedText = decryptSensitiveJson<string>(preparedText.semanticTextEncrypted).slice(
+          0,
+          200_000,
+        );
+      } catch {
+        // A damaged optional extraction must not block access to the original CV.
+      }
+    }
+    const [firstOpen] = await db
+      .select({
+        occurredAt: auditEvents.occurredAt,
+        actorDisplayName: auditEvents.actorDisplayName,
+      })
+      .from(auditEvents)
+      .where(
+        and(
+          eq(auditEvents.organisationId, verified.organisationId),
+          eq(auditEvents.module, "recruitment"),
+          eq(auditEvents.action, "candidate_cv_opened"),
+          eq(auditEvents.entityType, "recruitment-document"),
+          eq(auditEvents.entityId, record.fileId),
+        ),
+      )
+      .orderBy(asc(auditEvents.occurredAt))
+      .limit(1);
+    const firstOpenedAt = firstOpen?.occurredAt ?? new Date().toISOString();
+    if (!firstOpen) {
+      await db.insert(auditEvents).values({
+        organisationId: verified.organisationId,
+        actorUserId: verified.actor.userId,
+        actorEmployeeId: verified.actor.employeeId,
+        actorDisplayName: verified.actor.displayName,
+        activeRole: verified.actor.activeRole,
+        actorRoles: verified.actor.roles ?? [],
+        action: "candidate_cv_opened",
+        module: "recruitment",
+        entityType: "recruitment-document",
+        entityId: record.fileId,
+        afterSummary: { intent: data.intent },
+        reason: data.intent === "preview" ? "Opened CV preview" : "Downloaded original CV",
+        riskLevel: "Medium",
+      });
+    }
+    return {
+      metadata: file.metadata,
+      fileBase64: Buffer.from(file.bytes).toString("base64"),
+      ...(extractedText ? { extractedText } : {}),
+      openedAt: firstOpenedAt,
+      openedBy: firstOpen?.actorDisplayName ?? verified.actor.displayName,
+    };
+  });
+
 export const prepareCandidateCvZipFn = createServerFn({ method: "POST" })
   .validator((input: z.infer<typeof CandidateExport>) => CandidateExport.parse(input))
   .handler(async ({ data }) => {
@@ -512,6 +648,8 @@ const FinaliseCandidateCv = z
       location: z.string().trim().min(1).max(200),
       currentCompany: z.string().trim().max(200).optional(),
       currentTitle: z.string().trim().max(200).optional(),
+      currentSalary: z.string().trim().refine(isValidCurrentSalaryOmr),
+      expectedSalary: z.string().trim().min(1).max(200),
       yearsOfExperience: z.number().int().min(0).max(80),
       skills: z.array(z.string().trim().min(1)).max(100).optional(),
       education: z.array(z.string().trim().min(1)).max(100).optional(),

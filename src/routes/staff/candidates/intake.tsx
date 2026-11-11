@@ -10,6 +10,7 @@ import type { CandidateCvRecord, CandidateCvSource, RecommenderType } from "@/li
 
 type DirectCandidateCvSource = Exclude<CandidateCvSource, "Internal Application">;
 import { VacancyService } from "@/lib/data/vacancy-service";
+import { isValidCurrentSalaryOmr } from "@/lib/recruitment/current-salary";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -109,6 +110,8 @@ function CandidateIntakePage() {
   const [location, setLocation] = useState("");
   const [currentCompany, setCurrentCompany] = useState("");
   const [currentTitle, setCurrentTitle] = useState("");
+  const [currentSalary, setCurrentSalary] = useState("");
+  const [expectedSalary, setExpectedSalary] = useState("");
   const [experience, setExperience] = useState("0");
   const [skills, setSkills] = useState("");
   const [education, setEducation] = useState("");
@@ -149,6 +152,8 @@ function CandidateIntakePage() {
     setLocation(extracted.location || "");
     setCurrentCompany(extracted.currentCompany || "");
     setCurrentTitle(extracted.currentTitle || "");
+    setCurrentSalary("");
+    setExpectedSalary("");
     setExperience(String(extracted.yearsOfExperience ?? 0));
     setSkills((extracted.skills || []).join(", "));
     setEducation((extracted.education || []).join(", "));
@@ -180,6 +185,8 @@ function CandidateIntakePage() {
     setLocation("");
     setCurrentCompany("");
     setCurrentTitle("");
+    setCurrentSalary("");
+    setExpectedSalary("");
     setExperience("0");
     setSkills("");
     setEducation("");
@@ -233,6 +240,8 @@ function CandidateIntakePage() {
       setLocation(extracted.location || "");
       setCurrentCompany(extracted.currentCompany || "");
       setCurrentTitle(extracted.currentTitle || "");
+      setCurrentSalary("");
+      setExpectedSalary("");
       setExperience(String(extracted.yearsOfExperience ?? 0));
       setSkills((extracted.skills || []).join(", "));
       setEducation((extracted.education || []).join(", "));
@@ -249,6 +258,14 @@ function CandidateIntakePage() {
 
   const saveCandidate = async () => {
     if (!intake) return;
+    if (!isValidCurrentSalaryOmr(currentSalary)) {
+      toast.error("Enter the candidate's current monthly salary in OMR (0 if not earning).");
+      return;
+    }
+    if (!expectedSalary.trim()) {
+      toast.error("Enter the candidate's expected monthly salary.");
+      return;
+    }
     if (duplicateMatches.length > 0 && candidateResolution === "new") {
       toast.error("Review the possible existing candidate before creating a separate profile.");
       return;
@@ -270,6 +287,8 @@ function CandidateIntakePage() {
             location,
             currentCompany,
             currentTitle,
+            currentSalary,
+            expectedSalary,
             yearsOfExperience: Number(experience),
             skills: splitList(skills),
             education: splitList(education),
@@ -305,6 +324,14 @@ function CandidateIntakePage() {
 
   const saveRecommendedCandidate = async () => {
     if (!intake || vacancyId === "none") return;
+    if (!isValidCurrentSalaryOmr(currentSalary)) {
+      toast.error("Enter the candidate's current monthly salary in OMR (0 if not earning).");
+      return;
+    }
+    if (!expectedSalary.trim()) {
+      toast.error("Enter the candidate's expected monthly salary.");
+      return;
+    }
     if (duplicateMatches.length > 0 && candidateResolution === "new") {
       toast.error("Review the possible existing candidate before creating a separate profile.");
       return;
@@ -338,6 +365,8 @@ function CandidateIntakePage() {
             location,
             currentCompany,
             currentTitle,
+            currentSalary,
+            expectedSalary,
             yearsOfExperience: Number(experience),
             skills: splitList(skills),
             education: splitList(education),
@@ -751,6 +780,20 @@ function CandidateIntakePage() {
                     value={currentCompany}
                     onChange={setCurrentCompany}
                   />
+                  <Field
+                    label="Current salary (monthly OMR)"
+                    value={currentSalary}
+                    onChange={setCurrentSalary}
+                    placeholder="e.g. 1500; enter 0 if not earning"
+                    required
+                  />
+                  <Field
+                    label="Expected salary (monthly)"
+                    value={expectedSalary}
+                    onChange={setExpectedSalary}
+                    placeholder="e.g. OMR 1800-2000"
+                    required
+                  />
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field
@@ -784,7 +827,7 @@ function CandidateIntakePage() {
                     placeholder="Immediate, 30 days"
                   />
                   <Field
-                    label="Work eligibility"
+                    label="Work visa status"
                     value={workEligibility}
                     onChange={setWorkEligibility}
                     placeholder="Own visa, sponsorship required"
@@ -848,6 +891,8 @@ function CandidateIntakePage() {
                         !email ||
                         !phone ||
                         !location ||
+                        !isValidCurrentSalaryOmr(currentSalary) ||
+                        !expectedSalary.trim() ||
                         !recommenderName.trim() ||
                         (!recommenderEmail.trim() && !recommenderPhone.trim())
                       }
@@ -862,7 +907,16 @@ function CandidateIntakePage() {
                   <Button
                     className="w-full"
                     onClick={saveCandidate}
-                    disabled={isSaving || !firstName || !lastName || !email || !phone || !location}
+                    disabled={
+                      isSaving ||
+                      !firstName ||
+                      !lastName ||
+                      !email ||
+                      !phone ||
+                      !location ||
+                      !isValidCurrentSalaryOmr(currentSalary) ||
+                      !expectedSalary.trim()
+                    }
                   >
                     <CheckCircle2 className="mr-2 h-4 w-4" />{" "}
                     {isSaving

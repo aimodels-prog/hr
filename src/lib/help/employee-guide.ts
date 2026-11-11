@@ -255,7 +255,7 @@ export const employeeGuide = [
       "Open My Attendance to check that today’s clock-in appears. Allow the office connection to send the record.",
       "Clock out when you finish work, then check the recorded times and hours.",
       "If you thumb twice soon after arriving, the repeat is kept as a machine record but does not sign you out. The last valid thumb before local midnight is your sign-out; if there is no later valid thumb, the sign-out remains missing for review.",
-      "If HR records a company activity, training, approved remote work or an excused closure, your attendance shows the correct label. Do not invent clock times. Remote work still needs your actual work hours in the timesheet; an approved remote day is not automatic worked time. Ask HR if the covered day is incorrect.",
+      "If HR records a company activity, training, approved remote work or an excused closure, your attendance shows the correct label. Do not invent clock times. An approved full remote day counts as a complete scheduled work day on your timesheet; a half-day counts as half. This does not create a machine punch or overtime. Ask HR if the covered day is incorrect.",
       "If a time is missing or wrong, open that day and request a correction instead of creating another clock-in.",
       "If office clock-in says your location is not accurate enough, turn on precise location for your device and browser, then try again. Ask HR to check your office zone if it still fails.",
     ],
