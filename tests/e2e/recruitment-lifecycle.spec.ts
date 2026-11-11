@@ -160,7 +160,7 @@ test("public application progresses through shortlist, interview, offer and onbo
   await expect(page.getByText("Shortlist Finalized")).toBeVisible();
 
   await page.goto(`/staff/candidates/${intake.candidate.id}`);
-  await expect(page.getByText("Canonical Details")).toBeVisible();
+  await expect(page.getByText("Candidate details")).toBeVisible();
   await page.getByRole("link", { name: /^Applications \(/ }).click();
   await expect(page.getByText("Submitted answers")).toBeVisible();
   await expect(page.getByText("Salary expectation")).toBeVisible();
@@ -208,7 +208,7 @@ test("public application progresses through shortlist, interview, offer and onbo
     return name;
   }, unique);
   await page.reload();
-  await expect(page.getByText("Canonical Details")).toBeVisible();
+  await expect(page.getByText("Candidate details")).toBeVisible();
   await page.getByRole("link", { name: /^Interviews \(/ }).click();
   await page.getByRole("button", { name: "Schedule Interview" }).click();
   const dialog = page.getByRole("dialog", { name: "Schedule Interview" });

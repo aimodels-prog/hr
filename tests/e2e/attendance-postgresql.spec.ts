@@ -249,7 +249,7 @@ test("HR publishes a policy and staff can read it without seeing restricted comp
   await expect(page.getByRole("button", { name: "Upload document", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Company register", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Toggle Sidebar" }).click();
-  await page.getByRole("link", { name: "Ask VIA Policies", exact: true }).click();
+  await page.getByRole("link", { name: "Ask about policies", exact: true }).click();
   await expect(page.getByLabel("Your question")).toBeVisible();
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),

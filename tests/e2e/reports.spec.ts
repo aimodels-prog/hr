@@ -27,7 +27,7 @@ test("reports are role scoped and loaded from PostgreSQL", async ({ page }) => {
   await expect(page.getByText("You do not have permission to view Reports.")).toBeVisible();
 
   await previewAs(page, "user-rana", "HR");
-  await expect(page.getByRole("heading", { name: "Reports Centre" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Reports" })).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Headcount & Diversity", exact: true }),
   ).toBeVisible();
