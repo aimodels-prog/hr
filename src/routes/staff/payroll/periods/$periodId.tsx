@@ -60,7 +60,7 @@ export const Route = createFileRoute("/staff/payroll/periods/$periodId")({
 
 function PayrollWorkbenchRoute() {
   return (
-    <RequirePermission permission="payroll:view" resourceName="Payroll Workbench">
+    <RequirePermission permission="payroll:view" resourceName="Payroll period">
       <PayrollWorkbenchContent />
     </RequirePermission>
   );
@@ -267,13 +267,13 @@ function PayrollWorkbenchContent() {
           onClick={() => navigate({ to: "/staff/payroll/periods" })}
         >
           <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Periods
+          All payroll periods
         </Button>
       </div>
 
       <PageHeader
-        title={`Workbench: ${period.name}`}
-        description={`Dates: ${period.startDate} to ${period.endDate} | Cutoff: ${period.cutoffDate}`}
+        title={`Payroll: ${period.name}`}
+        description={`${period.startDate} to ${period.endDate} · Cutoff ${period.cutoffDate}`}
         actions={
           <div className="flex gap-2 items-center">
             <Badge
@@ -291,7 +291,7 @@ function PayrollWorkbenchContent() {
 
             {(isEditable || (period.status === "Prepared" && !period.preparedBy)) && (
               <Button onClick={() => handleCollect()} variant="outline">
-                <Play className="w-4 h-4 mr-2" /> Collect Inputs
+                <Play className="w-4 h-4 mr-2" /> Collect pay inputs
               </Button>
             )}
             {period.status === "Prepared" && currentUser.activeRole === "Accounts" && (
@@ -322,7 +322,7 @@ function PayrollWorkbenchContent() {
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="mb-4">
-          <TabsTrigger value="aggregation">Compiled Inputs</TabsTrigger>
+          <TabsTrigger value="aggregation">Pay inputs</TabsTrigger>
           <TabsTrigger value="manual">
             Manual Adjustments ({period.manualAdjustments.length})
           </TabsTrigger>
@@ -342,69 +342,67 @@ function PayrollWorkbenchContent() {
         <TabsContent value="aggregation">
           <Card>
             <CardHeader className="pb-3 border-b">
-              <CardTitle className="text-base">Payroll Input Aggregation</CardTitle>
+              <CardTitle className="text-base">Pay inputs</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/30">
-                    <th className="text-left p-3 font-medium">Employee</th>
-                    <th className="text-right p-3 font-medium">Approved Overtime (Hrs)</th>
-                    <th className="text-right p-3 font-medium">Unpaid Leave (Days)</th>
-                    <th className="text-right p-3 font-medium">Travel Reimbursements</th>
-                    <th className="text-right p-3 font-medium">Manual Adj.</th>
-                    <th className="text-right p-3 font-medium">Currencies</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {period.compiledInputs?.map((row, idx) => {
-                    const emp = allEmployees.find((e) => e.id === row.employeeId);
-                    return (
-                      <tr key={idx} className="hover:bg-muted/10">
-                        <td className="p-3 font-medium">
-                          {emp?.preferredName}{" "}
-                          <span className="text-muted-foreground text-xs block">{emp?.id}</span>
-                        </td>
-                        <td className="p-3 text-right">
-                          {row.approvedOvertimeHours > 0 ? (
-                            <Badge variant="secondary">{row.approvedOvertimeHours}</Badge>
-                          ) : (
-                            "-"
-                          )}
-                        </td>
-                        <td className="p-3 text-right">
-                          {row.unpaidLeaveDays > 0 ? (
-                            <Badge variant="outline">{row.unpaidLeaveDays}</Badge>
-                          ) : (
-                            "-"
-                          )}
-                        </td>
-                        <td className="p-3 text-right">
-                          {row.reimbursementsTotal > 0
-                            ? `${row.reimbursementsTotal.toLocaleString()} ${row.reimbursementsCurrency || "OMR"}`
-                            : "-"}
-                        </td>
-                        <td className="p-3 text-right">
-                          {row.manualAdjustmentsTotal !== 0
-                            ? row.manualAdjustmentsTotal.toLocaleString()
-                            : "-"}
-                        </td>
-                        <td className="p-3 text-right text-muted-foreground">
-                          Adjustments: {row.currency}
+              <div className="overflow-x-auto">
+                <table className="min-w-[760px] w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/30">
+                      <th className="text-left p-3 font-medium">Employee</th>
+                      <th className="text-right p-3 font-medium">Approved Overtime (Hrs)</th>
+                      <th className="text-right p-3 font-medium">Unpaid Leave (Days)</th>
+                      <th className="text-right p-3 font-medium">Travel Reimbursements</th>
+                      <th className="text-right p-3 font-medium">Manual changes</th>
+                      <th className="text-right p-3 font-medium">Currencies</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {period.compiledInputs?.map((row, idx) => {
+                      const emp = allEmployees.find((e) => e.id === row.employeeId);
+                      return (
+                        <tr key={idx} className="hover:bg-muted/10">
+                          <td className="p-3 font-medium">{emp?.preferredName || "Employee"}</td>
+                          <td className="p-3 text-right">
+                            {row.approvedOvertimeHours > 0 ? (
+                              <Badge variant="secondary">{row.approvedOvertimeHours}</Badge>
+                            ) : (
+                              "-"
+                            )}
+                          </td>
+                          <td className="p-3 text-right">
+                            {row.unpaidLeaveDays > 0 ? (
+                              <Badge variant="outline">{row.unpaidLeaveDays}</Badge>
+                            ) : (
+                              "-"
+                            )}
+                          </td>
+                          <td className="p-3 text-right">
+                            {row.reimbursementsTotal > 0
+                              ? `${row.reimbursementsTotal.toLocaleString()} ${row.reimbursementsCurrency || "OMR"}`
+                              : "-"}
+                          </td>
+                          <td className="p-3 text-right">
+                            {row.manualAdjustmentsTotal !== 0
+                              ? row.manualAdjustmentsTotal.toLocaleString()
+                              : "-"}
+                          </td>
+                          <td className="p-3 text-right text-muted-foreground">
+                            Adjustments: {row.currency}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {(!period.compiledInputs || period.compiledInputs.length === 0) && (
+                      <tr>
+                        <td colSpan={6} className="text-center p-8 text-muted-foreground">
+                          No pay inputs yet. Select “Collect pay inputs” to gather approved records.
                         </td>
                       </tr>
-                    );
-                  })}
-                  {(!period.compiledInputs || period.compiledInputs.length === 0) && (
-                    <tr>
-                      <td colSpan={6} className="text-center p-8 text-muted-foreground">
-                        No inputs compiled yet. Click 'Collect Inputs' to aggregate data from
-                        modules.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

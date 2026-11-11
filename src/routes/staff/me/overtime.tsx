@@ -170,7 +170,7 @@ function MyOvertimeRoute() {
       <div className="flex flex-col gap-6 max-w-[1200px] mx-auto pb-10">
         <PageHeader
           title="My Overtime Claims"
-          description="Request and track overtime compensation or TOIL."
+          description="Request and track overtime pay or time off in lieu."
           actions={
             <Button onClick={handleOpenNew}>
               <Clock className="w-4 h-4 mr-2" />
@@ -210,7 +210,7 @@ function MyOvertimeRoute() {
                     <TableCell className="max-w-[200px] truncate text-sm" title={claim.reason}>
                       {claim.reason}
                       <Badge variant="outline" className="ml-2 text-[10px]">
-                        {claim.compensationType === "TOIL" ? "TOIL" : "Paid"}
+                        {claim.compensationType === "TOIL" ? "Time off" : "Paid"}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -284,8 +284,8 @@ function MyOvertimeRoute() {
               </DialogTitle>
               <DialogDescription>
                 {originalClaimId
-                  ? "Adjusting this claim will archive the original record and send this new request through the approval flow."
-                  : "Overtime is mathematically cross-checked against your daily timesheet and physical attendance punches."}
+                  ? "Your earlier request stays in history. This change needs approval again."
+                  : "Your request is checked against your timesheet and attendance."}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">

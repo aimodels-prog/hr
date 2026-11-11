@@ -392,87 +392,90 @@ function TravelDetailRoute() {
               <CardTitle className="text-base">Approval Timeline</CardTitle>
             </CardHeader>
             <CardContent className="p-4 space-y-6">
-              <div className="flex items-start gap-4">
-                {getStatusIcon(request.managerApprovalStatus)}
-                <div>
-                  <div className="font-medium">
-                    {request.approvalRoute?.kind === "Managerless Executive"
-                      ? "Colleagues’ supervisor reviews"
-                      : request.approvalRoute?.kind === "HR Own Travel"
-                        ? `Independent review · ${request.approvalRoute.reviewerName ?? "Assigned reviewer"}`
-                        : "Supervisor · Business need"}
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    {request.managerApprovalStatus}
-                  </div>
-                  {request.approvalRoute?.kind === "HR Own Travel" && request.managerApprovedBy && (
-                    <div className="text-sm text-emerald-700">
-                      {request.approvalRoute.reviewerName ?? "Independent reviewer"} approved.
+              {request.managerApprovalStatus !== "Not Required" && (
+                <div className="flex items-start gap-4">
+                  {getStatusIcon(request.managerApprovalStatus)}
+                  <div>
+                    <div className="font-medium">
+                      {request.approvalRoute?.kind === "Managerless Executive"
+                        ? "Travelling colleagues’ supervisors"
+                        : request.approvalRoute?.kind === "HR Own Travel"
+                          ? `Independent review · ${request.approvalRoute.reviewerName ?? "Assigned reviewer"}`
+                          : "Supervisor review"}
                     </div>
-                  )}
-                  {request.participants?.some(
-                    (participant) => participant.status === "Pending",
-                  ) && (
                     <div className="text-sm text-muted-foreground">
-                      Awaiting supervisors for{" "}
-                      {request.participants
-                        .filter((participant) => participant.status === "Pending")
-                        .map((participant) => participant.name)
-                        .join(", ")}
-                      .
+                      {request.managerApprovalStatus}
                     </div>
-                  )}
-                  {request.managerNotes && (
-                    <div className="text-sm mt-1 bg-muted/50 p-2 rounded">
-                      {request.managerNotes}
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-start gap-4">
-                {getStatusIcon(request.hrApprovalStatus)}
-                <div>
-                  <div className="font-medium">
-                    {request.approvalRoute?.kind === "HR Own Travel"
-                      ? "HR review (not required for own request)"
-                      : request.approvalRoute?.kind === "Managerless Executive" &&
-                          request.approvalRoute.reviewerRole === "Accounts"
-                        ? request.approvalRoute.notifyHr
-                          ? "HR informed (no decision required)"
-                          : "HR review (not required)"
-                        : "HR Policy & Dates"}
+                    {request.approvalRoute?.kind === "HR Own Travel" &&
+                      request.managerApprovedBy && (
+                        <div className="text-sm text-emerald-700">
+                          {request.approvalRoute.reviewerName ?? "Independent reviewer"} approved.
+                        </div>
+                      )}
+                    {request.participants?.some(
+                      (participant) => participant.status === "Pending",
+                    ) && (
+                      <div className="text-sm text-muted-foreground">
+                        Awaiting supervisors for{" "}
+                        {request.participants
+                          .filter((participant) => participant.status === "Pending")
+                          .map((participant) => participant.name)
+                          .join(", ")}
+                        .
+                      </div>
+                    )}
+                    {request.managerNotes && (
+                      <div className="text-sm mt-1 bg-muted/50 p-2 rounded">
+                        {request.managerNotes}
+                      </div>
+                    )}
                   </div>
-                  <div className="text-sm text-muted-foreground">{request.hrApprovalStatus}</div>
-                  {request.hrApprovedAt && (
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      Approved {new Date(request.hrApprovedAt).toLocaleString()}
-                    </div>
-                  )}
-                  {request.hrNotes && (
-                    <div className="text-sm mt-1 bg-muted/50 p-2 rounded">{request.hrNotes}</div>
-                  )}
                 </div>
-              </div>
+              )}
+              {request.hrApprovalStatus !== "Not Required" && (
+                <div className="flex items-start gap-4">
+                  {getStatusIcon(request.hrApprovalStatus)}
+                  <div>
+                    <div className="font-medium">HR review</div>
+                    <div className="text-sm text-muted-foreground">{request.hrApprovalStatus}</div>
+                    {request.hrApprovedAt && (
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        Approved {new Date(request.hrApprovedAt).toLocaleString()}
+                      </div>
+                    )}
+                    {request.hrNotes && (
+                      <div className="text-sm mt-1 bg-muted/50 p-2 rounded">{request.hrNotes}</div>
+                    )}
+                  </div>
+                </div>
+              )}
 
-              <div className="flex items-start gap-4">
-                {getStatusIcon(request.accountsApprovalStatus)}
-                <div>
-                  <div className="font-medium">Finance & Budgeting</div>
-                  <div className="text-sm text-muted-foreground">
-                    {request.accountsApprovalStatus}
+              {request.accountsApprovalStatus !== "Not Required" && (
+                <div className="flex items-start gap-4">
+                  {getStatusIcon(request.accountsApprovalStatus)}
+                  <div>
+                    <div className="font-medium">Finance review</div>
+                    <div className="text-sm text-muted-foreground">
+                      {request.accountsApprovalStatus}
+                    </div>
+                    {request.accountsApprovedAt && (
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        Approved {new Date(request.accountsApprovedAt).toLocaleString()}
+                      </div>
+                    )}
+                    {request.accountsNotes && (
+                      <div className="text-sm mt-1 bg-muted/50 p-2 rounded">
+                        {request.accountsNotes}
+                      </div>
+                    )}
                   </div>
-                  {request.accountsApprovedAt && (
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      Approved {new Date(request.accountsApprovedAt).toLocaleString()}
-                    </div>
-                  )}
-                  {request.accountsNotes && (
-                    <div className="text-sm mt-1 bg-muted/50 p-2 rounded">
-                      {request.accountsNotes}
-                    </div>
-                  )}
                 </div>
-              </div>
+              )}
+              {request.approvalRoute?.kind === "Managerless Executive" &&
+                request.approvalRoute.notifyHr &&
+                request.hrApprovalStatus === "Not Required" && (
+                  <p className="text-sm text-muted-foreground">HR has been notified.</p>
+                )}
 
               {request.closureNotes && (
                 <div className="flex items-start gap-4 pt-4 border-t">

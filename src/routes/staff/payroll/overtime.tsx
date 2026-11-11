@@ -290,7 +290,7 @@ function OvertimeLedgerContent() {
         <SummaryCard
           label="Needs attention"
           value={String(counts.exceptions)}
-          detail="Cross-checks and legacy assignments"
+          detail="Claims needing a closer look"
           icon={TriangleAlert}
           tone={counts.exceptions > 0 ? "amber" : "slate"}
         />

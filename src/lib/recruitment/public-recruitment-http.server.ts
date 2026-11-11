@@ -4,6 +4,7 @@ import { ZodError } from "zod";
 
 import { submitPublicApplicationToDatabase } from "../db/repositories/public-application.repository.server.ts";
 import { listVacanciesForOrganisation } from "../db/repositories/vacancy.repository.server.ts";
+import { sortPublicVacanciesNewestFirst } from "../data/public-vacancy-date.ts";
 import { resolveDefaultOrganisationId } from "../db/organisation.server.ts";
 import {
   PublicApplicationSchema,
@@ -26,14 +27,14 @@ export async function resolvePublicRecruitmentRequest(
     const organisationId = await resolveDefaultOrganisationId();
     const vacancies = await listVacanciesForOrganisation(organisationId, false);
     return json(
-      vacancies
-        .filter((vacancy) => vacancy.status === "Open" && !vacancy.archivedAt)
-        .map((vacancy) => ({
-          ...vacancy,
-          hiringManagerId: undefined,
-          assignedOwnerId: undefined,
-          notes: "",
-        })),
+      sortPublicVacanciesNewestFirst(
+        vacancies.filter((vacancy) => vacancy.status === "Open" && !vacancy.archivedAt),
+      ).map((vacancy) => ({
+        ...vacancy,
+        hiringManagerId: undefined,
+        assignedOwnerId: undefined,
+        notes: "",
+      })),
     );
   }
 

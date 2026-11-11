@@ -182,7 +182,7 @@ function LeaveAdminContent() {
         {employeeFilter.control}
         <PageHeader
           title="Manage leave"
-          description="Check employee balances, review leave records, or see who will be away on the calendar. Choose a section on the left, or open Sections on your phone."
+          description="Review balances, requests and who is away."
           actions={
             <div className="flex flex-wrap items-center gap-2">
               {currentUser.activeRole === "HR" && <SickLeaveBackdateDialog employees={employees} />}
@@ -203,13 +203,13 @@ function LeaveAdminContent() {
         <Tabs defaultValue="balances" className="w-full">
           <TabsList className="mb-4">
             <TabsTrigger value="balances" className="flex gap-2">
-              <WalletCards className="h-4 w-4" /> Balance Register
+              <WalletCards className="h-4 w-4" /> Balances
             </TabsTrigger>
             <TabsTrigger value="list" className="flex gap-2">
-              <List className="h-4 w-4" /> All Requests
+              <List className="h-4 w-4" /> Requests
             </TabsTrigger>
             <TabsTrigger value="calendar" className="flex gap-2">
-              <CalendarIcon className="h-4 w-4" /> Team Calendar
+              <CalendarIcon className="h-4 w-4" /> Calendar
             </TabsTrigger>
             {currentUser.activeRole === "HR" && (
               <TabsTrigger value="office-work" className="flex gap-2">

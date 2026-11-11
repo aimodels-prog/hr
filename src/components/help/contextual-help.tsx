@@ -14,7 +14,7 @@ const Context = createContext<{
   dismiss: () => void;
   toggle: () => void;
   restore: () => void;
-}>({ visible: false, hidden: false, dismiss() {}, toggle() {}, restore() {} });
+}>({ visible: false, hidden: true, dismiss() {}, toggle() {}, restore() {} });
 
 export function ContextualHelpProvider({ children }: { children: ReactNode }) {
   const user = useCurrentUser();
@@ -24,11 +24,11 @@ export function ContextualHelpProvider({ children }: { children: ReactNode }) {
   const [loaded, setLoaded] = useState<{ key: string; article?: HelpArticle | undefined }>();
   const [preferences, setPreferences] = useState<{ key: string; value: Preferences }>();
   useEffect(() => {
-    let value: Preferences = {};
+    let value: Preferences = { hidden: true };
     try {
       const saved = JSON.parse(localStorage.getItem(preferenceKey) ?? "{}");
       value = {
-        hidden: saved?.hidden === true,
+        hidden: saved?.hidden !== false,
         dismissed: Array.isArray(saved?.dismissed)
           ? saved.dismissed.filter((id: unknown) => typeof id === "string")
           : [],
@@ -70,12 +70,12 @@ export function ContextualHelpProvider({ children }: { children: ReactNode }) {
         visible: Boolean(
           article && value && !value.hidden && !value.dismissed?.includes(article.id),
         ),
-        hidden: value?.hidden === true,
+        hidden: value?.hidden !== false,
         dismiss: () => {
           if (article)
             save({ ...value, dismissed: [...new Set([...(value?.dismissed ?? []), article.id])] });
         },
-        toggle: () => save({ ...value, hidden: !value?.hidden }),
+        toggle: () => save({ ...value, hidden: value?.hidden === false }),
         restore: () => save({ hidden: false, dismissed: [] }),
       }}
     >

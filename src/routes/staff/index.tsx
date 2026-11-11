@@ -5,6 +5,7 @@ import {
   Briefcase,
   FilePlus2,
   CalendarPlus,
+  CalendarClock,
   Plane,
   Upload,
   UserPlus,
@@ -272,6 +273,12 @@ function Dashboard() {
               className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 py-2 font-medium text-primary-foreground"
             >
               <Plane className="h-4 w-4" /> Quick visit
+            </Link>
+            <Link
+              to="/staff/time-away"
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg border bg-card px-4 py-2 text-sm font-medium"
+            >
+              <CalendarClock className="h-4 w-4" /> Time Away
             </Link>
           </div>
         )}

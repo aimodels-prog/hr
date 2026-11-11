@@ -128,7 +128,7 @@ function PayrollPeriodsContent() {
                       size="sm"
                       onClick={() => navigate({ to: `/staff/payroll/periods/${p.id}` })}
                     >
-                      <FileText className="w-4 h-4 mr-2" /> Open Workbench
+                      <FileText className="w-4 h-4 mr-2" /> Open payroll
                     </Button>
                   </TableCell>
                 </TableRow>

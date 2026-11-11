@@ -45,7 +45,7 @@ import { downloadExcel, downloadCsvExport, type ExportFormat } from "@/lib/data/
 export const Route = createFileRoute("/staff/reports")({
   component: ReportsRoute,
   head: () => ({
-    meta: [{ title: "Reports Centre — VIA HR System" }],
+    meta: [{ title: "Reports — VIA HR System" }],
   }),
 });
 
@@ -287,10 +287,9 @@ function ReportsDashboard() {
   return (
     <div className="mx-auto max-w-6xl space-y-6 pb-10">
       <div>
-        <h1 className="text-2xl font-semibold">Reports Centre</h1>
+        <h1 className="text-2xl font-semibold">Reports</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          View, filter, and export operational metrics across the system. Data is automatically
-          scoped to your role.
+          View and export reports available to your role.
         </p>
       </div>
 

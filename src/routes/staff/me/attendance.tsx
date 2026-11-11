@@ -626,7 +626,7 @@ function MyAttendanceRoute() {
                 <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
                   {todayOpenRecord
                     ? "Clock out when you finish. If a clock-out is missed, enter the actual finishing time for HR to confirm."
-                    : `Clocking is allowed only inside an active VIA office zone with browser accuracy of ${policy.maximumLocationAccuracyMeters} metres or better.`}
+                    : "To clock in, allow location access while you are at your office."}
                 </p>
                 {missedOpenRecord && (
                   <Alert className="mt-4 border-amber-300 bg-amber-50 text-amber-950">
@@ -686,7 +686,7 @@ function MyAttendanceRoute() {
                   </Button>
                 )}
                 <span className="text-center text-xs text-muted-foreground">
-                  High-accuracy browser location required
+                  Office location access required
                 </span>
               </div>
             </CardContent>
@@ -694,7 +694,7 @@ function MyAttendanceRoute() {
         )}
         {!trackingRequired && (
           <div className="rounded-xl border p-4 text-sm">
-            Attendance tracking is not enabled. Saved punches are still shown.{" "}
+            Clock-in is not required today. Existing records are shown below.{" "}
             <a className="text-primary underline" href="/staff/me/timesheets">
               Open your timesheet
             </a>
@@ -1175,7 +1175,11 @@ function MyAttendanceRoute() {
               <DialogTitle>Quick visit</DialogTitle>
               <DialogDescription>
                 Heading to a site, ministry or client? Choose the type, enter the destination and
-                go. An authorised reviewer will confirm it. Planned trips belong in Requests.
+                go. An authorised reviewer will confirm it. Plan longer trips in{" "}
+                <a className="text-primary underline" href="/staff/travel">
+                  My Travel
+                </a>
+                .
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3">

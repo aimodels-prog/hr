@@ -122,7 +122,7 @@ function AccountsDashboardDetails() {
         icon: AlertCircle,
         title: `${unresolvedExceptions} unresolved payroll exception${unresolvedExceptions === 1 ? "" : "s"}`,
         meta: `${currentPeriod.name} — blocks payroll`,
-        actionLabel: "Open Workbench",
+        actionLabel: "Open payroll",
         actionTo: `/staff/payroll/periods/${currentPeriod.id}`,
       });
     } else {
@@ -132,7 +132,7 @@ function AccountsDashboardDetails() {
         icon: FileSpreadsheet,
         title: `${currentPeriod.name} is ${currentPeriod.status}`,
         meta: "Routine payroll workflow",
-        actionLabel: "Open Workbench",
+        actionLabel: "Open payroll",
         actionTo: `/staff/payroll/periods/${currentPeriod.id}`,
       });
     }
@@ -198,7 +198,7 @@ function AccountsDashboardDetails() {
               ? `${latestTimesheetPeriod.startDate} – ${latestTimesheetPeriod.endDate}`
               : "No active timesheet period"
           }
-          viewAllLabel="Payroll Workbench"
+          viewAllLabel="Open payroll"
           viewAllTo={
             currentPeriod ? `/staff/payroll/periods/${currentPeriod.id}` : "/staff/payroll/periods"
           }

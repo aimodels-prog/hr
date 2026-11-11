@@ -63,3 +63,44 @@ test("declined and approved leave names the actual actor, never a raw user ID", 
     "Decision-maker not recorded",
   );
 });
+
+test("missing decision actors are omitted rather than invented", () => {
+  assert.equal(
+    leaveDecisionSummary(request({ status: "Declined", chainApprovals: [] }), { staffView: true }),
+    null,
+  );
+  assert.equal(
+    leaveDecisionSummary(request({ status: "Approved", chainApprovals: [] }), { staffView: true }),
+    null,
+  );
+  assert.equal(
+    leaveDecisionSummary(request({ status: "Taken", chainApprovals: [] }), { staffView: true }),
+    null,
+  );
+  assert.equal(
+    leaveDecisionSummary(request({ status: "Automatically Refused", chainApprovals: [] }), {
+      staffView: true,
+    }),
+    null,
+  );
+});
+
+test("an active request without a named manager still shows the review stage", () => {
+  assert.equal(
+    leaveDecisionSummary(request({ lineManagerName: undefined }), { staffView: true }),
+    "Manager review pending · Ask HR to confirm the reviewer",
+  );
+});
+
+test("legacy super admin review is shown to staff as HR review", () => {
+  assert.equal(
+    leaveDecisionSummary(
+      request({
+        status: "Pending Super Admin",
+        chainApprovals: [{ role: "Super Admin", status: "Pending" }],
+      }),
+      { staffView: true },
+    ),
+    "Waiting for HR review",
+  );
+});

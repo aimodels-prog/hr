@@ -145,10 +145,7 @@ function CompanyLibrary() {
     <div className="mx-auto max-w-5xl space-y-5 pb-10">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">Policies & Company Documents</h1>
-          <p className="text-sm text-muted-foreground">
-            Current guidance, original documents and renewal dates.
-          </p>
+          <h1 className="text-2xl font-semibold">Policies and documents</h1>
         </div>
         {hr && <Button onClick={() => startUpload()}>Upload document</Button>}
       </header>
@@ -162,7 +159,7 @@ function CompanyLibrary() {
                   ? "Company register"
                   : value === "Insurance"
                     ? "Health insurance"
-                    : "Ask VIA Policies"}
+                    : "Ask about policies"}
             </SectionLink>
           ))}
         </SectionNavigation>
@@ -176,9 +173,8 @@ function CompanyLibrary() {
           {tab === "Ask policies" ? (
             <section className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Ask about published policies you can access. Answers include supporting passages. AI
-                can make mistakes; check the cited PDF or ask HR. This does not approve requests.
-                Each question is independent; this conversation is not saved.
+                Ask about policies you can access. AI can make mistakes, so check the cited PDF or
+                ask HR. Questions are not saved and do not approve requests.
               </p>
               <Label htmlFor="policy-question">Your question</Label>
               <Textarea
@@ -237,8 +233,8 @@ function CompanyLibrary() {
             <section className="space-y-3">
               {tab === "Company" && (
                 <p className="text-sm text-muted-foreground">
-                  Restricted to HR. Expiry reminders go to HR at 90, 60, 30 and 7 days, and on
-                  expiry. Company files are never included in staff policy answers.
+                  HR-only documents. Renewal reminders go to HR. These files are not used in staff
+                  policy answers.
                 </p>
               )}
               {query.data?.filter((doc) => doc.kind === tab).length === 0 && (
@@ -256,8 +252,10 @@ function CompanyLibrary() {
                       <p className="text-sm">
                         {doc.category} · {doc.status} · {doc.audience}
                       </p>
-                      {doc.kind === "Library" && (
-                        <p className="text-xs text-muted-foreground">AI: {doc.processing}</p>
+                      {doc.kind === "Library" && hr && (
+                        <p className="text-xs text-muted-foreground">
+                          Policy search: {doc.processing}
+                        </p>
                       )}
                       {doc.kind === "Company" && (
                         <p className="text-sm">

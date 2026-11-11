@@ -125,15 +125,14 @@ function NewTravelRequestRoute() {
       <div className="flex flex-col gap-6 max-w-[800px] mx-auto pb-10">
         <PageHeader
           title="New Travel Request"
-          description="Complete this form to request approval before you travel."
+          description="Tell us where you are going and what you need."
         />
 
         <Alert className="bg-blue-50 text-blue-900 border-blue-200">
           <Info className="w-4 h-4 text-blue-600" />
-          <AlertTitle>How approval works</AlertTitle>
+          <AlertTitle>Before you book</AlertTitle>
           <AlertDescription>
-            Your supervisor, HR and Finance review as needed. Wait for approval before booking.
-            Estimate any costs you expect, whether VIA arranges them or you claim them later.
+            Wait for your trip to be approved. Your request shows who needs to decide next.
           </AlertDescription>
         </Alert>
 
@@ -240,8 +239,7 @@ function NewTravelRequestRoute() {
           <CardHeader>
             <CardTitle>Booking and costs</CardTitle>
             <CardDescription>
-              Tell us whether VIA needs to arrange travel and estimate any costs. Actual receipts
-              are submitted after the trip.
+              Include what VIA should book or reimburse. Add receipts after the trip.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -283,9 +281,8 @@ function NewTravelRequestRoute() {
                 </summary>
                 <div className="space-y-4 pt-3">
                   <p className="text-sm text-muted-foreground">
-                    Include costs you expect VIA to book or reimburse. Finance uses the approved
-                    estimate to check actual receipts. If you expect to claim expenses, do not leave
-                    this at zero.
+                    Include all costs you expect VIA to book or reimburse. Finance checks your
+                    receipts against this estimate after the trip.
                   </p>
                   <div className="max-w-[200px] space-y-2">
                     <label className="text-sm font-medium">Currency</label>

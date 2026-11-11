@@ -213,11 +213,11 @@ function DocumentExpiryRoute() {
   };
 
   return (
-    <RequirePermission permission="employee:manage_all" resourceName="Document Expiry Centre">
+    <RequirePermission permission="employee:manage_all" resourceName="Expiring documents">
       <div className="flex flex-col gap-6 max-w-[1400px] mx-auto pb-10">
         <PageHeader
-          title="Document Expiry Centre"
-          description="Monitor and track expiring employee documents globally."
+          title="Expiring documents"
+          description="Review employee documents that need renewal."
         />
         {loading && <p className="text-sm text-muted-foreground">Loading document tracking...</p>}
         {loadError && <p className="text-sm text-destructive">{loadError}</p>}
@@ -236,7 +236,7 @@ function DocumentExpiryRoute() {
           <Card className="bg-orange-50 border-orange-200">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-orange-700 flex items-center">
-                <ShieldAlert className="mr-2 h-4 w-4" /> Expiring &lt; 30 Days
+                <ShieldAlert className="mr-2 h-4 w-4" /> Due within 30 days
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -246,7 +246,7 @@ function DocumentExpiryRoute() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground flex items-center">
-                <Clock className="mr-2 h-4 w-4" /> Expiring 30-90 Days
+                <Clock className="mr-2 h-4 w-4" /> Due in 31–90 days
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -256,7 +256,7 @@ function DocumentExpiryRoute() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground flex items-center">
-                <CheckCircle2 className="mr-2 h-4 w-4" /> Valid (&gt; 90 Days)
+                <CheckCircle2 className="mr-2 h-4 w-4" /> Valid beyond 90 days
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -316,7 +316,7 @@ function DocumentExpiryRoute() {
                           <div className="capitalize font-medium">{doc.type.replace("_", " ")}</div>
                           <div className="text-xs text-muted-foreground">
                             {doc.visibility === "Restricted"
-                              ? "***REDACTED***"
+                              ? "Restricted"
                               : doc.documentNumber || "-"}
                           </div>
                         </TableCell>

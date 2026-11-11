@@ -197,7 +197,7 @@ test("dashboard chart figures match server data for HR and employee across perio
       await expect(insights.locator(".recharts-xAxis").getByText(/Today/).first()).toBeVisible();
       const details = insights
         .locator("details")
-        .filter({ has: page.getByText("Daily figures and calculation notes", { exact: true }) });
+        .filter({ has: page.getByText("How these figures are calculated", { exact: true }) });
       await details.locator("summary").click();
       const rows = details.locator("tbody tr");
       await expect(rows).toHaveCount(period);

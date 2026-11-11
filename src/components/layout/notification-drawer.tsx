@@ -9,8 +9,14 @@ import { getApplicationDataServices } from "@/lib/data/application-data";
 import { employeeDocumentLink } from "@/lib/data/document-links";
 import { getEmployeeDocumentsFn } from "@/lib/server-functions/core-hr-lifecycle.server";
 import { notificationServerActor } from "@/lib/data/notification-cache";
-import { newlyArrivedUnread } from "@/lib/data/notification-popup";
-import type { ActorContext, Notification } from "@/lib/data/types";
+import {
+  browserApprovalAlertHistoryKey,
+  browserApprovalAlertsKey,
+  claimBrowserApprovalTasks,
+  newlyArrivedUnread,
+  newlyAssignedApprovalTasks,
+} from "@/lib/data/notification-popup";
+import type { ActorContext, Notification as AppNotification } from "@/lib/data/types";
 import { formatDistanceToNow } from "date-fns";
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -41,6 +47,11 @@ export function NotificationDrawer() {
   const [, setTicker] = useState(0); // force refresh after repository mutations
   const [isLoading, setIsLoading] = useState(true);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [browserAlertsEnabled, setBrowserAlertsEnabled] = useState(false);
+  const [browserPermission, setBrowserPermission] = useState<
+    NotificationPermission | "unsupported"
+  >("unsupported");
+  const knownApprovalTaskIds = useRef<Set<string> | null>(null);
 
   useEffect(() => {
     openRef.current = open;
@@ -55,14 +66,111 @@ export function NotificationDrawer() {
   const { notifications: notifService } = getApplicationDataServices();
   const actorKey = JSON.stringify(currentUser.getActorContext());
   const actorContext = useMemo(() => JSON.parse(actorKey) as ActorContext, [actorKey]);
+  const activeRole = actorContext.actor.activeRole ?? actorContext.actor.roles[0] ?? "Employee";
+  const canReceiveApprovalAlerts = activeRole !== "Super Admin";
+
+  useEffect(() => {
+    if (!canReceiveApprovalAlerts || !("Notification" in window) || !window.isSecureContext) {
+      setBrowserPermission("unsupported");
+      setBrowserAlertsEnabled(false);
+      return;
+    }
+    setBrowserPermission(window.Notification.permission);
+    try {
+      setBrowserAlertsEnabled(
+        window.Notification.permission === "granted" &&
+          window.localStorage.getItem(browserApprovalAlertsKey(actorContext.actor.userId)) === "1",
+      );
+    } catch {
+      setBrowserAlertsEnabled(false);
+    }
+  }, [actorContext.actor.userId, canReceiveApprovalAlerts]);
+
+  useEffect(() => {
+    if (!open || !("Notification" in window)) return;
+    setBrowserPermission(window.Notification.permission);
+    if (window.Notification.permission !== "granted") setBrowserAlertsEnabled(false);
+  }, [open]);
+
   const approvalInbox = useQuery({
     queryKey: ["approval-inbox", actorKey],
     queryFn: async () =>
       getApprovalInboxFn({ data: { actor: await notificationServerActor(actorContext) } }),
-    enabled: open,
+    enabled: open || browserAlertsEnabled,
     staleTime: 15_000,
-    refetchInterval: open ? 30_000 : false,
+    refetchInterval: open || browserAlertsEnabled ? 30_000 : false,
+    refetchIntervalInBackground: browserAlertsEnabled,
   });
+
+  useEffect(() => {
+    knownApprovalTaskIds.current = null;
+  }, [actorKey, browserAlertsEnabled]);
+
+  useEffect(() => {
+    if (!browserAlertsEnabled || !approvalInbox.data) return;
+    const newTasks = newlyAssignedApprovalTasks(approvalInbox.data, knownApprovalTaskIds.current);
+    knownApprovalTaskIds.current = new Set(approvalInbox.data.map((task) => task.id));
+    if (newTasks.length === 0 || browserPermission !== "granted") return;
+    let tasksToNotify = newTasks;
+    try {
+      tasksToNotify = claimBrowserApprovalTasks(
+        newTasks,
+        window.localStorage,
+        browserApprovalAlertHistoryKey(actorContext.actor.userId, activeRole),
+      );
+    } catch {
+      // Storage can be unavailable in private browsing; the current tab still works.
+    }
+    if (tasksToNotify.length === 0 || open) return;
+    const openNewApproval = () => {
+      if (tasksToNotify.length !== 1) {
+        void navigate({ to: "/staff/requests", search: { view: "approvals" } });
+        return;
+      }
+      const [path, hash = ""] = approvalActionUrl(tasksToNotify[0]!).split("#");
+      void navigate({ to: path!, hash });
+    };
+    if (document.visibilityState === "visible" && document.hasFocus()) {
+      toast.info(
+        tasksToNotify.length === 1
+          ? "New request waiting for your review"
+          : `${tasksToNotify.length} new requests need your review`,
+        {
+          action: { label: "Review", onClick: openNewApproval },
+          duration: 8_000,
+        },
+      );
+      return;
+    }
+    try {
+      const alert = new window.Notification("VIA HR Application", {
+        body:
+          tasksToNotify.length === 1
+            ? "A new request is waiting for your review."
+            : `${tasksToNotify.length} new requests are waiting for your review.`,
+        icon: "/favicon.png",
+        tag: `via-hr-approvals-${actorContext.actor.userId}-${activeRole}`,
+      });
+      alert.onclick = () => {
+        alert.close();
+        window.focus();
+        openNewApproval();
+      };
+    } catch {
+      // Some mobile browsers grant permission but cannot construct page notifications.
+      // The in-app notification bell remains available in those browsers.
+      setBrowserAlertsEnabled(false);
+      setBrowserPermission("unsupported");
+    }
+  }, [
+    actorContext.actor.userId,
+    activeRole,
+    approvalInbox.data,
+    browserAlertsEnabled,
+    browserPermission,
+    navigate,
+    open,
+  ]);
   const notifications = notifService
     .listForContext(actorContext)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -82,7 +190,9 @@ export function NotificationDrawer() {
       try {
         const latest = await notifService.hydrateCompatibilityCache(actorContext, () => !cancelled);
         if (cancelled) return;
-        const arrived = newlyArrivedUnread(latest, knownIds);
+        const arrived = newlyArrivedUnread(latest, knownIds).filter(
+          (notification) => !browserAlertsEnabled || !isApprovalNotification(notification),
+        );
         knownIds = new Set(latest.map((notification) => notification.id));
         hasLoaded = true;
         if (openRef.current) return;
@@ -124,7 +234,7 @@ export function NotificationDrawer() {
       window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [actorContext, notifService]);
+  }, [actorContext, browserAlertsEnabled, notifService]);
 
   const handleMarkAsRead = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -162,7 +272,35 @@ export function NotificationDrawer() {
     }
   };
 
-  const handleClick = async (notif: Notification) => {
+  const handleEnableBrowserAlerts = async () => {
+    if (!canReceiveApprovalAlerts || !("Notification" in window) || !window.isSecureContext) return;
+    try {
+      // The browser permission prompt must be triggered directly by this click.
+      const permission = await window.Notification.requestPermission();
+      setBrowserPermission(permission);
+      if (permission !== "granted") return;
+      try {
+        window.localStorage.setItem(browserApprovalAlertsKey(actorContext.actor.userId), "1");
+      } catch {
+        // If storage is blocked, alerts can still run until this tab closes.
+      }
+      setBrowserAlertsEnabled(true);
+      toast.success("Browser alerts are on for requests waiting for your review.");
+    } catch {
+      toast.error("Browser alerts are unavailable. Your in-app notifications still work.");
+    }
+  };
+
+  const handleDisableBrowserAlerts = () => {
+    try {
+      window.localStorage.removeItem(browserApprovalAlertsKey(actorContext.actor.userId));
+    } catch {
+      // The current-session setting can still be disabled if storage is unavailable.
+    }
+    setBrowserAlertsEnabled(false);
+  };
+
+  const handleClick = async (notif: AppNotification) => {
     if (notif.status === "Unread") {
       try {
         await notifService.markReadAsync(notif.id, currentUser.getActorContext());
@@ -271,6 +409,35 @@ export function NotificationDrawer() {
         </SheetHeader>
         <ScrollArea className="flex-1">
           <div className="flex flex-col">
+            {canReceiveApprovalAlerts && browserPermission !== "unsupported" && (
+              <section className="border-b p-4" aria-label="Browser approval alerts">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">Browser alerts</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Pop-ups for new approvals while the app is open. No employee details shown.
+                    </p>
+                  </div>
+                  {browserPermission === "denied" ? (
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      Blocked by browser
+                    </span>
+                  ) : browserAlertsEnabled ? (
+                    <Button size="sm" variant="outline" onClick={handleDisableBrowserAlerts}>
+                      Turn off
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void handleEnableBrowserAlerts()}
+                    >
+                      Turn on
+                    </Button>
+                  )}
+                </div>
+              </section>
+            )}
             {approvalInbox.data && approvalInbox.data.length > 0 && (
               <section className="border-b bg-primary/5 p-4" aria-label="Approvals waiting for you">
                 <h3 className="mb-3 text-sm font-semibold">
@@ -313,7 +480,7 @@ export function NotificationDrawer() {
               </div>
             ) : notifications.length === 0 ? (
               <div className="p-8 text-center text-muted-foreground text-sm">
-                No notifications found.
+                You're all caught up.
               </div>
             ) : (
               notifications.map((notif) => (

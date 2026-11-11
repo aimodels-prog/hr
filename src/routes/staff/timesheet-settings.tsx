@@ -130,16 +130,16 @@ function TimesheetSettingsRoute() {
       <div className="flex flex-col gap-6 max-w-[800px] mx-auto pb-10">
         <PageHeader
           title="Timesheet Settings"
-          description="Set monthly periods, working hours and the submission deadline."
+          description="Set work hours, submission deadlines and timesheet periods."
         />
 
         <Card>
           <CardHeader>
-            <CardTitle>Global Configuration</CardTitle>
-            <CardDescription>Changes apply to new periods and timesheets.</CardDescription>
+            <CardTitle>Work hours and deadlines</CardTitle>
+            <CardDescription>Changes apply to new timesheets and periods.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Timesheet Period</Label>
                 <Select
@@ -182,7 +182,7 @@ function TimesheetSettingsRoute() {
                 </div>
               )}
               <div className="space-y-2">
-                <Label>Submission Deadline (Days after period end)</Label>
+                <Label>Days to submit after the period ends</Label>
                 <Input
                   type="number"
                   min={0}
@@ -197,7 +197,7 @@ function TimesheetSettingsRoute() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Standard Daily Hours</Label>
+                <Label>Required work hours per day</Label>
                 <Input
                   type="number"
                   min={1}
@@ -209,8 +209,8 @@ function TimesheetSettingsRoute() {
                   }
                 />
                 <p className="text-xs text-muted-foreground">
-                  Required work hours per day, excluding the scheduled break. Attendance may show
-                  the full time on site, including that break. Shared with company settings.
+                  Excludes the scheduled break. Attendance may show the full time on site, including
+                  the break.
                 </p>
               </div>
               <div className="space-y-2">
@@ -277,7 +277,7 @@ function TimesheetSettingsRoute() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Attendance Variance Tolerance (Hours)</Label>
+                <Label>Allowed difference from attendance (hours)</Label>
                 <Input
                   type="number"
                   min={0}
@@ -292,11 +292,11 @@ function TimesheetSettingsRoute() {
                   }
                 />
                 <p className="text-xs text-muted-foreground">
-                  Daily differences above this value require an employee explanation.
+                  Staff must explain any larger daily difference.
                 </p>
               </div>
               <div className="space-y-2">
-                <Label>Payroll Lock Behaviour</Label>
+                <Label>When to lock timesheets for payroll</Label>
                 <Select
                   value={settings.payrollLockBehaviour}
                   onValueChange={(value: TimesheetSettings["payrollLockBehaviour"]) =>
@@ -344,20 +344,17 @@ function TimesheetSettingsRoute() {
             </div>
           </CardContent>
           <CardFooter className="justify-end">
-            <Button onClick={handleSaveSettings}>Save Configuration</Button>
+            <Button onClick={handleSaveSettings}>Save settings</Button>
           </CardFooter>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Period Generation</CardTitle>
-            <CardDescription>
-              Create periods for the selected dates. Monthly periods cover the first to the last day
-              of each month.
-            </CardDescription>
+            <CardTitle>Prepare timesheet periods</CardTitle>
+            <CardDescription>The current period is created automatically.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Start Date</Label>
                 <Input type="date" value={genStart} onChange={(e) => setGenStart(e.target.value)} />
@@ -367,24 +364,20 @@ function TimesheetSettingsRoute() {
                 <Input type="date" value={genEnd} onChange={(e) => setGenEnd(e.target.value)} />
               </div>
             </div>
-            <p className="text-sm text-muted-foreground pt-2">
-              The current period is created automatically. Use this to prepare additional periods.
-            </p>
           </CardContent>
           <CardFooter className="justify-end">
             <Button variant="secondary" onClick={handleGeneratePeriods}>
-              Generate Periods
+              Create periods
             </Button>
           </CardFooter>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Period Lifecycle</CardTitle>
+            <CardTitle>Open and close periods</CardTitle>
             <CardDescription>
-              Closing a period stops any employee from creating, editing, or submitting a timesheet
-              inside it. A closed period can be reopened with a recorded reason when corrections are
-              required.
+              Staff cannot create, edit or submit timesheets in a closed period. Reopening requires
+              a recorded reason.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">

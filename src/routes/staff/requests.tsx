@@ -103,7 +103,9 @@ function TrackedRequestRow({
                 {row.approvedBy.join(", ")}
               </p>
             )}
-            <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{nextStep}</p>
+            {row.group !== "Waiting" && row.group !== "Approved" && (
+              <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{nextStep}</p>
+            )}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:block">
@@ -148,11 +150,6 @@ function TrackedRequestRow({
                 {date(event.at)}
               </time>
               {event.comment && <p className="mt-1 whitespace-pre-wrap">{event.comment}</p>}
-              {event.statusAfter && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Status after decision: {event.statusAfter}
-                </p>
-              )}
               <DecisionSnapshot snapshot={event.snapshot} unavailable={event.snapshotUnavailable} />
             </li>
           ))}
@@ -160,9 +157,6 @@ function TrackedRequestRow({
             Current: {row.status} · {row.waitingFor}
           </li>
         </ol>
-        <p className="mt-2 text-xs text-muted-foreground">
-          Older imported records may not include the original approver or decision date.
-        </p>
       </details>
     </article>
   );
@@ -277,14 +271,21 @@ function RequestCentre() {
       ...[...approvalCounts.keys()].filter((name) => !featuredApprovalTypes.includes(name)).sort(),
     ]),
   ];
+  const resultNoun =
+    view === "approvals"
+      ? "to review"
+      : view === "reviewed"
+        ? resultCount === 1
+          ? "decision"
+          : "decisions"
+        : resultCount === 1
+          ? "request"
+          : "requests";
   return (
     <main className="mx-auto min-w-0 max-w-[1440px] space-y-6 pb-8">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">
-            Requests centre
-          </p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">
+          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
             {view === "approvals"
               ? hr
                 ? "HR Approvals"
@@ -295,15 +296,11 @@ function RequestCentre() {
                   ? "Employee Requests"
                   : "My Requests"}
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {view === "approvals"
-              ? "Decisions waiting for you."
-              : view === "reviewed"
-                ? "See decisions you made, including requests still waiting for someone else."
-                : view === "organisation"
-                  ? "Find a request and see who needs to act next."
-                  : "Follow your requests from submission to decision."}
-          </p>
+          {view === "reviewed" && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              Decisions you made, including requests still waiting for someone else.
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -356,8 +353,10 @@ function RequestCentre() {
                 aria-label="Filter requests"
                 className="rounded-2xl border bg-card p-4 shadow-sm sm:p-5"
               >
-                <div className="mb-4 flex items-center justify-between gap-3">
-                  <h2 className="text-sm font-semibold">Find a request</h2>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <h2 className="text-sm font-semibold">
+                    {view === "approvals" ? "Find an approval" : "Find a request"}
+                  </h2>
                   {hasFilters && (
                     <button
                       type="button"
@@ -371,7 +370,11 @@ function RequestCentre() {
                 <div
                   className={cn(
                     "grid gap-3",
-                    view === "approvals" ? "sm:grid-cols-2" : "sm:grid-cols-3",
+                    view === "approvals" && hr
+                      ? "sm:grid-cols-1"
+                      : view === "approvals"
+                        ? "sm:grid-cols-2"
+                        : "sm:grid-cols-3",
                   )}
                 >
                   <label className="min-w-0 text-xs font-medium text-muted-foreground">
@@ -396,42 +399,44 @@ function RequestCentre() {
                       />
                     </span>
                   </label>
-                  <label className="min-w-0 text-xs font-medium text-muted-foreground">
-                    Request type
-                    <select
-                      value={view === "approvals" ? approvalModule : module}
-                      onChange={(event) => {
-                        if (view === "approvals") setApprovalModule(event.target.value);
-                        else setModule(event.target.value as typeof module);
-                        setPage(1);
-                      }}
-                      className="mt-1.5 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/20"
-                    >
-                      {view === "approvals" ? (
-                        <>
-                          <option value="All">All types</option>
-                          {[...new Set([...featuredApprovalTypes, ...approvalCounts.keys()])]
-                            .sort()
-                            .map((name) => (
-                              <option key={name} value={name}>
-                                {name.replaceAll("-", " ")} ({approvalCounts.get(name) ?? 0})
-                              </option>
-                            ))}
-                        </>
-                      ) : (
-                        [
-                          "All",
-                          ...REQUEST_MODULES.filter(
-                            (value) => value !== "Payroll" || user.activeRole === "Accounts",
-                          ),
-                        ].map((value) => (
-                          <option key={value} value={value}>
-                            {value === "All" ? "All types" : value}
-                          </option>
-                        ))
-                      )}
-                    </select>
-                  </label>
+                  {!(view === "approvals" && hr) && (
+                    <label className="min-w-0 text-xs font-medium text-muted-foreground">
+                      Request type
+                      <select
+                        value={view === "approvals" ? approvalModule : module}
+                        onChange={(event) => {
+                          if (view === "approvals") setApprovalModule(event.target.value);
+                          else setModule(event.target.value as typeof module);
+                          setPage(1);
+                        }}
+                        className="mt-1.5 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/20"
+                      >
+                        {view === "approvals" ? (
+                          <>
+                            <option value="All">All types</option>
+                            {[...new Set([...featuredApprovalTypes, ...approvalCounts.keys()])]
+                              .sort()
+                              .map((name) => (
+                                <option key={name} value={name}>
+                                  {name.replaceAll("-", " ")} ({approvalCounts.get(name) ?? 0})
+                                </option>
+                              ))}
+                          </>
+                        ) : (
+                          [
+                            "All",
+                            ...REQUEST_MODULES.filter(
+                              (value) => value !== "Payroll" || user.activeRole === "Accounts",
+                            ),
+                          ].map((value) => (
+                            <option key={value} value={value}>
+                              {value === "All" ? "All types" : value}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    </label>
+                  )}
                   {view !== "approvals" && (
                     <label className="min-w-0 text-xs font-medium text-muted-foreground">
                       Status
@@ -452,42 +457,44 @@ function RequestCentre() {
                     </label>
                   )}
                 </div>
+                {view === "approvals" && hr && (
+                  <nav
+                    aria-label="HR approval types"
+                    className="mt-4 flex gap-2 overflow-x-auto border-t pt-4 sm:flex-wrap"
+                  >
+                    {approvalTypes.map((name) => {
+                      const count =
+                        name === "All"
+                          ? (inbox.data ?? []).length
+                          : (approvalCounts.get(name) ?? 0);
+                      return (
+                        <button
+                          key={name}
+                          type="button"
+                          aria-pressed={approvalModule === name}
+                          onClick={() => {
+                            setApprovalModule(name);
+                            setPage(1);
+                          }}
+                          className={cn(
+                            "min-h-10 shrink-0 rounded-lg border px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            approvalModule === name
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : "bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground",
+                          )}
+                        >
+                          {name === "All"
+                            ? "All approvals"
+                            : name === "Attendance"
+                              ? "Visits & attendance"
+                              : name}{" "}
+                          <span className="ml-1 tabular-nums">{count}</span>
+                        </button>
+                      );
+                    })}
+                  </nav>
+                )}
               </section>
-              {view === "approvals" && hr && (
-                <nav
-                  aria-label="HR approval types"
-                  className="flex gap-2 overflow-x-auto pb-1 sm:flex-wrap"
-                >
-                  {approvalTypes.map((name) => {
-                    const count =
-                      name === "All" ? (inbox.data ?? []).length : (approvalCounts.get(name) ?? 0);
-                    return (
-                      <button
-                        key={name}
-                        type="button"
-                        aria-pressed={approvalModule === name}
-                        onClick={() => {
-                          setApprovalModule(name);
-                          setPage(1);
-                        }}
-                        className={cn(
-                          "min-h-10 shrink-0 rounded-lg border px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          approvalModule === name
-                            ? "border-primary bg-primary text-primary-foreground"
-                            : "bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground",
-                        )}
-                      >
-                        {name === "All"
-                          ? "All approvals"
-                          : name === "Attendance"
-                            ? "Visits & attendance"
-                            : name}{" "}
-                        <span className="ml-1 tabular-nums">{count}</span>
-                      </button>
-                    );
-                  })}
-                </nav>
-              )}
               {active.isPending && (
                 <p
                   role="status"
@@ -510,21 +517,13 @@ function RequestCentre() {
                 className="overflow-hidden rounded-2xl border bg-card shadow-sm"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-4 sm:px-5">
-                  <div>
-                    <h2 className="text-base font-semibold">
-                      {view === "approvals"
-                        ? "Waiting for your decision"
-                        : view === "reviewed"
-                          ? "Decisions you made"
-                          : "Requests"}
-                    </h2>
-                    {resultCount !== undefined && !active.isPending && (
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {resultCount} {hasFilters ? "matching" : "total"}{" "}
-                        {resultCount === 1 ? "item" : "items"}
-                      </p>
-                    )}
-                  </div>
+                  <h2 className="text-sm font-semibold">
+                    {resultCount !== undefined && !active.isPending
+                      ? `${resultCount} ${hasFilters ? "matching " : ""}${resultNoun}`
+                      : view === "approvals"
+                        ? "Requests to review"
+                        : "Requests"}
+                  </h2>
                   {active.isFetching && !active.isPending && (
                     <span className="text-xs text-muted-foreground">Updating…</span>
                   )}
@@ -537,35 +536,57 @@ function RequestCentre() {
                           key={task.id}
                           className="px-4 py-4 transition-colors hover:bg-muted/25 sm:px-5"
                         >
-                          <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(12rem,0.65fr)_auto] lg:items-center">
-                            <div className="flex min-w-0 gap-3">
-                              <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                                <ClipboardList className="size-5" aria-hidden="true" />
+                          <div className="grid gap-4 lg:grid-cols-[minmax(11rem,0.8fr)_minmax(16rem,1.4fr)_auto_auto] lg:items-center">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <span
+                                className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary"
+                                aria-hidden="true"
+                              >
+                                {task.subjectName ? (
+                                  task.subjectName
+                                    .trim()
+                                    .split(/\s+/)
+                                    .slice(0, 2)
+                                    .map((part) => part[0]?.toUpperCase())
+                                    .join("")
+                                ) : (
+                                  <ClipboardList className="size-5" />
+                                )}
                               </span>
                               <div className="min-w-0">
-                                <p className="text-xs font-semibold uppercase tracking-wide text-primary">
-                                  {task.module.replaceAll("-", " ")}
-                                  {task.subjectName && (
-                                    <span className="font-normal normal-case tracking-normal text-muted-foreground">
-                                      {" · "}
-                                      {task.subjectName}
-                                    </span>
-                                  )}
-                                </p>
-                                <h3 className="mt-1 text-base font-semibold">{task.title}</h3>
-                                <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-                                  {task.description}
-                                </p>
+                                <h3 className="truncate text-sm font-semibold">
+                                  {task.subjectName ?? task.module.replaceAll("-", " ")}
+                                </h3>
+                                {task.subjectName && (
+                                  <p className="truncate text-xs text-muted-foreground">
+                                    {task.module.replaceAll("-", " ")}
+                                  </p>
+                                )}
                               </div>
                             </div>
-                            <div>
-                              <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium">{task.title}</p>
+                              {task.description && (
+                                <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                                  {task.description}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={cn(
+                                  "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold",
+                                  task.state === "Overdue"
+                                    ? "border-rose-200 bg-rose-50 text-rose-800"
+                                    : "border-amber-200 bg-amber-50 text-amber-800",
+                                )}
+                              >
                                 {task.state}
                               </span>
                               {task.dueDate && (
-                                <p className="mt-2 text-xs text-muted-foreground">
-                                  Review due {task.dueDate}
-                                </p>
+                                <span className="text-xs text-muted-foreground">
+                                  Due {task.dueDate}
+                                </span>
                               )}
                             </div>
                             <Button asChild size="sm" className="w-full sm:w-auto">

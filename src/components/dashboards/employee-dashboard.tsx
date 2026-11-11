@@ -4,7 +4,17 @@ import { LiveAttendanceCard } from "./live-attendance-card";
 import { DashboardCharts } from "./dashboard-charts";
 import { StaffDataBoundary } from "@/components/layout/staff-data-boundary";
 import { DASHBOARD_MODULES } from "@/lib/data/staff-module-plan";
-import { AlertTriangle, Briefcase, CheckCircle, FileText, Plane } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  Briefcase,
+  CalendarDays,
+  CheckCircle,
+  Clock3,
+  FileText,
+  GraduationCap,
+  Plane,
+} from "lucide-react";
 import { LeaveService } from "@/lib/data/leave-service";
 import { leaveDisplayType } from "@/lib/data/leave-presentation";
 import { TimesheetService } from "@/lib/data/timesheet-service";
@@ -53,13 +63,12 @@ function EmployeeDashboardDetails({ employee, userId }: { employee: Employee; us
 
   // Leave
   const balances = leaveService.getAllBalancesForEmployee(employee.id, actorContext);
-  const annualBalance =
-    balances.find((b) =>
-      leaveService
-        .getPolicies()
-        .find((p) => p.id === b.policyId)
-        ?.name.includes("Annual"),
-    )?.available || 0;
+  const annualBalance = balances.find((b) =>
+    leaveService
+      .getPolicies()
+      .find((p) => p.id === b.policyId)
+      ?.name.includes("Annual"),
+  )?.available;
   const leaveRequests = leaveService
     .getLeaveRequestsForEmployee(employee.id, actorContext)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -187,6 +196,30 @@ function EmployeeDashboardDetails({ employee, userId }: { employee: Employee; us
     });
   }
 
+  if (previousNeedsReview && previousOpenPeriod && previousTimesheet?.status !== "Returned") {
+    attentionItems.push({
+      id: "previous-timesheet",
+      severity: "warning",
+      icon: CalendarDays,
+      title: `${timesheetPeriodLabel(previousOpenPeriod)} timesheet needs your review`,
+      meta: previousTimesheet?.status ?? "Not started",
+      actionLabel: "Open",
+      actionTo: `/staff/me/timesheets/${previousOpenPeriod.id}`,
+    });
+  }
+
+  if (pendingTimeReviews > 0) {
+    attentionItems.push({
+      id: "time-reviews",
+      severity: "info",
+      icon: Clock3,
+      title: `${pendingTimeReviews} visit or correction ${pendingTimeReviews === 1 ? "review" : "reviews"} pending`,
+      meta: "Track the decision",
+      actionLabel: "View status",
+      actionTo: "/staff/requests?view=my",
+    });
+  }
+
   if (myReviews.length > 0) {
     const review = myReviews[0];
     attentionItems.push({
@@ -246,80 +279,122 @@ function EmployeeDashboardDetails({ employee, userId }: { employee: Employee; us
 
   return (
     <div className="flex flex-col gap-4">
-      <DashboardPanel
-        title="My timesheet"
-        description={currentPeriod ? timesheetPeriodLabel(currentPeriod) : "Monthly work and leave"}
-        viewAllLabel="All months"
-        viewAllTo="/staff/me/timesheets"
-      >
-        <div className="space-y-3">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.65fr)]">
+        <DashboardPanel
+          title="My timesheet"
+          description={
+            currentPeriod ? timesheetPeriodLabel(currentPeriod) : "Monthly work and leave"
+          }
+          viewAllLabel="All months"
+          viewAllTo="/staff/me/timesheets"
+          className="border-primary/15 bg-gradient-to-br from-card via-card to-primary/[0.04] p-5"
+        >
           {currentPeriod && currentTimesheetSummary ? (
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-                <p>
-                  <span className="font-semibold">{currentTimesheetSummary.workedHours} h</span>{" "}
-                  worked
-                </p>
-                <p>
-                  <span className="font-semibold">{currentTimesheetSummary.paidLeaveHours} h</span>{" "}
-                  paid leave
-                </p>
-                <p>
-                  <span className="font-semibold">
-                    {currentTimesheetSummary.requiredWorkHours} h
-                  </span>{" "}
-                  required work
-                </p>
-                {pendingTimeReviews > 0 && (
-                  <p className="text-amber-700">
-                    {pendingTimeReviews} correction or visit review
-                    {pendingTimeReviews === 1 ? "" : "s"} pending
-                  </p>
-                )}
+            <>
+              <div className="grid gap-4 py-2 sm:grid-cols-3">
+                {[
+                  {
+                    label: "Worked",
+                    value: currentTimesheetSummary.workedHours,
+                    tone: "text-primary",
+                  },
+                  {
+                    label: "Paid leave",
+                    value: currentTimesheetSummary.paidLeaveHours,
+                    tone: "text-foreground",
+                  },
+                  {
+                    label: "Expected work",
+                    value: currentTimesheetSummary.requiredWorkHours,
+                    tone: "text-foreground",
+                  },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className="sm:border-r sm:border-border/70 sm:pr-4 sm:last:border-0"
+                  >
+                    <p
+                      className={`text-2xl font-semibold tracking-tight tabular-nums ${item.tone}`}
+                    >
+                      {item.value}
+                      <span className="ml-1 text-sm font-medium text-muted-foreground">h</span>
+                    </p>
+                    <p className="mt-1 text-xs font-medium text-muted-foreground">{item.label}</p>
+                  </div>
+                ))}
               </div>
-              <Link
-                to="/staff/me/timesheets/$periodId"
-                params={{ periodId: currentPeriod.id }}
-                className="inline-flex shrink-0 items-center rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
-              >
-                Open daily calendar
-              </Link>
-            </div>
+              <div className="mt-4 border-t border-border/70 pt-4">
+                <Link
+                  to="/staff/me/timesheets/$periodId"
+                  params={{ periodId: currentPeriod.id }}
+                  className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  Open calendar <ArrowUpRight className="size-3.5" aria-hidden="true" />
+                </Link>
+              </div>
+            </>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              This month's timesheet has not been opened by HR yet.
-            </p>
+            <div className="rounded-xl border border-dashed bg-background/70 px-4 py-7 text-sm text-muted-foreground">
+              No timesheet is open for this month yet.
+            </div>
           )}
-          {previousNeedsReview && previousOpenPeriod && (
+        </DashboardPanel>
+        {attentionItems.length > 0 ? (
+          <DashboardPanel title="Needs attention" description="Your next actions" className="p-5">
+            <AttentionQueue items={attentionItems} />
+          </DashboardPanel>
+        ) : (
+          <DashboardPanel
+            title="My leave"
+            description={
+              annualBalance === undefined ? "Balance not available yet" : "Available annual leave"
+            }
+            className="p-5"
+          >
+            <div className="rounded-xl bg-primary/[0.06] p-4">
+              <p className="text-3xl font-semibold tracking-tight tabular-nums text-primary">
+                {annualBalance ?? "—"}
+                {annualBalance !== undefined && (
+                  <span className="ml-1 text-sm font-medium text-muted-foreground">days</span>
+                )}
+              </p>
+              {pendingLeaveRequests.length > 0 && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {pendingLeaveRequests.length}{" "}
+                  {pendingLeaveRequests.length === 1 ? "request" : "requests"} awaiting a decision
+                </p>
+              )}
+            </div>
             <Link
-              to="/staff/me/timesheets/$periodId"
-              params={{ periodId: previousOpenPeriod.id }}
-              className="block rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900 hover:underline"
+              to="/staff/me/leave-balances"
+              className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline"
             >
-              {timesheetPeriodLabel(previousOpenPeriod)} needs your review ·{" "}
-              {previousTimesheet?.status ?? "Not started"}
+              View leave <ArrowUpRight className="size-4" aria-hidden="true" />
             </Link>
-          )}
-        </div>
-      </DashboardPanel>
-      <details className="rounded-xl border bg-card p-4">
-        <summary className="mb-3 cursor-pointer text-sm font-medium">My request reminders</summary>
-        <AttentionQueue items={attentionItems} />
-      </details>
+          </DashboardPanel>
+        )}
+      </div>
       <div className="grid gap-4 lg:grid-cols-2">
         <DashboardPanel
-          title="My recent leave requests"
-          viewAllLabel="Open Leave"
+          title="Recent leave"
+          viewAllLabel="View all"
           viewAllTo="/staff/me/leave-balances"
+          className="p-5"
         >
           {leaveRequests.length === 0 ? (
-            <p className="py-5 text-center text-sm text-muted-foreground">No leave requests yet.</p>
+            <div className="flex items-center gap-3 rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+              <CalendarDays className="size-5 shrink-0 text-primary" aria-hidden="true" />
+              No leave requests yet.
+            </div>
           ) : (
-            <div className="divide-y">
+            <div className="divide-y divide-border/70">
               {leaveRequests.slice(0, 4).map((request) => (
-                <div
+                <Link
                   key={request.id}
-                  className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0"
+                  to="/staff/request-detail/$module/$requestId"
+                  params={{ module: "Leave", requestId: request.id }}
+                  search={{ from: "my" }}
+                  className="flex items-center justify-between gap-3 rounded-lg py-3 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring first:pt-0 last:pb-0"
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{leaveDisplayType(request)}</p>
@@ -328,31 +403,84 @@ function EmployeeDashboardDetails({ employee, userId }: { employee: Employee; us
                       {new Date(request.endDate).toLocaleDateString()}
                     </p>
                   </div>
-                  <span className="shrink-0 rounded-full bg-muted px-2 py-1 text-[11px] font-medium">
+                  <span
+                    className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+                      ["Approved", "Taken"].includes(request.status)
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                        : /Declined|Refused|Rejected/.test(request.status)
+                          ? "border-rose-200 bg-rose-50 text-rose-800"
+                          : /Pending/.test(request.status)
+                            ? "border-amber-200 bg-amber-50 text-amber-800"
+                            : "border-border bg-muted/60 text-foreground"
+                    }`}
+                  >
                     {request.status}
                   </span>
-                </div>
+                </Link>
               ))}
             </div>
           )}
         </DashboardPanel>
         <DashboardPanel
-          title="My development"
-          viewAllLabel="My Profile"
+          title="Development"
+          viewAllLabel="My profile"
           viewAllTo="/staff/me/profile"
+          className="p-5"
         >
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              ["Approved overtime hours", approvedOvertimeHours.toFixed(1)],
-              ["Pending overtime", pendingOvertime.length],
-              ["Training records", trainingRecords.length],
-              ["Onboarding progress", obCase ? `${obCase.progressPercentage}%` : "Complete"],
-            ].map(([label, value]) => (
-              <div key={String(label)} className="rounded-lg border bg-muted/20 p-3">
-                <p className="text-lg font-bold tabular-nums">{value}</p>
-                <p className="text-xs text-muted-foreground">{label}</p>
-              </div>
-            ))}
+          <div className="space-y-3">
+            {obCase && (
+              <Link
+                to="/staff/me/onboarding"
+                className="block rounded-xl border border-primary/10 bg-primary/[0.05] p-4 transition-colors hover:bg-primary/[0.08]"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-2xl font-semibold tracking-tight tabular-nums">
+                      {obCase.progressPercentage}%
+                    </p>
+                    <p className="text-xs text-muted-foreground">Onboarding progress</p>
+                  </div>
+                  <ArrowUpRight className="size-4 text-primary" aria-hidden="true" />
+                </div>
+                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-primary/10">
+                  <div
+                    className="h-full rounded-full bg-primary"
+                    style={{ width: `${Math.max(0, Math.min(100, obCase.progressPercentage))}%` }}
+                  />
+                </div>
+              </Link>
+            )}
+            <div className="divide-y divide-border/70 rounded-xl border border-border/70">
+              <Link
+                to="/staff/me/training"
+                className="flex min-h-14 items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/40"
+              >
+                <GraduationCap className="size-5 shrink-0 text-primary" aria-hidden="true" />
+                <span className="flex-1 text-sm font-medium">Training</span>
+                <span className="text-xs text-muted-foreground">
+                  {trainingRecords.length} {trainingRecords.length === 1 ? "record" : "records"}
+                </span>
+                <ArrowUpRight
+                  className="size-4 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+              </Link>
+              <Link
+                to="/staff/me/overtime"
+                className="flex min-h-14 items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/40"
+              >
+                <Clock3 className="size-5 shrink-0 text-primary" aria-hidden="true" />
+                <span className="flex-1 text-sm font-medium">Overtime</span>
+                <span className="text-xs text-muted-foreground">
+                  {approvedOvertimeHours.toFixed(1)} h approved
+                  {pendingOvertime.length > 0 ? ` · ${pendingOvertime.length} pending` : ""}
+                </span>
+                <ArrowUpRight
+                  className="size-4 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+              </Link>
+            </div>
           </div>
         </DashboardPanel>
       </div>

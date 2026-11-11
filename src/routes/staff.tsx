@@ -145,9 +145,6 @@ function StaffWorkspace({ actor }: { actor: ActorContext }) {
                     <span className="font-display text-[15px] font-bold tracking-[-0.02em]">
                       VIA HR System
                     </span>
-                    <span className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-success">
-                      People operations
-                    </span>
                   </div>
 
                   <div className="ml-auto flex items-center gap-2">
@@ -163,31 +160,21 @@ function StaffWorkspace({ actor }: { actor: ActorContext }) {
                 </header>
                 <main className="flex-1 bg-background p-4 sm:p-6 lg:p-8">
                   {setupNeedsAttention && (
-                    <div className="mx-auto mb-5 flex max-w-7xl flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex gap-3">
-                        <ClipboardCheck className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
-                        <div>
-                          <p className="font-medium">
-                            {employmentChangesRequested
-                              ? "Update your employment information"
-                              : awaitingEmploymentConfirmation &&
-                                  currentEmployee?.profileSetupStatus === "Completed"
-                                ? "Your employment information is with HR"
-                                : "Complete your employee record"}
-                          </p>
-                          <p className="text-sm text-muted-foreground">
-                            {employmentChangesRequested
-                              ? currentEmployee?.employmentReviewNote ||
-                                "HR requested changes before confirming your employment information."
-                              : awaitingEmploymentConfirmation &&
-                                  currentEmployee?.profileSetupStatus === "Completed"
-                                ? "Your details are saved. Leave, timesheets, travel and overtime become available after HR confirms your employment information."
-                                : "You can continue using essential work services while you finish your details and documents. Leave becomes available after HR confirms your employment information."}
-                          </p>
-                        </div>
-                      </div>
+                    <div className="mx-auto mb-5 flex max-w-7xl flex-wrap items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5 sm:px-4">
+                      <ClipboardCheck className="size-5 shrink-0 text-primary" aria-hidden="true" />
+                      <p className="min-w-0 flex-1 text-sm font-medium">
+                        {employmentChangesRequested
+                          ? currentEmployee?.employmentReviewNote ||
+                            "HR asked you to update your employment details."
+                          : awaitingEmploymentConfirmation &&
+                              currentEmployee?.profileSetupStatus === "Completed"
+                            ? "Your employment details are with HR for review."
+                            : "Finish your employee record to unlock leave and other requests."}
+                      </p>
                       <Button asChild size="sm" className="shrink-0">
-                        <Link to="/staff/me/onboarding">Continue setup</Link>
+                        <Link to="/staff/me/onboarding">
+                          {employmentChangesRequested ? "Review changes" : "Open profile"}
+                        </Link>
                       </Button>
                     </div>
                   )}

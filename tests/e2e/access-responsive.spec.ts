@@ -79,6 +79,9 @@ test("employee essentials remain usable at a mobile viewport", async ({ page }) 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/staff");
   await previewAs(page, "user-omar", "Employee", "/staff");
+  await expect(
+    page.locator("[data-dashboard-role='Employee']").getByRole("link", { name: "Time Away" }),
+  ).toHaveAttribute("href", "/staff/time-away");
 
   const routes = [
     { path: "/staff", landmark: /Welcome back/i },

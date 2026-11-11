@@ -22,6 +22,7 @@ import {
 import { candidateApplications, vacancies, vacancyVersions } from "../schema/recruitment.ts";
 import { auditEvents } from "../schema/system.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
+import { listVacancyPublicationDatesForOrganisation } from "./vacancy-publication.repository.server.ts";
 
 const TRANSITIONS: Record<VacancyStatus, VacancyStatus[]> = {
   Draft: ["Pending Approval", "Closed"],
@@ -68,6 +69,7 @@ export async function listVacanciesForOrganisation(
     positionRows,
     gradeRows,
     employmentTypeRows,
+    publicationDates,
   ] = await Promise.all([
     db
       .select()
@@ -92,6 +94,7 @@ export async function listVacanciesForOrganisation(
     db.select().from(positions).where(eq(positions.organisationId, organisationId)),
     db.select().from(grades).where(eq(grades.organisationId, organisationId)),
     db.select().from(employmentTypes).where(eq(employmentTypes.organisationId, organisationId)),
+    listVacancyPublicationDatesForOrganisation(organisationId),
   ]);
   const names = (values: Array<{ id: string; name: string }>) =>
     new Map(values.map((value) => [value.id, value.name]));
@@ -104,6 +107,9 @@ export async function listVacanciesForOrganisation(
     applicantCountRows.map((row) => [row.vacancyId, Number(row.count)]),
   );
   return rows.map((row) => {
+    const publishedAt =
+      publicationDates.get(row.id) ??
+      (["Open", "Paused"].includes(row.status) ? iso(row.createdAt) : undefined);
     const salary = row.salaryRangeEncrypted
       ? decryptSensitiveJson<{ min: number; max: number; currency: string }>(
           row.salaryRangeEncrypted,
@@ -113,6 +119,7 @@ export async function listVacanciesForOrganisation(
       id: row.id,
       databaseId: row.id,
       publicSlug: row.publicSlug,
+      ...(publishedAt ? { publishedAt } : {}),
       createdAt: iso(row.createdAt)!,
       createdBy: row.createdBy,
       updatedAt: iso(row.updatedAt)!,
@@ -158,6 +165,7 @@ export type VacancyDraftInput = Omit<
   | "id"
   | "databaseId"
   | "publicSlug"
+  | "publishedAt"
   | "createdAt"
   | "createdBy"
   | "updatedAt"

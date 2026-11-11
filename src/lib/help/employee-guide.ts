@@ -231,7 +231,7 @@ export const employeeGuide = [
     "/staff/me/leave-balances",
     "old leave may expiry rollover withdraw cancel amend entitlement year",
     [
-      "Open My Leave Balances and check the relevant leave year and leave type.",
+      "Open My Leave and check the relevant leave year and leave type.",
       "Review used, reserved and available days, plus any carried-over balance and expiry shown.",
       "Plan leave before the carryover deadline and submit it through the normal approval process.",
       "To change or withdraw a request, open the original request and use the action available for its current status. Ask HR if the approved request cannot be changed there.",
@@ -257,6 +257,7 @@ export const employeeGuide = [
       "If you thumb twice soon after arriving, the repeat is kept as a machine record but does not sign you out. The last valid thumb before local midnight is your sign-out; if there is no later valid thumb, the sign-out remains missing for review.",
       "If HR records a company activity, training, approved remote work or an excused closure, your attendance shows the correct label. Do not invent clock times. Remote work still needs your actual work hours in the timesheet; an approved remote day is not automatic worked time. Ask HR if the covered day is incorrect.",
       "If a time is missing or wrong, open that day and request a correction instead of creating another clock-in.",
+      "If office clock-in says your location is not accurate enough, turn on precise location for your device and browser, then try again. Ask HR to check your office zone if it still fails.",
     ],
     "VIA allows flexible working hours. HR sets the daily working hours and scheduled break. For example, with eight working hours and a one-hour lunch, an 8:30 am arrival normally means a 5:30 pm finish. Attendance can show nine hours on site, including lunch; the timesheet target is eight working hours, excluding lunch. Extra time in the office is not automatically approved overtime.",
     [

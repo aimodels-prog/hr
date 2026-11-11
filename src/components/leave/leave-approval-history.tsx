@@ -14,29 +14,65 @@ function decisionDate(value?: string) {
 
 type ApprovalStep = LeaveRequest["chainApprovals"][number];
 
-function stepPerson(request: LeaveRequest, step: ApprovalStep): string {
-  if (step.status !== "Pending") return step.approverName || "Decision-maker not recorded";
-  if (["Line Manager", "Supervisor", "Manager"].includes(step.role))
-    return request.lineManagerName || "Assigned manager name not recorded";
+function stepPerson(
+  request: LeaveRequest,
+  step: ApprovalStep,
+  showRecordGaps: boolean,
+): string | null {
+  if (step.status !== "Pending") {
+    return step.approverName || (showRecordGaps ? "Decision-maker not recorded" : null);
+  }
+  if (["Line Manager", "Supervisor", "Manager"].includes(step.role)) {
+    return (
+      request.lineManagerName || (showRecordGaps ? "Assigned manager name not recorded" : null)
+    );
+  }
   if (step.role === "HR") return "HR team";
   return step.role;
 }
 
 /** Read-only history shared by the employee and HR views. */
-export function LeaveApprovalHistory({ request }: { request: LeaveRequest }) {
+export function LeaveApprovalHistory({
+  request,
+  showRecordGaps = true,
+}: {
+  request: LeaveRequest;
+  /** HR keeps audit gaps visible; staff see only known actors and actionable pending gaps. */
+  showRecordGaps?: boolean;
+}) {
   const steps = request.chainApprovals;
   const amendmentSteps = request.pendingAmendment?.chainApprovals ?? [];
+  const missingCurrentManager =
+    !showRecordGaps &&
+    !request.lineManagerName &&
+    [...steps, ...amendmentSteps].some(
+      (step) =>
+        step.status === "Pending" && ["Line Manager", "Supervisor", "Manager"].includes(step.role),
+    );
   return (
     <div className="space-y-3 text-sm">
-      <p className="text-muted-foreground">
-        {request.startDate} to {request.endDate} · {request.workingDaysRequested} day(s)
-      </p>
-      <p>
-        Line manager: <strong>{request.lineManagerName || "None assigned"}</strong>
-      </p>
-      {leaveDecisionSummary(request) && (
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-muted-foreground">
+          {request.startDate} to {request.endDate} · {request.workingDaysRequested} day(s)
+        </p>
+        <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium">
+          {request.status}
+        </span>
+      </div>
+      {(request.lineManagerName || showRecordGaps) && (
+        <p>
+          Line manager: <strong>{request.lineManagerName || "None assigned"}</strong>
+        </p>
+      )}
+      {missingCurrentManager && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-950">
+          This request is waiting for a manager, but their name is unavailable. Contact HR if it is
+          not moving forward.
+        </p>
+      )}
+      {leaveDecisionSummary(request, { staffView: !showRecordGaps }) && (
         <p className="rounded-lg border bg-muted/30 p-3 font-medium">
-          {leaveDecisionSummary(request)}
+          {leaveDecisionSummary(request, { staffView: !showRecordGaps })}
         </p>
       )}
       {Boolean(request.policySnapshot.officeWorkCorrections?.length) && (
@@ -61,7 +97,7 @@ export function LeaveApprovalHistory({ request }: { request: LeaveRequest }) {
       )}
       {request.status === "Declined" && (
         <p className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-rose-900">
-          Reason for decline: {request.refusalReason || "Not recorded for this request"}
+          Reason for decline: {request.refusalReason || "No reason provided"}
         </p>
       )}
       {amendmentSteps.length > 0 && <p className="font-medium">Original request</p>}
@@ -73,10 +109,12 @@ export function LeaveApprovalHistory({ request }: { request: LeaveRequest }) {
           >
             <span>
               <span className="block font-medium">{step.role}</span>
-              <span className="block text-xs text-muted-foreground">
-                {step.status === "Pending" ? "Assigned to " : "By "}
-                {stepPerson(request, step)}
-              </span>
+              {stepPerson(request, step, showRecordGaps) && (
+                <span className="block text-xs text-muted-foreground">
+                  {step.status === "Pending" ? "Assigned to " : "By "}
+                  {stepPerson(request, step, showRecordGaps)}
+                </span>
+              )}
             </span>
             <span className="text-right">
               <span
@@ -110,10 +148,12 @@ export function LeaveApprovalHistory({ request }: { request: LeaveRequest }) {
               >
                 <span>
                   <span className="block font-medium">{step.role}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    {step.status === "Pending" ? "Assigned to " : "By "}
-                    {stepPerson(request, step)}
-                  </span>
+                  {stepPerson(request, step, showRecordGaps) && (
+                    <span className="block text-xs text-muted-foreground">
+                      {step.status === "Pending" ? "Assigned to " : "By "}
+                      {stepPerson(request, step, showRecordGaps)}
+                    </span>
+                  )}
                 </span>
                 <span className="text-right">
                   <span
@@ -145,7 +185,12 @@ export function LeaveApprovalHistory({ request }: { request: LeaveRequest }) {
             {request.amendmentHistory?.map((history, index) => (
               <li key={`${history.decidedAt}-${index}`} className="rounded-lg border p-3">
                 <p className="font-medium">
-                  {history.outcome} by {history.deciderName || "decision-maker not recorded"}
+                  {history.outcome}
+                  {history.deciderName
+                    ? ` by ${history.deciderName}`
+                    : showRecordGaps
+                      ? " by decision-maker not recorded"
+                      : ""}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {history.previousStartDate} to {history.previousEndDate} → {history.newStartDate}{" "}
@@ -164,14 +209,11 @@ export function LeaveApprovalHistory({ request }: { request: LeaveRequest }) {
           </ol>
         </>
       )}
-      {steps.length === 0 && amendmentSteps.length === 0 && (
+      {showRecordGaps && steps.length === 0 && amendmentSteps.length === 0 && (
         <p className="rounded-lg border p-3 text-muted-foreground">
           Approval steps were not recorded for this older leave entry. Current status:{" "}
           {request.status}.
         </p>
-      )}
-      {(steps.length > 0 || amendmentSteps.length > 0) && (
-        <p className="text-xs text-muted-foreground">Current status: {request.status}</p>
       )}
     </div>
   );

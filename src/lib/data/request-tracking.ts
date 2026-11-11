@@ -162,7 +162,7 @@ export function toTrackedRequest(
   const hrOwnTravel = row.module === "Travel" && approvalRoute["kind"] === "HR Own Travel";
   const manager = row.manager_name
     ? `${row.manager_name} — Line Manager`
-    : "Line Manager not assigned — HR must check";
+    : "Reviewer assignment needed";
   let waitingFor = "No approval pending";
   let nextStep = "Open the record for details.";
   if (archivedAt) {
@@ -216,12 +216,9 @@ export function toTrackedRequest(
             : countryManager;
       }
     }
-    if (row.module === "Offers")
-      waitingFor =
-        text(meta["approver"]) ?? "Assigned offer approver not available — HR must check";
+    if (row.module === "Offers") waitingFor = text(meta["approver"]) ?? "HR review needed";
     if (row.module === "Objectives") waitingFor = manager;
-    if (row.status === "Pending Super Admin")
-      waitingFor = "HR — legacy approval stage needs review";
+    if (row.status === "Pending Super Admin") waitingFor = "HR";
     if (row.status === "Pending Super Admin Closure") waitingFor = "Finance";
     if (row.module === "Travel" && row.status === "Pending HR and Accounts") {
       waitingFor =
@@ -242,7 +239,7 @@ export function toTrackedRequest(
             ? "HR"
             : meta["finance"] === "Pending"
               ? "Finance"
-              : "HR — check outstanding travel stage";
+              : "HR review needed";
     }
     if (
       ["Self Assessment Pending", "Acknowledgement Pending", "Objectives Pending"].includes(
@@ -251,7 +248,12 @@ export function toTrackedRequest(
     )
       waitingFor = "Employee";
     if (row.status === "Awaiting Delivery") waitingFor = "HR / delivery service";
-    nextStep = `Waiting for ${waitingFor} to review this request.`;
+    nextStep =
+      waitingFor === "Reviewer assignment needed"
+        ? "HR needs to assign a reviewer."
+        : waitingFor === "HR review needed"
+          ? "HR needs to check this request."
+          : `Waiting for ${waitingFor} to review this request.`;
   } else if (
     row.module === "Applications" &&
     ["Shortlisted", "Interviewing", "On Hold", "Offered"].includes(row.status)

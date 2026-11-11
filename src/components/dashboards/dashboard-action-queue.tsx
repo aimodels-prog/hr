@@ -23,6 +23,7 @@ export function DashboardActionQueue() {
     refetchInterval: 60_000,
   });
   const reminderTasks = (tasks.data ?? []).filter((task) => !isApprovalTask(task));
+  if (tasks.isSuccess && reminderTasks.length === 0) return null;
   return (
     <section aria-label="Tasks and reminders" className="space-y-3 rounded-xl border bg-card p-4">
       <div className="flex items-center justify-between gap-3">
@@ -42,8 +43,6 @@ export function DashboardActionQueue() {
             Try again
           </Button>
         </div>
-      ) : reminderTasks.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No tasks or reminders right now.</p>
       ) : (
         <AttentionQueue
           items={reminderTasks.slice(0, 5).map((task) => ({

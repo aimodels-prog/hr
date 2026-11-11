@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 
 import { getDatabaseClient } from "../client.ts";
+import { sortPublicVacanciesNewestFirst } from "../../data/public-vacancy-date.ts";
 import { deleteObjectFile, saveObjectFile } from "../object-storage.server.ts";
 import { employees, roles, userRoles, users } from "../schema/employee.ts";
 import { departments, locations, positions } from "../schema/master-data.ts";
@@ -19,9 +20,11 @@ import {
 } from "../schema/recruitment.ts";
 import { auditEvents, backgroundJobs, notifications } from "../schema/system.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
+import { listVacancyPublicationDatesForOrganisation } from "./vacancy-publication.repository.server.ts";
 
 export interface EmployeeOpportunityVacancy {
   id: string;
+  publishedAt?: string;
   title: string;
   department: string;
   location: string;
@@ -178,10 +181,11 @@ export async function listEmployeeOpportunitiesInDatabase(
 ): Promise<EmployeeOpportunitySnapshot> {
   const db = getDatabaseClient();
   await activeEmployee(organisationId, actor, db);
-  const [vacancyRows, applicationRows, referralRows] = await Promise.all([
+  const [vacancyRows, applicationRows, referralRows, publicationDates] = await Promise.all([
     db
       .select({
         id: vacancies.id,
+        createdAt: vacancies.createdAt,
         title: vacancies.title,
         department: departments.name,
         location: locations.name,
@@ -252,12 +256,16 @@ export async function listEmployeeOpportunitiesInDatabase(
         ),
       )
       .orderBy(sql`${candidateRecommendations.createdAt} DESC`),
+    listVacancyPublicationDatesForOrganisation(organisationId),
   ]);
   return {
-    vacancies: vacancyRows.map((row) => ({
-      ...row,
-      mandatoryCriteria: row.mandatoryCriteria ?? [],
-    })),
+    vacancies: sortPublicVacanciesNewestFirst(
+      vacancyRows.map(({ createdAt, ...row }) => ({
+        ...row,
+        publishedAt: publicationDates.get(row.id) ?? createdAt.toISOString(),
+        mandatoryCriteria: row.mandatoryCriteria ?? [],
+      })),
+    ),
     applications: applicationRows.map((row) => ({
       ...row,
       submittedAt: row.submittedAt.toISOString(),

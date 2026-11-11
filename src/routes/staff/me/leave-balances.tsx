@@ -114,12 +114,12 @@ function requestVariant(
 }
 
 function entitlementLabel(policy: LeavePolicy): string {
-  if (!policy.consumesBalance || policy.scope === "Not Tracked") return "Not balance tracked";
+  if (!policy.consumesBalance || policy.scope === "Not Tracked") return "—";
   if (policy.scope === "Annual") return `${formatDays(policy.baseEntitlementDays)} days / year`;
   if (policy.scope === "Once Per Service")
     return `${formatDays(policy.baseEntitlementDays)} days once`;
   if (policy.scope === "Per Event") return `${formatDays(policy.baseEntitlementDays)} days / event`;
-  return "Credited by HR";
+  return "—";
 }
 
 function activityLabel(type: LeaveTransaction["transactionType"]): string {
@@ -446,10 +446,7 @@ function LeaveBalancesRoute() {
         <section className="overflow-hidden rounded-2xl border bg-card shadow-sm">
           <div className="grid lg:grid-cols-[1.2fr_1fr]">
             <div className="border-b p-6 sm:p-8 lg:border-b-0 lg:border-r">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="font-semibold">{annualPolicy.name}</p>
-                <Badge variant="outline">Managed by HR policy</Badge>
-              </div>
+              <p className="font-semibold">{annualPolicy.name}</p>
               <div className="mt-5 flex items-end gap-3">
                 <span className="text-5xl font-semibold tracking-tight tabular-nums">
                   {formatDays(annualBalance.available)}
@@ -458,9 +455,9 @@ function LeaveBalancesRoute() {
               </div>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
                 Your current year allowance is {formatDays(annualBalance.entitlement)} days.
-                {annualBalance.carryExpiryDate
-                  ? ` Older days expire after ${formatDate(annualBalance.carryExpiryDate)}.`
-                  : " Older days have no expiry date set."}
+                {annualBalance.carryExpiryDate &&
+                  (annualBalance.carryRemaining ?? annualBalance.carriedForward) > 0 &&
+                  ` Earlier-year leave expires after ${formatDate(annualBalance.carryExpiryDate)}.`}
               </p>
               <div className="mt-6 h-2 overflow-hidden rounded-full bg-muted">
                 <div
@@ -558,14 +555,9 @@ function LeaveBalancesRoute() {
                       <TableRow key={policy.id}>
                         <TableCell className="min-w-60">
                           <div className="font-medium">{policy.name}</div>
-                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                            <Badge variant="outline" className="font-mono text-[10px]">
-                              {policy.code}
-                            </Badge>
-                            <span className="text-xs text-muted-foreground">
-                              {policy.isPaid ? "Paid" : "Unpaid"} · {policy.scope}
-                            </span>
-                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {policy.isPaid ? "Paid leave" : "Unpaid leave"}
+                          </p>
                         </TableCell>
                         <TableCell className="whitespace-nowrap font-medium">
                           {policy.type === "Annual" && balance?.entitlement
@@ -598,9 +590,7 @@ function LeaveBalancesRoute() {
                                 Shorter notice can be sent for special approval.
                               </span>
                             </span>
-                          ) : (
-                            <span>No advance-notice rule</span>
-                          )}
+                          ) : null}
                           {policy.requiresAttachment && (
                             <span className="block font-medium text-foreground">
                               Evidence required
@@ -703,9 +693,9 @@ function LeaveBalancesRoute() {
                           {fullyReplacedByWork ? "Counted as work" : request.status}
                         </Badge>
                       </div>
-                      {leaveDecisionSummary(request) && (
+                      {leaveDecisionSummary(request, { staffView: true }) && (
                         <p className="text-sm text-muted-foreground">
-                          {leaveDecisionSummary(request)}
+                          {leaveDecisionSummary(request, { staffView: true })}
                         </p>
                       )}
                       <div className="pt-1">{requestActions(request)}</div>
@@ -739,7 +729,7 @@ function LeaveBalancesRoute() {
                         request.policySnapshot.workingDates?.length === 0;
                       const reason =
                         request.status === "Declined"
-                          ? `Declined: ${request.refusalReason || "reason not recorded"}`
+                          ? `Declined: ${request.refusalReason || "No reason provided"}`
                           : request.status === "Automatically Refused"
                             ? request.refusalReason
                             : request.policySnapshot.noticeException && !request.pendingAmendment
@@ -779,9 +769,9 @@ function LeaveBalancesRoute() {
                                   ? "Special approvals pending"
                                   : request.status}
                             </Badge>
-                            {leaveDecisionSummary(request) && (
+                            {leaveDecisionSummary(request, { staffView: true }) && (
                               <span className="mt-1 block text-xs text-muted-foreground">
-                                {leaveDecisionSummary(request)}
+                                {leaveDecisionSummary(request, { staffView: true })}
                               </span>
                             )}
                           </TableCell>
@@ -890,9 +880,9 @@ function LeaveBalancesRoute() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Leave approval details</DialogTitle>
-            <DialogDescription>See each decision recorded for this request.</DialogDescription>
+            <DialogDescription>Dates, status and review history.</DialogDescription>
           </DialogHeader>
-          {detailRequest && <LeaveApprovalHistory request={detailRequest} />}
+          {detailRequest && <LeaveApprovalHistory request={detailRequest} showRecordGaps={false} />}
         </DialogContent>
       </Dialog>
 

@@ -429,7 +429,7 @@ function OrganisationHrDashboardDetails() {
       severity: pendingLeave.length > 5 ? "warning" : "info",
       icon: CalendarClock,
       title: `${pendingLeave.length} leave request${pendingLeave.length === 1 ? "" : "s"} awaiting approval`,
-      meta: `${pendingLeave.filter((request) => request.status === "Pending HR").length} waiting for HR; others waiting for their manager or a legacy review`,
+      meta: "See who needs to act next",
       actionLabel: "Monitor",
       actionTo: "/staff/leave-admin",
     });

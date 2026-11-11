@@ -17,7 +17,7 @@ test("contextual help: footer, page guide, persistent tips and mobile controls",
   });
   await page.goto("/staff/me/attendance");
   const tip = page.getByRole("complementary", { name: "Page tip" });
-  await expect(tip).toBeVisible({ timeout: 30_000 });
+  await expect(tip).toHaveCount(0);
   await expect(
     page
       .getByRole("navigation", { name: "Main navigation" })
@@ -26,6 +26,10 @@ test("contextual help: footer, page guide, persistent tips and mobile controls",
   await expect(
     page.locator('[data-sidebar="footer"]').getByRole("link", { name: "Help & Knowledge" }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Help for this page" }).click();
+  await page.getByLabel("Show page tips", { exact: true }).check();
+  await expect(tip).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press("Escape");
   await tip.getByRole("button", { name: "Dismiss tip" }).click();
   await expect(tip).toHaveCount(0);
   await page.reload();
@@ -57,7 +61,7 @@ test("contextual help: footer, page guide, persistent tips and mobile controls",
     ),
   );
   await page.goto("/staff/payroll/periods");
-  await expect(tip).toBeVisible();
+  await expect(tip).toHaveCount(0);
   await page.getByRole("button", { name: "Help for this page" }).click();
   await page.getByRole("link", { name: "Guide for this page" }).click();
   await expect(

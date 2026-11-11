@@ -410,7 +410,7 @@ function TimesheetEntryRoute() {
                 </div>
                 {diff > 0 && (
                   <p className="text-xs text-muted-foreground">
-                    Extra hours are not overtime approval.
+                    Extra hours need separate overtime approval.
                   </p>
                 )}
               </div>
@@ -435,10 +435,18 @@ function TimesheetEntryRoute() {
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Daily calendar</CardTitle>
             <p className="text-sm text-muted-foreground">
-              Complete attendance can fill work hours automatically. The scheduled break is not
-              timesheet work. Green means the daily hours target is met; approval and overtime are
-              separate. Paid leave adds credit; unpaid leave does not.
+              Select a day to see your hours, leave and anything needing review.
             </p>
+            <details className="text-sm text-muted-foreground">
+              <summary className="w-fit cursor-pointer text-primary">
+                How daily hours are counted
+              </summary>
+              <p className="mt-2 max-w-2xl">
+                Complete attendance can fill work hours automatically. Your scheduled break is
+                excluded. Green means the daily target is met, not that overtime is approved. Paid
+                leave adds credit; unpaid leave does not.
+              </p>
+            </details>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-7 gap-1 text-center text-xs font-medium text-muted-foreground">

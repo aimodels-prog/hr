@@ -131,7 +131,11 @@ function TimeAwayPage({
         <div>
           <h1 className="text-2xl font-semibold">Time away during work</h1>
           <p className="text-sm text-muted-foreground">
-            Appointments and personal absences. Use Quick visit for official duties.
+            Appointments and personal absences. Use{" "}
+            <a className="text-primary underline" href="/staff/me/attendance?action=site-visit">
+              Quick visit
+            </a>{" "}
+            for official duties.
           </p>
         </div>
         <Button
@@ -166,10 +170,15 @@ function TimeAwayPage({
           Refresh
         </Button>
       </div>
-      <p className="text-sm text-muted-foreground">
-        Clock-in/out stays unchanged. Time away is recorded separately; pay and leave balances are
-        not automatically deducted.
-      </p>
+      <details className="text-sm text-muted-foreground">
+        <summary className="w-fit cursor-pointer text-primary">
+          How time away affects your record
+        </summary>
+        <p className="mt-2">
+          Clock-in and clock-out stay unchanged. Time away is recorded separately. Pay and leave
+          balances are not automatically deducted.
+        </p>
+      </details>
       {query.isPending && <p role="status">Loading time away…</p>}
       {query.isError && <p role="alert">Records could not be loaded. Please refresh.</p>}
       {query.data && !query.data.rows.length && (
@@ -196,14 +205,7 @@ function TimeAwayPage({
             away · {row.category}
           </p>
           {row.note && <p className="text-sm">{row.note}</p>}
-          {row.treatment && (
-            <p className="text-sm font-medium">
-              HR decision: {row.treatment}
-              {row.treatment !== "Paid time"
-                ? " — HR must process any leave or payroll adjustment separately."
-                : ""}
-            </p>
-          )}
+          {row.treatment && <p className="text-sm font-medium">HR decision: {row.treatment}</p>}
           {row.reviewNote && <p className="text-sm">HR note: {row.reviewNote}</p>}
           {row.status === "Pending HR" && (
             <div className="flex flex-wrap gap-2">

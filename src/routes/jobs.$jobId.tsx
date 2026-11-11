@@ -12,6 +12,7 @@ import {
   PublicCareersHeader,
   PublicCareersPage,
 } from "@/components/public-careers-shell";
+import { PublicVacancyPostedDate } from "@/components/public-vacancy-posted-date";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -285,6 +286,10 @@ function JobDetail() {
             {job.title}
           </h1>
           <div className="mt-7 flex flex-wrap gap-x-7 gap-y-3 text-sm text-blue-50/85">
+            <PublicVacancyPostedDate
+              publishedAt={job.publishedAt}
+              className="inline-flex items-center gap-2"
+            />
             <span className="inline-flex items-center gap-2">
               <MapPin className="h-4 w-4" /> {job.location}
             </span>

@@ -886,7 +886,7 @@ function AttendanceAdminContent() {
       {employeeFilter.control}
       <PageHeader
         title="Manage attendance"
-        description="Check attendance, review visits and resolve missing records. Use Office Setup only when office locations or working hours change."
+        description="Check attendance, visits and missing records."
         actions={
           <Button asChild variant="outline">
             <Link to="/staff/attendance/corrections">Review Corrections</Link>
@@ -1238,9 +1238,11 @@ function AttendanceAdminContent() {
                         <TableCell>{device.locationName}</TableCell>
                         <TableCell>
                           {device.serialNumber ?? "Not confirmed"}
-                          <span className="block text-xs text-muted-foreground">
-                            {device.model ?? "Model not recorded"}
-                          </span>
+                          {device.model && (
+                            <span className="block text-xs text-muted-foreground">
+                              {device.model}
+                            </span>
+                          )}
                         </TableCell>
                         <TableCell>
                           {device.lastSuccessfulSyncAt
@@ -1601,7 +1603,7 @@ function AttendanceAdminContent() {
                   {exceptionCases.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={6} className="h-28 text-center text-muted-foreground">
-                        No exception cases recorded.
+                        No attendance issues to review.
                       </TableCell>
                     </TableRow>
                   ) : (

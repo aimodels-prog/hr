@@ -120,21 +120,36 @@ function RequestDetailPage() {
           </span>
         </div>
         <div className="mt-5 grid gap-3 border-t pt-4 text-sm sm:grid-cols-2">
-          <p>
-            <span className="text-muted-foreground">Submitted by</span>
-            <br />
-            {request.submittedByName ?? "Not separately recorded"}
-          </p>
-          <p>
-            <span className="text-muted-foreground">Record made by</span>
-            <br />
-            {request.createdByName ?? "Original creator not recorded"}
-          </p>
-          <p>
-            <span className="text-muted-foreground">Next step</span>
-            <br />
-            {request.waitingFor}
-          </p>
+          {request.submittedByName && (
+            <p>
+              <span className="text-muted-foreground">Submitted by</span>
+              <br />
+              {request.submittedByName}
+            </p>
+          )}
+          {request.createdByName && request.createdByName !== request.submittedByName && (
+            <p>
+              <span className="text-muted-foreground">Created by</span>
+              <br />
+              {request.createdByName}
+            </p>
+          )}
+          {request.waitingFor !== "No approval pending" && (
+            <p>
+              <span className="text-muted-foreground">Next</span>
+              <br />
+              {request.waitingFor}
+            </p>
+          )}
+          {request.approvedBy.length > 0 && (
+            <p>
+              <span className="text-muted-foreground">
+                {request.group === "Approved" ? "Approved by" : "Approved earlier by"}
+              </span>
+              <br />
+              {request.approvedBy.join(", ")}
+            </p>
+          )}
           {request.archivedAt && (
             <p>
               <span className="text-muted-foreground">Archived on</span>
@@ -190,10 +205,6 @@ function RequestDetailPage() {
               {openingEvidence ? "Opening evidence..." : "Download supporting evidence"}
             </Button>
           )}
-        <p className="mt-4 text-xs text-muted-foreground">
-          These are the current saved details. The timeline below preserves recorded decisions and
-          their dates.
-        </p>
       </section>
 
       <section
@@ -214,21 +225,16 @@ function RequestDetailPage() {
                 {new Date(event.at).toLocaleString()}
               </time>
               {event.comment && <p className="mt-1 whitespace-pre-wrap text-sm">{event.comment}</p>}
-              {event.statusAfter && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Status after decision: {event.statusAfter}
-                </p>
-              )}
               <DecisionSnapshot snapshot={event.snapshot} unavailable={event.snapshotUnavailable} />
             </li>
           ))}
         </ol>
-        {request.events.length <= 1 && (
-          <p className="mt-4 text-sm text-muted-foreground">
-            No original decision details were recorded for this request. Older imported records may
-            not include an approver or decision date.
-          </p>
-        )}
+        {request.events.length <= 1 &&
+          ["Approved", "Closed", "Rejected"].includes(request.group) && (
+            <p className="mt-4 text-sm text-muted-foreground">
+              The original decision details were not recorded for this older request.
+            </p>
+          )}
       </section>
     </main>
   );

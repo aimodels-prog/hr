@@ -64,6 +64,42 @@ test("only a successfully loaded empty list shows no published positions", async
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
+test("open positions show their posting dates with the newest first", async ({ page }) => {
+  await page.route("**/api/public/vacancies", (route) =>
+    route.fulfill({
+      json: [
+        {
+          id: "older-position",
+          publicSlug: "older-engineer",
+          title: "Older Engineer",
+          department: "Design",
+          location: "Muscat",
+          employmentType: "Full time",
+          status: "Open",
+          publishedAt: "2026-11-01T08:00:00.000Z",
+        },
+        {
+          id: "newer-position",
+          publicSlug: "newer-engineer",
+          title: "Newer Engineer",
+          department: "Design",
+          location: "Salalah",
+          employmentType: "Full time",
+          status: "Open",
+          publishedAt: "2026-11-10T08:00:00.000Z",
+        },
+      ],
+    }),
+  );
+  await page.goto("/#openings");
+  const positions = page.locator("#openings article");
+  await expect(positions).toHaveCount(2, { timeout: 30_000 });
+  await expect(positions.first()).toContainText("Newer Engineer");
+  await expect(positions.first()).toContainText("Posted 10 Nov 2026");
+  await expect(positions.last()).toContainText("Older Engineer");
+  await expect(positions.last()).toContainText("Posted 1 Nov 2026");
+});
+
 test("a failed request offers a retry instead of claiming there are no vacancies", async ({
   page,
   request,

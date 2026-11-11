@@ -261,6 +261,8 @@ export interface Vacancy extends BaseRecord {
   databaseId?: string;
   /** Stable, readable reference for public careers links. */
   publicSlug?: string;
+  /** First public posting; legacy roles without an audit event use their creation date. */
+  publishedAt?: string;
   title: string;
   department: string;
   location: string;

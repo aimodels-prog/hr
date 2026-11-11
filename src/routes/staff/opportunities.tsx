@@ -4,6 +4,7 @@ import { BriefcaseBusiness, FileText, HeartHandshake, Loader2, MapPin } from "lu
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
+import { PublicVacancyPostedDate } from "@/components/public-vacancy-posted-date";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -29,6 +30,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useCurrentUser } from "@/lib/auth";
 import { getSupportedCvMimeType } from "@/lib/data/cv-file-validation";
+import { sortPublicVacanciesNewestFirst } from "@/lib/data/public-vacancy-date";
 import type { EmployeeOpportunitySnapshot } from "@/lib/db/repositories/employee-opportunities.repository.server";
 import {
   getEmployeeOpportunitiesFn,
@@ -176,7 +178,7 @@ function OpportunitiesPage() {
           <TabsContent value="positions" className="mt-5">
             {snapshot.vacancies.length ? (
               <div className="grid gap-4 lg:grid-cols-2">
-                {snapshot.vacancies.map((vacancy) => (
+                {sortPublicVacanciesNewestFirst(snapshot.vacancies).map((vacancy) => (
                   <Card key={vacancy.id} className="flex flex-col">
                     <CardHeader>
                       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -189,6 +191,10 @@ function OpportunitiesPage() {
                               {vacancy.location}
                             </span>
                             <span>{vacancy.employmentType}</span>
+                            <PublicVacancyPostedDate
+                              publishedAt={vacancy.publishedAt}
+                              className="inline-flex items-center gap-1"
+                            />
                           </CardDescription>
                         </div>
                         <Badge variant="outline">Open</Badge>

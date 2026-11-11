@@ -576,7 +576,7 @@ export default function WorkforceCharts({
                 title={
                   !hasExpectedHours ? "Recorded attendance" : "Recorded attendance vs expected"
                 }
-                description="Attendance includes scheduled breaks where applicable; timesheets count working hours without them. Today shows hours so far and refreshes every minute. Today is excluded from completed-day totals and shortfall checks."
+                description="Today shows live hours. Timesheet hours exclude breaks."
                 link={detail(
                   "attendance",
                   scope === "hr" ? "/staff/attendance" : "/staff/me/attendance",
@@ -640,7 +640,7 @@ export default function WorkforceCharts({
             )}
             <Panel
               title={scope === "hr" ? "Leave usage and carryover" : "My annual leave balance"}
-              description={`Leave year starting ${data.priorities.leaveYearStart}; independent of the attendance period. Used means approved days before today; booked means approved days from today onwards. Remaining is the recorded balance, already reduced for approved bookings.`}
+              description={`Leave year from ${data.priorities.leaveYearStart}. Remaining already includes approved bookings.`}
               link={detail("leave", scope === "hr" ? "/staff/leave-admin" : "/staff/leave")}
             >
               <LeaveChart
@@ -648,15 +648,16 @@ export default function WorkforceCharts({
                 donut={scope === "self" || Boolean(employeeId)}
               />
               <DashboardInfo label="About carryover and eligibility">
-                Carried days are included in remaining leave and used first. HR can set an expiry
-                date in leave settings. These figures do not change balances or grant eligibility.
+                Used means approved days before today; booked means approved days from today onward.
+                Carried days are included in remaining leave and used first. HR sets their expiry.
+                These figures do not change balances or grant eligibility.
               </DashboardInfo>
             </Panel>
             {scope === "hr" && (
               <>
                 <Panel
                   title="Attendance trend"
-                  description="Past days show completed attendance and records needing review. Today shows employees with clock-in or approved duty so far; missing punches are not flagged while the day is in progress. Missing data is not a finding of absence."
+                  description="Recorded, pending review and missing records by day. Today is still in progress."
                   link={detail("attendance", "/staff/attendance")}
                 >
                   <ChartContainer
@@ -713,7 +714,7 @@ export default function WorkforceCharts({
                 </Panel>
                 <Panel
                   title="Approvals waiting"
-                  description="Current approval and verification stages across employee requests, documents, performance and recruitment. Later travel stages appear only when ready for review. Independent of the attendance period."
+                  description="Requests waiting for a decision across the app."
                   link={
                     employeeId
                       ? detail("overview", "/staff/requests")
@@ -742,8 +743,8 @@ export default function WorkforceCharts({
                   title="Upcoming document expiries"
                   description={
                     employeeId
-                      ? "This employee's and their dependants' current verified documents expiring within 90 days or overdue, including passports, visas and insurance cards. Waived and replaced documents are excluded."
-                      : "Current verified employee and dependant documents, plus published company documents. Includes passports, visas and insurance cards with expiry dates. Waived and replaced documents are excluded. Buckets do not overlap; due today is in 0–30 days."
+                      ? "This employee's documents due within 90 days or overdue."
+                      : "Employee, dependant and company documents due within 90 days or overdue."
                   }
                   link={detail("documents", "/staff/document-expiry")}
                 >
@@ -763,7 +764,7 @@ export default function WorkforceCharts({
                 {!employeeId && (
                   <Panel
                     title="Recruitment pipeline"
-                    description="Current application statuses for open vacancies, independent of the attendance date filter. Applications are counted—not unique people or stage conversions."
+                    description="Applications for open roles, grouped by current stage."
                     link="/staff/vacancies"
                   >
                     <CountChart
@@ -777,7 +778,7 @@ export default function WorkforceCharts({
             {scope === "hr" && !employeeId && (
               <Panel
                 title="Workforce distribution"
-                description="Current employees by department or assigned office, independent of the attendance date range."
+                description="Current employees by department or office."
                 link="/staff/employees"
               >
                 <label className="mb-4 flex items-center justify-between gap-3 text-sm">
@@ -806,60 +807,63 @@ export default function WorkforceCharts({
               </Panel>
             )}
           </div>
-          <details className="rounded-lg border p-3 text-xs">
-            <summary className="cursor-pointer font-medium">
-              Daily figures and calculation notes
+          <details className="group text-xs">
+            <summary className="ml-auto w-fit cursor-pointer rounded-lg px-2 py-1.5 font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
+              How these figures are calculated
             </summary>
-            <p className="my-3 text-muted-foreground">
-              Expected attendance uses the current policy ({hours(data.dailyHours)} h/day including
-              scheduled breaks where applicable), working week, holidays, service dates and approved
-              leave. Open punches, pending corrections and unconfirmed site visits do not count as
-              completed hours. These charts are not payroll deductions or overtime approval. Today
-              shows live hours, including breaks, and is excluded from completed-day totals and
-              absence checks. HR totals count employee-days, not unique employees.
-            </p>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <caption className="sr-only">Daily hours and attendance figures</caption>
-                <thead>
-                  <tr>
-                    {[
-                      "Date",
-                      "Attendance h",
-                      "Expected attendance h",
-                      "Recorded days",
-                      "Pending review",
-                      "No record",
-                      "Leave days",
-                    ].map((title) => (
-                      <th scope="col" className="whitespace-nowrap px-2 py-1" key={title}>
-                        {title}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.days.map((day) => (
-                    <tr key={day.date} className="border-t">
-                      <th scope="row" className="whitespace-nowrap px-2 py-1 font-normal">
-                        {day.date}
-                      </th>
+            <div className="mt-3 rounded-xl border bg-card p-4">
+              <p className="mb-3 text-muted-foreground">
+                Expected attendance uses the current policy ({hours(data.dailyHours)} h/day
+                including scheduled breaks where applicable), working week, holidays, service dates
+                and approved leave. Open punches, pending corrections and unconfirmed site visits do
+                not count as completed hours. These charts are not payroll deductions or overtime
+                approval. Today shows live hours, including breaks, and is excluded from
+                completed-day totals and absence checks. HR totals count employee-days, not unique
+                employees.
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <caption className="sr-only">Daily hours and attendance figures</caption>
+                  <thead>
+                    <tr>
                       {[
-                        day.worked,
-                        day.expected,
-                        day.recorded,
-                        day.review,
-                        day.missing,
-                        day.leaveDays,
-                      ].map((value, index) => (
-                        <td key={index} className="px-2 py-1 tabular-nums">
-                          {hours(value)}
-                        </td>
+                        "Date",
+                        "Attendance h",
+                        "Expected attendance h",
+                        "Recorded days",
+                        "Pending review",
+                        "No record",
+                        "Leave days",
+                      ].map((title) => (
+                        <th scope="col" className="whitespace-nowrap px-2 py-1" key={title}>
+                          {title}
+                        </th>
                       ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {data.days.map((day) => (
+                      <tr key={day.date} className="border-t">
+                        <th scope="row" className="whitespace-nowrap px-2 py-1 font-normal">
+                          {day.date}
+                        </th>
+                        {[
+                          day.worked,
+                          day.expected,
+                          day.recorded,
+                          day.review,
+                          day.missing,
+                          day.leaveDays,
+                        ].map((value, index) => (
+                          <td key={index} className="px-2 py-1 tabular-nums">
+                            {hours(value)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </details>
         </>

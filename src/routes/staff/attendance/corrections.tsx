@@ -299,7 +299,7 @@ function AttendanceCorrectionsRoute() {
     <div className="mx-auto flex max-w-7xl flex-col gap-6 pb-10" data-revision={revision}>
       <PageHeader
         title="Attendance Corrections"
-        description="Original punches remain immutable until the controlled approval flow is complete."
+        description="Review requested changes to attendance. Original machine punches are kept."
       />
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>

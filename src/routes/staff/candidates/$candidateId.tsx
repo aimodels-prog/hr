@@ -761,7 +761,7 @@ function CandidateProfile({
         <aside className="space-y-6">
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Canonical Details</CardTitle>
+              <CardTitle className="text-base">Candidate details</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4 text-sm">
               <div className="flex items-center gap-3 text-muted-foreground">
@@ -799,11 +799,11 @@ function CandidateProfile({
 
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Metadata</CardTitle>
+              <CardTitle className="text-base">Recruitment details</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4 text-sm">
               <div>
-                <p className="text-muted-foreground mb-1">Global Stage</p>
+                <p className="text-muted-foreground mb-1">Current stage</p>
                 <Badge variant="outline">{candidate.stage}</Badge>
               </div>
               <div>
@@ -811,7 +811,7 @@ function CandidateProfile({
                 <p className="font-medium">{candidate.source || "Unknown"}</p>
               </div>
               <div>
-                <p className="text-muted-foreground mb-1">Joined</p>
+                <p className="text-muted-foreground mb-1">Added</p>
                 <p className="font-medium">{new Date(candidate.createdAt).toLocaleDateString()}</p>
               </div>
             </CardContent>
@@ -836,18 +836,10 @@ function CandidateProfile({
             </TabsList>
 
             <TabsContent value="overview" className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Summary</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground leading-relaxed">
-                    {candidate.firstName} is currently in the <strong>{candidate.stage}</strong>{" "}
-                    stage. They have <strong>{candidate.yearsOfExperience}</strong> years of
-                    experience.
-                  </p>
-                  {candidate.doNotContact && (
-                    <div className="mt-4 p-4 border border-destructive/50 bg-destructive/10 rounded-md flex items-start gap-3">
+              {candidate.doNotContact && (
+                <Card className="border-destructive/50 bg-destructive/10">
+                  <CardContent className="p-4">
+                    <div className="flex items-start gap-3">
                       <ShieldAlert className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
                       <div>
                         <p className="font-semibold text-destructive text-sm">Do Not Contact</p>
@@ -857,9 +849,9 @@ function CandidateProfile({
                         </p>
                       </div>
                     </div>
-                  )}
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              )}
 
               <Card>
                 <CardHeader>
@@ -1518,7 +1510,7 @@ function CandidateProfile({
                                 Application CV ({app.referenceId})
                               </p>
                               <p className="text-xs text-muted-foreground">
-                                Legacy CV · Attached {new Date(app.createdAt).toLocaleDateString()}
+                                CV added {new Date(app.createdAt).toLocaleDateString()}
                               </p>
                             </div>
                           </div>

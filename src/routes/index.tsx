@@ -10,6 +10,7 @@ import {
   PublicCareersHeader,
   PublicCareersPage,
 } from "@/components/public-careers-shell";
+import { PublicVacancyPostedDate } from "@/components/public-vacancy-posted-date";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +25,7 @@ import {
 import type { Vacancy } from "@/lib/data/types";
 import { VacancyService } from "@/lib/data/vacancy-service";
 import { getPublicVacancyReference } from "@/lib/data/public-vacancy-link";
+import { sortPublicVacanciesNewestFirst } from "@/lib/data/public-vacancy-date";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -100,15 +102,17 @@ function CareerPortal() {
     () => Array.from(new Set(openVacancies.map((vacancy) => vacancy.employmentType))),
     [openVacancies],
   );
-  const filtered = openVacancies.filter((job) => {
-    const searchText = `${job.title} ${job.department} ${job.location}`.toLowerCase();
-    return (
-      searchText.includes(query.trim().toLowerCase()) &&
-      (department === "all" || job.department === department) &&
-      (location === "all" || job.location === location) &&
-      (employmentType === "all" || job.employmentType === employmentType)
-    );
-  });
+  const filtered = sortPublicVacanciesNewestFirst(
+    openVacancies.filter((job) => {
+      const searchText = `${job.title} ${job.department} ${job.location}`.toLowerCase();
+      return (
+        searchText.includes(query.trim().toLowerCase()) &&
+        (department === "all" || job.department === department) &&
+        (location === "all" || job.location === location) &&
+        (employmentType === "all" || job.employmentType === employmentType)
+      );
+    }),
+  );
   const hasActiveFilters =
     Boolean(query) || department !== "all" || location !== "all" || employmentType !== "all";
   const clearFilters = () => {
@@ -362,6 +366,10 @@ function CareerPortal() {
                         </h3>
                       </div>
                       <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-600">
+                        <PublicVacancyPostedDate
+                          publishedAt={job.publishedAt}
+                          className="inline-flex items-center gap-2"
+                        />
                         <span className="inline-flex items-center gap-2">
                           <MapPin className="h-4 w-4" /> {job.location}
                         </span>
