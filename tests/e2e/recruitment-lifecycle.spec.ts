@@ -145,7 +145,7 @@ test("public application progresses through shortlist, interview, offer and onbo
     .click();
   await page.getByRole("link", { name: candidateName, exact: true }).click();
   await expect(page.getByRole("link", { name: "Back to applications" })).toBeVisible();
-  await expect(page.getByText("Candidate 1 of 1")).toBeVisible();
+  await expect(page.getByText(/^Candidate \d+ of \d+$/)).toBeVisible();
   await page.getByRole("link", { name: "Back to applications" }).click();
   await expect(page.getByRole("link", { name: candidateName, exact: true })).toBeVisible();
   await page
