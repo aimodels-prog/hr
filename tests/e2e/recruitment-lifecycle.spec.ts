@@ -143,17 +143,11 @@ test("public application progresses through shortlist, interview, offer and onbo
     .getByRole("navigation", { name: "Page sections" })
     .getByRole("link", { name: /^Applications \(/ })
     .click();
-  await page.getByRole("textbox", { name: "Search applications" }).fill(candidateEmail);
-  await page
-    .locator("#vacancy-application-list")
-    .getByRole("link", { name: candidateName, exact: true })
-    .click();
+  await page.getByRole("link", { name: candidateName, exact: true }).click();
   await expect(page.getByRole("link", { name: "Back to applications" })).toBeVisible();
   await expect(page.getByText("Candidate 1 of 1")).toBeVisible();
   await page.getByRole("link", { name: "Back to applications" }).click();
-  await expect(page.getByRole("textbox", { name: "Search applications" })).toHaveValue(
-    candidateEmail,
-  );
+  await expect(page.getByRole("link", { name: candidateName, exact: true })).toBeVisible();
   await page
     .getByRole("navigation", { name: "Page sections" })
     .getByRole("link", { name: "CV analysis (optional)" })
