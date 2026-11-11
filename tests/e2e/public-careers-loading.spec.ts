@@ -91,7 +91,7 @@ test("open positions show their posting dates with the newest first", async ({ p
       ],
     }),
   );
-  await page.goto("/#openings");
+  await page.goto("/#openings", { waitUntil: "domcontentloaded" });
   const positions = page.locator("#openings article");
   await expect(positions).toHaveCount(2, { timeout: 30_000 });
   await expect(positions.first()).toContainText("Newer Engineer");

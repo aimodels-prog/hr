@@ -255,6 +255,21 @@ jobs:
             npx playwright test tests/e2e/production-smoke.spec.ts --reporter=line \
             | tee production-smoke.txt
 
+      - name: Summarize failed browser checks
+        if: failure()
+        run: |
+          {
+            echo '### Browser-check failure details'
+            echo '```text'
+            if [ -f browser-tests.txt ]; then
+              tail -n 160 browser-tests.txt | sed -E 's/\x1B\[[0-9;]*[mK]//g'
+            fi
+            if [ -f production-smoke.txt ]; then
+              tail -n 100 production-smoke.txt | sed -E 's/\x1B\[[0-9;]*[mK]//g'
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload browser and worker evidence
         if: always()
         uses: actions/upload-artifact@v4
