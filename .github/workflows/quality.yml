@@ -230,7 +230,9 @@ jobs:
       - name: Install locked dependencies and Chromium
         run: |
           npm ci --include=dev
-          npx playwright install --with-deps chromium
+          # The hosted runner provides browser libraries; avoid apt's external
+          # Ubuntu mirrors, which can fail before any application test runs.
+          npx playwright install chromium
 
       - name: Start isolated MinIO and CV processor
         run: bash scripts/start-ci-services.sh 2>&1 | tee ci-services.log
