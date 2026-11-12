@@ -155,7 +155,9 @@ test("HR switches to her own employee dashboard and back without carrying an emp
   page,
 }) => {
   await page.goto("/staff");
-  await expect(page.getByText("VIA HR System").first()).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Main navigation", exact: true }),
+  ).toBeVisible();
   await preview(page, "HR");
   await page.goto("/staff?employeeId=employee-omar");
   const switchRole = async (role: "HR" | "Employee") => {
@@ -165,20 +167,22 @@ test("HR switches to her own employee dashboard and back without carrying an emp
     expect(new URL(page.url()).searchParams.has("employeeId")).toBe(false);
   };
   await switchRole("Employee");
-  await expect(page.getByRole("heading", { name: "Welcome back, Rana" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome, Rana." })).toBeVisible();
   await expect(page.getByRole("region", { name: "My working hours", exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "HR insights", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: /Needs My Approval/ })).not.toBeVisible();
   await switchRole("HR");
   await expect(page.getByRole("region", { name: "HR insights", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "People overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome, Rana." })).toBeVisible();
 });
 
 test("dashboard chart figures match server data for HR and employee across periods and mobile", async ({
   page,
 }) => {
   await page.goto("/staff");
-  await expect(page.getByText("VIA HR System").first()).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Main navigation", exact: true }),
+  ).toBeVisible();
   for (const role of ["HR", "Employee"] as const) {
     await preview(page, role);
     const scope = role === "HR" ? "hr" : "self";

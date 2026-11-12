@@ -66,8 +66,9 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   };
 
   await page.goto("/staff");
-  await expect(page.getByText("VIA HR System").first()).toBeVisible();
-  await expect(page.getByText("VIA HR System").first()).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Main navigation", exact: true }),
+  ).toBeVisible();
 
   const records = await page.evaluate(
     async ({

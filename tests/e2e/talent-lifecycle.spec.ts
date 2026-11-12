@@ -26,8 +26,9 @@ test("objectives, appraisal, acknowledgement and certification complete across r
   const certificateTitle = `Browser Safety Certificate ${suffix}`;
 
   await page.goto("/staff");
-  await expect(page.getByText("VIA HR System").first()).toBeVisible();
-  await expect(page.getByText("VIA HR System").first()).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Main navigation", exact: true }),
+  ).toBeVisible();
 
   const reviewId = await page.evaluate(
     async ({ cycleName, firstObjective, secondObjective }) => {
@@ -248,7 +249,9 @@ test("objectives, appraisal, acknowledgement and certification complete across r
 
 test("Team Performance and Training Records open for every intended role", async ({ page }) => {
   await page.goto("/staff");
-  await expect(page.getByText("VIA HR System").first()).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Main navigation", exact: true }),
+  ).toBeVisible();
   await previewAs(page, "user-rana", "HR", "/staff/performance/team");
   await expect(page.getByRole("heading", { name: "Team Performance" })).toBeVisible();
   await expect(page.getByText("This page didn't load.")).toHaveCount(0);

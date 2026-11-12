@@ -23,7 +23,9 @@ async function previewAs(page: Page, userId: string, activeRole: "Employee" | "S
 test("audit history is PostgreSQL-backed, restricted and server exported", async ({ page }) => {
   test.setTimeout(180_000);
   await page.goto("/staff");
-  await expect(page.getByText("VIA HR System").first()).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Main navigation", exact: true }),
+  ).toBeVisible();
 
   await previewAs(page, "user-omar", "Employee");
   await expect(page.getByText("You do not have permission to view Audit History.")).toBeVisible();

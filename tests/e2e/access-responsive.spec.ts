@@ -24,7 +24,9 @@ async function previewAs(page: Page, userId: string, activeRole: PreviewRole, pa
 
 test("sensitive direct URLs enforce the active VIA role", async ({ page }) => {
   await page.goto("/staff");
-  await expect(page.getByText("VIA HR System").first()).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Main navigation", exact: true }),
+  ).toBeVisible();
 
   const denied: Array<{
     userId: string;
@@ -84,7 +86,7 @@ test("employee essentials remain usable at a mobile viewport", async ({ page }) 
   ).toHaveAttribute("href", "/staff/time-away");
 
   const routes = [
-    { path: "/staff", landmark: /Welcome back/i },
+    { path: "/staff", landmark: /^Welcome, /i },
     { path: "/staff/me/profile", landmark: "Omar Rahman" },
     { path: "/staff/my-tasks", landmark: "Tasks & Reminders" },
     { path: "/staff/me/leave-balances", landmark: "My Leave" },
@@ -144,7 +146,7 @@ test("staff bootstrap recovers from one interrupted organisation-data request", 
   });
 
   await page.goto("/staff");
-  await expect(page.getByRole("heading", { name: "People overview", exact: true })).toBeVisible({
+  await expect(page.getByRole("heading", { name: /^Welcome, / })).toBeVisible({
     timeout: 30_000,
   });
   expect(interrupted).toBe(true);

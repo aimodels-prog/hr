@@ -351,7 +351,9 @@ test("workforce charts load real data for HR and personal attendance on mobile",
   page,
 }) => {
   await page.goto("/staff");
-  await expect(page.getByText("VIA HR System").first()).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Main navigation", exact: true }),
+  ).toBeVisible();
   await previewAs(page, "user-rana", "HR", "/staff");
   const insights = page.getByRole("region", { name: "HR insights", exact: true });
   await expect(insights).toBeVisible({ timeout: 30_000 });
@@ -396,7 +398,9 @@ test("employee site visit persists to PostgreSQL and HR approval survives a role
   const visitDate = future.toISOString().slice(0, 10);
 
   await page.goto("/staff");
-  await expect(page.getByText("VIA HR System").first()).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Main navigation", exact: true }),
+  ).toBeVisible();
   await previewAs(page, "user-omar", "Employee", "/staff");
   await page.getByRole("link", { name: "Quick visit", exact: true }).click();
   await expect(page).toHaveURL(/action=site-visit/);

@@ -20,7 +20,9 @@ async function previewAs(page: Page, userId: string, activeRole: PreviewRole) {
 test("PostgreSQL task inbox and notifications load for every VIA role", async ({ page }) => {
   test.setTimeout(180_000);
   await page.goto("/staff");
-  await expect(page.getByText("VIA HR System").first()).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Main navigation", exact: true }),
+  ).toBeVisible();
 
   await previewAs(page, "user-omar", "Employee");
   await expect(page.getByPlaceholder("Search my tasks")).toBeVisible();

@@ -351,7 +351,7 @@ test("production release smoke shows six charts for Super Admin on desktop and p
     "Requires isolated portal SSO configuration",
   );
   await signInAs(page, "yusuf.balushi@via-int.com", "Yusuf Al Balushi", "/staff");
-  await expect(page.getByRole("heading", { name: "People overview", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Welcome, / })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Attendance trend", exact: true })).toBeVisible({
     timeout: 30_000,
   });
@@ -443,7 +443,7 @@ test("production release smoke covers health, secure CV intake and all five role
       name: "Omar Rahman",
       role: "Employee",
       path: "/staff",
-      heading: /Welcome back/i,
+      heading: /^Welcome, /i,
     },
     {
       email: "layla.harthy@via-int.com",

@@ -21,7 +21,9 @@ async function previewAs(page: Page, userId: string, activeRole: PreviewRole) {
 test("reports are role scoped and loaded from PostgreSQL", async ({ page }) => {
   test.setTimeout(180_000);
   await page.goto("/staff");
-  await expect(page.getByText("VIA HR System").first()).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Main navigation", exact: true }),
+  ).toBeVisible();
 
   await previewAs(page, "user-omar", "Employee");
   await expect(page.getByText("You do not have permission to view Reports.")).toBeVisible();

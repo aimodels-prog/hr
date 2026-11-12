@@ -57,7 +57,7 @@ test("HR dashboard setup: connections, retry, shortcuts and mobile", async ({ pa
   await setup.getByRole("button", { name: "Hide from dashboard" }).click();
   await expect(setup).toHaveCount(0);
   await page.reload();
-  await expect(page.getByRole("heading", { name: "People overview", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Welcome, / })).toBeVisible();
   await expect(setup).toHaveCount(0);
   await page.goto("/staff/settings?section=connections");
   await page.getByRole("button", { name: "Show setup on dashboard" }).click();
@@ -97,7 +97,7 @@ test("HR dashboard setup is absent from the employee dashboard", async ({ page }
     return route.fulfill({ status: 403, json: {} });
   });
   await page.goto("/staff");
-  await expect(page.getByRole("heading", { name: /Welcome back/ })).toBeVisible({
+  await expect(page.getByRole("heading", { name: /^Welcome, / })).toBeVisible({
     timeout: 30_000,
   });
   await expect(page.getByRole("region", { name: "HR setup", exact: true })).toHaveCount(0);
