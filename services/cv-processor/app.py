@@ -215,6 +215,33 @@ def health() -> dict[str, str]:
     return {"status": "ok", "embeddingModel": MODEL_NAME}
 
 
+@app.post("/v1/preview")
+def preview(request: ExtractRequest) -> dict[str, str]:
+    """Return readable Word text only to the authorised HR app, not ranking-redacted text."""
+    try:
+        data = base64.b64decode(request.contentBase64, validate=True)
+    except Exception as exc:
+        raise HTTPException(400, "Invalid document encoding") from exc
+    if not data or len(data) > MAX_BYTES:
+        raise HTTPException(413, "Document is empty or too large")
+    extension = Path(request.fileName).suffix.lower()
+    try:
+        if extension == ".docx":
+            text = docx_text(data)
+        elif extension == ".doc":
+            text = doc_text(data)
+        else:
+            raise HTTPException(415, "Only Word documents have text previews")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(422, "The Word document could not be previewed") from exc
+    text = clean_text(text)[:200_000]
+    if not text:
+        raise HTTPException(422, "The Word document has no readable text")
+    return {"text": text}
+
+
 @app.post("/v1/similarity")
 def similarity(request: SimilarityRequest) -> dict[str, Any]:
     vacancy = " ".join(request.vacancyText.split())

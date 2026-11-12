@@ -43,6 +43,41 @@ async function postProcessor(path: string, body: unknown, timeoutMilliseconds: n
   }
 }
 
+/** Full Word text for an authorised in-app preview; ranking text deliberately omits details. */
+export async function previewCandidateCvText(input: {
+  bytes: Uint8Array;
+  fileName: string;
+  mimeType: string;
+}): Promise<string> {
+  const maximum = Number(process.env["VIA_HR_MAX_FILE_BYTES"] || 10 * 1024 * 1024);
+  if (input.bytes.byteLength < 1 || input.bytes.byteLength > maximum)
+    throw new Error("The CV is empty or exceeds the permitted file size.");
+  try {
+    const response = await postProcessor(
+      "/v1/preview",
+      {
+        fileName: input.fileName,
+        mimeType: input.mimeType,
+        contentBase64: Buffer.from(input.bytes).toString("base64"),
+      },
+      30_000,
+    );
+    if (!response.ok) throw new Error("The Word CV could not be previewed.");
+    const result: unknown = await response.json();
+    if (
+      !result ||
+      typeof result !== "object" ||
+      typeof (result as { text?: unknown }).text !== "string"
+    )
+      throw new Error("The Word CV preview was invalid.");
+    return (result as { text: string }).text.slice(0, 200_000);
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError")
+      throw new Error("The Word CV preview timed out.");
+    throw error;
+  }
+}
+
 function isResult(value: unknown): value is Omit<ProductionCvExtractionResult, "method"> {
   if (!value || typeof value !== "object") return false;
   const result = value as Record<string, unknown>;

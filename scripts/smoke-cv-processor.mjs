@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { strToU8, zipSync } from "fflate";
 
 const origin = (process.argv[2] || "http://127.0.0.1:18080").replace(/\/$/, "");
 
@@ -65,6 +66,30 @@ assert.equal(result.fields.email, "amina.rahman@example.com");
 assert.equal(result.fields.yearsOfExperience, 8);
 assert.ok(result.fields.skills.includes("customs clearance"));
 assert.ok(!result.semanticText.toLowerCase().includes("amina.rahman@example.com"));
+const wordText = "Sandro Pascolo sandro@example.com 12 years of engineering experience";
+const wordDocument = zipSync({
+  "[Content_Types].xml": strToU8(
+    '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+  ),
+  "_rels/.rels": strToU8(
+    '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+  ),
+  "word/document.xml": strToU8(
+    `<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>${wordText}</w:t></w:r></w:p></w:body></w:document>`,
+  ),
+});
+const previewResponse = await fetch(`${origin}/v1/preview`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    fileName: "Sandro_Pascolo_CV.docx",
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    contentBase64: Buffer.from(wordDocument).toString("base64"),
+  }),
+});
+const previewBody = await previewResponse.text();
+assert.equal(previewResponse.status, 200, previewBody);
+assert.ok(JSON.parse(previewBody).text.includes(wordText));
 const semanticResponse = await fetch(`${origin}/v1/similarity`, {
   method: "POST",
   headers: { "content-type": "application/json" },
@@ -76,4 +101,6 @@ const semanticResponse = await fetch(`${origin}/v1/similarity`, {
 const semantic = await semanticResponse.json();
 assert.equal(semanticResponse.status, 200);
 assert.ok(semantic.score >= 40 && semantic.score <= 100);
-process.stdout.write("CV extraction, OCR service health and semantic matching passed.\n");
+process.stdout.write(
+  "CV extraction, Word preview, OCR service health and semantic matching passed.\n",
+);

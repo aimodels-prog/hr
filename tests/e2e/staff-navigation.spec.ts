@@ -113,6 +113,9 @@ test("employee search never exposes HR, payroll or system controls", async ({ pa
 
 test("sidebar headings, pages and nested sections have distinct colours", async ({ page }) => {
   await asRole(page, "user-rana", "HR", "/staff/leave-admin");
+  const sidebar = page.locator('[data-sidebar="sidebar"]');
+  await expect(sidebar).toHaveCSS("background-color", "rgb(11, 87, 150)");
+  await expect(sidebar).toHaveCSS("background-image", "none");
   const nav = page.getByRole("navigation", { name: "Main navigation", exact: true });
   const heading = nav.getByRole("button", { name: "Time & Leave", exact: true });
   const ordinaryPage = nav.getByRole("link", { name: "Employee Timesheets", exact: true });

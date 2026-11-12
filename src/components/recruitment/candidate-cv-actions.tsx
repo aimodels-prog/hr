@@ -56,7 +56,7 @@ export function CandidateCvActions({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewText, setPreviewText] = useState<string | null>(null);
   const [previewNote, setPreviewNote] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busyIntent, setBusyIntent] = useState<"preview" | "download" | null>(null);
   const [openedAt, setOpenedAt] = useState(firstOpenedAt);
   const [openedBy, setOpenedBy] = useState(firstOpenedBy);
 
@@ -73,7 +73,7 @@ export function CandidateCvActions({
   );
 
   const access = async (intent: "preview" | "download") => {
-    setBusy(true);
+    setBusyIntent(intent);
     try {
       const result = await accessCandidateCvFn({
         data: {
@@ -110,12 +110,20 @@ export function CandidateCvActions({
         } else if (extension === "txt") {
           setPreviewText(new TextDecoder().decode(bytes).slice(0, 200_000));
         } else if (extension === "docx") {
-          const text = docxText(bytes) || result.extractedText;
+          const text = result.previewText || docxText(bytes);
           setPreviewText(text || null);
-          setPreviewNote("Text preview of the Word CV; formatting and images may differ.");
+          setPreviewNote(
+            text
+              ? "Text preview of the Word CV; formatting and images may differ."
+              : "This Word CV could not be read in the preview. Download the original to review it.",
+          );
         } else if (extension === "doc") {
-          setPreviewText(result.extractedText || null);
-          setPreviewNote("Text preview of the Word CV; formatting and images may differ.");
+          setPreviewText(result.previewText || null);
+          setPreviewNote(
+            result.previewText
+              ? "Text preview of the Word CV; formatting and images may differ."
+              : "This older Word CV could not be read in the preview. Download the original to review it.",
+          );
         }
         setPreviewOpen(true);
       }
@@ -128,7 +136,7 @@ export function CandidateCvActions({
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "The CV could not be opened.");
     } finally {
-      setBusy(false);
+      setBusyIntent(null);
     }
   };
 
@@ -139,19 +147,21 @@ export function CandidateCvActions({
           type="button"
           variant="outline"
           size="sm"
-          disabled={busy}
+          disabled={busyIntent !== null}
           onClick={() => void access("preview")}
         >
-          <Eye className="mr-2 h-4 w-4" /> Preview CV
+          <Eye className="mr-2 h-4 w-4" />
+          {busyIntent === "preview" ? "Opening CV…" : "Preview CV"}
         </Button>
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          disabled={busy}
+          disabled={busyIntent !== null}
           onClick={() => void access("download")}
         >
-          <FileDown className="mr-2 h-4 w-4" /> Download original
+          <FileDown className="mr-2 h-4 w-4" />
+          {busyIntent === "download" ? "Preparing download…" : "Download original"}
         </Button>
         <span className="text-xs text-muted-foreground" aria-live="polite">
           {openedAt
@@ -159,7 +169,17 @@ export function CandidateCvActions({
             : "No recorded CV open"}
         </span>
       </div>
-      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+      <Dialog
+        open={previewOpen}
+        onOpenChange={(open) => {
+          setPreviewOpen(open);
+          if (!open) {
+            setPreviewUrl(null);
+            setPreviewText(null);
+            setPreviewNote(null);
+          }
+        }}
+      >
         <DialogContent className="flex h-[min(90vh,60rem)] w-[min(96vw,70rem)] max-w-none flex-col p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle className="truncate pr-7">{fileName}</DialogTitle>

@@ -216,15 +216,8 @@ body.via-hr-portal-theme {
 
 .via-hr-app [data-sidebar="sidebar"],
 body.via-hr-portal-theme [data-sidebar="sidebar"] {
-  background-image: radial-gradient(
-    circle at -12% 104%,
-    transparent 0 58px,
-    rgb(255 255 255 / 14%) 59px 82px,
-    transparent 83px 118px,
-    rgb(255 255 255 / 8%) 119px 120px,
-    transparent 121px
-  );
-  background-repeat: no-repeat;
+  background-color: var(--sidebar);
+  background-image: none;
 }
 
 .via-hr-app [data-via-surface="card"] {

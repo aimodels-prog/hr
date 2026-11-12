@@ -112,6 +112,8 @@ test("request protection enforces body limits, rate limits and security headers"
 
     const secured = addSecurityHeaders(new Request("https://hr.example.test/"), new Response("ok"));
     assert.match(secured.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
+    assert.match(secured.headers.get("content-security-policy") ?? "", /frame-src 'self' blob:/);
+    assert.match(secured.headers.get("content-security-policy") ?? "", /object-src 'none'/);
     assert.equal(secured.headers.get("x-content-type-options"), "nosniff");
     assert.match(secured.headers.get("strict-transport-security") ?? "", /max-age=31536000/);
   } finally {

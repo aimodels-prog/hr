@@ -17,17 +17,12 @@ import {
 } from "../db/utils.server.ts";
 import { ROLE_VALUES } from "../data/types.ts";
 import { isValidCurrentSalaryOmr } from "../recruitment/current-salary.ts";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { getDatabaseClient } from "../db/client.ts";
-import {
-  candidateApplications,
-  candidateCvExtractions,
-  candidateCvRecords,
-  recruitmentDocuments,
-} from "../db/schema/recruitment.ts";
+import { candidateApplications, candidateCvRecords } from "../db/schema/recruitment.ts";
 import { auditEvents } from "../db/schema/system.ts";
 import { readObjectFile } from "../db/object-storage.server.ts";
-import { decryptSensitiveJson } from "../db/encryption.server.ts";
+import { previewCandidateCvText } from "../integrations/cv-processing.server.ts";
 import {
   addCandidateRecommendationInDatabase,
   exportCandidatesFromDatabase,
@@ -429,42 +424,17 @@ export const accessCandidateCvFn = createServerFn({ method: "POST" })
       verified.actor,
       data.intent === "preview" ? "Previewed candidate CV" : "Downloaded candidate CV",
     );
-    const wantsText =
-      data.intent === "preview" && !file.metadata.name.toLowerCase().endsWith(".pdf");
-    const [document] = wantsText
-      ? await db
-          .select({ checksum: recruitmentDocuments.checksum })
-          .from(recruitmentDocuments)
-          .where(
-            and(
-              eq(recruitmentDocuments.organisationId, verified.organisationId),
-              eq(recruitmentDocuments.id, record.fileId),
-            ),
-          )
-          .limit(1)
-      : [];
-    const [preparedText] = document?.checksum
-      ? await db
-          .select({ semanticTextEncrypted: candidateCvExtractions.semanticTextEncrypted })
-          .from(candidateCvExtractions)
-          .where(
-            and(
-              eq(candidateCvExtractions.organisationId, verified.organisationId),
-              eq(candidateCvExtractions.checksum, document.checksum),
-            ),
-          )
-          .orderBy(desc(candidateCvExtractions.createdAt))
-          .limit(1)
-      : [];
-    let extractedText: string | undefined;
-    if (preparedText?.semanticTextEncrypted) {
+    const wantsWordPreview = data.intent === "preview" && /\.docx?$/i.test(file.metadata.name);
+    let previewText: string | undefined;
+    if (wantsWordPreview) {
       try {
-        extractedText = decryptSensitiveJson<string>(preparedText.semanticTextEncrypted).slice(
-          0,
-          200_000,
-        );
+        previewText = await previewCandidateCvText({
+          bytes: file.bytes,
+          fileName: file.metadata.name,
+          mimeType: file.metadata.mimeType,
+        });
       } catch {
-        // A damaged optional extraction must not block access to the original CV.
+        // The original is still available; the browser can also read many DOCX files locally.
       }
     }
     const [firstOpen] = await db
@@ -505,7 +475,7 @@ export const accessCandidateCvFn = createServerFn({ method: "POST" })
     return {
       metadata: file.metadata,
       fileBase64: Buffer.from(file.bytes).toString("base64"),
-      ...(extractedText ? { extractedText } : {}),
+      ...(previewText ? { previewText } : {}),
       openedAt: firstOpenedAt,
       openedBy: firstOpen?.actorDisplayName ?? verified.actor.displayName,
     };
