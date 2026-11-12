@@ -6,6 +6,7 @@ const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElemen
   ({ className, ...props }, ref) => (
     <div
       ref={ref}
+      data-via-surface="card"
       className={cn("rounded-xl border border-border/70 bg-card text-card-foreground", className)}
       {...props}
     />

@@ -186,12 +186,21 @@ export function PulseStrip({
             onClick={metric.onClick}
             aria-label={`View ${metric.label.toLowerCase()}: ${metric.value}`}
             title={metric.note}
-            className="rounded-xl border border-border/70 bg-card p-5 text-left transition-colors hover:border-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-6"
+            className={cn(
+              "via-metric-card relative overflow-hidden rounded-xl border border-border/70 bg-card p-5 text-left transition-[border-color,transform,box-shadow] hover:-translate-y-0.5 hover:border-primary hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-6",
+              index % 2 === 0 ? "via-metric-card-blue" : "via-metric-card-green",
+            )}
           >
             {content}
           </button>
         ) : (
-          <div key={index} className="rounded-xl border border-border/70 bg-card p-5 sm:p-6">
+          <div
+            key={index}
+            className={cn(
+              "via-metric-card relative overflow-hidden rounded-xl border border-border/70 bg-card p-5 sm:p-6",
+              index % 2 === 0 ? "via-metric-card-blue" : "via-metric-card-green",
+            )}
+          >
             {content}
           </div>
         );

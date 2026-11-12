@@ -224,7 +224,7 @@ function Dashboard() {
             key={action.title}
             to={action.to}
             {...(action.hash ? { hash: action.hash } : {})}
-            className="group flex min-h-12 items-center gap-3 rounded-xl border bg-card px-3 py-2.5 transition-colors hover:border-primary/30 hover:bg-muted/30"
+            className="group relative flex min-h-14 items-center gap-3 overflow-hidden rounded-xl border bg-card px-4 py-3 shadow-sm transition-[border-color,transform,box-shadow] hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-[#13af6f] before:content-['']"
           >
             <span
               className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${action.tone}`}
@@ -245,20 +245,20 @@ function Dashboard() {
       className="mx-auto max-w-7xl space-y-6 pb-10"
       data-dashboard-role={activeRole}
     >
-      {/* Header Banner */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
+          <p className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-muted-foreground">
+            {activeRole === "HR" ? "HR workspace" : `${activeRole} workspace`}
+          </p>
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-semibold tracking-tight">
-              {["HR", "Super Admin"].includes(activeRole)
-                ? "People overview"
-                : `Welcome back, ${displayName.split(" ")[0]}`}
+            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+              Welcome, {displayName.split(" ")[0]}.
             </h1>
-            <Badge variant="outline" className="rounded-full bg-card px-2.5 text-[11px]">
+            <Badge variant="outline" className="rounded-full bg-card px-3 py-1 text-xs">
               {activeRole}
             </Badge>
           </div>
-        </div>{" "}
+        </div>
         {currentEmployee && !["HR", "Super Admin"].includes(activeRole) && (
           <div className="flex flex-wrap items-center gap-3">
             <Link
@@ -283,6 +283,41 @@ function Dashboard() {
           </div>
         )}
       </div>
+
+      <section
+        className="via-dashboard-hero relative overflow-hidden rounded-2xl bg-primary p-6 text-primary-foreground shadow-sm sm:p-8"
+        aria-label="Workspace overview"
+      >
+        <div className="relative z-10 max-w-2xl">
+          <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+            {activeRole === "HR"
+              ? "People operations at a glance"
+              : activeRole === "Employee"
+                ? "Your work, all in one place"
+                : "Your workspace at a glance"}
+          </h2>
+          <p className="mt-2 max-w-xl text-sm leading-relaxed text-white/85 sm:text-base">
+            {activeRole === "HR"
+              ? "See your team, pending approvals and the work that needs attention."
+              : activeRole === "Employee"
+                ? "Check your hours, requests and next steps."
+                : "See what needs your attention and continue your work."}
+          </p>
+          <Link
+            to={
+              activeRole === "HR"
+                ? "/staff/requests?view=approvals"
+                : (roleQuickActions[0]?.to ?? "/staff/requests?view=my")
+            }
+            className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-[#0b5796] shadow-sm transition-colors hover:bg-[#eaf5ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+          >
+            {activeRole === "HR"
+              ? "Review approvals"
+              : (roleQuickActions[0]?.title ?? "My requests")}
+            <ArrowRight className="size-4" aria-hidden="true" />
+          </Link>
+        </div>
+      </section>
 
       <RequestTrackerSummary />
       {quickAccess}

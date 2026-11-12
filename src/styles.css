@@ -147,6 +147,171 @@
   --sidebar-detail-accent: oklch(0.3 0.045 190);
 }
 
+/* The VIA Portal visual language is intentionally scoped to the HR workspace.
+   Recruitment and other public pages retain their own presentation. */
+.via-hr-app,
+body.via-hr-portal-theme {
+  --radius: 0.75rem;
+  --font-display: "Inter", "Aptos Display", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", "Aptos", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --background: #f5f8fc;
+  --foreground: #0b1d36;
+  --card: #ffffff;
+  --card-foreground: #0b1d36;
+  --popover: #ffffff;
+  --popover-foreground: #0b1d36;
+  --primary: #0b5796;
+  --primary-foreground: #ffffff;
+  --secondary: #eaf2fa;
+  --secondary-foreground: #173e67;
+  --muted: #eef3f9;
+  --muted-foreground: #61748e;
+  --accent: #e8f2fb;
+  --accent-foreground: #0b5796;
+  --border: #d8e3ef;
+  --input: #cfdeed;
+  --ring: #0b5796;
+  --chart-1: #0b5796;
+  --chart-2: #079968;
+  --chart-3: #3c79b2;
+  --chart-4: #75b8d8;
+  --chart-5: #a9c9df;
+  --sidebar: #0b5796;
+  --sidebar-foreground: #f7fbff;
+  --sidebar-primary: #ffffff;
+  --sidebar-primary-foreground: #0b5796;
+  --sidebar-accent: rgb(255 255 255 / 12%);
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: rgb(255 255 255 / 18%);
+  --sidebar-ring: #ffffff;
+  --sidebar-heading: #c8e1f5;
+  --sidebar-detail: #b8e9dc;
+  --sidebar-detail-accent: rgb(255 255 255 / 12%);
+  --via-table-header: #f0f5fa;
+  --via-table-hover: #f4f9fd;
+  --via-table-heading: #526b87;
+  font-family: var(--font-sans);
+}
+
+.dark .via-hr-app,
+.dark body.via-hr-portal-theme {
+  --background: #101e31;
+  --foreground: #edf5fd;
+  --card: #192b43;
+  --card-foreground: #edf5fd;
+  --popover: #192b43;
+  --popover-foreground: #edf5fd;
+  --secondary: #203954;
+  --secondary-foreground: #edf5fd;
+  --muted: #20334b;
+  --muted-foreground: #b4c7dc;
+  --accent: #25486c;
+  --accent-foreground: #ffffff;
+  --border: #38506c;
+  --input: #49617c;
+  --via-table-header: #223a55;
+  --via-table-hover: #213b58;
+  --via-table-heading: #c5d8ea;
+}
+
+.via-hr-app [data-sidebar="sidebar"],
+body.via-hr-portal-theme [data-sidebar="sidebar"] {
+  background-image: radial-gradient(
+    circle at -12% 104%,
+    transparent 0 58px,
+    rgb(255 255 255 / 14%) 59px 82px,
+    transparent 83px 118px,
+    rgb(255 255 255 / 8%) 119px 120px,
+    transparent 121px
+  );
+  background-repeat: no-repeat;
+}
+
+.via-hr-app [data-via-surface="card"] {
+  box-shadow:
+    0 1px 2px rgb(11 29 54 / 4%),
+    0 12px 28px -22px rgb(11 57 103 / 24%);
+}
+
+.via-hr-app .via-dashboard-hero {
+  background-image:
+    radial-gradient(
+      circle at 98% 115%,
+      transparent 0 72px,
+      rgb(255 255 255 / 10%) 73px 105px,
+      transparent 106px 155px,
+      rgb(255 255 255 / 12%) 156px 157px,
+      transparent 158px
+    ),
+    linear-gradient(110deg, #0b5796, #0c619f);
+}
+
+.via-hr-app .via-metric-card {
+  box-shadow: 0 1px 2px rgb(11 29 54 / 5%);
+}
+
+.via-hr-app .via-metric-card::before {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 4px;
+  content: "";
+  background-color: #0b68b0;
+}
+
+.via-hr-app .via-metric-card-green::before {
+  background-color: #13af6f;
+}
+
+.via-hr-app [data-via-control="input"],
+.via-hr-app [data-via-control="select"],
+.via-hr-app [data-via-control="textarea"],
+body.via-hr-portal-theme [data-via-control="input"],
+body.via-hr-portal-theme [data-via-control="select"],
+body.via-hr-portal-theme [data-via-control="textarea"] {
+  min-height: 2.5rem;
+  border-radius: 0.65rem;
+  background-color: var(--card);
+}
+
+.via-hr-app [data-via-control="textarea"],
+body.via-hr-portal-theme [data-via-control="textarea"] {
+  min-height: 5rem;
+}
+
+.via-hr-app [data-sidebar="sidebar"] [data-via-control="input"],
+body.via-hr-portal-theme [data-sidebar="sidebar"] [data-via-control="input"] {
+  border-color: rgb(255 255 255 / 25%);
+  background-color: rgb(255 255 255 / 10%);
+  color: #ffffff;
+}
+
+body.via-hr-portal-theme [data-via-surface="dialog"] {
+  border-color: var(--border);
+  border-radius: 0.85rem;
+  background-color: var(--card);
+  box-shadow: 0 22px 64px rgb(5 30 58 / 22%);
+}
+
+.via-hr-app [data-via-table] thead {
+  background-color: var(--via-table-header);
+}
+
+.via-hr-app [data-via-table] th {
+  color: var(--via-table-heading);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.via-hr-app [data-via-table] tbody tr:hover {
+  background-color: var(--via-table-hover);
+}
+
+.via-hr-app .page-grid {
+  background-image: none;
+}
+
 @layer base {
   * {
     border-color: var(--color-border);

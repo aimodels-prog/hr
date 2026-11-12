@@ -64,6 +64,12 @@ function StaffWorkspace({ actor }: { actor: ActorContext }) {
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
 
+  // Menus and dialogs render under body, outside the staff workspace.
+  useEffect(() => {
+    document.body.classList.add("via-hr-portal-theme");
+    return () => document.body.classList.remove("via-hr-portal-theme");
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     setBootstrapError(null);
@@ -133,19 +139,14 @@ function StaffWorkspace({ actor }: { actor: ActorContext }) {
 
   return (
     <StaffDataContext.Provider value={moduleLoader}>
-      <SidebarProvider>
+      <SidebarProvider className="via-hr-app">
         <ContextualHelpProvider>
           <SidebarSectionsProvider>
             <div className="flex min-h-screen w-full bg-background">
               <HrSidebar />
               <div className="min-w-0 flex flex-1 flex-col">
-                <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border/70 bg-card/90 px-4 shadow-[0_1px_12px_oklch(0.3_0.08_253/0.04)] backdrop-blur-xl sm:px-6">
-                  <SidebarTrigger className="h-9 w-9 rounded-xl border border-border/70 bg-background shadow-sm" />
-                  <div className="hidden items-center gap-2 md:flex">
-                    <span className="font-display text-[15px] font-bold tracking-[-0.02em]">
-                      VIA HR System
-                    </span>
-                  </div>
+                <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border/60 bg-background/95 px-4 backdrop-blur-xl sm:px-6">
+                  <SidebarTrigger className="h-9 w-9 rounded-lg border border-border bg-card shadow-sm" />
 
                   <div className="ml-auto flex items-center gap-2">
                     {isDevelopmentPreview && (

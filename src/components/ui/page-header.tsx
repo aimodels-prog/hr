@@ -20,8 +20,9 @@ export function PageHeader({
 }: PageHeaderProps) {
   return (
     <div
+      data-via-page-header
       className={cn(
-        "relative flex flex-col gap-3 pb-5 pt-1 md:flex-row md:items-center md:justify-between",
+        "relative flex flex-col gap-4 pb-6 pt-1 md:flex-row md:items-end md:justify-between",
         className,
       )}
       {...props}
@@ -52,7 +53,7 @@ export function PageHeader({
           </nav>
         )}
         <div className="space-y-1">
-          <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground">
+          <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
             {title}
           </h1>
           {description && (
