@@ -1,5 +1,6 @@
 import { SafeForm } from "@/components/ui/safe-form";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { LocationFields } from "@/components/recruitment/location-fields";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, useMemo } from "react";
 import {
@@ -1078,7 +1079,7 @@ function CandidateProfile({
                                 <FormItem>
                                   <FormLabel>Location</FormLabel>
                                   <FormControl>
-                                    <Input {...field} />
+                                    <LocationFields value={field.value} onChange={field.onChange} />
                                   </FormControl>
                                   <FormMessage />
                                 </FormItem>

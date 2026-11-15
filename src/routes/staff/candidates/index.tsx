@@ -1,4 +1,5 @@
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { COUNTRY_OPTIONS, locationCountryCode } from "@/lib/recruitment/countries";
 import { CvZipDownload } from "@/components/candidates/cv-zip-download";
 import { ExportMenu } from "@/components/ui/export-menu";
 import { downloadCsvExport, type ExportFormat } from "@/lib/data/excel-export";
@@ -114,10 +115,6 @@ function CandidatesIndex() {
     [empService, currentUser],
   );
 
-  const locations = useMemo(
-    () => Array.from(new Set(candidatesWithApps.map((c) => c.location).filter(Boolean))).sort(),
-    [candidatesWithApps],
-  );
   const sources = useMemo(
     () =>
       Array.from(
@@ -177,6 +174,7 @@ function CandidatesIndex() {
   const [viewMode, setViewMode] = useState<"list" | "board">("list");
   const [stageFilter, setStageFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
+  const [cityFilter, setCityFilter] = useState("");
   const [projectFilter, setProjectFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [positionFilter, setPositionFilter] = useState("all");
@@ -275,7 +273,10 @@ function CandidatesIndex() {
         : stageFilter === "Shortlisted"
           ? shortlistedCandidates.has(candidate.id)
           : candidate.stage === stageFilter);
-    const matchesLocation = locationFilter === "all" || candidate.location === locationFilter;
+    const matchesLocation =
+      (locationFilter === "all" || locationCountryCode(candidate.location) === locationFilter) &&
+      (!cityFilter.trim() ||
+        candidate.location.toLocaleLowerCase().includes(cityFilter.trim().toLocaleLowerCase()));
     const matchesProject = projectFilter === "all" || candidate.projectId === projectFilter;
     const matchesSource = sourceFilter === "all" || candidate.source === sourceFilter;
     const matchesPosition = positionFilter === "all" || candidate.currentTitle === positionFilter;
@@ -353,6 +354,7 @@ function CandidatesIndex() {
 
   const hiddenFilterCount = [
     locationFilter !== "all",
+    Boolean(cityFilter.trim()),
     projectFilter !== "all",
     sourceFilter !== "all",
     positionFilter !== "all",
@@ -377,6 +379,7 @@ function CandidatesIndex() {
     setSearchQuery("");
     setStageFilter("all");
     setLocationFilter("all");
+    setCityFilter("");
     setProjectFilter("all");
     setSourceFilter("all");
     setPositionFilter("all");
@@ -540,19 +543,19 @@ function CandidatesIndex() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={locationFilter} onValueChange={setLocationFilter}>
-              <SelectTrigger className="bg-background">
-                <SelectValue placeholder="Location" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Locations</SelectItem>
-                {locations.map((loc) => (
-                  <SelectItem key={loc} value={loc}>
-                    {loc}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={locationFilter}
+              onValueChange={setLocationFilter}
+              options={[{ value: "all", label: "All countries" }, ...COUNTRY_OPTIONS]}
+              placeholder="All countries"
+              searchPlaceholder="Search countries"
+            />
+            <Input
+              value={cityFilter}
+              onChange={(event) => setCityFilter(event.target.value)}
+              placeholder="Search city or region"
+              aria-label="Search city or region"
+            />
             <Select value={sourceFilter} onValueChange={setSourceFilter}>
               <SelectTrigger className="bg-background">
                 <SelectValue placeholder="Source" />

@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { LocationFields } from "@/components/recruitment/location-fields";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -32,6 +33,7 @@ import { CandidateService } from "@/lib/data/candidate-service";
 import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
 import { VacancyService } from "@/lib/data/vacancy-service";
 import { isValidCurrentSalaryOmr } from "@/lib/recruitment/current-salary";
+import { locationCountryCode } from "@/lib/recruitment/countries";
 import type { Candidate, CandidateCvRecord } from "@/lib/data/types";
 import { toast } from "sonner";
 
@@ -58,7 +60,13 @@ const formSchema = z
     lastName: z.string().min(1, "Last name is required"),
     email: z.string().email("Invalid email"),
     phone: z.string().min(1, "Phone is required"),
-    location: z.string().min(1, "Location is required"),
+    location: z
+      .string()
+      .refine(
+        (value) =>
+          Boolean(value.includes(",") && locationCountryCode(value) && value.split(",")[0]?.trim()),
+        "Select a country and enter a city, state or province",
+      ),
     currentCompany: z.string().optional(),
     currentTitle: z.string().optional(),
     currentSalary: z
@@ -472,7 +480,7 @@ function RecommendCandidate() {
                   <FormItem>
                     <FormLabel>Location</FormLabel>
                     <FormControl>
-                      <Input {...field} />
+                      <LocationFields value={field.value} onChange={field.onChange} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

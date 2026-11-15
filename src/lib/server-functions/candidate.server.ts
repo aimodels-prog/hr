@@ -45,6 +45,7 @@ import {
   saveShortlistDraftInDatabase,
   setCandidateCvSuitabilityInDatabase,
   selectCandidateForInterviewInDatabase,
+  unselectCandidateForInterviewInDatabase,
   shortlistCandidateApplicationInDatabase,
   updateAssessmentSelectionInDatabase,
 } from "../db/repositories/recruitment-screening.repository.server.ts";
@@ -754,6 +755,28 @@ export const selectCandidateForInterviewFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const verified = await verifyRecruitmentActor(data.actor);
     await selectCandidateForInterviewInDatabase(
+      verified.organisationId,
+      data.vacancyId,
+      data.candidateId,
+      verified.actor,
+    );
+    return { ok: true };
+  });
+
+export const unselectCandidateForInterviewFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: RecruitmentActor,
+        vacancyId: z.string().uuid(),
+        candidateId: z.string().uuid(),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await verifyRecruitmentActor(data.actor);
+    await unselectCandidateForInterviewInDatabase(
       verified.organisationId,
       data.vacancyId,
       data.candidateId,

@@ -87,6 +87,8 @@ import {
 import { CandidatePreparationService } from "@/lib/data/candidate-preparation-service";
 import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
 import { PreliminaryScoreExplanation } from "@/components/recruitment/preliminary-score-explanation";
+import { CandidateCvActions } from "@/components/recruitment/candidate-cv-actions";
+import { COUNTRY_OPTIONS, locationCountryCode } from "@/lib/recruitment/countries";
 import { applicationList } from "@/lib/recruitment/application-lists";
 import {
   readCandidateReviewQueue,
@@ -95,6 +97,7 @@ import {
 import {
   setCandidateCvSuitabilityFn,
   selectCandidateForInterviewFn,
+  unselectCandidateForInterviewFn,
   shortlistCandidateApplicationFn,
 } from "@/lib/server-functions/candidate.server";
 
@@ -195,6 +198,9 @@ function VacancyDetailRoute() {
   const [shortlistingCandidateId, setShortlistingCandidateId] = useState<string | null>(null);
   const [pipelineView, setPipelineView] = useState<"all" | "shortlisted" | "interview">("all");
   const [pipelineSearch, setPipelineSearch] = useState("");
+  const [pipelineCountry, setPipelineCountry] = useState("all");
+  const [pipelineArea, setPipelineArea] = useState("");
+  const [previewApplicationId, setPreviewApplicationId] = useState<string | null>(null);
 
   useEffect(() => {
     const saved = readCandidateReviewQueue(vacancy.id);
@@ -378,11 +384,27 @@ function VacancyDetailRoute() {
     )
     .filter((application) => {
       const candidate = candidates.find((item) => item.id === application.candidateId);
-      return `${candidate?.firstName ?? ""} ${candidate?.lastName ?? ""} ${candidate?.email ?? ""}`
-        .toLowerCase()
-        .includes(pipelineSearch.trim().toLowerCase());
+      if (
+        !`${candidate?.firstName ?? ""} ${candidate?.lastName ?? ""} ${candidate?.email ?? ""}`
+          .toLowerCase()
+          .includes(pipelineSearch.trim().toLowerCase())
+      )
+        return false;
+      if (
+        pipelineCountry !== "all" &&
+        locationCountryCode(candidate?.location ?? "") !== pipelineCountry
+      )
+        return false;
+      return (
+        !pipelineArea.trim() ||
+        (candidate?.location ?? "")
+          .toLocaleLowerCase()
+          .includes(pipelineArea.trim().toLocaleLowerCase())
+      );
     })
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  const previewApplication = applications.find((item) => item.id === previewApplicationId);
+  const previewCandidate = candidates.find((item) => item.id === previewApplication?.candidateId);
   const applicationSources = [...new Set(applications.map((item) => item.source))].sort();
   const filteredApplications = applications
     .filter((application) => {
@@ -590,6 +612,23 @@ function VacancyDetailRoute() {
       toast.success("Selected for interview. Schedule the interview from the candidate profile.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not select this candidate.");
+    } finally {
+      setSelectingCandidateId(null);
+    }
+  };
+
+  const unselectForInterview = async (candidateId: string) => {
+    setSelectingCandidateId(candidateId);
+    try {
+      await unselectCandidateForInterviewFn({
+        data: { actor: serverActor, vacancyId: databaseVacancyId, candidateId },
+      });
+      await candidateService.hydrateCompatibilityCache(context);
+      refreshScreening();
+      setPipelineView("shortlisted");
+      toast.success("Removed from interview selection. The candidate remains shortlisted.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not remove interview selection.");
     } finally {
       setSelectingCandidateId(null);
     }
@@ -1147,14 +1186,30 @@ function VacancyDetailRoute() {
                     </button>
                   ))}
                 </nav>
-                {applications.length > 8 && (
-                  <Input
-                    type="search"
-                    aria-label="Search candidates for this role"
-                    placeholder="Search name or email"
-                    value={pipelineSearch}
-                    onChange={(event) => setPipelineSearch(event.target.value)}
-                  />
+                {applications.length > 0 && (
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <Input
+                      type="search"
+                      aria-label="Search candidates for this role"
+                      placeholder="Search name or email"
+                      value={pipelineSearch}
+                      onChange={(event) => setPipelineSearch(event.target.value)}
+                    />
+                    <SearchableSelect
+                      options={[{ value: "all", label: "All countries" }, ...COUNTRY_OPTIONS]}
+                      value={pipelineCountry}
+                      onValueChange={setPipelineCountry}
+                      placeholder="All countries"
+                      searchPlaceholder="Search countries"
+                    />
+                    <Input
+                      type="search"
+                      aria-label="Filter candidates by city or region"
+                      placeholder="City or region"
+                      value={pipelineArea}
+                      onChange={(event) => setPipelineArea(event.target.value)}
+                    />
+                  </div>
                 )}
                 {applications.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
@@ -1162,7 +1217,7 @@ function VacancyDetailRoute() {
                   </p>
                 ) : pipelineApplications.length === 0 ? (
                   <p className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
-                    {pipelineSearch
+                    {pipelineSearch || pipelineCountry !== "all" || pipelineArea
                       ? "No candidates match this search."
                       : pipelineView === "shortlisted"
                         ? "No shortlisted candidates yet. Choose Shortlist from All applications."
@@ -1181,11 +1236,17 @@ function VacancyDetailRoute() {
                       !candidate?.mergedIntoId &&
                       candidate?.stage !== "Archived" &&
                       vacancy.status === "Open";
-                    const scheduled = interviewSelections.some(
-                      (item) =>
-                        item.candidateId === application.candidateId &&
-                        item.status === "Interview Scheduled",
-                    );
+                    const scheduled =
+                      interviewSelections.some(
+                        (item) =>
+                          item.candidateId === application.candidateId &&
+                          item.status === "Interview Scheduled",
+                      ) ||
+                      interviews.some(
+                        (item) =>
+                          item.candidateId === application.candidateId &&
+                          item.status !== "Cancelled",
+                      );
                     return (
                       <div
                         key={application.id}
@@ -1219,6 +1280,15 @@ function VacancyDetailRoute() {
                           </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
+                          {canManageCandidates && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setPreviewApplicationId(application.id)}
+                            >
+                              Preview application
+                            </Button>
+                          )}
                           {stage === "interview" ? (
                             <Badge>
                               {scheduled ? "Interview scheduled" : "Selected for interview"}
@@ -1272,6 +1342,18 @@ function VacancyDetailRoute() {
                               >
                                 {scheduled ? "View interview" : "Schedule interview"}
                               </Link>
+                            </Button>
+                          )}
+                          {stage === "interview" && !scheduled && canManageCandidates && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={selectingCandidateId !== null}
+                              onClick={() => void unselectForInterview(application.candidateId)}
+                            >
+                              {selectingCandidateId === application.candidateId
+                                ? "Removing..."
+                                : "Unselect"}
                             </Button>
                           )}
                         </div>
@@ -2435,6 +2517,98 @@ function VacancyDetailRoute() {
             <AuditViewer entityId={vacancy.id} entityType="vacancy" />
           </TabsContent>
         </Tabs>
+        <Dialog
+          open={Boolean(previewApplication)}
+          onOpenChange={(open) => !open && setPreviewApplicationId(null)}
+        >
+          <DialogContent className="max-h-[90dvh] max-w-2xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>
+                {previewCandidate
+                  ? `${previewCandidate.firstName} ${previewCandidate.lastName}`
+                  : "Application preview"}
+              </DialogTitle>
+            </DialogHeader>
+            {previewApplication && (
+              <div className="space-y-5 text-sm">
+                <p className="text-muted-foreground">
+                  {previewApplication.referenceId} · {previewApplication.source}
+                </p>
+                <dl className="grid grid-cols-1 gap-3 rounded-lg border p-4 sm:grid-cols-2">
+                  {(
+                    [
+                      ["Email", previewCandidate?.email],
+                      ["Phone", previewCandidate?.phone],
+                      ["Current company", previewCandidate?.currentCompany],
+                      ["Current title", previewCandidate?.currentTitle],
+                      ["Current location", previewCandidate?.location],
+                      ["Nationality", previewCandidate?.nationality],
+                      [
+                        "Experience",
+                        previewCandidate?.yearsOfExperience == null
+                          ? undefined
+                          : `${previewCandidate.yearsOfExperience} years`,
+                      ],
+                      ["Work visa", previewCandidate?.workEligibility],
+                      ["Notice period", previewApplication.noticePeriod],
+                      ["Current salary", previewCandidate?.currentSalary],
+                      [
+                        "Expected salary",
+                        previewApplication.salaryExpectation ?? previewCandidate?.expectedSalary,
+                      ],
+                    ] as const
+                  ).map(([label, value]) => (
+                    <div key={label}>
+                      <dt className="text-muted-foreground">{label}</dt>
+                      <dd className="font-medium">{value || "Not provided"}</dd>
+                    </div>
+                  ))}
+                </dl>
+                {previewApplication.screeningAnswers.length > 0 && (
+                  <section className="space-y-2">
+                    <h3 className="font-semibold">Application answers</h3>
+                    {previewApplication.screeningAnswers.map((answer, index) => (
+                      <div key={`${answer.question}-${index}`} className="rounded-lg border p-3">
+                        <p className="font-medium">{answer.question}</p>
+                        <p className="mt-1 text-muted-foreground">{answer.answer}</p>
+                      </div>
+                    ))}
+                  </section>
+                )}
+                {previewApplication.coverNote && (
+                  <section>
+                    <h3 className="font-semibold">Cover note</h3>
+                    <p className="mt-1 whitespace-pre-wrap">{previewApplication.coverNote}</p>
+                  </section>
+                )}
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+                  <CandidateCvActions
+                    applicationId={previewApplication.id}
+                    fileName="Candidate CV"
+                    firstOpenedAt={previewApplication.firstCvOpenedAt}
+                    firstOpenedBy={previewApplication.firstCvOpenedBy}
+                  />
+                  <Button asChild variant="outline" size="sm">
+                    <Link
+                      to="/staff/candidates/$candidateId"
+                      params={{ candidateId: previewApplication.candidateId }}
+                      search={{ fromVacancy: vacancy.id }}
+                      hash="applications"
+                      onClick={() =>
+                        rememberReviewQueue(
+                          pipelineApplications.map((item) => item.candidateId),
+                          "pipeline",
+                        )
+                      }
+                    >
+                      Full profile
+                    </Link>
+                  </Button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </RequirePermission>
   );

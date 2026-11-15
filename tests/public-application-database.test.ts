@@ -23,6 +23,7 @@ import {
   runDetailedAssessmentInDatabase,
   setCandidateCvSuitabilityInDatabase,
   selectCandidateForInterviewInDatabase,
+  unselectCandidateForInterviewInDatabase,
 } from "../src/lib/db/repositories/recruitment-screening.repository.server.ts";
 import {
   createInterviewInDatabase,
@@ -332,6 +333,27 @@ test(
           directSelection.score_count,
         ],
         ["Shortlisted", "Shortlisted", 1, 0, 0],
+      );
+      await unselectCandidateForInterviewInDatabase(
+        String(vacancy.organisation_id),
+        vacancyId,
+        directSelectionCandidateId,
+        actor,
+      );
+      const [afterUnselect] = await sql`
+        SELECT
+          (SELECT hr_interview_recommendation_id FROM candidate_applications
+            WHERE id=${directSelectionApplicationId}) AS recommendation_id,
+          (SELECT count(*)::int FROM candidate_interview_recommendations
+            WHERE application_id=${directSelectionApplicationId} AND status='Ready to Schedule') AS selection_count
+      `;
+      assert.equal(afterUnselect.recommendation_id, null);
+      assert.equal(afterUnselect.selection_count, 0);
+      await selectCandidateForInterviewInDatabase(
+        String(vacancy.organisation_id),
+        vacancyId,
+        directSelectionCandidateId,
+        actor,
       );
       await assert.rejects(
         setCandidateCvSuitabilityInDatabase(

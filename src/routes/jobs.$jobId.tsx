@@ -16,6 +16,7 @@ import { PublicVacancyPostedDate } from "@/components/public-vacancy-posted-date
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -34,6 +35,7 @@ import type { Vacancy } from "@/lib/data/types";
 import { getSupportedCvMimeType } from "@/lib/data/cv-file-validation";
 import { findPublicVacancy } from "@/lib/data/public-vacancy-link";
 import { isValidCurrentSalaryOmr } from "@/lib/recruitment/current-salary";
+import { COUNTRY_OPTIONS, countryName } from "@/lib/recruitment/countries";
 import {
   EXISTING_VISA_OPTIONS,
   isValidExistingVisa,
@@ -66,7 +68,10 @@ const formSchema = z
     email: z.string().email("Invalid email address"),
     phone: z.string().min(5, "Valid phone number is required"),
     nationality: z.string().optional(),
-    location: z.string().min(1, "Current location is required"),
+    locationCountry: z
+      .string()
+      .refine((value) => Boolean(countryName(value)), "Select your country"),
+    locationArea: z.string().trim().min(1, "Enter your city, state or province").max(150),
     currentCompany: z.string().trim().min(1, "Current company is required").max(200),
     currentTitle: z.string().trim().min(1, "Current title is required").max(200),
     yearsOfExperience: z.number().min(0),
@@ -148,7 +153,8 @@ function JobDetail() {
       email: "",
       phone: "",
       nationality: "",
-      location: "",
+      locationCountry: "",
+      locationArea: "",
       currentCompany: "",
       currentTitle: "",
       yearsOfExperience: 0,
@@ -260,7 +266,7 @@ function JobDetail() {
             email: values.email,
             phone: values.phone,
             nationality: values.nationality || undefined,
-            location: values.location,
+            location: `${values.locationArea}, ${countryName(values.locationCountry)}`,
             currentCompany: values.currentCompany,
             currentTitle: values.currentTitle,
             yearsOfExperience: values.yearsOfExperience,
@@ -460,14 +466,35 @@ function JobDetail() {
                 />
                 <FormField
                   control={form.control}
-                  name="location"
+                  name="locationCountry"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>
-                        Current Location <span className="text-destructive">*</span>
+                        Current country <span className="text-destructive">*</span>
                       </FormLabel>
                       <FormControl>
-                        <Input {...field} />
+                        <SearchableSelect
+                          options={COUNTRY_OPTIONS}
+                          value={field.value}
+                          onValueChange={field.onChange}
+                          placeholder="Select a country"
+                          searchPlaceholder="Search countries"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="locationArea"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        City, state or province <span className="text-destructive">*</span>
+                      </FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="For example, Salalah or Rome" />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
