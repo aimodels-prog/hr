@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   ClipboardCheck,
   ArrowRight,
+  ArrowUpRight,
   Briefcase,
   FilePlus2,
   CalendarPlus,
@@ -26,6 +27,34 @@ import { AccountsDashboard } from "@/components/dashboards/accounts-dashboard";
 import { employeeSearch } from "@/components/employees/employee-filter";
 import { RequestTrackerSummary } from "@/components/dashboards/request-tracker-summary";
 import { DashboardActionQueue } from "@/components/dashboards/dashboard-action-queue";
+
+const quickActionArt: Record<string, { background: string; ring: string; accent: string }> = {
+  "bg-primary/10 text-primary": {
+    background: "bg-[#eaf3fb]",
+    ring: "border-[#b9daf4]",
+    accent: "bg-[#0aa86c]",
+  },
+  "bg-info/10 text-info": {
+    background: "bg-[#f0efff]",
+    ring: "border-[#d9d2f7]",
+    accent: "bg-[#e96152]",
+  },
+  "bg-warning/10 text-warning": {
+    background: "bg-[#fff4e8]",
+    ring: "border-[#f4d6b4]",
+    accent: "bg-[#0b5796]",
+  },
+  "bg-success/10 text-success": {
+    background: "bg-[#eaf8f0]",
+    ring: "border-[#b9e5cf]",
+    accent: "bg-[#e8a829]",
+  },
+  "bg-destructive/10 text-destructive": {
+    background: "bg-[#fff0ee]",
+    ring: "border-[#f5cbc5]",
+    accent: "bg-[#0b5796]",
+  },
+};
 
 export const Route = createFileRoute("/staff/")({
   validateSearch: employeeSearch,
@@ -213,29 +242,56 @@ function Dashboard() {
                 ];
 
   const quickAccess = (
-    <section
-      aria-label="Quick access"
-      className={`grid gap-2 sm:grid-cols-2 ${roleQuickActions.length === 3 ? "xl:grid-cols-3" : "xl:grid-cols-4"}`}
-    >
-      {roleQuickActions.map((action) => {
-        const Icon = action.icon;
-        return (
-          <Link
-            key={action.title}
-            to={action.to}
-            {...(action.hash ? { hash: action.hash } : {})}
-            className="group relative flex min-h-14 items-center gap-3 overflow-hidden rounded-xl border bg-card px-4 py-3 shadow-sm transition-[border-color,transform,box-shadow] hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-[#13af6f] before:content-['']"
-          >
-            <span
-              className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${action.tone}`}
+    <section aria-labelledby="dashboard-quick-actions" className="space-y-3">
+      <h2 id="dashboard-quick-actions" className="text-base font-semibold tracking-tight">
+        Quick actions
+      </h2>
+      <div
+        className={`grid gap-3 sm:grid-cols-2 ${roleQuickActions.length === 3 ? "xl:grid-cols-3" : "xl:grid-cols-4"}`}
+      >
+        {roleQuickActions.map((action) => {
+          const Icon = action.icon;
+          const art = quickActionArt[action.tone] ?? quickActionArt["bg-primary/10 text-primary"]!;
+          return (
+            <Link
+              key={action.title}
+              to={action.to}
+              {...(action.hash ? { hash: action.hash } : {})}
+              className="group flex min-h-[132px] items-center gap-4 rounded-2xl border border-border/80 bg-card p-4 shadow-sm transition-[border-color,transform,box-shadow] hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
-              <Icon className="size-4" />
-            </span>
-            <span className="min-w-0 flex-1 text-sm font-medium">{action.title}</span>
-            <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
-          </Link>
-        );
-      })}
+              <span
+                aria-hidden="true"
+                className={`relative flex size-[76px] shrink-0 items-center justify-center overflow-hidden rounded-2xl ${art.background}`}
+              >
+                <span
+                  className={`absolute -right-5 -top-5 size-16 rounded-full border-2 ${art.ring}`}
+                />
+                <span
+                  className={`absolute -bottom-7 -left-5 size-16 rounded-full border-2 ${art.ring}`}
+                />
+                <span className={`absolute right-3 top-3 size-2 rounded-full ${art.accent}`} />
+                <span className="absolute bottom-3 right-4 size-1.5 rounded-full bg-[#e96152]" />
+                <span
+                  className={`relative flex size-11 items-center justify-center rounded-xl border border-white/80 bg-white shadow-[0_5px_14px_rgba(13,58,98,0.12)] ${action.tone}`}
+                >
+                  <Icon className="size-5" strokeWidth={1.9} />
+                </span>
+              </span>
+              <span className="flex min-w-0 flex-1 flex-col items-start">
+                <span className="text-sm font-semibold leading-snug text-foreground">
+                  {action.title}
+                </span>
+                <span className="mt-1 text-xs leading-snug text-muted-foreground">
+                  {action.description}
+                </span>
+                <span className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-primary group-hover:underline">
+                  Open <ArrowUpRight className="size-3.5" aria-hidden="true" />
+                </span>
+              </span>
+            </Link>
+          );
+        })}
+      </div>
     </section>
   );
 
