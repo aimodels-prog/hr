@@ -1,16 +1,16 @@
-import countries from "i18n-iso-countries";
 import english from "i18n-iso-countries/langs/en.json" with { type: "json" };
 
-countries.registerLocale(english);
-
-const names = countries.getNames("en", { select: "official" });
-
-export const COUNTRY_OPTIONS = Object.entries(names)
-  .map(([code, label]) => ({
-    value: code,
-    label,
-    keywords: [code, ...(countries.getName(code, "en", { select: "all" }) as string[])],
-  }))
+// Import the English country data directly. The package's CommonJS entry point
+// dynamically requires every locale and cannot run from the bundled server.
+export const COUNTRY_OPTIONS = Object.entries(english.countries)
+  .map(([code, names]) => {
+    const aliases = Array.isArray(names) ? names : [names];
+    return {
+      value: code,
+      label: aliases[0] ?? code,
+      keywords: [code, ...aliases],
+    };
+  })
   .sort((a, b) => a.label.localeCompare(b.label));
 
 const countryByCode = new Map(COUNTRY_OPTIONS.map((option) => [option.value, option.label]));
@@ -22,10 +22,7 @@ export function countryName(code: string): string {
 export function locationCountryCode(location: string): string | undefined {
   const lastPart = location.split(",").at(-1)?.trim() ?? "";
   if (!lastPart) return undefined;
-  return (
-    countries.getAlpha2Code(lastPart, "en") ??
-    COUNTRY_OPTIONS.find((option) =>
-      option.keywords.some((keyword) => keyword.toLowerCase() === lastPart.toLowerCase()),
-    )?.value
-  );
+  return COUNTRY_OPTIONS.find((option) =>
+    option.keywords.some((keyword) => keyword.toLowerCase() === lastPart.toLowerCase()),
+  )?.value;
 }
