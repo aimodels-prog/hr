@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { selectApplicationLocation } from "./fixtures/application-location";
 
 test("careers links use readable references and keep old job links usable", async ({
   page,
@@ -41,7 +42,7 @@ test("careers links use readable references and keep old job links usable", asyn
   await page.locator('input[name="lastName"]').fill("Test");
   await page.locator('input[name="email"]').fill("applicant@example.com");
   await page.locator('input[name="phone"]').fill("+968 9000 0000");
-  await page.locator('input[name="location"]').fill("Muscat");
+  await selectApplicationLocation(page, "Oman", "Muscat");
   await page.locator('input[name="yearsOfExperience"]').fill("15");
   await page.locator('input[name="noticePeriod"]').fill("30 days");
   await page.locator('input[name="currentCompany"]').fill("Not currently employed");
@@ -66,9 +67,11 @@ test("careers links use readable references and keep old job links usable", asyn
   const submittedApplication = (await applicationRequest).postDataJSON() as {
     fileName: string;
     fileBase64: string;
+    location: string;
   };
   expect(submittedApplication.fileName).toBe("applicant-cv.pdf");
   expect(submittedApplication.fileBase64).toBeTruthy();
+  expect(submittedApplication.location).toBe("Muscat, Oman");
   await expect(page.getByRole("heading", { name: "Application received" })).toBeVisible();
 
   await page.goto(`/jobs/${vacancy.id}?source=shared#application`);
@@ -124,7 +127,7 @@ test("careers links use readable references and keep old job links usable", asyn
     await page.locator('input[name="lastName"]').fill("Applicant");
     await page.locator('input[name="email"]').fill("future.applicant@example.com");
     await page.locator('input[name="phone"]').fill("+968 9000 0001");
-    await page.locator('input[name="location"]').fill("Muscat");
+    await selectApplicationLocation(page, "Oman", "Muscat");
     await page.locator('input[name="yearsOfExperience"]').fill("10");
     await page.locator('input[name="noticePeriod"]').fill("30 days");
     await page.locator('input[name="currentCompany"]').fill("Self-employed");
@@ -143,10 +146,12 @@ test("careers links use readable references and keep old job links usable", asyn
       vacancyId: string;
       fileName: string;
       fileBase64: string;
+      location: string;
     };
     expect(payload.vacancyId).toBe(otherVacancy.id);
     expect(payload.fileName).toBe("future-role-cv.pdf");
     expect(payload.fileBase64).toBeTruthy();
+    expect(payload.location).toBe("Muscat, Oman");
     await expect(page.getByRole("heading", { name: "Application received" })).toBeVisible();
   }
 

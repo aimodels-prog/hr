@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { textPdf } from "./pdf-fixture";
+import { selectApplicationLocation } from "./fixtures/application-location";
 
 test("public application progresses through shortlist, interview, offer and onboarding", async ({
   page,
@@ -23,7 +24,6 @@ test("public application progresses through shortlist, interview, offer and onbo
     lastName: candidateLastName,
     email: candidateEmail,
     phone: `+97150${unique.slice(-7)}`,
-    location: "Dubai",
     yearsOfExperience: "8",
     noticePeriod: "30 days",
     currentCompany: "Global Freight",
@@ -34,6 +34,7 @@ test("public application progresses through shortlist, interview, offer and onbo
   for (const [name, value] of Object.entries(fields)) {
     await page.locator(`input[name="${name}"]`).fill(value);
   }
+  await selectApplicationLocation(page, "United Arab Emirates", "Dubai");
   await page.locator('select[name="workEligibility"]').selectOption("Need employer sponsorship");
   const textareas = page.locator("textarea");
   for (let index = 0; index < (await textareas.count()); index += 1) {

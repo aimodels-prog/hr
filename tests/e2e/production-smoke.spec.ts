@@ -3,6 +3,7 @@ import { SignJWT } from "jose";
 import postgres from "postgres";
 import { textPdf } from "./pdf-fixture";
 import { configureAttendanceFixture } from "./attendance-fixture";
+import { selectApplicationLocation } from "./fixtures/application-location";
 
 test.beforeAll(configureAttendanceFixture);
 
@@ -405,7 +406,6 @@ test("production release smoke covers health, secure CV intake and all five role
     lastName: "Smoke",
     email: `production.smoke.${unique}@example.test`,
     phone: `+97150${unique.slice(-7)}`,
-    location: "Dubai",
     yearsOfExperience: "8",
     noticePeriod: "30 days",
     currentCompany: "VIA Release Test",
@@ -415,6 +415,7 @@ test("production release smoke covers health, secure CV intake and all five role
   })) {
     await page.locator(`input[name="${name}"]`).fill(value);
   }
+  await selectApplicationLocation(page, "United Arab Emirates", "Dubai");
   await page.locator('select[name="workEligibility"]').selectOption("Need employer sponsorship");
   const textareas = page.locator("textarea");
   for (let index = 0; index < (await textareas.count()); index += 1) {

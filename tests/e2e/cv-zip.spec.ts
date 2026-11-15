@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { unzipSync } from "fflate";
 import { textPdf } from "./pdf-fixture";
+import { selectApplicationLocation } from "./fixtures/application-location";
 
 test("CV ZIP exports portal uploads together with original bytes and protects access", async ({
   page,
@@ -28,7 +29,6 @@ test("CV ZIP exports portal uploads together with original bytes and protects ac
       lastName: unique,
       email: `${unique.toLowerCase()}.${index}@example.test`,
       phone: `+97150${String(Date.now()).slice(-6)}${index}`,
-      location: "Dubai",
       yearsOfExperience: "8",
       noticePeriod: "30 days",
       currentCompany: "Test Company",
@@ -38,6 +38,7 @@ test("CV ZIP exports portal uploads together with original bytes and protects ac
     };
     for (const [name, value] of Object.entries(fields))
       await page.locator(`input[name="${name}"]`).fill(value);
+    await selectApplicationLocation(page, "United Arab Emirates", "Dubai");
     await page.locator('select[name="workEligibility"]').selectOption("Need employer sponsorship");
     const areas = page.locator("textarea");
     for (let item = 0; item < (await areas.count()); item++)
