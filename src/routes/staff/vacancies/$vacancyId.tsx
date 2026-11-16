@@ -88,6 +88,7 @@ import { CandidatePreparationService } from "@/lib/data/candidate-preparation-se
 import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
 import { PreliminaryScoreExplanation } from "@/components/recruitment/preliminary-score-explanation";
 import { CandidateCvActions } from "@/components/recruitment/candidate-cv-actions";
+import { CandidateRemarkInline } from "@/components/recruitment/candidate-remark-dialog";
 import { COUNTRY_OPTIONS, locationCountryCode } from "@/lib/recruitment/countries";
 import { applicationList } from "@/lib/recruitment/application-lists";
 import {
@@ -99,6 +100,7 @@ import {
   selectCandidateForInterviewFn,
   unselectCandidateForInterviewFn,
   shortlistCandidateApplicationFn,
+  unshortlistCandidateApplicationFn,
 } from "@/lib/server-functions/candidate.server";
 
 export const Route = createFileRoute("/staff/vacancies/$vacancyId")({
@@ -646,6 +648,23 @@ function VacancyDetailRoute() {
       toast.success("Candidate added to the shortlist. No invitation has been sent.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not shortlist this candidate.");
+    } finally {
+      setShortlistingCandidateId(null);
+    }
+  };
+
+  const unshortlistApplication = async (candidateId: string) => {
+    setShortlistingCandidateId(candidateId);
+    try {
+      await unshortlistCandidateApplicationFn({
+        data: { actor: serverActor, vacancyId: databaseVacancyId, candidateId },
+      });
+      await candidateService.hydrateCompatibilityCache(context);
+      refreshScreening();
+      setPipelineView("all");
+      toast.success("Removed from shortlist. The application is back in review.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not remove this shortlist.");
     } finally {
       setShortlistingCandidateId(null);
     }
@@ -1278,6 +1297,20 @@ function VacancyDetailRoute() {
                           <p className="text-sm text-muted-foreground">
                             {application.referenceId} · {application.source}
                           </p>
+                          {candidate && (
+                            <CandidateRemarkInline
+                              candidate={{
+                                id: candidate.id,
+                                name: `${candidate.firstName} ${candidate.lastName}`,
+                                remarks: candidate.remarks,
+                              }}
+                              canEdit={canManageCandidates}
+                              onSaved={async () => {
+                                await candidateService.hydrateCompatibilityCache(context);
+                                refreshScreening();
+                              }}
+                            />
+                          )}
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                           {canManageCandidates && (
@@ -1313,6 +1346,22 @@ function VacancyDetailRoute() {
                                 : "Shortlist"}
                             </Button>
                           )}
+                          {stage === "shortlisted" &&
+                            canManageCandidates &&
+                            vacancy.status === "Open" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={
+                                  shortlistingCandidateId !== null || selectingCandidateId !== null
+                                }
+                                onClick={() => void unshortlistApplication(application.candidateId)}
+                              >
+                                {shortlistingCandidateId === application.candidateId
+                                  ? "Removing..."
+                                  : "Remove shortlist"}
+                              </Button>
+                            )}
                           {(stage === "review" || stage === "shortlisted") && canProgress && (
                             <Button
                               size="sm"
@@ -1570,6 +1619,17 @@ function VacancyDetailRoute() {
                           (item) => item.id === application.candidateId,
                         );
                         const selected = selectedInterviewIds.has(application.candidateId);
+                        const scheduled =
+                          interviewSelections.some(
+                            (item) =>
+                              item.candidateId === application.candidateId &&
+                              item.status === "Interview Scheduled",
+                          ) ||
+                          interviews.some(
+                            (item) =>
+                              item.candidateId === application.candidateId &&
+                              item.status !== "Cancelled",
+                          );
                         const canSelect =
                           ["New", "On Hold", "Shortlisted"].includes(application.status) &&
                           !candidate?.doNotContact &&
@@ -1608,8 +1668,22 @@ function VacancyDetailRoute() {
                                 {application.source} · {candidate?.email ?? ""}
                                 {score !== undefined ? ` · Score ${score}/100` : " · Not assessed"}
                               </p>
+                              {candidate && (
+                                <CandidateRemarkInline
+                                  candidate={{
+                                    id: candidate.id,
+                                    name: `${candidate.firstName} ${candidate.lastName}`,
+                                    remarks: candidate.remarks,
+                                  }}
+                                  canEdit={canManageCandidates}
+                                  onSaved={async () => {
+                                    await candidateService.hydrateCompatibilityCache(context);
+                                    refreshScreening();
+                                  }}
+                                />
+                              )}
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               {selected ? (
                                 <Badge>Selected for interview</Badge>
                               ) : application.status === "Rejected" &&
@@ -1630,6 +1704,35 @@ function VacancyDetailRoute() {
                                     : "Select for interview"}
                                 </Button>
                               )}
+                              {selected && !scheduled && canManageCandidates && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={selectingCandidateId !== null}
+                                  onClick={() => void unselectForInterview(application.candidateId)}
+                                >
+                                  {selectingCandidateId === application.candidateId
+                                    ? "Removing..."
+                                    : "Unselect"}
+                                </Button>
+                              )}
+                              {!selected &&
+                                application.status === "Shortlisted" &&
+                                canManageCandidates &&
+                                vacancy.status === "Open" && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    disabled={shortlistingCandidateId !== null}
+                                    onClick={() =>
+                                      void unshortlistApplication(application.candidateId)
+                                    }
+                                  >
+                                    {shortlistingCandidateId === application.candidateId
+                                      ? "Removing..."
+                                      : "Remove shortlist"}
+                                  </Button>
+                                )}
                             </div>
                           </div>
                         );

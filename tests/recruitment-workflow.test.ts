@@ -398,7 +398,7 @@ test("a directly received CV is saved, extracted, duplicate-reviewed and added t
         },
         hr,
       ),
-    /current monthly salary in OMR/,
+    /current monthly salary and currency/,
   );
   assert.equal(storage.readCollection("candidates").length, 0);
 

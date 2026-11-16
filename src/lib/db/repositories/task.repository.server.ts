@@ -586,8 +586,15 @@ export async function listTasksForActorInDatabase(
       SELECT 'onboarding-' || c.id || '-' || t.id, 'Onboarding', t.title,
         coalesce(t.instructions,t.task_group || ' for ' || coalesce(e.preferred_name,e.legal_name) || '.'),
         CASE WHEN t.is_mandatory THEN 'High' ELSE 'Normal' END, t.due_date::text,
-        CASE WHEN t.status='Blocked' THEN 'Blocked' ELSE NULL END, CASE WHEN t.status='Blocked' THEN 'View blocker' ELSE 'Open task' END,
-        CASE WHEN t.owner_role='Employee' AND c.employee_id=${employeeId}::uuid THEN '/staff/me/onboarding' ELSE '/staff/onboarding/' || c.id END,
+        CASE WHEN t.status='Blocked' THEN 'Blocked' ELSE NULL END,
+        CASE WHEN t.status='Blocked' THEN 'View blocker'
+          WHEN t.owner_role='Employee' AND t.self_service_form_key='document_upload' THEN 'Upload document'
+          ELSE 'Open task' END,
+        CASE WHEN t.owner_role='Employee' AND c.employee_id=${employeeId}::uuid
+          THEN CASE WHEN t.self_service_form_key='document_upload' AND t.status<>'Blocked'
+            THEN '/staff/me/profile#section=documents&upload=new'
+            ELSE '/staff/me/onboarding' END
+          ELSE '/staff/onboarding/' || c.id END,
         'onboarding-task', t.id::text, c.employee_id::text, coalesce(e.preferred_name,e.legal_name)
       FROM onboarding_tasks t JOIN onboarding_cases c ON c.id=t.case_id JOIN employees e ON e.id=c.employee_id
       WHERE t.organisation_id=${organisationId} AND t.archived_at IS NULL AND c.status='In Progress' AND t.status IN ('Pending','Blocked')

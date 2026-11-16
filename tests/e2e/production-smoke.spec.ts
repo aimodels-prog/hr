@@ -410,8 +410,8 @@ test("production release smoke covers health, secure CV intake and all five role
     noticePeriod: "30 days",
     currentCompany: "VIA Release Test",
     currentTitle: "Logistics Manager",
-    currentSalary: "7000",
-    salaryExpectation: "18000",
+    currentSalary: "AED 7000",
+    salaryExpectation: "AED 18000",
   })) {
     await page.locator(`input[name="${name}"]`).fill(value);
   }

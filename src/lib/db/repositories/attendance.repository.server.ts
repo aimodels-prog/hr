@@ -39,6 +39,7 @@ import { fileMetadata } from "../schema/documents.ts";
 import { locations, positions, publicHolidays } from "../schema/master-data.ts";
 import { leaveRequests } from "../schema/leave.ts";
 import { appSettings } from "../schema/organisation.ts";
+import { timeAway } from "../schema/time-away.ts";
 import { auditEvents } from "../schema/system.ts";
 import { hrIndependentReviewAssignments } from "../schema/hr-independent-review.ts";
 import {
@@ -649,6 +650,7 @@ export async function captureAttendancePunchInDatabase(
     employeeId: string;
     direction: "in" | "out";
     returnFromSiteVisit?: boolean;
+    returnFromTimeAwayId?: string;
     latitude: number;
     longitude: number;
     accuracyMeters: number;
@@ -659,6 +661,8 @@ export async function captureAttendancePunchInDatabase(
 ): Promise<string> {
   if (!actor.employeeId || actor.employeeId !== input.employeeId)
     throw new Error("You can only record your own attendance.");
+  if (input.returnFromSiteVisit && input.returnFromTimeAwayId)
+    throw new Error("Choose one return action.");
   if (
     !Number.isFinite(input.latitude) ||
     !Number.isFinite(input.longitude) ||
@@ -752,6 +756,106 @@ export async function captureAttendancePunchInDatabase(
       .for("update")
       .limit(1);
     const id = existing?.id ?? randomUUID();
+    let confirmedTimeAwayId = input.returnFromTimeAwayId;
+    if (input.returnFromTimeAwayId) {
+      if (input.direction !== "in") throw new Error("A return to office must be a clock-in.");
+      const [away] = await tx
+        .select()
+        .from(timeAway)
+        .where(
+          and(
+            eq(timeAway.id, input.returnFromTimeAwayId),
+            eq(timeAway.organisationId, organisationId),
+            eq(timeAway.employeeId, input.employeeId),
+            eq(timeAway.date, date),
+            inArray(timeAway.status, ["Pending HR", "Approved"]),
+            isNull(timeAway.archivedAt),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (!away) throw new Error("No current time-away request is awaiting your return.");
+      if (zonedParts(at, settings?.timezone ?? "UTC").time <= away.startTime)
+        throw new Error("Confirm your return after the recorded departure time.");
+      if (
+        existing &&
+        (["Correction Pending", "Corrected"].includes(existing.status) ||
+          !["Web", "Hardware Terminal", "Multiple Sources"].includes(existing.source))
+      )
+        throw new Error("This attendance record needs HR review before a return is added.");
+      const [priorReturn] = await tx
+        .select({ id: auditEvents.id })
+        .from(auditEvents)
+        .where(
+          and(
+            eq(auditEvents.organisationId, organisationId),
+            eq(auditEvents.entityType, "time-away"),
+            eq(auditEvents.entityId, away.id),
+            eq(auditEvents.action, "time-away-return"),
+          ),
+        )
+        .limit(1);
+      if (priorReturn) throw new Error("Your return to office is already recorded.");
+      if (existing?.clockOutAt) {
+        const priorOut = zonedParts(new Date(existing.clockOutAt), settings?.timezone ?? "UTC");
+        if (
+          priorOut.date !== date ||
+          priorOut.time < away.startTime ||
+          priorOut.time > away.endTime
+        )
+          throw new Error("Attendance has already closed. Ask HR for a correction.");
+      }
+      // A departure thumb inside the time-away window is not the final exit.
+      if (existing?.clockInAt)
+        await tx
+          .update(attendanceRecords)
+          .set({
+            clockOutAt: null,
+            calculatedHours: "0",
+            source: existing.source === "Hardware Terminal" ? "Multiple Sources" : existing.source,
+            updatedAt: new Date(),
+            updatedBy: actor.userId,
+          })
+          .where(eq(attendanceRecords.id, id));
+      // With no earlier office thumb, the verified return is the first clock-in.
+    }
+    if (
+      input.direction === "in" &&
+      !input.returnFromSiteVisit &&
+      !confirmedTimeAwayId &&
+      !existing?.clockInAt
+    ) {
+      const [away] = await tx
+        .select({ id: timeAway.id })
+        .from(timeAway)
+        .where(
+          and(
+            eq(timeAway.organisationId, organisationId),
+            eq(timeAway.employeeId, input.employeeId),
+            eq(timeAway.date, date),
+            inArray(timeAway.status, ["Pending HR", "Approved"]),
+            isNull(timeAway.archivedAt),
+            sql`${timeAway.startTime} < ${zonedParts(at, settings?.timezone ?? "UTC").time}`,
+          ),
+        )
+        .orderBy(desc(timeAway.startTime))
+        .limit(1);
+      if (away) {
+        const [priorReturn] = await tx
+          .select({ id: auditEvents.id })
+          .from(auditEvents)
+          .where(
+            and(
+              eq(auditEvents.organisationId, organisationId),
+              eq(auditEvents.entityType, "time-away"),
+              eq(auditEvents.entityId, away.id),
+              eq(auditEvents.action, "time-away-return"),
+            ),
+          )
+          .limit(1);
+        if (!priorReturn) confirmedTimeAwayId = away.id;
+      }
+    }
     if (input.returnFromSiteVisit) {
       if (input.direction !== "in" || existing?.clockOutAt)
         throw new Error("Attendance has already closed. Ask HR for a correction.");
@@ -790,9 +894,17 @@ export async function captureAttendancePunchInDatabase(
           updatedBy: actor.userId,
         })
         .where(eq(siteVisitRequests.id, activeVisit.id));
+      if (existing?.source === "Site Visit Auto")
+        await tx
+          .update(attendanceRecords)
+          .set({ source: "Multiple Sources", updatedAt: new Date(), updatedBy: actor.userId })
+          .where(eq(attendanceRecords.id, id));
       // Record an additional verified IN punch, without replacing the day's first clock-in.
     }
-    if (input.direction === "in" && !(input.returnFromSiteVisit && existing?.clockInAt)) {
+    if (
+      input.direction === "in" &&
+      !((input.returnFromSiteVisit || input.returnFromTimeAwayId) && existing?.clockInAt)
+    ) {
       if (existing?.clockInAt) throw new Error("You are already clocked in today.");
       const leave = await tx
         .select({
@@ -906,19 +1018,28 @@ export async function captureAttendancePunchInDatabase(
       actorDisplayName: actor.displayName,
       activeRole: actor.activeRole ?? null,
       actorRoles: actor.roles ?? [],
-      action: input.returnFromSiteVisit ? "site-visit-return" : `clock-${input.direction}`,
+      action: confirmedTimeAwayId
+        ? "time-away-return"
+        : input.returnFromSiteVisit
+          ? "site-visit-return"
+          : `clock-${input.direction}`,
       module: "attendance",
-      entityType: "attendance-record",
-      entityId: id,
+      entityType: confirmedTimeAwayId ? "time-away" : "attendance-record",
+      entityId: confirmedTimeAwayId ?? id,
       afterSummary: {
         date,
+        attendanceRecordId: id,
         locationId: site.id,
         latitude: input.latitude,
         longitude: input.longitude,
       },
-      reason: input.returnFromSiteVisit
-        ? "Employee confirmed return using office location verification"
-        : `Recorded office clock ${input.direction}`,
+      reason: confirmedTimeAwayId
+        ? input.returnFromTimeAwayId
+          ? "Employee confirmed return from time away using office location verification"
+          : "First verified office clock-in after recorded time away"
+        : input.returnFromSiteVisit
+          ? "Employee confirmed return using office location verification"
+          : `Recorded office clock ${input.direction}`,
       riskLevel: "Medium",
     } as typeof auditEvents.$inferInsert);
     await tx.insert(attendancePunchEvents).values({

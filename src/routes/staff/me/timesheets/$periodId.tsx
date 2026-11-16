@@ -1,5 +1,7 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useState, useMemo, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { listOwnApprovedTimeAwayMonthFn } from "@/lib/server-functions/time-away.server";
 import { PageHeader } from "@/components/ui/page-header";
 import { TimesheetDayNavigation } from "@/components/timesheets/day-navigation";
 import { timesheetPeriodLabel, isConfiguredTimesheetPeriod } from "@/lib/data/timesheet-periods";
@@ -100,7 +102,36 @@ function TimesheetEntryRoute() {
     }
   }, [currentUser, periodId, router.history, tsService]);
 
+  const month = tsService
+    .getPeriods()
+    .find((item) => item.id === periodId)
+    ?.startDate.slice(0, 7);
+  const approvedAwayQuery = useQuery({
+    queryKey: ["own-approved-time-away", currentUser.id, month],
+    queryFn: () =>
+      listOwnApprovedTimeAwayMonthFn({
+        data: {
+          actor: {
+            actorId: currentUser.id,
+            ...(currentUser.workspaceEmail ? { actorEmail: currentUser.workspaceEmail } : {}),
+            activeRole: currentUser.activeRole,
+          },
+          month: month!,
+        },
+      }),
+    enabled: Boolean(month && currentUser.employeeId),
+    staleTime: 30_000,
+  });
+
   if (!timesheet) return <div>Loading...</div>;
+  if (month && approvedAwayQuery.isPending) return <div>Loading approved time away...</div>;
+  if (approvedAwayQuery.isError)
+    return (
+      <div role="alert" className="p-6">
+        Approved time away could not be loaded.{" "}
+        <Button onClick={() => void approvedAwayQuery.refetch()}>Retry</Button>
+      </div>
+    );
 
   const period = tsService.getPeriods().find((p) => p.id === periodId);
   const isEditable = timesheet.status === "Draft" || timesheet.status === "Returned";
@@ -249,9 +280,15 @@ function TimesheetEntryRoute() {
     });
   });
 
-  const reconciliation = tsService.reconcileAttendance(timesheet);
+  const approvedAway = approvedAwayQuery.data ?? [];
+  const reconciliation = tsService.reconcileAttendance(timesheet, approvedAway);
   const hasProjectComparison = reconciliation.days.some((day) => (day.projectHours ?? 0) > 0);
-  const summary = tsService.getPeriodSummary(currentUser.employeeId!, period!, timesheet);
+  const summary = tsService.getPeriodSummary(
+    currentUser.employeeId!,
+    period!,
+    timesheet,
+    approvedAway,
+  );
   const diff = Number((summary.workedHours - summary.requiredWorkHours).toFixed(2));
   const periodWorkTargetMet = meetsTimesheetWorkTarget(
     summary.workedHours,
@@ -307,6 +344,7 @@ function TimesheetEntryRoute() {
       correction.attendanceRecordId === focusedRecord?.databaseId,
   );
   const focusedVisits = visits.filter((visit) => visit.date === focusedDate);
+  const focusedAway = approvedAway.filter((item) => item.date === focusedDate);
   const focusedLeaveRequests = leaveRequests.filter((request) =>
     approvedLeaveCoversDate(request, focusedDate),
   );
@@ -660,6 +698,17 @@ function TimesheetEntryRoute() {
                     className="font-medium text-primary underline"
                   >
                     Visit to {visit.destination} · {visit.status}
+                  </Link>
+                </p>
+              ))}
+              {focusedAway.map((item) => (
+                <p key={item.id} className="mt-2">
+                  <Link
+                    to="/staff/time-away"
+                    search={{ date: item.date, review: item.id }}
+                    className="font-medium text-primary underline"
+                  >
+                    Time away {item.startTime}–{item.endTime} · {item.treatment}
                   </Link>
                 </p>
               ))}

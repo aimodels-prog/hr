@@ -44,6 +44,54 @@ export function siteVisitReturnLabel(details?: SiteVisitDetails): string {
   return details.returnPlan === "Unknown" ? "Return time not sure" : "Not returning today";
 }
 
+/** A home-origin visit may have a scheduled attendance start before the first
+ * physical office punch. Only an early first office punch can establish a
+ * return; a lone end-of-day punch is ambiguous and must not be guessed.
+ */
+export function isFirstOfficeArrivalFromHomeVisit(input: {
+  origin: string;
+  details: SiteVisitDetails;
+  startTime: string;
+  endTime: string;
+  localTime: string;
+  hasEarlierOfficePunch: boolean;
+}): boolean {
+  if (
+    input.origin !== "Home" ||
+    !input.details.returnPlan ||
+    input.details.returnPlan === "Not returning" ||
+    input.details.returnedAt ||
+    input.details.finishedAt ||
+    input.hasEarlierOfficePunch ||
+    input.localTime <= input.startTime
+  )
+    return false;
+  const toMinutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+  const arrival = toMinutes(input.localTime);
+  const dayEnd = toMinutes(input.endTime);
+  const expected = input.details.expectedReturnTime
+    ? toMinutes(input.details.expectedReturnTime)
+    : dayEnd - 60;
+  return arrival < dayEnd && arrival <= expected + 60;
+}
+
+/** Once a return is verified, only the time before that return is visit time.
+ * The rest of the day belongs to office attendance, not the visit.
+ */
+export function siteVisitEffectiveEndTime(input: {
+  date: string;
+  startTime: string;
+  endTime: string;
+  details?: SiteVisitDetails | null | undefined;
+  timeZone: string;
+}): string {
+  const returnedAt = input.details?.returnedAt;
+  if (!returnedAt) return input.endTime;
+  const actual = siteVisitLocalNow(input.timeZone, new Date(returnedAt));
+  if (actual.date !== input.date || actual.time <= input.startTime) return input.endTime;
+  return actual.time < input.endTime ? actual.time : input.endTime;
+}
+
 /** An unconfirmed visit has not changed attendance, so its owner may withdraw it. */
 export function canCancelSiteVisit(
   status: string,

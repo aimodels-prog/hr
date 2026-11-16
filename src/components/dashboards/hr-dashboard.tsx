@@ -2,6 +2,9 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { DashboardCharts } from "./dashboard-charts";
 import { HrSetup } from "./hr-setup";
+import { HrAttendanceToday } from "./hr-attendance-today";
+import { HrDocumentShortcut } from "./hr-document-shortcut";
+import { HrWorkspaceLinks } from "./hr-workspace-links";
 import { StaffDataBoundary } from "@/components/layout/staff-data-boundary";
 import { DASHBOARD_MODULES } from "@/lib/data/staff-module-plan";
 import {
@@ -167,7 +170,13 @@ export function HrDashboard() {
           />
         </>
       ) : (
-        !search.employeeId && <OrganisationHrDashboard toolbar={employeeFilter} />
+        !search.employeeId && (
+          <>
+            {user.activeRole === "HR" && <HrDocumentShortcut employees={employees} />}
+            {user.activeRole === "HR" && <HrWorkspaceLinks />}
+            <OrganisationHrDashboard toolbar={employeeFilter} />
+          </>
+        )
       )}
     </div>
   );
@@ -178,6 +187,7 @@ function OrganisationHrDashboard({ toolbar }: { toolbar: ReactNode }) {
     <div className="flex flex-col gap-4">
       {toolbar}
       <DashboardCharts scope="hr" />
+      <HrAttendanceToday />
       <StaffDataBoundary modules={DASHBOARD_MODULES.hr}>
         <OrganisationHrDashboardDetails />
       </StaffDataBoundary>

@@ -20,7 +20,7 @@ function validApplication() {
     noticePeriod: "Available immediately",
     workEligibility: "Need employer sponsorship",
     currentSalary: "0",
-    salaryExpectation: "OMR 1,800–2,000 monthly",
+    salaryExpectation: "OMR 1800",
     screeningAnswers: [],
     consent: true as const,
     fileName: "candidate.pdf",
@@ -29,12 +29,20 @@ function validApplication() {
   };
 }
 
-test("server accepts a monthly salary range and unemployment descriptions", () => {
+test("server requires salary currencies when earning and accepts zero for unemployment", () => {
   const parsed = PublicApplicationSchema.parse(validApplication());
   assert.equal(parsed.currentCompany, "Not currently employed");
   assert.equal(parsed.currentTitle, "Job seeker");
   assert.equal(parsed.currentSalary, "0");
-  assert.equal(parsed.salaryExpectation, "OMR 1,800–2,000 monthly");
+  assert.equal(parsed.salaryExpectation, "OMR 1800");
+  assert.equal(
+    PublicApplicationSchema.safeParse({ ...validApplication(), currentSalary: "1500" }).success,
+    false,
+  );
+  assert.equal(
+    PublicApplicationSchema.safeParse({ ...validApplication(), salaryExpectation: "1800" }).success,
+    false,
+  );
 });
 
 test("public application endpoint rejects missing or whitespace-only compulsory fields", async () => {
@@ -64,21 +72,20 @@ test("public application endpoint rejects missing or whitespace-only compulsory 
   }
 });
 
-test("visa type is required only for candidates who already hold an Oman work visa", () => {
+test("work authorisation is country-neutral and requires no visa subtype", () => {
+  assert.equal(
+    PublicApplicationSchema.safeParse({
+      ...validApplication(),
+      workEligibility: "Yes, I am authorised to work there",
+    }).success,
+    true,
+  );
   assert.equal(
     PublicApplicationSchema.safeParse({
       ...validApplication(),
       workEligibility: "Valid Oman work visa",
     }).success,
     false,
-  );
-  assert.equal(
-    PublicApplicationSchema.safeParse({
-      ...validApplication(),
-      workEligibility: "Valid Oman work visa",
-      visaStatus: "Own Visa",
-    }).success,
-    true,
   );
 });
 
@@ -102,8 +109,16 @@ test("persistence guard rejects blank compulsory fields before touching the data
         currentSalary: value,
         fileBytes: Buffer.from("%PDF-1.4\n%%EOF\n"),
       }),
-      /current monthly salary in OMR/,
+      /current monthly salary and currency/,
       `currentSalary=${JSON.stringify(value)} should be rejected before persistence`,
     );
   }
+  await assert.rejects(
+    submitPublicApplicationToDatabase(randomUUID(), {
+      ...base,
+      salaryExpectation: "1800",
+      fileBytes: Buffer.from("%PDF-1.4\n%%EOF\n"),
+    }),
+    /expected monthly salary and its currency/,
+  );
 });

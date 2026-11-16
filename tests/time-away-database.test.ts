@@ -10,7 +10,7 @@ import {
 import { closeDatabaseConnection } from "../src/lib/db/client.ts";
 const url = process.env["VIA_HR_TEST_DATABASE_URL"];
 test(
-  "time away protects teams, prevents duplicate periods and serialises HR decisions without changing pay or leave",
+  "time away protects teams, prevents duplicate periods and serialises paid HR decisions without creating payroll or leave transactions",
   { skip: !url },
   async () => {
     assert.match(new URL(url!).pathname, /test|scratch/);
@@ -85,7 +85,6 @@ test(
         id: record.id,
         version: 1,
         action: "Approve" as const,
-        treatment: "Paid time" as const,
         note: "",
       };
       await assert.rejects(decideTimeAway(org, decision, managerActor), /Only HR/);
@@ -141,29 +140,30 @@ test(
         true,
       );
       await assert.rejects(
-        decideTimeAway(
-          org,
-          { id: ownId, version: 1, action: "Approve", treatment: "Paid time", note: "" },
-          hrActor,
-        ),
+        decideTimeAway(org, { id: ownId, version: 1, action: "Approve", note: "" }, hrActor),
         /assigned independent reviewer/,
       );
       await assert.rejects(
         decideTimeAway(
           org,
-          { id: ownId, version: 1, action: "Approve", treatment: "Paid time", note: "" },
+          { id: ownId, version: 1, action: "Approve", note: "" },
           { ...managerActor, activeRole: "Super Admin" },
         ),
         /assigned independent reviewer/,
       );
       await decideTimeAway(
         org,
-        { id: ownId, version: 1, action: "Approve", treatment: "Paid time", note: "" },
-        { ...managerActor, activeRole: "Employee" },
+        { id: ownId, version: 1, action: "Approve", note: "" },
+        {
+          ...managerActor,
+          activeRole: "Employee",
+        },
       );
-      const ownStatus = await db`SELECT status,reviewed_by FROM time_away WHERE id=${ownId}`;
+      const ownStatus =
+        await db`SELECT status,reviewed_by,treatment FROM time_away WHERE id=${ownId}`;
       assert.equal(ownStatus[0]?.status, "Approved");
       assert.equal(ownStatus[0]?.reviewed_by, manager);
+      assert.equal(ownStatus[0]?.treatment, "Paid time");
     } finally {
       // Keep this uniquely named fixture in the isolated test database: audit history is append-only.
       await db.end();

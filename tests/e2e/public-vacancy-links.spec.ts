@@ -26,6 +26,9 @@ test("careers links use readable references and keep old job links usable", asyn
   await expect(
     page.getByRole("heading", { name: "Apply for this position", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByText("Are you authorised to work in the country where this job is based?"),
+  ).toBeVisible();
   await page.locator('input[name="firstName"]').fill("Readable link applicant");
   // No title-based application IDs and no production application is submitted here.
   await expect(page.locator('input[type="file"]')).toHaveCount(1);
@@ -49,7 +52,9 @@ test("careers links use readable references and keep old job links usable", asyn
   await page.locator('input[name="currentTitle"]').fill("Job seeker");
   await page.locator('select[name="workEligibility"]').selectOption("Need employer sponsorship");
   await page.locator('input[name="currentSalary"]').fill("0");
-  await page.locator('input[name="salaryExpectation"]').fill("OMR 1,800–2,000");
+  await page.locator('input[name="salaryExpectation"]').fill("1800");
+  await page.getByRole("combobox", { name: /Expected salary currency/ }).click();
+  await page.getByRole("option", { name: /OMR/ }).click();
   const screeningAnswers = page.locator('textarea[name^="screeningAnswers."]');
   for (let index = 0; index < (await screeningAnswers.count()); index += 1) {
     await screeningAnswers.nth(index).fill("Relevant experience");
@@ -68,10 +73,14 @@ test("careers links use readable references and keep old job links usable", asyn
     fileName: string;
     fileBase64: string;
     location: string;
+    currentSalary: string;
+    salaryExpectation: string;
   };
   expect(submittedApplication.fileName).toBe("applicant-cv.pdf");
   expect(submittedApplication.fileBase64).toBeTruthy();
   expect(submittedApplication.location).toBe("Muscat, Oman");
+  expect(submittedApplication.currentSalary).toBe("0");
+  expect(submittedApplication.salaryExpectation).toBe("OMR 1800");
   await expect(page.getByRole("heading", { name: "Application received" })).toBeVisible();
 
   await page.goto(`/jobs/${vacancy.id}?source=shared#application`);
@@ -114,6 +123,9 @@ test("careers links use readable references and keep old job links usable", asyn
     await expect(
       page.getByRole("heading", { level: 1, name: otherVacancy.title, exact: true }),
     ).toBeVisible();
+    await expect(
+      page.getByText("Are you authorised to work in the country where this job is based?"),
+    ).toBeVisible();
     const picker = page.waitForEvent("filechooser");
     await page.getByLabel("Upload resume or CV").click();
     await (
@@ -134,7 +146,11 @@ test("careers links use readable references and keep old job links usable", asyn
     await page.locator('input[name="currentTitle"]').fill("Logistics Consultant");
     await page.locator('select[name="workEligibility"]').selectOption("Need employer sponsorship");
     await page.locator('input[name="currentSalary"]').fill("1500");
-    await page.locator('input[name="salaryExpectation"]').fill("OMR 2,000 monthly");
+    await page.getByRole("combobox", { name: /Current salary currency/ }).click();
+    await page.getByRole("option", { name: /OMR/ }).click();
+    await page.locator('input[name="salaryExpectation"]').fill("2000");
+    await page.getByRole("combobox", { name: /Expected salary currency/ }).click();
+    await page.getByRole("option", { name: /OMR/ }).click();
     const questions = page.locator('textarea[name^="screeningAnswers."]');
     for (let index = 0; index < (await questions.count()); index += 1) {
       await questions.nth(index).fill("Relevant experience");

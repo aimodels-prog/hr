@@ -28,8 +28,8 @@ test("public application progresses through shortlist, interview, offer and onbo
     noticePeriod: "30 days",
     currentCompany: "Global Freight",
     currentTitle: "Logistics Manager",
-    currentSalary: "7000",
-    salaryExpectation: "18000",
+    currentSalary: "AED 7000",
+    salaryExpectation: "AED 18000",
   };
   for (const [name, value] of Object.entries(fields)) {
     await page.locator(`input[name="${name}"]`).fill(value);

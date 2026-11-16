@@ -1,5 +1,6 @@
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { recordedAttendanceHours } from "@/lib/data/recorded-hours";
+import { recordedWorkingHours } from "@/lib/data/recorded-hours";
+import { attendanceDayCredit } from "@/lib/data/attendance-day-credit";
 import { siteVisitNeedsHrReview, siteVisitsForReview } from "@/lib/data/site-visit-review";
 import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
@@ -51,6 +52,15 @@ import type {
 import { EmployeeService } from "@/lib/data/employee-service";
 import type { ActorContext } from "@/lib/data/types";
 import { withRequestTimeout } from "@/lib/data/request-timeout";
+import { useQuery } from "@tanstack/react-query";
+import { listTimeAwayMonthFn } from "@/lib/server-functions/time-away.server";
+import { timeAwayMinutes } from "@/lib/data/time-away";
+import {
+  approvedLeaveCoversDate,
+  approvedLeaveFraction,
+  isAbsenceLeave,
+  isEffectiveLeave,
+} from "@/lib/data/approved-leave";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -400,6 +410,34 @@ function AttendanceAdminContent() {
       .filter((request) => isApprovedRemoteWork(request, date))
       .map((request) => request.employeeId),
   );
+  const leaveRequests = new LeaveService().getAllRequests(actorContext);
+  const timeAwayQuery = useQuery({
+    queryKey: [
+      "attendance-approved-time-away",
+      currentUser.id,
+      currentUser.activeRole,
+      date.slice(0, 7),
+    ],
+    queryFn: () =>
+      listTimeAwayMonthFn({
+        data: {
+          actor: {
+            actorId: currentUser.id,
+            ...(currentUser.workspaceEmail ? { actorEmail: currentUser.workspaceEmail } : {}),
+            activeRole: currentUser.activeRole,
+          },
+          month: date.slice(0, 7),
+        },
+      }),
+    enabled: policyReady && ["HR", "Super Admin"].includes(currentUser.activeRole),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+  const approvedTimeAway = timeAwayQuery.data ?? [];
+  const dailyReady = policyReady && timeAwayQuery.isSuccess;
+  const approvedVisits = siteVisits.filter((visit) =>
+    ["Approved", "Completed"].includes(visit.status),
+  );
   const dayRows = employeeService
     .getEmployees(actorContext)
     .filter((employee) => {
@@ -418,27 +456,112 @@ function AttendanceAdminContent() {
     .filter((employee) => employeeFilter.matchesEmployee(employee.id))
     .sort((a, b) => (a.preferredName || a.legalName).localeCompare(b.preferredName || b.legalName))
     .map((employee) => {
+      const employeeDbId = employee.databaseId ?? employee.id;
+      const leaveForDay = leaveRequests.filter(
+        (request) =>
+          request.employeeId === employee.id &&
+          isEffectiveLeave(request) &&
+          isAbsenceLeave(request) &&
+          approvedLeaveCoversDate(request, date),
+      );
+      const visitsForDay = approvedVisits.filter(
+        (visit) => visit.employeeId === employee.id && visit.date === date,
+      );
+      const awayForDay = approvedTimeAway.filter(
+        (away) => away.employeeId === employeeDbId && away.date === date,
+      );
+      const activities = [
+        ...leaveForDay.map((leave) => ({
+          kind: "Leave",
+          label: leave.policySnapshot?.name ?? "Approved leave",
+          href: `/staff/leave-admin#request=${leave.id}`,
+        })),
+        ...visitsForDay.map((visit) => ({
+          kind: "Site visit",
+          label: `Official visit ${visit.startTime}–${visit.endTime}`,
+          href: `/staff/attendance#section=site-visits&visit=${visit.id}`,
+        })),
+        ...awayForDay.map((away) => ({
+          kind: "Time away",
+          label: `Time away ${away.startTime}–${away.endTime}`,
+          href: `/staff/time-away?date=${date}&review=${away.id}`,
+        })),
+      ];
       const record = allRecords.find(
         (item) => item.employeeId === employee.id && item.date === date,
       );
+      const paidLeaveFraction = Math.min(
+        1,
+        leaveForDay.reduce((total, leave) => {
+          const fraction = leave.isHalfDay ? 0.5 : 1;
+          const unpaid = leave.policySnapshot.specialRequest?.unpaidByDate?.find(
+            (item) => item.date === date,
+          )?.days;
+          return (
+            total +
+            Math.max(
+              0,
+              fraction -
+                (leave.policySnapshot.specialRequest
+                  ? Math.min(fraction, Math.max(0, unpaid ?? 0))
+                  : leave.policySnapshot.isPaid
+                    ? 0
+                    : fraction),
+            )
+          );
+        }, 0),
+      );
+      const dayCredit = attendanceDayCredit({
+        actualWorkHours: recordedWorkingHours(record),
+        standardDailyHours: policy.standardDailyHours,
+        clockIn: record?.clockIn,
+        clockOut: record?.clockOut,
+        breakStart: policy.breakStart,
+        breakMinutes: record?.breakMinutes ?? policy.defaultBreakMinutes,
+        approvedIntervals: [
+          ...visitsForDay.map((visit) => ({ startTime: visit.startTime, endTime: visit.endTime })),
+          ...awayForDay
+            .filter((away) => away.treatment === "Paid time")
+            .map((away) => ({ startTime: away.startTime, endTime: away.endTime })),
+        ],
+        unpaidIntervals: awayForDay
+          .filter((away) => away.treatment !== "Paid time")
+          .map((away) => ({ startTime: away.startTime, endTime: away.endTime })),
+        paidLeaveFraction,
+        approvedRemoteWork: remoteWorkEmployeeIds.has(employee.id),
+      });
       // Eligibility controls inferred absence, never visibility of saved evidence.
       const reconciled = attendanceService.reconcileDailyStatus(employee.id, date, actorContext);
       if (record) {
-        const status = reconciled?.status ?? record.status;
+        const completeRealPunch =
+          record.source !== "Site Visit Auto" &&
+          Boolean((record.clockIn || record.clockInAt) && (record.clockOut || record.clockOutAt));
+        const status =
+          !completeRealPunch && leaveForDay.length
+            ? approvedLeaveFraction(leaveForDay, date) >= 1
+              ? "On Leave"
+              : "Half-day Leave"
+            : (reconciled?.status ?? record.status);
         return {
           employee,
           ...record,
+          activities,
+          dayCredit,
           status: dailyAttendanceStatus(
             { ...record, status },
             date,
             today,
             remoteWorkEmployeeIds.has(employee.id),
+            visitsForDay.length > 0,
+            awayForDay.length > 0,
           ),
         };
       }
       if (!reconciled?.status && !attendanceService.isTrackingRequired(employee.id, date))
         return {
           employee,
+          activities,
+          dayCredit,
           id: `untracked-${employee.id}`,
           date,
           status: dailyAttendanceStatus(
@@ -446,6 +569,8 @@ function AttendanceAdminContent() {
             date,
             today,
             remoteWorkEmployeeIds.has(employee.id),
+            visitsForDay.length > 0,
+            awayForDay.length > 0,
           ),
           clockIn: undefined,
           clockOut: undefined,
@@ -454,13 +579,23 @@ function AttendanceAdminContent() {
         };
       return {
         employee,
+        activities,
+        dayCredit,
         id: `virtual-${employee.id}-${date}`,
         date,
         status: dailyAttendanceStatus(
-          { status: reconciled?.status ?? "Absent" },
+          {
+            status: leaveForDay.length
+              ? approvedLeaveFraction(leaveForDay, date) >= 1
+                ? "On Leave"
+                : "Half-day Leave"
+              : (reconciled?.status ?? "Absent"),
+          },
           date,
           today,
           remoteWorkEmployeeIds.has(employee.id),
+          visitsForDay.length > 0,
+          awayForDay.length > 0,
         ),
         clockIn: undefined,
         clockOut: undefined,
@@ -469,6 +604,20 @@ function AttendanceAdminContent() {
       };
     });
   const currentRows = dayRows.filter((row) => matchesAttendanceListFilter(row, statusFilter));
+  const monthlyActivity = employees
+    .filter((employee) => employeeFilter.matchesEmployee(employee.id))
+    .map((employee) => {
+      const timeAwayMinutesTotal = approvedTimeAway
+        .filter((away) => away.employeeId === (employee.databaseId ?? employee.id))
+        .reduce((total, away) => total + timeAwayMinutes(away.startTime, away.endTime), 0);
+      const visitMinutesTotal = approvedVisits
+        .filter(
+          (visit) => visit.employeeId === employee.id && visit.date.startsWith(date.slice(0, 7)),
+        )
+        .reduce((total, visit) => total + timeAwayMinutes(visit.startTime, visit.endTime), 0);
+      return { employee, timeAwayMinutesTotal, visitMinutesTotal };
+    })
+    .filter((row) => row.timeAwayMinutesTotal || row.visitMinutesTotal);
 
   const saveManualRecord = async () => {
     try {
@@ -915,7 +1064,7 @@ function AttendanceAdminContent() {
         </div>
 
         <TabsContent value="daily" className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-7">
             {[
               { label: "People in view", value: dayRows.length, filter: "All" },
               {
@@ -943,8 +1092,15 @@ function AttendanceAdminContent() {
               },
               {
                 label: "Site visits",
-                value: dayRows.filter((row) => row.status === "Site visit").length,
+                value: dayRows.filter((row) => matchesAttendanceListFilter(row, "Site visit"))
+                  .length,
                 filter: "Site visit",
+              },
+              {
+                label: "Time away",
+                value: dayRows.filter((row) => matchesAttendanceListFilter(row, "Time away"))
+                  .length,
+                filter: "Time away",
               },
             ].map(({ label, value, filter }) => (
               <button
@@ -957,17 +1113,20 @@ function AttendanceAdminContent() {
               >
                 <span className="text-sm text-muted-foreground">{label}</span>
                 <span className="mt-1 block text-2xl font-semibold tabular-nums">
-                  {policyReady ? value : "—"}
+                  {dailyReady ? value : "—"}
                 </span>
               </button>
             ))}
           </div>
-          {!policyReady && (
+          {!dailyReady && (
             <div
               role={attendanceError ? "alert" : "status"}
               className="rounded-xl border p-4 text-sm"
             >
-              {attendanceError || "Checking attendance and approved leave…"}
+              {attendanceError ||
+                (timeAwayQuery.isError
+                  ? "Approved time away could not be loaded. Refresh before relying on this list."
+                  : "Checking attendance and approved activities…")}
               {attendanceError && (
                 <Button
                   variant="outline"
@@ -983,6 +1142,11 @@ function AttendanceAdminContent() {
           {date === today && (
             <p className="text-xs text-muted-foreground">
               Not clocked in means no punch is recorded yet; it is not a confirmed absence.
+            </p>
+          )}
+          {timeAwayQuery.isError && (
+            <p role="alert" className="text-sm text-destructive">
+              Approved time away could not be loaded. Refresh before relying on this list.
             </p>
           )}
           {policyReady && !attendanceService.getTrackingPolicy() && (
@@ -1053,14 +1217,15 @@ function AttendanceAdminContent() {
                     <TableHead>Status</TableHead>
                     <TableHead>Clock In</TableHead>
                     <TableHead>Clock Out</TableHead>
-                    <TableHead>Hours</TableHead>
+                    <TableHead>Day total</TableHead>
                     <TableHead>Location</TableHead>
                     <TableHead>Source</TableHead>
+                    <TableHead>Approved activity</TableHead>
                     <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {policyReady &&
+                  {dailyReady &&
                     currentRows.map((row) => (
                       <TableRow key={row.id}>
                         <TableCell>
@@ -1071,6 +1236,13 @@ function AttendanceAdminContent() {
                         </TableCell>
                         <TableCell>
                           <Badge
+                            className={
+                              row.source !== "Site Visit Auto" && row.clockIn
+                                ? "border-blue-300 bg-blue-50 text-blue-800"
+                                : row.status === "Not clocked in"
+                                  ? "border-amber-300 bg-amber-50 text-amber-900"
+                                  : ""
+                            }
                             variant={
                               ["Absent", "Missing Punch"].includes(row.status)
                                 ? "destructive"
@@ -1079,6 +1251,13 @@ function AttendanceAdminContent() {
                                   : "outline"
                             }
                           >
+                            {row.source !== "Site Visit Auto" &&
+                              Boolean(row.clockIn || ("clockInAt" in row && row.clockInAt)) && (
+                                <CheckCircle2
+                                  className="mr-1 inline h-3.5 w-3.5 text-blue-600"
+                                  aria-label="Clock-in recorded"
+                                />
+                              )}
                             {("officeExceptionLabel" in row && row.officeExceptionLabel) ||
                               row.status}
                           </Badge>
@@ -1086,13 +1265,47 @@ function AttendanceAdminContent() {
                         <TableCell>{row.clockIn ?? "—"}</TableCell>
                         <TableCell>{row.clockOut ?? "—"}</TableCell>
                         <TableCell>
-                          {recordedAttendanceHours(row) ? `${recordedAttendanceHours(row)}h` : "—"}
+                          {row.dayCredit.creditedHours ? (
+                            <>
+                              <span className="font-medium tabular-nums">
+                                {row.dayCredit.creditedHours}h
+                              </span>
+                              {row.dayCredit.complete && (
+                                <span className="ml-1 text-xs text-emerald-700">Complete</span>
+                              )}
+                              {(row.dayCredit.approvedActivityHours > 0 ||
+                                row.dayCredit.policyTopupHours > 0) && (
+                                <span className="block text-xs text-muted-foreground">
+                                  {row.dayCredit.officeWorkHours}h recorded work ·{" "}
+                                  {row.dayCredit.approvedActivityHours}h approved
+                                  {row.dayCredit.policyTopupHours > 0
+                                    ? ` · ${row.dayCredit.policyTopupHours}h standard-day credit`
+                                    : ""}
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            "—"
+                          )}
                         </TableCell>
                         <TableCell>{"location" in row ? (row.location ?? "—") : "—"}</TableCell>
                         <TableCell className="text-xs text-muted-foreground">
                           {"officeExceptionLabel" in row && row.officeExceptionLabel
                             ? "HR office exception"
                             : row.source}
+                        </TableCell>
+                        <TableCell className="min-w-44 text-xs">
+                          {row.activities.length
+                            ? row.activities.map((activity) => (
+                                <a
+                                  key={`${activity.kind}-${activity.href}-${activity.label}`}
+                                  href={activity.href}
+                                  className="block text-primary underline-offset-2 hover:underline"
+                                >
+                                  {activity.label}
+                                </a>
+                              ))
+                            : "—"}
                         </TableCell>
                         <TableCell className="text-right">
                           {allRecords.some((record) => record.id === row.id) && (
@@ -1131,16 +1344,16 @@ function AttendanceAdminContent() {
                         </TableCell>
                       </TableRow>
                     ))}
-                  {!policyReady && (
+                  {!dailyReady && (
                     <TableRow>
-                      <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
+                      <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
                         Checking attendance…
                       </TableCell>
                     </TableRow>
                   )}
-                  {policyReady && !currentRows.length && (
+                  {dailyReady && !currentRows.length && (
                     <TableRow>
-                      <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
+                      <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
                         {statusFilter === "Clocked in"
                           ? "No clock-ins recorded for this date and selection."
                           : "No employees match this selection."}
@@ -1150,6 +1363,51 @@ function AttendanceAdminContent() {
                 </TableBody>
               </Table>
             </div>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">
+                Time away and official visits ·{" "}
+                {format(parseISO(`${date.slice(0, 7)}-01`), "MMMM yyyy")}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {!dailyReady ? (
+                <p className="text-sm text-muted-foreground">Monthly totals are loading.</p>
+              ) : monthlyActivity.length ? (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Employee</TableHead>
+                        <TableHead>Approved time away</TableHead>
+                        <TableHead>Approved official visits</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {monthlyActivity.map(
+                        ({ employee, timeAwayMinutesTotal, visitMinutesTotal }) => (
+                          <TableRow key={employee.id}>
+                            <TableCell>{employee.preferredName || employee.legalName}</TableCell>
+                            <TableCell>
+                              {Math.floor(timeAwayMinutesTotal / 60)} hr {timeAwayMinutesTotal % 60}{" "}
+                              min
+                            </TableCell>
+                            <TableCell>
+                              {Math.floor(visitMinutesTotal / 60)} hr {visitMinutesTotal % 60} min
+                            </TableCell>
+                          </TableRow>
+                        ),
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No approved time away or official visits this month.
+                </p>
+              )}
+            </CardContent>
           </Card>
         </TabsContent>
 

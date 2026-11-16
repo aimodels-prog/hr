@@ -571,7 +571,9 @@ export class CandidatePoolService {
       throw new Error("Email and phone number are required for duplicate protection.");
     }
     if (!isValidCurrentSalaryOmr(input.candidate.currentSalary)) {
-      throw new Error("Enter the candidate's current monthly salary in OMR (0 if not earning).");
+      throw new Error(
+        "Enter the candidate's current monthly salary and currency (0 if not earning).",
+      );
     }
     if (!input.candidate.expectedSalary?.trim()) {
       throw new Error("Enter the candidate's expected monthly salary.");

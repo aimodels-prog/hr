@@ -4,6 +4,7 @@ export const ATTENDANCE_LIST_FILTERS = [
   "Not clocked in",
   "Working remotely",
   "Site visit",
+  "Time away",
   "Exceptions",
   "Present",
   "Late",
@@ -61,12 +62,21 @@ export function attendanceListSearch(search: Record<string, unknown>): {
 
 /** A saved clock-in remains visible even if its clock-out needs correction. */
 export function matchesAttendanceListFilter(
-  row: { status: string; clockIn?: string | undefined; clockInAt?: string | undefined },
+  row: {
+    status: string;
+    source?: string | undefined;
+    clockIn?: string | undefined;
+    clockInAt?: string | undefined;
+    activities?: readonly { kind: string }[];
+  },
   filter: string,
 ) {
   if (filter === "All") return true;
-  if (filter === "Clocked in") return Boolean(row.clockInAt || row.clockIn);
+  if (filter === "Clocked in")
+    return row.source !== "Site Visit Auto" && Boolean(row.clockInAt || row.clockIn);
   if (filter === "On Leave") return ["On Leave", "Half-day Leave"].includes(row.status);
+  if (filter === "Site visit" || filter === "Time away")
+    return row.activities?.some((activity) => activity.kind === filter) ?? row.status === filter;
   if (filter === "Exceptions")
     return ["Late", "Absent", "Missing Punch", "Correction Pending"].includes(row.status);
   return row.status === filter;
@@ -76,6 +86,7 @@ export function matchesAttendanceListFilter(
 export function dailyAttendanceStatus(
   row: {
     status: string;
+    source?: string | undefined;
     clockIn?: string | undefined;
     clockInAt?: string | undefined;
     clockOut?: string | undefined;
@@ -86,11 +97,40 @@ export function dailyAttendanceStatus(
   date: string,
   today: string,
   approvedRemoteWork = false,
+  approvedVisit = false,
+  approvedTimeAway = false,
 ): string {
+  // Only a complete real in/out pair can take precedence over approved duty.
+  // A lone scan must not hide approved leave, remote work or a visit.
+  if (
+    row.source !== "Site Visit Auto" &&
+    (row.clockIn || row.clockInAt) &&
+    (row.clockOut || row.clockOutAt)
+  )
+    return row.status;
   if (["On Leave", "Half-day Leave"].includes(row.status)) return row.status;
   if (row.officeExceptionLabel === "Approved remote work" || approvedRemoteWork)
     return "Working remotely";
-  if (row.workMode === "Approved Site Visit") return "Site visit";
+  if (row.workMode === "Approved Site Visit" || approvedVisit) return "Site visit";
+  if (
+    approvedTimeAway &&
+    date === today &&
+    (row.clockIn || row.clockInAt) &&
+    !row.clockOut &&
+    !row.clockOutAt &&
+    ["Present", "Late"].includes(row.status)
+  )
+    return row.status;
+  if (
+    approvedTimeAway &&
+    date < today &&
+    (row.clockIn || row.clockInAt) &&
+    !row.clockOut &&
+    !row.clockOutAt &&
+    row.status === "Missing Punch"
+  )
+    return "Missing Punch";
+  if (approvedTimeAway) return "Time away";
   if (
     row.status === "Absent" &&
     !row.clockIn &&

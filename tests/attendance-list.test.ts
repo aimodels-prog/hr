@@ -62,6 +62,13 @@ test("clocked-in list includes open, late, corrected and incomplete saved punche
   assert.equal(matchesAttendanceListFilter({ status: "Present" }, "Exceptions"), false);
   assert.equal(matchesAttendanceListFilter({ status: "Late" }, "Present"), false);
   assert.equal(matchesAttendanceListFilter({ status: "Absent" }, "All"), true);
+  assert.equal(
+    matchesAttendanceListFilter(
+      { status: "Present", source: "Site Visit Auto", clockIn: "08:30" },
+      "Clocked in",
+    ),
+    false,
+  );
 });
 
 test("HR daily roster separates unrecorded clock-ins, approved leave and remote duty", () => {
@@ -92,6 +99,83 @@ test("HR daily roster separates unrecorded clock-ins, approved leave and remote 
   );
   assert.equal(matchesAttendanceListFilter({ status: "Half-day Leave" }, "On Leave"), true);
   assert.equal(matchesAttendanceListFilter({ status: "Not clocked in" }, "Not clocked in"), true);
+  assert.equal(
+    dailyAttendanceStatus({ status: "Absent" }, today, today, false, true),
+    "Site visit",
+  );
+  assert.equal(
+    dailyAttendanceStatus({ status: "Absent" }, today, today, false, false, true),
+    "Time away",
+  );
+  assert.equal(
+    dailyAttendanceStatus(
+      { status: "Present", clockIn: "10:00" },
+      today,
+      today,
+      false,
+      false,
+      true,
+    ),
+    "Present",
+    "First office arrival after approved time away is shown as present",
+  );
+  assert.equal(
+    dailyAttendanceStatus(
+      { status: "Missing Punch", clockIn: "10:00" },
+      "2026-10-18",
+      today,
+      false,
+      false,
+      true,
+    ),
+    "Missing Punch",
+  );
+  assert.equal(
+    dailyAttendanceStatus(
+      { status: "Present", source: "Site Visit Auto", clockIn: "09:00" },
+      today,
+      today,
+      false,
+      true,
+    ),
+    "Site visit",
+  );
+  assert.equal(
+    dailyAttendanceStatus({ status: "Present", clockIn: "08:30" }, today, today, false, true),
+    "Site visit",
+  );
+  assert.equal(
+    dailyAttendanceStatus({ status: "Present", clockIn: "08:30" }, today, today, true),
+    "Working remotely",
+  );
+  assert.equal(
+    dailyAttendanceStatus({ status: "On Leave", clockIn: "08:30" }, today, today),
+    "On Leave",
+  );
+  assert.equal(
+    dailyAttendanceStatus(
+      { status: "Present", clockIn: "08:30", clockOut: "17:30" },
+      today,
+      today,
+      false,
+      true,
+    ),
+    "Present",
+  );
+  assert.equal(
+    matchesAttendanceListFilter(
+      { status: "Present", activities: [{ kind: "Site visit" }] },
+      "Site visit",
+    ),
+    true,
+  );
+  assert.equal(
+    matchesAttendanceListFilter(
+      { status: "Not clocked in", activities: [{ kind: "Time away" }] },
+      "Time away",
+    ),
+    true,
+  );
   assert.equal(
     matchesAttendanceListFilter({ status: "Working remotely" }, "Working remotely"),
     true,

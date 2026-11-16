@@ -65,7 +65,12 @@ import {
 import { CandidateService } from "@/lib/data/candidate-service";
 import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
 import { CandidateCvActions } from "@/components/recruitment/candidate-cv-actions";
-import { setCandidateCvSuitabilityFn } from "@/lib/server-functions/candidate.server";
+import { CandidateRemarkDialog } from "@/components/recruitment/candidate-remark-dialog";
+import {
+  setCandidateCvSuitabilityFn,
+  unselectCandidateForInterviewFn,
+  unshortlistCandidateApplicationFn,
+} from "@/lib/server-functions/candidate.server";
 import { readCandidateReviewQueue } from "@/lib/recruitment/candidate-review-queue";
 import { VacancyService } from "@/lib/data/vacancy-service";
 import { InterviewService } from "@/lib/data/interview-service";
@@ -558,6 +563,8 @@ function CandidateProfile({
   const [reviewApplicationId, setReviewApplicationId] = useState<string | null>(null);
   const [reviewRemark, setReviewRemark] = useState("");
   const [reviewSaving, setReviewSaving] = useState(false);
+  const [remarkOpen, setRemarkOpen] = useState(false);
+  const [pipelineBusyApplicationId, setPipelineBusyApplicationId] = useState<string | null>(null);
   const recForm = useForm<z.infer<typeof recommendationFormSchema>>({
     resolver: zodResolver(recommendationFormSchema),
     defaultValues: {
@@ -708,6 +715,40 @@ function CandidateProfile({
       );
     } finally {
       setReviewSaving(false);
+    }
+  };
+
+  const undoPipelineDecision = async (
+    applicationId: string,
+    action: "unselect" | "unshortlist",
+  ) => {
+    const application = candidate.applications.find((item) => item.id === applicationId);
+    const vacancy = vacancies.find((item) => item.id === application?.vacancyId);
+    if (!application || !vacancy) return;
+    setPipelineBusyApplicationId(applicationId);
+    try {
+      const data = {
+        actor: {
+          actorId: currentUser.userId,
+          ...(currentUser.workspaceEmail ? { actorEmail: currentUser.workspaceEmail } : {}),
+          activeRole: currentUser.activeRole,
+        },
+        vacancyId: vacancy.databaseId ?? vacancy.id,
+        candidateId: candidate.id,
+      };
+      if (action === "unselect") await unselectCandidateForInterviewFn({ data });
+      else await unshortlistCandidateApplicationFn({ data });
+      await candidateService.hydrateCompatibilityCache(currentUser.getActorContext());
+      toast.success(
+        action === "unselect"
+          ? "Removed from interview selection. The candidate remains shortlisted."
+          : "Removed from shortlist. The application is back in review.",
+      );
+      refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not change this decision.");
+    } finally {
+      setPipelineBusyApplicationId(null);
     }
   };
 
@@ -1229,9 +1270,9 @@ function CandidateProfile({
                               name="currentSalary"
                               render={({ field }) => (
                                 <FormItem>
-                                  <FormLabel>Current</FormLabel>
+                                  <FormLabel>Current salary</FormLabel>
                                   <FormControl>
-                                    <Input placeholder="OMR" {...field} />
+                                    <Input placeholder="e.g. OMR 1500" {...field} />
                                   </FormControl>
                                   <FormMessage />
                                 </FormItem>
@@ -1242,9 +1283,9 @@ function CandidateProfile({
                               name="expectedSalary"
                               render={({ field }) => (
                                 <FormItem>
-                                  <FormLabel>Expected</FormLabel>
+                                  <FormLabel>Expected salary</FormLabel>
                                   <FormControl>
-                                    <Input placeholder="OMR" {...field} />
+                                    <Input placeholder="e.g. UGX 5000000" {...field} />
                                   </FormControl>
                                   <FormMessage />
                                 </FormItem>
@@ -1255,9 +1296,9 @@ function CandidateProfile({
                               name="acceptedSalary"
                               render={({ field }) => (
                                 <FormItem>
-                                  <FormLabel>Accepted</FormLabel>
+                                  <FormLabel>Accepted salary</FormLabel>
                                   <FormControl>
-                                    <Input placeholder="OMR" {...field} />
+                                    <Input placeholder="Include currency and amount" {...field} />
                                   </FormControl>
                                   <FormMessage />
                                 </FormItem>
@@ -1380,6 +1421,17 @@ function CandidateProfile({
                     <p className="font-medium whitespace-pre-wrap">
                       {candidate.remarks || "No remarks recorded."}
                     </p>
+                    {currentUser.can("recruitment:manage_candidates") && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="mt-2"
+                        onClick={() => setRemarkOpen(true)}
+                      >
+                        {candidate.remarks ? "Edit HR remark" : "Add HR remark"}
+                      </Button>
+                    )}
                   </div>
                   <div>
                     <span className="text-muted-foreground block mb-1">Accepted Salary</span>
@@ -1407,6 +1459,14 @@ function CandidateProfile({
                   .map((app) => {
                     const vacancy = vacancies.find((v) => v.id === app.vacancyId);
                     const submittedCv = cvRecords.find((record) => record.applicationId === app.id);
+                    const selectedForInterview = interviewRecommendations.some(
+                      (item) =>
+                        (item.applicationId === app.id || item.vacancyId === app.vacancyId) &&
+                        ["Ready to Schedule", "Interview Scheduled"].includes(item.status),
+                    );
+                    const scheduledInterview = interviews.some(
+                      (item) => item.vacancyId === app.vacancyId && item.status !== "Cancelled",
+                    );
                     return (
                       <Card key={app.id}>
                         <CardHeader className="pb-3 flex flex-row items-start justify-between space-y-0">
@@ -1419,10 +1479,14 @@ function CandidateProfile({
                             </CardDescription>
                           </div>
                           <Badge>
-                            {app.status === "Rejected" &&
-                            app.screeningDecision?.startsWith("Not suitable: ")
-                              ? "Not suitable"
-                              : app.status}
+                            {selectedForInterview
+                              ? scheduledInterview
+                                ? "Interview scheduled"
+                                : "Selected for interview"
+                              : app.status === "Rejected" &&
+                                  app.screeningDecision?.startsWith("Not suitable: ")
+                                ? "Not suitable"
+                                : app.status}
                           </Badge>
                         </CardHeader>
                         <CardContent className="space-y-5">
@@ -1538,6 +1602,35 @@ function CandidateProfile({
                                   onClick={() => void saveNotSuitable(app.id, "restore")}
                                 >
                                   Restore to review
+                                </Button>
+                              )}
+                            {currentUser.can("recruitment:manage_candidates") &&
+                              selectedForInterview &&
+                              !scheduledInterview && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={pipelineBusyApplicationId !== null}
+                                  onClick={() => void undoPipelineDecision(app.id, "unselect")}
+                                >
+                                  {pipelineBusyApplicationId === app.id
+                                    ? "Removing..."
+                                    : "Unselect"}
+                                </Button>
+                              )}
+                            {currentUser.can("recruitment:manage_candidates") &&
+                              vacancy?.status === "Open" &&
+                              app.status === "Shortlisted" &&
+                              !selectedForInterview && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={pipelineBusyApplicationId !== null}
+                                  onClick={() => void undoPipelineDecision(app.id, "unshortlist")}
+                                >
+                                  {pipelineBusyApplicationId === app.id
+                                    ? "Removing..."
+                                    : "Remove shortlist"}
                                 </Button>
                               )}
                             <Button variant="outline" size="sm" asChild>
@@ -2792,6 +2885,23 @@ function CandidateProfile({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <CandidateRemarkDialog
+        candidate={
+          remarkOpen
+            ? {
+                id: candidate.id,
+                name: `${candidate.firstName} ${candidate.lastName}`,
+                remarks: candidate.remarks,
+              }
+            : null
+        }
+        onOpenChange={(open) => setRemarkOpen(open)}
+        onSaved={async (remark) => {
+          recruitmentForm.setValue("remarks", remark);
+          await candidateService.hydrateCompatibilityCache(currentUser.getActorContext());
+          refresh();
+        }}
+      />
     </div>
   );
 }

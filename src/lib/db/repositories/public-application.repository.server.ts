@@ -17,8 +17,11 @@ import {
 } from "../schema/recruitment.ts";
 import { users } from "../schema/employee.ts";
 import { auditEvents, backgroundJobs, notifications } from "../schema/system.ts";
-import { isValidCurrentSalaryOmr } from "../../recruitment/current-salary.ts";
-import { isValidExistingVisa, isValidWorkEligibility } from "../../recruitment/work-eligibility.ts";
+import {
+  isValidApplicantCurrentSalary,
+  isValidCurrencyQualifiedExpectation,
+} from "../../recruitment/salary-currency.ts";
+import { isValidWorkEligibility } from "../../recruitment/work-eligibility.ts";
 
 export interface PublicApplicationInput {
   vacancyId: string;
@@ -33,7 +36,6 @@ export interface PublicApplicationInput {
   yearsOfExperience: number;
   noticePeriod: string;
   workEligibility: string;
-  visaStatus?: "Own Visa" | "Company Visa" | "Freelance Visa" | "Other" | undefined;
   currentSalary: string;
   salaryExpectation: string;
   screeningAnswers: { question: string; answer: string }[];
@@ -70,28 +72,19 @@ export async function submitPublicApplicationToDatabase(
   const currentTitle = input.currentTitle?.trim();
   const salaryExpectation = input.salaryExpectation?.trim();
   const currentSalary = input.currentSalary?.trim();
-  if (!currentSalary || !isValidCurrentSalaryOmr(currentSalary)) {
-    throw new Error("Enter your current monthly salary in OMR, or 0 if you are not earning.");
+  if (!currentSalary || !isValidApplicantCurrentSalary(currentSalary)) {
+    throw new Error("Enter your current monthly salary and currency, or 0 if you are not earning.");
   }
   if (!isValidWorkEligibility(input.workEligibility)) {
-    throw new Error("Select your work visa status.");
-  }
-  if (
-    (input.workEligibility === "Valid Oman work visa" && !isValidExistingVisa(input.visaStatus)) ||
-    (input.workEligibility !== "Valid Oman work visa" && input.visaStatus)
-  ) {
-    throw new Error("Select visa details only when you already hold an Oman work visa.");
+    throw new Error("Select whether you are authorised to work in the job's country.");
   }
   const visaStatus =
-    input.workEligibility === "Omani citizen"
-      ? "Omani (No Visa Required)"
-      : input.workEligibility === "Need employer sponsorship"
-        ? "Requires Sponsorship"
-        : input.workEligibility === "Valid Oman work visa"
-          ? input.visaStatus
-          : null;
+    input.workEligibility === "Need employer sponsorship" ? "Requires Sponsorship" : null;
   if (!currentCompany || !currentTitle || !salaryExpectation) {
     throw new Error("Current company, current title and monthly salary expectation are required.");
+  }
+  if (!isValidCurrencyQualifiedExpectation(salaryExpectation)) {
+    throw new Error("Enter the expected monthly salary and its currency.");
   }
   const db = getDatabaseClient();
   const [vacancy] = await db

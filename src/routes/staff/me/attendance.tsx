@@ -1,5 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { recordedAttendanceHours } from "@/lib/data/recorded-hours";
+import { recordedAttendanceHours, recordedWorkingHours } from "@/lib/data/recorded-hours";
+import { attendanceDayCredit } from "@/lib/data/attendance-day-credit";
+import { dailyAttendanceStatus } from "@/lib/data/attendance-list";
+import {
+  approvedLeaveCoversDate,
+  isAbsenceLeave,
+  isApprovedRemoteWork,
+  isEffectiveLeave,
+} from "@/lib/data/approved-leave";
+import { listOwnApprovedTimeAwayMonthFn } from "@/lib/server-functions/time-away.server";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { eachDayOfInterval, endOfMonth, format, parseISO, startOfMonth } from "date-fns";
 import {
@@ -17,6 +27,7 @@ import { DashboardCharts } from "@/components/dashboards/dashboard-charts";
 import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { getApplicationDataServices } from "@/lib/data/application-data";
 import { AttendanceService } from "@/lib/data/attendance-service";
+import { getBrowserOfficeLocation } from "@/lib/data/browser-office-location";
 import { LeaveService } from "@/lib/data/leave-service";
 import { flexibleOfficeSchedule } from "@/lib/data/office-schedule";
 import {
@@ -28,7 +39,6 @@ import {
 import { SettingsService } from "@/lib/data/settings-service";
 import type {
   AttendanceRecord,
-  GeoReading,
   SiteVisitOrigin,
   SiteVisitRequest,
 } from "@/lib/data/attendance-types";
@@ -92,32 +102,6 @@ export const Route = createFileRoute("/staff/me/attendance")({
   component: MyAttendanceRoute,
 });
 
-function getBrowserLocation(): Promise<GeoReading> {
-  return new Promise((resolve, reject) => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      reject(new Error("Location services are unavailable in this browser."));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (position) =>
-        resolve({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracyMeters: position.coords.accuracy,
-          capturedAt: new Date(position.timestamp).toISOString(),
-        }),
-      (error) => {
-        const message =
-          error.code === error.PERMISSION_DENIED
-            ? "Location permission was denied. Enable location access in your browser and retry."
-            : "Your location could not be confirmed. Move near a window and retry.";
-        reject(new Error(message));
-      },
-      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
-    );
-  });
-}
-
 function statusVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
   if (["Present", "Corrected", "Approved", "Completed"].includes(status)) return "default";
   if (["Absent", "Missing Punch", "Rejected"].includes(status)) return "destructive";
@@ -179,6 +163,23 @@ function MyAttendanceRoute() {
 
   const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
   const employeeId = currentUser.employeeId;
+  const monthPrefix = format(currentMonth, "yyyy-MM");
+  const approvedAwayQuery = useQuery({
+    queryKey: ["own-approved-time-away", currentUser.id, monthPrefix],
+    queryFn: () =>
+      listOwnApprovedTimeAwayMonthFn({
+        data: {
+          actor: {
+            actorId: currentUser.id,
+            ...(currentUser.workspaceEmail ? { actorEmail: currentUser.workspaceEmail } : {}),
+            activeRole: currentUser.activeRole,
+          },
+          month: monthPrefix,
+        },
+      }),
+    enabled: Boolean(employeeId && attendanceReady),
+    staleTime: 30_000,
+  });
 
   useEffect(() => {
     if (search.action === "site-visit") setSiteVisitOpen(true);
@@ -314,7 +315,6 @@ function MyAttendanceRoute() {
   );
   const policy = attendanceService.getPolicy();
   const locations = attendanceService.getClockInLocations();
-  const monthPrefix = format(currentMonth, "yyyy-MM");
   const summary = attendanceService.getMonthlySummary(employeeId, monthPrefix, actorContext);
   const corrections = attendanceService.getCorrectionsForEmployee(employeeId, actorContext);
   const correctionByRecord = new Map<string, (typeof corrections)[number]>();
@@ -325,25 +325,115 @@ function MyAttendanceRoute() {
     start: startOfMonth(currentMonth),
     end: endOfMonth(currentMonth),
   });
+  const approvedAway = approvedAwayQuery.data ?? [];
+  const approvedLeave = new LeaveService()
+    .getLeaveRequestsForEmployee(employeeId, actorContext)
+    .filter((item) => isEffectiveLeave(item));
   const monthlyRows = monthDays
     .filter((day) => day <= new Date())
     .map((day) => {
       const date = format(day, "yyyy-MM-dd");
       const record = records.find((item) => item.date === date);
       const reconciled = attendanceService.reconcileDailyStatus(employeeId, date, actorContext);
+      const visitsForDay = siteVisits.filter(
+        (visit) => visit.date === date && ["Approved", "Completed"].includes(visit.status),
+      );
+      const awayForDay = approvedAway.filter((item) => item.date === date);
+      const leavesForDay = approvedLeave.filter(
+        (item) => isAbsenceLeave(item) && approvedLeaveCoversDate(item, date),
+      );
+      const remoteWork = approvedLeave.some((item) => isApprovedRemoteWork(item, date));
+      const paidLeaveFraction = Math.min(
+        1,
+        leavesForDay.reduce((total, leave) => {
+          const fraction = leave.isHalfDay ? 0.5 : 1;
+          const unpaid = leave.policySnapshot.specialRequest?.unpaidByDate?.find(
+            (item) => item.date === date,
+          )?.days;
+          return (
+            total +
+            Math.max(
+              0,
+              fraction -
+                (leave.policySnapshot.specialRequest
+                  ? Math.min(fraction, Math.max(0, unpaid ?? 0))
+                  : leave.policySnapshot.isPaid
+                    ? 0
+                    : fraction),
+            )
+          );
+        }, 0),
+      );
+      const dayCredit = attendanceDayCredit({
+        actualWorkHours: recordedWorkingHours(record),
+        standardDailyHours: policy.standardDailyHours,
+        clockIn: record?.clockIn,
+        clockOut: record?.clockOut,
+        breakStart: policy.breakStart,
+        breakMinutes: record?.breakMinutes ?? policy.defaultBreakMinutes,
+        approvedIntervals: [
+          ...visitsForDay.map((visit) => ({ startTime: visit.startTime, endTime: visit.endTime })),
+          ...awayForDay
+            .filter((item) => item.treatment === "Paid time")
+            .map((item) => ({ startTime: item.startTime, endTime: item.endTime })),
+        ],
+        unpaidIntervals: awayForDay
+          .filter((item) => item.treatment !== "Paid time")
+          .map((item) => ({ startTime: item.startTime, endTime: item.endTime })),
+        paidLeaveFraction,
+        approvedRemoteWork: remoteWork,
+      });
+      const activities = [
+        ...visitsForDay.map((visit) => ({
+          label: `Official visit ${visit.startTime}–${visit.endTime}`,
+          href: `/staff/request-detail/Visits/${visit.databaseId ?? visit.id}`,
+        })),
+        ...awayForDay.map((item) => ({
+          label: `Time away ${item.startTime}–${item.endTime} · ${item.treatment}`,
+          href: `/staff/time-away?date=${date}&review=${item.id}`,
+        })),
+      ];
       if (record)
         return {
           ...record,
-          ...(reconciled?.status ? { status: reconciled.status } : {}),
+          status: dailyAttendanceStatus(
+            {
+              ...record,
+              status:
+                leavesForDay.length && !(record.clockIn && record.clockOut)
+                  ? leavesForDay.some((item) => !item.isHalfDay)
+                    ? "On Leave"
+                    : "Half-day Leave"
+                  : (reconciled?.status ?? record.status),
+            },
+            date,
+            todayKey,
+            remoteWork,
+            visitsForDay.length > 0,
+            awayForDay.length > 0,
+          ),
+          dayCredit,
+          activities,
           virtual: false,
         };
       return {
         id: `virtual-${date}`,
         employeeId,
         date,
-        status: siteVisits.some((visit) => visit.date === date && visit.status === "Pending HR")
-          ? "Site visit — awaiting HR"
-          : (reconciled?.status ?? "Absent"),
+        status: dailyAttendanceStatus(
+          {
+            status: siteVisits.some((visit) => visit.date === date && visit.status === "Pending HR")
+              ? "Site visit — awaiting HR"
+              : (reconciled?.status ?? "Absent"),
+          },
+          date,
+          todayKey,
+          remoteWork,
+          visitsForDay.length > 0,
+          awayForDay.length > 0,
+        ),
+        dayCredit,
+        activities,
         clockIn: undefined,
         clockOut: undefined,
         breakMinutes: 0,
@@ -356,11 +446,14 @@ function MyAttendanceRoute() {
       };
     })
     .reverse();
+  const creditedMonthHours = approvedAwayQuery.isSuccess
+    ? Number(monthlyRows.reduce((total, row) => total + row.dayCredit.creditedHours, 0).toFixed(2))
+    : "—";
 
   const performClockAction = async (action: "in" | "out", returning = false) => {
     setLocating(true);
     try {
-      const reading = await getBrowserLocation();
+      const reading = await getBrowserOfficeLocation();
       const record = await attendanceService.clockAsync(
         employeeId,
         action,
@@ -383,18 +476,19 @@ function MyAttendanceRoute() {
     }
   };
 
-  const openCorrection = (row: (typeof monthlyRows)[number]) => {
+  const openCorrection = (row: AttendanceRecord | (typeof monthlyRows)[number]) => {
     const timestamp = new Date().toISOString();
-    const record = row.virtual
-      ? ({
-          ...row,
-          createdAt: timestamp,
-          createdBy: currentUser.userId,
-          updatedAt: timestamp,
-          updatedBy: currentUser.userId,
-          recordVersion: 0,
-        } as AttendanceRecord)
-      : (row as AttendanceRecord);
+    const record =
+      "virtual" in row && row.virtual
+        ? ({
+            ...row,
+            createdAt: timestamp,
+            createdBy: currentUser.userId,
+            updatedAt: timestamp,
+            updatedBy: currentUser.userId,
+            recordVersion: 0,
+          } as AttendanceRecord)
+        : (row as AttendanceRecord);
     setCorrectionRecord(record);
     setProposedIn(record.clockIn ?? policy.expectedClockIn);
     setProposedOut(
@@ -710,10 +804,11 @@ function MyAttendanceRoute() {
           </TabsList>
 
           <TabsContent value="attendance" className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
               {[
                 ["Present", summary.present],
-                ["Worked Hours", summary.hours],
+                ["Clocked hours", summary.hours],
+                ["Credited hours", creditedMonthHours],
                 ["Late", summary.late],
                 ["Absent", summary.absent],
                 ["Missing Punch", summary.missingPunch],
@@ -767,70 +862,111 @@ function MyAttendanceRoute() {
                       <TableHead>Status</TableHead>
                       <TableHead>Clock In</TableHead>
                       <TableHead>Clock Out</TableHead>
-                      <TableHead>Hours</TableHead>
+                      <TableHead>Day total</TableHead>
                       <TableHead>Mode</TableHead>
+                      <TableHead>Approved activity</TableHead>
                       <TableHead className="text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {monthlyRows.map((row) => {
-                      const correction = correctionByRecord.get(row.id);
-                      const canCorrect =
-                        row.date < todayKey &&
-                        (!currentUser.currentEmployee?.startDate ||
-                          row.date >= currentUser.currentEmployee.startDate) &&
-                        !("officeExceptionLabel" in row && row.officeExceptionLabel) &&
-                        !["On Leave", "Holiday", "Rest Day", "Correction Pending"].includes(
-                          row.status,
-                        );
-                      return (
-                        <TableRow key={row.date}>
-                          <TableCell>
-                            <span className="font-medium">
-                              {format(parseISO(row.date), "dd MMM")}
-                            </span>
-                            <span className="ml-2 text-xs text-muted-foreground">
-                              {format(parseISO(row.date), "EEE")}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={statusVariant(row.status)}>
-                              {("officeExceptionLabel" in row && row.officeExceptionLabel) ||
-                                row.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>{row.clockIn ?? "—"}</TableCell>
-                          <TableCell>{row.clockOut ?? "—"}</TableCell>
-                          <TableCell>
-                            {recordedAttendanceHours(row)
-                              ? `${recordedAttendanceHours(row)}h`
-                              : "—"}
-                          </TableCell>
-                          <TableCell>{row.workMode ?? "—"}</TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex flex-wrap items-center justify-end gap-2">
-                              {correction && <Badge variant="secondary">{correction.status}</Badge>}
-                              {canCorrect &&
-                                !["Pending Manager", "Pending HR"].includes(
-                                  correction?.status ?? "",
-                                ) && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => openCorrection(row)}
-                                  >
-                                    {correction
-                                      ? "Correct again"
-                                      : row.virtual
-                                        ? "Add worked time"
-                                        : "Correct"}
-                                  </Button>
+                    {approvedAwayQuery.isPending && (
+                      <TableRow>
+                        <TableCell colSpan={8}>Loading approved activities...</TableCell>
+                      </TableRow>
+                    )}
+                    {approvedAwayQuery.isError && (
+                      <TableRow>
+                        <TableCell colSpan={8} role="alert">
+                          Approved time away could not be loaded.{" "}
+                          <Button variant="link" onClick={() => void approvedAwayQuery.refetch()}>
+                            Retry
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {approvedAwayQuery.isSuccess &&
+                      monthlyRows.map((row) => {
+                        const correction = correctionByRecord.get(row.id);
+                        const canCorrect =
+                          row.date < todayKey &&
+                          (!currentUser.currentEmployee?.startDate ||
+                            row.date >= currentUser.currentEmployee.startDate) &&
+                          !("officeExceptionLabel" in row && row.officeExceptionLabel) &&
+                          !["On Leave", "Holiday", "Rest Day", "Correction Pending"].includes(
+                            row.status,
+                          );
+                        return (
+                          <TableRow key={row.date}>
+                            <TableCell>
+                              <span className="font-medium">
+                                {format(parseISO(row.date), "dd MMM")}
+                              </span>
+                              <span className="ml-2 text-xs text-muted-foreground">
+                                {format(parseISO(row.date), "EEE")}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={statusVariant(row.status)}>
+                                {("officeExceptionLabel" in row && row.officeExceptionLabel) ||
+                                  row.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>{row.clockIn ?? "—"}</TableCell>
+                            <TableCell>{row.clockOut ?? "—"}</TableCell>
+                            <TableCell>
+                              {row.dayCredit.creditedHours
+                                ? `${row.dayCredit.creditedHours}h`
+                                : "—"}
+                              {row.dayCredit.complete && (
+                                <span className="block text-xs text-emerald-700">Complete</span>
+                              )}
+                              {row.dayCredit.approvedActivityHours > 0 && (
+                                <span className="block text-xs text-muted-foreground">
+                                  {row.dayCredit.officeWorkHours}h recorded work +{" "}
+                                  {row.dayCredit.approvedActivityHours}h approved
+                                  {row.dayCredit.policyTopupHours > 0 &&
+                                    ` + ${row.dayCredit.policyTopupHours}h standard-day credit`}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell>{row.workMode ?? "—"}</TableCell>
+                            <TableCell className="text-xs">
+                              {row.activities.map((activity) => (
+                                <a
+                                  key={activity.href}
+                                  href={activity.href}
+                                  className="block text-primary hover:underline"
+                                >
+                                  {activity.label}
+                                </a>
+                              ))}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex flex-wrap items-center justify-end gap-2">
+                                {correction && (
+                                  <Badge variant="secondary">{correction.status}</Badge>
                                 )}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
+                                {canCorrect &&
+                                  !["Pending Manager", "Pending HR"].includes(
+                                    correction?.status ?? "",
+                                  ) && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => openCorrection(row)}
+                                    >
+                                      {correction
+                                        ? "Correct again"
+                                        : row.virtual
+                                          ? "Add worked time"
+                                          : "Correct"}
+                                    </Button>
+                                  )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                   </TableBody>
                 </Table>
               </div>

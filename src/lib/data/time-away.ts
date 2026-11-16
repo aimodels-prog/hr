@@ -1,7 +1,6 @@
 import * as z from "zod";
 
 export const TIME_AWAY_CATEGORIES = ["Medical appointment", "Personal matter", "Other"] as const;
-export const TIME_AWAY_TREATMENTS = ["Paid time", "Unpaid time", "Leave"] as const;
 export const timeAwayDate = z.string().date();
 export const timeAwayInput = z
   .object({

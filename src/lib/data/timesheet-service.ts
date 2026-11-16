@@ -22,6 +22,8 @@ import type { ActorContext, User } from "./types.ts";
 import { LeaveService } from "./leave-service.ts";
 import { AttendanceService } from "./attendance-service.ts";
 import { recordedDailyHours, recordedWorkingHours } from "./recorded-hours.ts";
+import { attendanceDayCredit } from "./attendance-day-credit.ts";
+import { siteVisitEffectiveEndTime } from "./site-visit.ts";
 import { EmployeeService } from "./employee-service.ts";
 import { SettingsService, syncWorkingHoursCompatibilityCache } from "./settings-service.ts";
 import { isApprovedRemoteWork, timesheetAbsences, organisationDate } from "./approved-leave.ts";
@@ -655,7 +657,15 @@ export class TimesheetService {
     return created;
   }
 
-  reconcileAttendance(timesheet: TimesheetWithEntries): TimesheetAttendanceReconciliation {
+  reconcileAttendance(
+    timesheet: TimesheetWithEntries,
+    approvedAway: readonly {
+      date: string;
+      startTime: string;
+      endTime: string;
+      treatment: string | null;
+    }[] = [],
+  ): TimesheetAttendanceReconciliation {
     if (
       ["Approved", "Payroll Locked", "Corrected"].includes(timesheet.status) &&
       timesheet.attendanceReconciliationSnapshot
@@ -671,10 +681,18 @@ export class TimesheetService {
         .map((record) => [record.date, record]),
     );
     const explanations = timesheet.attendanceDiscrepancyExplanations ?? {};
-    const workingDays = new SettingsService().getAppSettingsSync().workingDays;
+    const appSettings = new SettingsService().getAppSettingsSync();
+    const workingDays = appSettings.workingDays;
     const approvedRemoteWork = new LeaveService()
       .getAllRequests(SYSTEM_CONTEXT)
       .filter((request) => request.employeeId === timesheet.employeeId);
+    const approvedVisits = this.attendanceService
+      .getSiteVisitsForEmployee(timesheet.employeeId, SYSTEM_CONTEXT)
+      .filter((visit) => ["Approved", "Completed"].includes(visit.status));
+    const approvedVisitDates = new Set(approvedVisits.map((visit) => visit.date));
+    const approvedPaidAwayDates = new Set(
+      approvedAway.filter((item) => item.treatment === "Paid time").map((item) => item.date),
+    );
     const days: DailyAttendanceReconciliation[] = eachDayOfInterval({
       start: parseISO(period.startDate),
       end: parseISO(period.endDate),
@@ -685,6 +703,8 @@ export class TimesheetService {
         return (
           this.attendanceService.isTrackingRequired(timesheet.employeeId, date) ||
           approvedRemoteWork.some((request) => isApprovedRemoteWork(request, date)) ||
+          approvedVisitDates.has(date) ||
+          approvedPaidAwayDates.has(date) ||
           Boolean(
             record &&
             (record.clockInAt ||
@@ -718,12 +738,46 @@ export class TimesheetService {
           else manualHours += hours;
         }
         const fullAbsence = leaveHours + holidayHours >= settings.standardDailyHours;
+        const approvedDuty =
+          !fullAbsence && (approvedVisitDates.has(date) || approvedPaidAwayDates.has(date));
         // Office exceptions are policy credits. Ordinary punches are actual work
         // and must stay visible even when they overlap an approved absence.
         const policyCreditLimit = record?.officeExceptionLabel
           ? Math.max(0, settings.standardDailyHours - leaveHours - holidayHours)
           : undefined;
-        const attendanceHours = recordedWorkingHours(record, policyCreditLimit);
+        const recordedHours = recordedWorkingHours(record, policyCreditLimit);
+        const dutyCredit = attendanceDayCredit({
+          actualWorkHours: recordedHours,
+          standardDailyHours: Math.max(0, settings.standardDailyHours - leaveHours - holidayHours),
+          clockIn: record?.clockIn,
+          clockOut: record?.clockOut,
+          breakStart: this.attendanceService.getPolicy().breakStart,
+          breakMinutes:
+            record?.breakMinutes ?? this.attendanceService.getPolicy().defaultBreakMinutes,
+          approvedIntervals: fullAbsence
+            ? []
+            : [
+                ...approvedVisits
+                  .filter((visit) => visit.date === date)
+                  .map((visit) => ({
+                    startTime: visit.startTime,
+                    endTime: siteVisitEffectiveEndTime({
+                      date: visit.date,
+                      startTime: visit.startTime,
+                      endTime: visit.endTime,
+                      details: visit.details,
+                      timeZone: appSettings.timezone,
+                    }),
+                  })),
+                ...approvedAway
+                  .filter((item) => item.date === date && item.treatment === "Paid time")
+                  .map((item) => ({ startTime: item.startTime, endTime: item.endTime })),
+              ],
+          unpaidIntervals: approvedAway
+            .filter((item) => item.date === date && item.treatment !== "Paid time")
+            .map((item) => ({ startTime: item.startTime, endTime: item.endTime })),
+        });
+        const attendanceHours = dutyCredit.creditedHours;
         const attendanceStatus = remoteWork
           ? "Remote Work"
           : (record?.status ?? virtualStatus ?? "No Record");
@@ -746,7 +800,9 @@ export class TimesheetService {
         );
         const workHours = Math.max(
           actualWorkHours,
-          Math.min(availableWorkHours, attendanceHours + remoteHours),
+          approvedDuty
+            ? attendanceHours
+            : Math.min(availableWorkHours, attendanceHours + remoteHours),
         );
         const projectGap =
           manualHours > 0 && completeAttendance
@@ -758,6 +814,7 @@ export class TimesheetService {
           manualHours >= settings.standardDailyHours &&
           attendanceHours > manualHours;
         const projectVariance =
+          !approvedDuty &&
           Math.abs(projectGap) > settings.attendanceVarianceToleranceHours &&
           !extraPresenceWithFullAllocation;
         const absenceWorkOverlap =
@@ -779,6 +836,7 @@ export class TimesheetService {
           requiresExplanation = true;
         } else if (attendanceStatus === "Rest Day" && workHours === 0 && attendanceHours === 0)
           status = "Rest Day";
+        else if (approvedDuty) status = "Matched";
         else if (remoteWork)
           status =
             workHours > 0
@@ -812,7 +870,11 @@ export class TimesheetService {
           leaveHours,
           holidayHours,
           varianceHours: projectGap,
-          attendanceStatus,
+          attendanceStatus: approvedVisitDates.has(date)
+            ? "Official visit"
+            : approvedPaidAwayDates.has(date)
+              ? "Paid time away"
+              : attendanceStatus,
           status,
           requiresExplanation,
           ...(explanation ? { explanation } : {}),
@@ -853,7 +915,17 @@ export class TimesheetService {
   }
 
   /** Read-only daily source summary; paid leave is credit, never biometric work or overtime. */
-  getPeriodSummary(employeeId: string, period: TimesheetPeriod, timesheet?: TimesheetWithEntries) {
+  getPeriodSummary(
+    employeeId: string,
+    period: TimesheetPeriod,
+    timesheet?: TimesheetWithEntries,
+    approvedAway: readonly {
+      date: string;
+      startTime: string;
+      endTime: string;
+      treatment: string | null;
+    }[] = [],
+  ) {
     const absence = timesheet ? null : this.absences(employeeId, period);
     const source: TimesheetWithEntries = timesheet ?? {
       id: `preview-${period.id}`,
@@ -869,7 +941,7 @@ export class TimesheetService {
       updatedBy: "",
       recordVersion: 0,
     };
-    const reconciliation = this.reconcileAttendance(source);
+    const reconciliation = this.reconcileAttendance(source, approvedAway);
     const workedHours = ["Approved", "Payroll Locked", "Corrected"].includes(source.status)
       ? source.totalHours
       : reconciliation.timesheetWorkHours;

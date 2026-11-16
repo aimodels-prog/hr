@@ -8,6 +8,8 @@ import {
   effectiveTerminalPunchTimes,
   officeLeaveReturnEvidence,
 } from "../../data/terminal-punches.ts";
+import { isTimeAwayMachineReturn } from "../../data/time-away-return.ts";
+import { isFirstOfficeArrivalFromHomeVisit } from "../../data/site-visit.ts";
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
@@ -18,6 +20,7 @@ import { decryptSensitiveJson, encryptSensitiveJson } from "../encryption.server
 import { employees, roles, userRoles, users } from "../schema/employee.ts";
 import { locations } from "../schema/master-data.ts";
 import { appSettings } from "../schema/organisation.ts";
+import { timeAway } from "../schema/time-away.ts";
 import { auditEvents, notifications } from "../schema/system.ts";
 import {
   attendanceDeviceEmployeeMappings,
@@ -325,11 +328,90 @@ async function projectDailyAttendance(
     .orderBy(desc(siteVisitRequests.startTime))
     .for("update")
     .limit(1);
+  const localEventTime = zonedParts(eventDate, timezone).time;
+  const homeVisitArrival = Boolean(
+    siteVisit &&
+    isFirstOfficeArrivalFromHomeVisit({
+      origin: siteVisit.origin,
+      details: siteVisit.details,
+      startTime: siteVisit.startTime,
+      endTime: siteVisit.endTime,
+      localTime: localEventTime,
+      hasEarlierOfficePunch: priorEvents.length > 0,
+    }),
+  );
+  const [away] = !siteVisit
+    ? await tx
+        .select()
+        .from(timeAway)
+        .where(
+          and(
+            eq(timeAway.organisationId, input.organisationId),
+            eq(timeAway.employeeId, input.employeeId),
+            eq(timeAway.date, date),
+            inArray(timeAway.status, ["Pending HR", "Approved"]),
+            sql`${timeAway.archivedAt} IS NULL`,
+            sql`${timeAway.startTime} < ${localEventTime}`,
+          ),
+        )
+        .orderBy(desc(timeAway.startTime))
+        .limit(1)
+    : [];
+  const [priorAwayReturn] = away
+    ? await tx
+        .select({ occurredAt: auditEvents.occurredAt })
+        .from(auditEvents)
+        .where(
+          and(
+            eq(auditEvents.organisationId, input.organisationId),
+            eq(auditEvents.entityType, "time-away"),
+            eq(auditEvents.entityId, away.id),
+            eq(auditEvents.action, "time-away-return"),
+          ),
+        )
+        .limit(1)
+    : [];
+  const canProjectAway =
+    !existing || ["Web", "Hardware Terminal", "Multiple Sources"].includes(existing.source);
+  const timeAwayReturn = Boolean(
+    away &&
+    canProjectAway &&
+    isTimeAwayMachineReturn({
+      deviceStatus: input.status,
+      localTime: localEventTime,
+      startTime: away.startTime,
+      endTime: away.endTime,
+      hasOriginalClockIn: Boolean(existing?.clockInAt),
+      alreadyReturned: Boolean(priorAwayReturn),
+    }),
+  );
+  const repeatedAwayReturn = Boolean(
+    priorAwayReturn &&
+    input.status === 0 &&
+    eventDate.getTime() >= new Date(priorAwayReturn.occurredAt).getTime() &&
+    eventDate.getTime() - new Date(priorAwayReturn.occurredAt).getTime() <=
+      (policy?.punchDeduplicationMinutes ?? 15) * 60_000,
+  );
   // During a flexible visit, respect a terminal's explicit IN/OUT marker instead of
   // treating a return IN as the day's final OUT. Unknown device modes retain legacy handling.
   const siteDirectionKnown = !!siteVisit && (input.status === 0 || input.status === 1);
   if (siteDirectionKnown) direction = input.status === 0 ? "in" : "out";
-  if (siteVisit && siteDirectionKnown && direction === "in" && !siteVisit.details.returnedAt) {
+  if (homeVisitArrival) direction = "in";
+  else if (
+    siteVisit?.origin === "Home" &&
+    siteVisit.details.returnedAt &&
+    input.status === 0 &&
+    effectiveIndex > 0
+  )
+    direction = effectiveIndex % 2 === 0 ? "in" : "out";
+  if (away && input.status === 1) direction = "out";
+  if (timeAwayReturn || repeatedAwayReturn) direction = "in";
+  if (
+    siteVisit &&
+    (siteDirectionKnown || homeVisitArrival) &&
+    direction === "in" &&
+    !siteVisit.details.returnedAt
+  ) {
     await tx
       .update(siteVisitRequests)
       .set({
@@ -379,6 +461,26 @@ async function projectDailyAttendance(
     })
     .returning({ id: attendancePunchEvents.id });
   if (!event) throw new Error("The terminal punch could not be recorded.");
+  if (timeAwayReturn && away)
+    await tx.insert(auditEvents).values({
+      organisationId: input.organisationId,
+      occurredAt: input.occurredAt,
+      actorDisplayName: "ZKTeco attendance bridge",
+      activeRole: "System",
+      actorRoles: [],
+      action: "time-away-return",
+      module: "attendance",
+      entityType: "time-away",
+      entityId: away.id,
+      afterSummary: {
+        attendanceRecordId: recordId,
+        punchEventId: event.id,
+        deviceId: input.deviceId,
+        returnedAt: input.occurredAt,
+      },
+      reason: "Office terminal confirmed return during recorded time away",
+      riskLevel: "Medium",
+    } as typeof auditEvents.$inferInsert);
 
   const clockInAt =
     siteVisit && existing?.clockInAt && new Date(existing.clockInAt) < effectiveEvents[0]!
@@ -388,6 +490,7 @@ async function projectDailyAttendance(
     effectiveEvents.length > 1 ? effectiveEvents[effectiveEvents.length - 1]!.toISOString() : null;
   if (siteDirectionKnown && effectiveIndex === effectiveEvents.length - 1)
     clockOutAt = direction === "out" ? input.occurredAt : null;
+  if (timeAwayReturn || repeatedAwayReturn) clockOutAt = null;
   const breakMinutes = clockOutAt
     ? attendanceBreakMinutes(
         zonedParts(new Date(clockInAt), timezone).time,

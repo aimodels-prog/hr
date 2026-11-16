@@ -3,6 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { Badge } from "@/components/ui/badge";
 import { ShieldAlert, Archive } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { CandidateRemarkInline } from "@/components/recruitment/candidate-remark-dialog";
 import type { Candidate, CandidateApplication, Vacancy } from "@/lib/data/types";
 
 type KanbanCandidate = Candidate & { applications: CandidateApplication[] };
@@ -14,6 +15,8 @@ interface CandidateKanbanProps {
   userById: Map<string, string>;
   onStageChange: (candidateId: string, newStage: Candidate["stage"]) => void;
   onArchive: (candidate: KanbanCandidate) => void;
+  onRemarkSaved: () => Promise<void> | void;
+  canEditRemarks: boolean;
 }
 
 const KANBAN_STAGES = [
@@ -32,6 +35,8 @@ export function CandidateKanban({
   userById,
   onStageChange,
   onArchive,
+  onRemarkSaved,
+  canEditRemarks,
 }: CandidateKanbanProps) {
   const navigate = useNavigate();
   const [draggedId, setDraggedId] = useState<string | null>(null);
@@ -124,6 +129,16 @@ export function CandidateKanban({
                         {vacancy.title}
                       </div>
                     )}
+
+                    <CandidateRemarkInline
+                      candidate={{
+                        id: candidate.id,
+                        name: `${candidate.firstName} ${candidate.lastName}`,
+                        remarks: candidate.remarks,
+                      }}
+                      canEdit={canEditRemarks}
+                      onSaved={onRemarkSaved}
+                    />
 
                     <label className="mb-2 block text-xs text-muted-foreground">
                       Move to stage

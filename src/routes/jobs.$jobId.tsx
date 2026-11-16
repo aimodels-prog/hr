@@ -34,11 +34,16 @@ import { initializeApplicationData } from "@/lib/data/application-data";
 import type { Vacancy } from "@/lib/data/types";
 import { getSupportedCvMimeType } from "@/lib/data/cv-file-validation";
 import { findPublicVacancy } from "@/lib/data/public-vacancy-link";
-import { isValidCurrentSalaryOmr } from "@/lib/recruitment/current-salary";
+import {
+  isSupportedSalaryCurrency,
+  isValidMonthlySalaryAmount,
+  isValidMonthlySalaryExpectation,
+  salaryExpectationWithCurrency,
+  salaryWithCurrency,
+  SALARY_CURRENCY_OPTIONS,
+} from "@/lib/recruitment/salary-currency";
 import { COUNTRY_OPTIONS, countryName } from "@/lib/recruitment/countries";
 import {
-  EXISTING_VISA_OPTIONS,
-  isValidExistingVisa,
   isValidWorkEligibility,
   WORK_ELIGIBILITY_OPTIONS,
 } from "@/lib/recruitment/work-eligibility";
@@ -76,16 +81,17 @@ const formSchema = z
     currentTitle: z.string().trim().min(1, "Current title is required").max(200),
     yearsOfExperience: z.number().min(0),
     noticePeriod: z.string().min(1, "Notice period is required"),
-    workEligibility: z.string().refine(isValidWorkEligibility, "Select your work visa status"),
-    visaStatus: z.string().optional(),
+    workEligibility: z.string().refine(isValidWorkEligibility, "Select your work authorisation"),
     currentSalary: z
       .string()
       .trim()
-      .refine(
-        isValidCurrentSalaryOmr,
-        "Enter your current monthly salary in OMR (0 if not earning)",
-      ),
-    salaryExpectation: z.string().trim().min(1, "Monthly salary expectation is required").max(200),
+      .refine(isValidMonthlySalaryAmount, "Enter your current monthly salary (0 if not earning)"),
+    currentSalaryCurrency: z.string(),
+    salaryExpectation: z
+      .string()
+      .trim()
+      .refine(isValidMonthlySalaryExpectation, "Enter an expected monthly amount or range"),
+    salaryExpectationCurrency: z.string().refine(isSupportedSalaryCurrency, "Select a currency"),
     coverNote: z.string().optional(),
     screeningAnswers: z.array(
       z.object({
@@ -96,14 +102,11 @@ const formSchema = z
     consent: z.boolean().refine((value) => value, "You must agree to the privacy policy"),
   })
   .superRefine((values, context) => {
-    if (
-      values.workEligibility === "Valid Oman work visa" &&
-      !isValidExistingVisa(values.visaStatus)
-    ) {
+    if (values.currentSalary !== "0" && !isSupportedSalaryCurrency(values.currentSalaryCurrency)) {
       context.addIssue({
         code: "custom",
-        path: ["visaStatus"],
-        message: "Select your current Oman work visa type",
+        path: ["currentSalaryCurrency"],
+        message: "Select your current salary currency",
       });
     }
   });
@@ -160,9 +163,10 @@ function JobDetail() {
       yearsOfExperience: 0,
       noticePeriod: "",
       workEligibility: "",
-      visaStatus: "",
       currentSalary: "",
+      currentSalaryCurrency: "",
       salaryExpectation: "",
+      salaryExpectationCurrency: "",
       coverNote: "",
       screeningAnswers: [],
       // Consent must be an affirmative, unprompted action - defaulting it to checked defeats the
@@ -272,12 +276,14 @@ function JobDetail() {
             yearsOfExperience: values.yearsOfExperience,
             noticePeriod: values.noticePeriod,
             workEligibility: values.workEligibility,
-            visaStatus:
-              values.workEligibility === "Valid Oman work visa"
-                ? values.visaStatus || undefined
-                : undefined,
-            currentSalary: values.currentSalary,
-            salaryExpectation: values.salaryExpectation,
+            currentSalary:
+              values.currentSalary === "0"
+                ? "0"
+                : salaryWithCurrency(values.currentSalary, values.currentSalaryCurrency),
+            salaryExpectation: salaryExpectationWithCurrency(
+              values.salaryExpectation,
+              values.salaryExpectationCurrency,
+            ),
             coverNote: values.coverNote || undefined,
             screeningAnswers: values.screeningAnswers,
             consent: values.consent,
@@ -592,18 +598,15 @@ function JobDetail() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>
-                        Work Visa Status <span className="text-destructive">*</span>
+                        Are you authorised to work in the country where this job is based?{" "}
+                        <span className="text-destructive">*</span>
                       </FormLabel>
                       <FormControl>
                         <select
                           {...field}
                           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          onChange={(event) => {
-                            field.onChange(event);
-                            form.setValue("visaStatus", "");
-                          }}
                         >
-                          <option value="">Select your visa situation</option>
+                          <option value="">Select your work-authorisation status</option>
                           {WORK_ELIGIBILITY_OPTIONS.map((option) => (
                             <option key={option} value={option}>
                               {option}
@@ -615,33 +618,6 @@ function JobDetail() {
                     </FormItem>
                   )}
                 />
-                {form.watch("workEligibility") === "Valid Oman work visa" && (
-                  <FormField
-                    control={form.control}
-                    name="visaStatus"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>
-                          Visa Type <span className="text-destructive">*</span>
-                        </FormLabel>
-                        <FormControl>
-                          <select
-                            {...field}
-                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          >
-                            <option value="">Select visa type</option>
-                            {EXISTING_VISA_OPTIONS.map((option) => (
-                              <option key={option} value={option}>
-                                {option}
-                              </option>
-                            ))}
-                          </select>
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )}
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <FormField
@@ -650,12 +626,31 @@ function JobDetail() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>
-                          Current Salary (Monthly, OMR) <span className="text-destructive">*</span>
+                          Current Salary (Monthly) <span className="text-destructive">*</span>
                         </FormLabel>
                         <FormControl>
                           <Input {...field} inputMode="decimal" placeholder="e.g. 1500" />
                         </FormControl>
                         <FormDescription>Enter 0 if you are not currently earning.</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="currentSalaryCurrency"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Current salary currency (if earning)</FormLabel>
+                        <FormControl>
+                          <SearchableSelect
+                            options={SALARY_CURRENCY_OPTIONS}
+                            value={field.value}
+                            onValueChange={field.onChange}
+                            placeholder="Select currency"
+                            searchPlaceholder="Search currency name or code"
+                          />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -669,9 +664,32 @@ function JobDetail() {
                           Expected Salary (Monthly) <span className="text-destructive">*</span>
                         </FormLabel>
                         <FormControl>
-                          <Input {...field} maxLength={200} placeholder="e.g. OMR 1,800-2,000" />
+                          <Input
+                            {...field}
+                            inputMode="decimal"
+                            placeholder="e.g. 1800 or 1800-2000"
+                          />
                         </FormControl>
-                        <FormDescription>Include the currency; a range is fine.</FormDescription>
+                        <FormDescription>Enter a monthly amount or range.</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="salaryExpectationCurrency"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Expected salary currency *</FormLabel>
+                        <FormControl>
+                          <SearchableSelect
+                            options={SALARY_CURRENCY_OPTIONS}
+                            value={field.value}
+                            onValueChange={field.onChange}
+                            placeholder="Select currency"
+                            searchPlaceholder="Search currency name or code"
+                          />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}

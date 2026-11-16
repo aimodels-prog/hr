@@ -1,12 +1,14 @@
 import { createServerFn } from "@tanstack/react-start";
 import * as z from "zod";
 import { ROLE_VALUES } from "../data/types.ts";
-import { timeAwayDate, timeAwayInput, TIME_AWAY_TREATMENTS } from "../data/time-away.ts";
+import { timeAwayDate, timeAwayInput } from "../data/time-away.ts";
 import { resolveOrganisationIdForActor, verifyServerActorRole } from "../db/utils.server.ts";
 import {
   listTimeAway,
   recordTimeAway,
   decideTimeAway,
+  listTimeAwayMonth,
+  listOwnApprovedTimeAwayMonth,
 } from "../db/repositories/time-away.repository.server.ts";
 const Actor = z.object({
   actorId: z.string().min(1),
@@ -26,6 +28,28 @@ export const listTimeAwayFn = createServerFn({ method: "GET" })
     const v = await verify(data.actor);
     return listTimeAway(v.org, data.date, v.actor);
   });
+export const listTimeAwayMonthFn = createServerFn({ method: "GET" })
+  .validator((input) =>
+    z
+      .object({ actor: Actor, month: z.string().regex(/^\d{4}-\d{2}$/) })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    return listTimeAwayMonth(v.org, data.month, v.actor);
+  });
+export const listOwnApprovedTimeAwayMonthFn = createServerFn({ method: "GET" })
+  .validator((input) =>
+    z
+      .object({ actor: Actor, month: z.string().regex(/^\d{4}-\d{2}$/) })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const v = await verify(data.actor);
+    return listOwnApprovedTimeAwayMonth(v.org, data.month, v.actor);
+  });
 export const recordTimeAwayFn = createServerFn({ method: "POST" })
   .validator((input) => z.object({ actor: Actor, record: timeAwayInput }).strict().parse(input))
   .handler(async ({ data }) => {
@@ -40,7 +64,6 @@ export const decideTimeAwayFn = createServerFn({ method: "POST" })
         id: z.string().uuid(),
         version: z.number().int().positive(),
         action: z.enum(["Approve", "Reject", "Cancel"]),
-        treatment: z.enum(TIME_AWAY_TREATMENTS).optional(),
         note: z.string().trim().max(500).default(""),
       })
       .strict()

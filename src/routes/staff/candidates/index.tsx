@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 
 import { CandidateKanban } from "@/components/candidates/candidate-kanban";
+import { CandidateRemarkInline } from "@/components/recruitment/candidate-remark-dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 import {
@@ -720,6 +721,11 @@ function CandidatesIndex() {
             userById={userById}
             onStageChange={handleStageChange}
             onArchive={(c) => setArchiveTarget({ id: c.id, name: `${c.firstName} ${c.lastName}` })}
+            canEditRemarks={currentUser.can("recruitment:manage_candidates")}
+            onRemarkSaved={async () => {
+              await candidateService.hydrateCompatibilityCache(currentUser.getActorContext());
+              setRefreshKey((key) => key + 1);
+            }}
           />
         ) : (
           <>
@@ -768,6 +774,20 @@ function CandidatesIndex() {
                     {candidate.doNotContact && (
                       <p className="text-xs font-medium text-destructive">Do not contact</p>
                     )}
+                    <CandidateRemarkInline
+                      candidate={{
+                        id: candidate.id,
+                        name: `${candidate.firstName} ${candidate.lastName}`,
+                        remarks: candidate.remarks,
+                      }}
+                      canEdit={currentUser.can("recruitment:manage_candidates")}
+                      onSaved={async () => {
+                        await candidateService.hydrateCompatibilityCache(
+                          currentUser.getActorContext(),
+                        );
+                        setRefreshKey((key) => key + 1);
+                      }}
+                    />
                     <div className="flex items-center justify-between gap-2 border-t pt-3">
                       <Button asChild size="sm">
                         <Link
@@ -866,6 +886,22 @@ function CandidatesIndex() {
                                 </div>
                                 <div className="text-xs text-muted-foreground">
                                   {candidate.currentTitle || "No title provided"}
+                                </div>
+                                <div className="max-w-[280px]">
+                                  <CandidateRemarkInline
+                                    candidate={{
+                                      id: candidate.id,
+                                      name: `${candidate.firstName} ${candidate.lastName}`,
+                                      remarks: candidate.remarks,
+                                    }}
+                                    canEdit={currentUser.can("recruitment:manage_candidates")}
+                                    onSaved={async () => {
+                                      await candidateService.hydrateCompatibilityCache(
+                                        currentUser.getActorContext(),
+                                      );
+                                      setRefreshKey((key) => key + 1);
+                                    }}
+                                  />
                                 </div>
                               </div>
                             </div>

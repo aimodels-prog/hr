@@ -1,9 +1,10 @@
 import "@tanstack/react-start/server-only";
-import { and, eq, isNull, or, sql, desc, inArray } from "drizzle-orm";
+import { and, eq, isNull, or, sql, desc, asc, inArray } from "drizzle-orm";
 import { getDatabaseClient } from "../client.ts";
 import { timeAway } from "../schema/time-away.ts";
 import { employees, users, userRoles, roles } from "../schema/employee.ts";
 import { auditEvents, notifications } from "../schema/system.ts";
+import { appSettings } from "../schema/organisation.ts";
 import { hrIndependentReviewAssignments } from "../schema/hr-independent-review.ts";
 import {
   actorIsIndependentHrReviewer,
@@ -11,12 +12,8 @@ import {
   assignedIndependentHrReviewer,
   independentReviewerForHrEmployee,
 } from "./independent-hr-review.repository.server.ts";
-import {
-  canRecordTimeAway,
-  timeAwayDate,
-  timeAwayInput,
-  TIME_AWAY_TREATMENTS,
-} from "../../data/time-away.ts";
+import { canRecordTimeAway, timeAwayDate, timeAwayInput } from "../../data/time-away.ts";
+import { isAttendanceTracked, readAttendanceTracking } from "../../data/attendance-tracking.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
 
 const hr = (actor: AuditActorContext) => actor.activeRole === "HR";
@@ -81,6 +78,32 @@ export async function listTimeAway(org: string, date: string, actor: AuditActorC
       ),
     )
     .orderBy(desc(timeAway.createdAt));
+  const [settings] = await db
+    .select({ additional: appSettings.additionalSettings })
+    .from(appSettings)
+    .where(eq(appSettings.organisationId, org))
+    .limit(1);
+  const returns = rows.length
+    ? await db
+        .select({ entityId: auditEvents.entityId, occurredAt: auditEvents.occurredAt })
+        .from(auditEvents)
+        .where(
+          and(
+            eq(auditEvents.organisationId, org),
+            eq(auditEvents.entityType, "time-away"),
+            eq(auditEvents.action, "time-away-return"),
+            inArray(
+              auditEvents.entityId,
+              rows.map(({ record }) => record.id),
+            ),
+          ),
+        )
+        .orderBy(asc(auditEvents.occurredAt))
+    : [];
+  const returnedAtById = new Map<string, string>();
+  for (const item of returns)
+    if (!returnedAtById.has(item.entityId)) returnedAtById.set(item.entityId, item.occurredAt);
+  const tracking = readAttendanceTracking(settings?.additional);
   return {
     people,
     rows: rows.map(({ record, name, independentReviewerEmployeeId, independentReviewerName }) => ({
@@ -88,6 +111,8 @@ export async function listTimeAway(org: string, date: string, actor: AuditActorC
       name,
       independentReviewerEmployeeId,
       independentReviewerName,
+      returnedAt: returnedAtById.get(record.id) ?? null,
+      canConfirmOfficeReturn: isAttendanceTracked(tracking, record.employeeId, record.date),
     })),
     selfId: actor.employeeId ?? null,
     canReview:
@@ -98,6 +123,67 @@ export async function listTimeAway(org: string, date: string, actor: AuditActorC
           actor.activeRole !== "Super Admin",
       ),
   };
+}
+
+/** Read-only attendance overlay; approval permissions remain in decideTimeAway. */
+export async function listTimeAwayMonth(org: string, month: string, actor: AuditActorContext) {
+  if (!/^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])$/.test(month)) throw new Error("Choose a valid month.");
+  if (!["HR", "Super Admin"].includes(actor.activeRole))
+    throw new Error("Only HR can view organisation time-away totals.");
+  const start = `${month}-01`;
+  const next = new Date(`${start}T12:00:00Z`);
+  next.setUTCMonth(next.getUTCMonth() + 1);
+  const end = next.toISOString().slice(0, 10);
+  return getDatabaseClient()
+    .select({
+      id: timeAway.id,
+      employeeId: timeAway.employeeId,
+      date: timeAway.date,
+      startTime: timeAway.startTime,
+      endTime: timeAway.endTime,
+      category: timeAway.category,
+      treatment: timeAway.treatment,
+    })
+    .from(timeAway)
+    .where(
+      and(
+        eq(timeAway.organisationId, org),
+        sql`${timeAway.date} >= ${start}::date AND ${timeAway.date} < ${end}::date`,
+        eq(timeAway.status, "Approved"),
+        isNull(timeAway.archivedAt),
+      ),
+    );
+}
+/** Staff can see their own approved day treatment without gaining HR review access. */
+export async function listOwnApprovedTimeAwayMonth(
+  org: string,
+  month: string,
+  actor: AuditActorContext,
+) {
+  if (!/^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])$/.test(month)) throw new Error("Choose a valid month.");
+  if (!actor.employeeId) throw new Error("An employee profile is required.");
+  const start = `${month}-01`;
+  const next = new Date(`${start}T12:00:00Z`);
+  next.setUTCMonth(next.getUTCMonth() + 1);
+  const end = next.toISOString().slice(0, 10);
+  return getDatabaseClient()
+    .select({
+      id: timeAway.id,
+      date: timeAway.date,
+      startTime: timeAway.startTime,
+      endTime: timeAway.endTime,
+      treatment: timeAway.treatment,
+    })
+    .from(timeAway)
+    .where(
+      and(
+        eq(timeAway.organisationId, org),
+        eq(timeAway.employeeId, actor.employeeId),
+        sql`${timeAway.date} >= ${start}::date AND ${timeAway.date} < ${end}::date`,
+        eq(timeAway.status, "Approved"),
+        isNull(timeAway.archivedAt),
+      ),
+    );
 }
 export async function recordTimeAway(org: string, raw: unknown, actor: AuditActorContext) {
   const input = timeAwayInput.parse(raw);
@@ -258,7 +344,6 @@ export async function decideTimeAway(
     id: string;
     version: number;
     action: "Approve" | "Reject" | "Cancel";
-    treatment?: (typeof TIME_AWAY_TREATMENTS)[number] | undefined;
     note: string;
   },
   actor: AuditActorContext,
@@ -312,11 +397,6 @@ export async function decideTimeAway(
       }
       if (record.employeeId === actor.employeeId || record.createdBy === actor.userId)
         throw new Error("Another HR reviewer must review your own record.");
-      if (
-        input.action === "Approve" &&
-        (!input.treatment || !TIME_AWAY_TREATMENTS.includes(input.treatment))
-      )
-        throw new Error("Choose paid time, unpaid time or leave.");
       if (input.action === "Reject" && !input.note.trim())
         throw new Error("Tell the employee what needs correcting.");
     }
@@ -330,7 +410,7 @@ export async function decideTimeAway(
       .update(timeAway)
       .set({
         status,
-        treatment: input.action === "Approve" ? input.treatment! : null,
+        treatment: input.action === "Approve" ? "Paid time" : null,
         reviewNote: input.note,
         reviewedBy: actor.userId!,
         updatedBy: actor.userId!,
@@ -365,7 +445,7 @@ export async function decideTimeAway(
           recipientUserId: person.id,
           type: "time_away.decision",
           title: `Time away ${status.toLowerCase()}`,
-          message: `${record.date}, ${record.startTime}–${record.endTime}: ${status}${input.action === "Approve" ? ` as ${input.treatment}` : ""} by ${actor.displayName}. Open the record for details. No pay or leave deduction has been made automatically.`,
+          message: `${record.date}, ${record.startTime}–${record.endTime}: ${status} by ${actor.displayName}.${input.action === "Approve" ? " Approved time away counts toward paid daily hours and appears separately in attendance and the monthly timesheet." : ""} Open the record for details.`,
           link: {
             entityType: "time-away",
             entityId: record.id,

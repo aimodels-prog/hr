@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { LocationFields } from "@/components/recruitment/location-fields";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -32,7 +33,14 @@ import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { CandidateService } from "@/lib/data/candidate-service";
 import { CandidatePoolService } from "@/lib/data/candidate-pool-service";
 import { VacancyService } from "@/lib/data/vacancy-service";
-import { isValidCurrentSalaryOmr } from "@/lib/recruitment/current-salary";
+import {
+  isSupportedSalaryCurrency,
+  isValidMonthlySalaryAmount,
+  isValidMonthlySalaryExpectation,
+  salaryExpectationWithCurrency,
+  salaryWithCurrency,
+  SALARY_CURRENCY_OPTIONS,
+} from "@/lib/recruitment/salary-currency";
 import { locationCountryCode } from "@/lib/recruitment/countries";
 import type { Candidate, CandidateCvRecord } from "@/lib/data/types";
 import { toast } from "sonner";
@@ -72,8 +80,13 @@ const formSchema = z
     currentSalary: z
       .string()
       .trim()
-      .refine(isValidCurrentSalaryOmr, "Enter current monthly salary in OMR (0 if not earning)"),
-    expectedSalary: z.string().trim().min(1, "Enter expected monthly salary").max(200),
+      .refine(isValidMonthlySalaryAmount, "Enter current monthly salary (0 if not earning)"),
+    currentSalaryCurrency: z.string(),
+    expectedSalary: z
+      .string()
+      .trim()
+      .refine(isValidMonthlySalaryExpectation, "Enter expected monthly amount or range"),
+    expectedSalaryCurrency: z.string().refine(isSupportedSalaryCurrency, "Select a currency"),
     yearsOfExperience: z.number().min(0, "Must be zero or more"),
     recommenderType: z.enum([
       "Agency",
@@ -93,9 +106,19 @@ const formSchema = z
     commercialTerms: z.string().optional(),
     vacancyId: z.string().min(1, "Select the vacancy"),
   })
-  .refine((values) => values.recommenderEmail.trim() || values.recommenderPhone?.trim(), {
-    path: ["recommenderPhone"],
-    message: "Enter the recommender's email or phone number",
+  .superRefine((values, context) => {
+    if (values.currentSalary !== "0" && !isSupportedSalaryCurrency(values.currentSalaryCurrency))
+      context.addIssue({
+        code: "custom",
+        path: ["currentSalaryCurrency"],
+        message: "Select a currency",
+      });
+    if (!values.recommenderEmail.trim() && !values.recommenderPhone?.trim())
+      context.addIssue({
+        code: "custom",
+        path: ["recommenderPhone"],
+        message: "Enter the recommender's email or phone number",
+      });
   });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -140,7 +163,9 @@ function RecommendCandidate() {
       currentCompany: linkedIntake?.extractedFields.currentCompany || "",
       currentTitle: linkedIntake?.extractedFields.currentTitle || "",
       currentSalary: "",
+      currentSalaryCurrency: "",
       expectedSalary: "",
+      expectedSalaryCurrency: "",
       yearsOfExperience: linkedIntake?.extractedFields.yearsOfExperience || 0,
       recommenderType: "Employee Referral",
       recommenderName: "",
@@ -213,8 +238,14 @@ function RecommendCandidate() {
             location: values.location,
             ...(values.currentCompany ? { currentCompany: values.currentCompany } : {}),
             ...(values.currentTitle ? { currentTitle: values.currentTitle } : {}),
-            currentSalary: values.currentSalary,
-            expectedSalary: values.expectedSalary,
+            currentSalary:
+              values.currentSalary === "0"
+                ? "0"
+                : salaryWithCurrency(values.currentSalary, values.currentSalaryCurrency),
+            expectedSalary: salaryExpectationWithCurrency(
+              values.expectedSalary,
+              values.expectedSalaryCurrency,
+            ),
             yearsOfExperience: values.yearsOfExperience,
             ...(intake.extractedFields.skills ? { skills: intake.extractedFields.skills } : {}),
             ...(intake.extractedFields.education
@@ -539,7 +570,7 @@ function RecommendCandidate() {
                 name="currentSalary"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Current Salary (Monthly, OMR) *</FormLabel>
+                    <FormLabel>Current Salary (Monthly) *</FormLabel>
                     <FormControl>
                       <Input
                         {...field}
@@ -553,12 +584,50 @@ function RecommendCandidate() {
               />
               <FormField
                 control={form.control}
+                name="currentSalaryCurrency"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Current salary currency (if earning)</FormLabel>
+                    <FormControl>
+                      <SearchableSelect
+                        options={SALARY_CURRENCY_OPTIONS}
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        placeholder="Select currency"
+                        searchPlaceholder="Search currency name or code"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
                 name="expectedSalary"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Expected Salary (Monthly) *</FormLabel>
                     <FormControl>
-                      <Input {...field} placeholder="e.g. OMR 1800-2000" />
+                      <Input {...field} inputMode="decimal" placeholder="e.g. 1800 or 1800-2000" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="expectedSalaryCurrency"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Expected salary currency *</FormLabel>
+                    <FormControl>
+                      <SearchableSelect
+                        options={SALARY_CURRENCY_OPTIONS}
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        placeholder="Select currency"
+                        searchPlaceholder="Search currency name or code"
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

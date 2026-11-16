@@ -85,6 +85,14 @@ function Dashboard() {
     activeRole === "HR"
       ? [
           {
+            title: "Upload staff document",
+            description: "Find a person and add their file",
+            to: "/staff",
+            hash: "upload-document",
+            icon: Upload,
+            tone: "bg-warning/10 text-warning",
+          },
+          {
             title: "Add job",
             description: "Start a hiring request",
             to: "/staff/vacancies/new",
@@ -359,25 +367,36 @@ function Dashboard() {
                 ? "Check your hours, requests and next steps."
                 : "See what needs your attention and continue your work."}
           </p>
-          <Link
-            to={
-              activeRole === "HR"
-                ? "/staff/requests?view=approvals"
-                : (roleQuickActions[0]?.to ?? "/staff/requests?view=my")
-            }
-            className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-[#0b5796] shadow-sm transition-colors hover:bg-[#eaf5ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-          >
-            {activeRole === "HR"
-              ? "Review approvals"
-              : (roleQuickActions[0]?.title ?? "My requests")}
-            <ArrowRight className="size-4" aria-hidden="true" />
-          </Link>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Link
+              to={
+                activeRole === "HR"
+                  ? "/staff/requests?view=approvals"
+                  : (roleQuickActions[0]?.to ?? "/staff/requests?view=my")
+              }
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-[#0b5796] shadow-sm transition-colors hover:bg-[#eaf5ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            >
+              {activeRole === "HR"
+                ? "Review approvals"
+                : (roleQuickActions[0]?.title ?? "My requests")}
+              <ArrowRight className="size-4" aria-hidden="true" />
+            </Link>
+            {activeRole === "HR" && (
+              <Link
+                to="/staff"
+                hash="upload-document"
+                className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-white/40 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              >
+                <Upload className="size-4" aria-hidden="true" /> Upload staff document
+              </Link>
+            )}
+          </div>
         </div>
       </section>
 
+      <DashboardActionQueue />
       <RequestTrackerSummary />
       {quickAccess}
-      <DashboardActionQueue />
       {["Employee", "IT", "Travel Admin"].includes(activeRole) && currentEmployee && (
         <EmployeeDashboard employee={currentEmployee} userId={currentUserId} />
       )}

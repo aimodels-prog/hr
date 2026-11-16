@@ -9,6 +9,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { getBrowserOfficeLocation } from "@/lib/data/browser-office-location";
+import { SettingsService } from "@/lib/data/settings-service";
+import { siteVisitLocalNow } from "@/lib/data/site-visit";
+import { captureAttendancePunchFn } from "@/lib/server-functions/attendance.server";
 import {
   Dialog,
   DialogContent,
@@ -21,12 +25,7 @@ import {
   recordTimeAwayFn,
   decideTimeAwayFn,
 } from "@/lib/server-functions/time-away.server";
-import {
-  TIME_AWAY_CATEGORIES,
-  TIME_AWAY_TREATMENTS,
-  timeAwayDate,
-  timeAwayMinutes,
-} from "@/lib/data/time-away";
+import { TIME_AWAY_CATEGORIES, timeAwayDate, timeAwayMinutes } from "@/lib/data/time-away";
 
 export const Route = createFileRoute("/staff/time-away")({
   validateSearch: (search: Record<string, unknown>): { date?: string; review?: string } => {
@@ -58,6 +57,8 @@ function TimeAwayPage({
   initialReviewId: string | undefined;
 }) {
   const user = useCurrentUser();
+  const timeZone = new SettingsService().getAppSettingsSync().timezone;
+  const [officeNow, setOfficeNow] = useState(() => siteVisitLocalNow(timeZone));
   const actor = {
     actorId: user.id,
     ...(user.workspaceEmail ? { actorEmail: user.workspaceEmail } : {}),
@@ -74,9 +75,13 @@ function TimeAwayPage({
   const [review, setReview] = useState<Row | null>(null);
   const openedReview = useRef(false);
   const [action, setAction] = useState<"Approve" | "Reject" | "Cancel">("Approve");
-  const [treatment, setTreatment] = useState<(typeof TIME_AWAY_TREATMENTS)[number]>("Paid time");
   const [reviewNote, setReviewNote] = useState("");
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setOfficeNow(siteVisitLocalNow(timeZone));
+    const timer = window.setInterval(() => setOfficeNow(siteVisitLocalNow(timeZone)), 60_000);
+    return () => window.clearInterval(timer);
+  }, [timeZone]);
   const query = useQuery({
     queryKey: ["time-away", user.id, user.activeRole, date],
     queryFn: () => listTimeAwayFn({ data: { actor, date } }),
@@ -110,7 +115,6 @@ function TimeAwayPage({
     openedReview.current = true;
     setReview(row);
     setAction("Approve");
-    setTreatment("Paid time");
     setReviewNote("");
   }, [initialReviewId, query.data, canReviewRow]);
   const run = async (task: () => Promise<void>) => {
@@ -175,8 +179,10 @@ function TimeAwayPage({
           How time away affects your record
         </summary>
         <p className="mt-2">
-          Clock-in and clock-out stay unchanged. Time away is recorded separately. Pay and leave
-          balances are not automatically deducted.
+          Approved time away counts toward paid daily hours and appears separately in attendance. If
+          you start from home, your first office clock-in confirms arrival. Otherwise, choose Back
+          at office when you return. Clock out when you finish the day. Leave balances are not
+          deducted.
         </p>
       </details>
       {query.isPending && <p role="status">Loading time away…</p>}
@@ -204,8 +210,51 @@ function TimeAwayPage({
             {row.startTime}–{row.endTime} · {timeAwayMinutes(row.startTime, row.endTime)} minutes
             away · {row.category}
           </p>
+          {row.returnedAt && (
+            <p className="text-sm font-medium text-emerald-700">
+              Back at office confirmed at{" "}
+              {new Intl.DateTimeFormat("en-GB", {
+                timeZone,
+                hour: "2-digit",
+                minute: "2-digit",
+                hourCycle: "h23",
+              }).format(new Date(row.returnedAt))}
+            </p>
+          )}
+          {row.employeeId === query.data.selfId &&
+            row.canConfirmOfficeReturn &&
+            !row.returnedAt &&
+            ["Pending HR", "Approved"].includes(row.status) &&
+            row.date === officeNow.date &&
+            officeNow.time > row.startTime && (
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() =>
+                  void run(async () => {
+                    const reading = await getBrowserOfficeLocation();
+                    await captureAttendancePunchFn({
+                      data: {
+                        actor,
+                        employeeId: row.employeeId,
+                        direction: "in",
+                        returnFromTimeAwayId: row.id,
+                        latitude: reading.latitude,
+                        longitude: reading.longitude,
+                        accuracyMeters: reading.accuracyMeters,
+                      },
+                    });
+                    toast.success("Return recorded. Clock out normally when you finish today.");
+                  })
+                }
+              >
+                Back at office
+              </Button>
+            )}
           {row.note && <p className="text-sm">{row.note}</p>}
-          {row.treatment && <p className="text-sm font-medium">HR decision: {row.treatment}</p>}
+          {row.treatment && row.treatment !== "Paid time" && (
+            <p className="text-sm font-medium">Earlier decision: {row.treatment}</p>
+          )}
           {row.reviewNote && <p className="text-sm">HR note: {row.reviewNote}</p>}
           {row.status === "Pending HR" && (
             <div className="flex flex-wrap gap-2">
@@ -214,7 +263,6 @@ function TimeAwayPage({
                   onClick={() => {
                     setReview(row);
                     setAction("Approve");
-                    setTreatment("Paid time");
                     setReviewNote("");
                   }}
                 >
@@ -349,8 +397,10 @@ function TimeAwayPage({
               {action === "Cancel" ? "Cancel this record?" : "Review time away"}
             </DialogTitle>
             <DialogDescription>
-              {review?.name}: {review?.startTime}–{review?.endTime}. No automatic salary or leave
-              deduction.
+              {review?.name}: {review?.startTime}–{review?.endTime}.
+              {action === "Cancel"
+                ? " This pending record will be cancelled."
+                : " Approved time counts toward paid daily hours; leave balance is unchanged."}
             </DialogDescription>
           </DialogHeader>
           {action !== "Cancel" && (
@@ -365,27 +415,6 @@ function TimeAwayPage({
                 <option value="Approve">Approve</option>
                 <option value="Reject">Reject — needs correction</option>
               </select>
-              {action === "Approve" && (
-                <>
-                  <Label htmlFor="away-treatment">Treat as</Label>
-                  <select
-                    id="away-treatment"
-                    className="h-11 rounded-md border bg-background px-3"
-                    value={treatment}
-                    onChange={(e) => setTreatment(e.target.value as typeof treatment)}
-                  >
-                    {TIME_AWAY_TREATMENTS.map((item) => (
-                      <option key={item}>{item}</option>
-                    ))}
-                  </select>
-                  {treatment !== "Paid time" && (
-                    <p className="text-sm text-muted-foreground">
-                      This records HR's decision. Complete any leave request or payroll adjustment
-                      through the normal approval process.
-                    </p>
-                  )}
-                </>
-              )}
               <Label htmlFor="away-review-note">
                 {action === "Reject" ? "What needs correcting?" : "Note (optional)"}
               </Label>
@@ -408,7 +437,6 @@ function TimeAwayPage({
                     id: review.id,
                     version: review.recordVersion,
                     action,
-                    ...(action === "Approve" ? { treatment } : {}),
                     note: reviewNote,
                   },
                 });

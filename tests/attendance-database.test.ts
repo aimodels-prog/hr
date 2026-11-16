@@ -14,6 +14,7 @@ import {
   missingClockoutCandidates,
 } from "../src/lib/db/repositories/missing-clockout.repository.server.ts";
 import { getWorkforceAnalytics } from "../src/lib/db/repositories/workforce-analytics.repository.server.ts";
+import { listTimeAway } from "../src/lib/db/repositories/time-away.repository.server.ts";
 
 import {
   captureAttendancePunchInDatabase,
@@ -924,6 +925,134 @@ test(
         WHERE attendance_record_id = ${returnRecordId} AND direction = 'in' AND network_verified = true
       `;
       assert.equal(returnEvidence.count, 1);
+
+      const awayRecordId = randomUUID();
+      const awayId = randomUUID();
+      await sql`
+        INSERT INTO attendance_records (id, organisation_id, employee_id, date, clock_in_at, clock_out_at,
+          source, status, created_by, updated_by)
+        VALUES (${awayRecordId}, ${organisationId}, ${homeEmployeeId}, ${today},
+          ${`${today}T00:00:00.000Z`}, ${`${today}T00:00:01.000Z`},
+          'Web', 'Present', ${homeUserId}, ${homeUserId})
+      `;
+      await sql`
+        INSERT INTO time_away (id, organisation_id, employee_id, date, start_time, end_time,
+          category, status, treatment, reviewed_by, created_by, updated_by)
+        VALUES (${awayId}, ${organisationId}, ${homeEmployeeId}, ${today}, '00:00', '23:59',
+          'Personal matter', 'Approved', 'Paid time', ${hrUserId}, ${homeUserId}, ${homeUserId})
+      `;
+      const awayActor = actor(homeUserId, homeEmployeeId, "Home Visit Employee", "Employee");
+      const awayReturn = {
+        employeeId: homeEmployeeId,
+        direction: "in" as const,
+        returnFromTimeAwayId: awayId,
+        latitude: 25.2048,
+        longitude: 55.2708,
+        accuracyMeters: 5,
+        clientIp: "10.20.1.5",
+      };
+      await assert.rejects(
+        captureAttendancePunchInDatabase(
+          organisationId,
+          { ...awayReturn, employeeId: officeEmployeeId },
+          awayActor,
+        ),
+        /only record your own attendance/,
+      );
+      assert.equal(
+        await captureAttendancePunchInDatabase(organisationId, awayReturn, awayActor),
+        awayRecordId,
+      );
+      const [awayOpen] = await sql`
+        SELECT clock_in_at, clock_out_at FROM attendance_records WHERE id=${awayRecordId}
+      `;
+      assert.equal(new Date(awayOpen.clock_in_at).toISOString(), `${today}T00:00:00.000Z`);
+      assert.equal(awayOpen.clock_out_at, null, "Return must not finish attendance");
+      await assert.rejects(
+        captureAttendancePunchInDatabase(organisationId, awayReturn, awayActor),
+        /already recorded/,
+      );
+      await captureAttendancePunchInDatabase(
+        organisationId,
+        { ...awayReturn, direction: "out", returnFromTimeAwayId: undefined },
+        awayActor,
+      );
+      const [awayClosed] = await sql`
+        SELECT clock_out_at FROM attendance_records WHERE id=${awayRecordId}
+      `;
+      assert.ok(awayClosed.clock_out_at, "Final clock-out still closes the day");
+      const [awayAudit] = await sql`
+        SELECT count(*)::int AS count FROM audit_events
+        WHERE organisation_id=${organisationId} AND entity_id=${awayId}
+          AND entity_type='time-away' AND action='time-away-return'
+      `;
+      assert.equal(awayAudit.count, 1, "Return proof is retained for employee and HR");
+      const ownAway = await listTimeAway(organisationId, today, awayActor);
+      assert.ok(ownAway.rows.find((item) => item.id === awayId)?.returnedAt);
+
+      const fromHomeAwayId = randomUUID();
+      await sql`
+        INSERT INTO time_away (id, organisation_id, employee_id, date, start_time, end_time,
+          category, status, treatment, reviewed_by, created_by, updated_by)
+        VALUES (${fromHomeAwayId}, ${organisationId}, ${reminderEmployeeId}, ${today},
+          '00:00', '23:59', 'Medical appointment', 'Approved', 'Paid time',
+          ${hrUserId}, ${reminderUserId}, ${reminderUserId})
+      `;
+      const fromHomeActor = actor(
+        reminderUserId,
+        reminderEmployeeId,
+        "Reminder Employee",
+        "Employee",
+      );
+      const firstOfficeIn = await captureAttendancePunchInDatabase(
+        organisationId,
+        {
+          employeeId: reminderEmployeeId,
+          direction: "in",
+          returnFromTimeAwayId: fromHomeAwayId,
+          latitude: 25.2048,
+          longitude: 55.2708,
+          accuracyMeters: 5,
+          clientIp: "10.20.1.5",
+        },
+        fromHomeActor,
+      );
+      const [firstArrival] = await sql`
+        SELECT clock_in_at, clock_out_at FROM attendance_records WHERE id=${firstOfficeIn}
+      `;
+      assert.ok(firstArrival.clock_in_at, "First office arrival is the initial clock-in");
+      assert.equal(firstArrival.clock_out_at, null);
+      const [homeReturn] = await sql`
+        SELECT count(*)::int AS count FROM audit_events
+        WHERE entity_id=${fromHomeAwayId} AND action='time-away-return'
+      `;
+      assert.equal(homeReturn.count, 1);
+
+      const normalClockAwayId = randomUUID();
+      await sql`
+        INSERT INTO time_away (id, organisation_id, employee_id, date, start_time, end_time,
+          category, status, treatment, reviewed_by, created_by, updated_by)
+        VALUES (${normalClockAwayId}, ${organisationId}, ${managerEmployeeId}, ${today},
+          '00:00', '23:59', 'Personal matter', 'Approved', 'Paid time',
+          ${hrUserId}, ${managerUserId}, ${managerUserId})
+      `;
+      await captureAttendancePunchInDatabase(
+        organisationId,
+        {
+          employeeId: managerEmployeeId,
+          direction: "in",
+          latitude: 25.2048,
+          longitude: 55.2708,
+          accuracyMeters: 5,
+          clientIp: "10.20.1.5",
+        },
+        actor(managerUserId, managerEmployeeId, "Manager", "Line Manager"),
+      );
+      const [normalClockReturn] = await sql`
+        SELECT count(*)::int AS count FROM audit_events
+        WHERE entity_id=${normalClockAwayId} AND action='time-away-return'
+      `;
+      assert.equal(normalClockReturn.count, 1, "Normal office clock-in also confirms arrival");
 
       const [hrRole] = await sql`SELECT id FROM roles WHERE code='HR' LIMIT 1`;
       if (hrRole)

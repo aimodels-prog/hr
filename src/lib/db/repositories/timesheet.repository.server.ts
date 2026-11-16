@@ -17,6 +17,8 @@ import { employees, roles, userRoles, users } from "../schema/employee.ts";
 import { appSettings, organisations } from "../schema/organisation.ts";
 import { isAttendanceTracked, readAttendanceTracking } from "../../data/attendance-tracking.ts";
 import { recordedWorkingHours } from "../../data/recorded-hours.ts";
+import { attendanceDayCredit } from "../../data/attendance-day-credit.ts";
+import { siteVisitEffectiveEndTime } from "../../data/site-visit.ts";
 import { effectiveDailyWorkHours } from "../../data/timesheet-work-hours.ts";
 import { timesheetDecisionSnapshot } from "../../data/timesheet-decision-snapshot.ts";
 import {
@@ -32,10 +34,14 @@ import {
 } from "../../data/approved-leave.ts";
 import { officeCredits, applyOfficeCredits } from "./office-exception.repository.server.ts";
 import { leaveRequests } from "../schema/leave.ts";
+import { timeAway } from "../schema/time-away.ts";
+import { travelRequests } from "../schema/travel-payroll.ts";
+import type { TravelParticipant } from "../../data/travel-types.ts";
 import { auditEvents, notifications } from "../schema/system.ts";
 import {
   attendanceRecords,
   attendancePolicies,
+  siteVisitRequests,
   timesheetEntries,
   timesheetPeriods,
   timesheetSettings,
@@ -1283,6 +1289,65 @@ async function buildTimesheetReconciliation(
         sql`${attendanceRecords.date} BETWEEN ${period.startDate} AND ${period.endDate}`,
       ),
     )) as Array<typeof attendanceRecords.$inferSelect>;
+  const approvedVisits = (await tx
+    .select({
+      date: siteVisitRequests.date,
+      startTime: siteVisitRequests.startTime,
+      endTime: siteVisitRequests.endTime,
+      details: siteVisitRequests.details,
+    })
+    .from(siteVisitRequests)
+    .where(
+      and(
+        eq(siteVisitRequests.organisationId, organisationId),
+        eq(siteVisitRequests.employeeId, sheet.employeeId),
+        inArray(siteVisitRequests.status, ["Approved", "Completed"]),
+        sql`${siteVisitRequests.date} BETWEEN ${period.startDate} AND ${period.endDate}`,
+        isNull(siteVisitRequests.archivedAt),
+      ),
+    )) as Array<{
+    date: string;
+    startTime: string;
+    endTime: string;
+    details: typeof siteVisitRequests.$inferSelect.details;
+  }>;
+  const approvedAway = (await tx
+    .select({
+      date: timeAway.date,
+      startTime: timeAway.startTime,
+      endTime: timeAway.endTime,
+      treatment: timeAway.treatment,
+    })
+    .from(timeAway)
+    .where(
+      and(
+        eq(timeAway.organisationId, organisationId),
+        eq(timeAway.employeeId, sheet.employeeId),
+        eq(timeAway.status, "Approved"),
+        sql`${timeAway.date} BETWEEN ${period.startDate} AND ${period.endDate}`,
+        isNull(timeAway.archivedAt),
+      ),
+    )) as Array<{ date: string; startTime: string; endTime: string; treatment: string | null }>;
+  const authorisedTravel = await tx
+    .select({
+      employeeId: travelRequests.employeeId,
+      participants: travelRequests.participants,
+      startDate: travelRequests.startDate,
+      endDate: travelRequests.endDate,
+    })
+    .from(travelRequests)
+    .where(
+      and(
+        eq(travelRequests.organisationId, organisationId),
+        inArray(travelRequests.status, ["Pre-authorised", "Pending Super Admin Closure", "Closed"]),
+        sql`${travelRequests.startDate} <= ${period.endDate}::date AND ${travelRequests.endDate} >= ${period.startDate}::date`,
+        isNull(travelRequests.archivedAt),
+      ),
+    );
+  const officialVisitDates = new Set(approvedVisits.map((item) => item.date));
+  const paidAwayDates = new Set(
+    approvedAway.filter((item) => item.treatment === "Paid time").map((item) => item.date),
+  );
   const workByDate = new Map<string, number>();
   for (const entry of entries)
     if (!entry.isLeave && !entry.isHoliday)
@@ -1296,11 +1361,41 @@ async function buildTimesheetReconciliation(
   );
   const explanations = (sheet.attendanceDiscrepancyExplanations ?? {}) as Record<string, string>;
   const [trackingSettings] = await tx
-    .select({ additional: appSettings.additionalSettings, workingDays: appSettings.workingDays })
+    .select({
+      additional: appSettings.additionalSettings,
+      workingDays: appSettings.workingDays,
+      timezone: appSettings.timezone,
+    })
     .from(appSettings)
     .where(eq(appSettings.organisationId, organisationId))
     .limit(1);
+  const [attendancePolicy] = await tx
+    .select({
+      breakStart: attendancePolicies.breakStart,
+      breakMinutes: attendancePolicies.defaultBreakMinutes,
+    })
+    .from(attendancePolicies)
+    .where(eq(attendancePolicies.organisationId, organisationId))
+    .limit(1);
   const tracking = readAttendanceTracking(trackingSettings?.additional);
+  const approvedTravelDates = new Set<string>();
+  const workingDays = trackingSettings?.workingDays ?? [1, 2, 3, 4, 5];
+  for (const trip of authorisedTravel) {
+    if (
+      trip.employeeId !== sheet.employeeId &&
+      !trip.participants.some(
+        (person: TravelParticipant) =>
+          person.employeeId === sheet.employeeId && person.status === "Approved",
+      )
+    )
+      continue;
+    for (const date of dateRange(
+      trip.startDate > period.startDate ? trip.startDate : period.startDate,
+      trip.endDate < period.endDate ? trip.endDate : period.endDate,
+    ))
+      if (workingDays.includes(new Date(`${date}T12:00:00Z`).getUTCDay()))
+        approvedTravelDates.add(date);
+  }
   const absence = await absencesForPeriod(
     tx,
     organisationId,
@@ -1327,6 +1422,9 @@ async function buildTimesheetReconciliation(
       ...leaveByDate.keys(),
       ...holidayByDate.keys(),
       ...remoteWorkDates,
+      ...officialVisitDates,
+      ...paidAwayDates,
+      ...approvedTravelDates,
     ]),
   ]
     .filter((date) => {
@@ -1337,7 +1435,10 @@ async function buildTimesheetReconciliation(
         Boolean(record && (record.clockInAt || record.clockOutAt || record.officeExceptionLabel)) ||
         leaveByDate.has(date) ||
         holidayByDate.has(date) ||
-        remoteWorkDates.has(date)
+        remoteWorkDates.has(date) ||
+        officialVisitDates.has(date) ||
+        paidAwayDates.has(date) ||
+        approvedTravelDates.has(date)
       );
     })
     .sort()
@@ -1346,20 +1447,72 @@ async function buildTimesheetReconciliation(
       const leaveHours = leaveByDate.get(date) ?? 0;
       const holidayHours = holidayByDate.get(date) ?? 0;
       const nonWorking = leaveHours + holidayHours >= standardDay;
+      const approvedDuty =
+        !nonWorking &&
+        (officialVisitDates.has(date) || paidAwayDates.has(date) || approvedTravelDates.has(date));
       const policyCreditLimit =
         leaveHours + holidayHours > 0 || record?.officeExceptionLabel
           ? Math.max(0, standardDay - leaveHours - holidayHours)
           : undefined;
-      const attendanceHours = recordedWorkingHours(record, policyCreditLimit);
+      const recordedHours = recordedWorkingHours(record, policyCreditLimit);
+      const visitsForDay = approvedVisits.filter((item) => item.date === date);
+      const awayForDay = approvedAway.filter((item) => item.date === date);
+      const dutyCredit = attendanceDayCredit({
+        actualWorkHours: recordedHours,
+        standardDailyHours: Math.max(0, standardDay - leaveHours - holidayHours),
+        clockIn: record?.clockInAt
+          ? new Intl.DateTimeFormat("en-GB", {
+              timeZone: trackingSettings?.timezone ?? "UTC",
+              hour: "2-digit",
+              minute: "2-digit",
+              hourCycle: "h23",
+            }).format(new Date(record.clockInAt))
+          : null,
+        clockOut: record?.clockOutAt
+          ? new Intl.DateTimeFormat("en-GB", {
+              timeZone: trackingSettings?.timezone ?? "UTC",
+              hour: "2-digit",
+              minute: "2-digit",
+              hourCycle: "h23",
+            }).format(new Date(record.clockOutAt))
+          : null,
+        breakStart: attendancePolicy?.breakStart,
+        breakMinutes: record?.breakMinutes ?? attendancePolicy?.breakMinutes ?? 0,
+        approvedIntervals: nonWorking
+          ? []
+          : [
+              ...visitsForDay.map((item) => ({
+                startTime: item.startTime,
+                endTime: siteVisitEffectiveEndTime({
+                  date: item.date,
+                  startTime: item.startTime,
+                  endTime: item.endTime,
+                  details: item.details,
+                  timeZone: trackingSettings?.timezone ?? "UTC",
+                }),
+              })),
+              ...awayForDay
+                .filter((item) => item.treatment === "Paid time")
+                .map((item) => ({ startTime: item.startTime, endTime: item.endTime })),
+            ],
+        unpaidIntervals: awayForDay
+          .filter((item) => item.treatment !== "Paid time")
+          .map((item) => ({ startTime: item.startTime, endTime: item.endTime })),
+        approvedRemoteWork: approvedTravelDates.has(date),
+      });
+      const attendanceHours = dutyCredit.creditedHours;
       const manualHours = workByDate.get(date) ?? 0;
       const completeAttendance = Boolean(
         record?.officeExceptionLabel || (record?.clockInAt && record?.clockOutAt),
       );
-      const timesheetWorkHours = effectiveDailyWorkHours(
-        manualHours,
+      const timesheetWorkHours = Math.max(
+        effectiveDailyWorkHours(
+          manualHours,
+          dutyCredit.officeWorkHours,
+          completeAttendance,
+          nonWorking,
+        ),
         attendanceHours,
-        completeAttendance,
-        nonWorking,
       );
       const varianceHours =
         manualHours > 0 && completeAttendance
@@ -1368,17 +1521,21 @@ async function buildTimesheetReconciliation(
       const extraPresenceWithFullAllocation =
         !leaveHours && !holidayHours && manualHours >= standardDay && attendanceHours > manualHours;
       const projectVariance =
-        Math.abs(varianceHours) > toleranceHours && !extraPresenceWithFullAllocation;
-      const incomplete = Boolean(
-        record &&
-        !record.officeExceptionLabel &&
-        (record.clockInAt || record.clockOutAt) &&
-        (!record.clockInAt || !record.clockOutAt),
-      );
+        !approvedDuty &&
+        Math.abs(varianceHours) > toleranceHours &&
+        !extraPresenceWithFullAllocation;
+      const incomplete =
+        !approvedDuty &&
+        Boolean(
+          record &&
+          !record.officeExceptionLabel &&
+          (record.clockInAt || record.clockOutAt) &&
+          (!record.clockInAt || !record.clockOutAt),
+        );
       const remoteWork = remoteWorkDates.has(date);
       const tracked = !remoteWork && isAttendanceTracked(tracking, sheet.employeeId, date);
       const requiresExplanation =
-        (tracked && !nonWorking && (!record || incomplete || projectVariance)) ||
+        (tracked && !nonWorking && ((!record && !approvedDuty) || incomplete || projectVariance)) ||
         (nonWorking && (timesheetWorkHours > 0 || attendanceHours > 0 || incomplete));
       const explanation = explanations[date]?.trim();
       const status = nonWorking
@@ -1387,23 +1544,25 @@ async function buildTimesheetReconciliation(
           : holidayHours
             ? "Holiday"
             : "Leave"
-        : remoteWork
-          ? timesheetWorkHours > 0
-            ? "Matched"
-            : (trackingSettings?.workingDays ?? [1, 2, 3, 4, 5]).includes(
-                  new Date(`${date}T12:00:00Z`).getUTCDay(),
-                )
-              ? "Missing Timesheet"
-              : "Rest Day"
-          : incomplete
-            ? "Incomplete Attendance"
-            : !record
-              ? "Missing Attendance"
-              : !nonWorking && timesheetWorkHours === 0 && attendanceHours > toleranceHours
+        : approvedDuty
+          ? "Matched"
+          : remoteWork
+            ? timesheetWorkHours > 0
+              ? "Matched"
+              : (trackingSettings?.workingDays ?? [1, 2, 3, 4, 5]).includes(
+                    new Date(`${date}T12:00:00Z`).getUTCDay(),
+                  )
                 ? "Missing Timesheet"
-                : projectVariance
-                  ? "Variance"
-                  : "Matched";
+                : "Rest Day"
+            : incomplete
+              ? "Incomplete Attendance"
+              : !record
+                ? "Missing Attendance"
+                : !nonWorking && timesheetWorkHours === 0 && attendanceHours > toleranceHours
+                  ? "Missing Timesheet"
+                  : projectVariance
+                    ? "Variance"
+                    : "Matched";
       return {
         date,
         attendanceHours,
@@ -1412,13 +1571,19 @@ async function buildTimesheetReconciliation(
         leaveHours,
         holidayHours,
         varianceHours,
-        attendanceStatus: remoteWork
-          ? "Remote Work"
-          : nonWorking && !record?.clockInAt && !record?.clockOutAt
-            ? holidayHours
-              ? "Holiday"
-              : "On Leave"
-            : (record?.status ?? "No Record"),
+        attendanceStatus: officialVisitDates.has(date)
+          ? "Official visit"
+          : paidAwayDates.has(date)
+            ? "Paid time away"
+            : approvedTravelDates.has(date)
+              ? "Official travel"
+              : remoteWork
+                ? "Remote Work"
+                : nonWorking && !record?.clockInAt && !record?.clockOutAt
+                  ? holidayHours
+                    ? "Holiday"
+                    : "On Leave"
+                  : (record?.status ?? "No Record"),
         status,
         requiresExplanation,
         ...(explanation ? { explanation } : {}),

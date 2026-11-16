@@ -13,6 +13,7 @@ import {
   logCandidateContactInDatabase,
   mergeCandidatesInDatabase,
   reassignCandidateOwnerInDatabase,
+  saveCandidateRemarkInDatabase,
   updateCandidateDetailsInDatabase,
   updateCandidateStageInDatabase,
 } from "../src/lib/db/repositories/candidate-mutation.repository.server.ts";
@@ -24,6 +25,7 @@ import {
   setCandidateCvSuitabilityInDatabase,
   selectCandidateForInterviewInDatabase,
   unselectCandidateForInterviewInDatabase,
+  unshortlistCandidateApplicationInDatabase,
 } from "../src/lib/db/repositories/recruitment-screening.repository.server.ts";
 import {
   createInterviewInDatabase,
@@ -144,8 +146,8 @@ test(
         yearsOfExperience: 7,
         noticePeriod: "30 days",
         workEligibility: "Need employer sponsorship",
-        currentSalary: "7000",
-        salaryExpectation: "AED 18,000",
+        currentSalary: "AED 7000",
+        salaryExpectation: "AED 18000",
         screeningAnswers: [],
         consent: true,
         fileName: "database-applicant.pdf",
@@ -192,7 +194,7 @@ test(
       const [ciphertext] = await sql`
         SELECT salary_expectation_encrypted FROM candidate_applications WHERE id = ${result.applicationId}
       `;
-      assert.ok(!String(ciphertext.salary_expectation_encrypted).includes("18,000"));
+      assert.ok(!String(ciphertext.salary_expectation_encrypted).includes("18000"));
       const [storedCandidate] = await sql`
         SELECT current_company, current_title, current_salary_encrypted, expected_salary_encrypted
         FROM candidates WHERE id = ${result.candidateId}
@@ -200,7 +202,7 @@ test(
       assert.equal(storedCandidate.current_company, "Global Cargo");
       assert.equal(storedCandidate.current_title, "Logistics Manager");
       assert.ok(!String(storedCandidate.current_salary_encrypted).includes("7000"));
-      assert.ok(!String(storedCandidate.expected_salary_encrypted).includes("18,000"));
+      assert.ok(!String(storedCandidate.expected_salary_encrypted).includes("18000"));
       const hrSnapshot = await listRecruitmentReadSnapshot(String(vacancy.organisation_id));
       const hrCandidate = hrSnapshot.candidates.find((item) => item.id === result.candidateId);
       const hrApplication = hrSnapshot.applications.find(
@@ -208,9 +210,9 @@ test(
       );
       assert.equal(hrCandidate?.currentCompany, "Global Cargo");
       assert.equal(hrCandidate?.currentTitle, "Logistics Manager");
-      assert.equal(hrCandidate?.currentSalary, "7000");
-      assert.equal(hrCandidate?.expectedSalary, "AED 18,000");
-      assert.equal(hrApplication?.salaryExpectation, "AED 18,000");
+      assert.equal(hrCandidate?.currentSalary, "AED 7000");
+      assert.equal(hrCandidate?.expectedSalary, "AED 18000");
+      assert.equal(hrApplication?.salaryExpectation, "AED 18000");
 
       const [queuedJob] = await sql`
         SELECT bj.id, bj.status
@@ -334,6 +336,15 @@ test(
         ],
         ["Shortlisted", "Shortlisted", 1, 0, 0],
       );
+      await assert.rejects(
+        unshortlistCandidateApplicationInDatabase(
+          String(vacancy.organisation_id),
+          vacancyId,
+          directSelectionCandidateId,
+          actor,
+        ),
+        /Unselect this candidate for interview/,
+      );
       await unselectCandidateForInterviewInDatabase(
         String(vacancy.organisation_id),
         vacancyId,
@@ -349,6 +360,36 @@ test(
       `;
       assert.equal(afterUnselect.recommendation_id, null);
       assert.equal(afterUnselect.selection_count, 0);
+      await unshortlistCandidateApplicationInDatabase(
+        String(vacancy.organisation_id),
+        vacancyId,
+        directSelectionCandidateId,
+        actor,
+      );
+      const [afterUnshortlist] = await sql`
+        SELECT
+          (SELECT status FROM candidate_applications WHERE id=${directSelectionApplicationId}) AS application_status,
+          (SELECT stage FROM candidates WHERE id=${directSelectionCandidateId}) AS candidate_stage,
+          (SELECT hr_interview_recommendation_id FROM candidate_applications
+            WHERE id=${directSelectionApplicationId}) AS recommendation_id
+      `;
+      assert.deepEqual(
+        [
+          afterUnshortlist.application_status,
+          afterUnshortlist.candidate_stage,
+          afterUnshortlist.recommendation_id,
+        ],
+        ["New", "Applied", null],
+      );
+      await assert.rejects(
+        unshortlistCandidateApplicationInDatabase(
+          String(vacancy.organisation_id),
+          vacancyId,
+          directSelectionCandidateId,
+          actor,
+        ),
+        /Only a shortlisted application/,
+      );
       await selectCandidateForInterviewInDatabase(
         String(vacancy.organisation_id),
         vacancyId,
@@ -426,6 +467,20 @@ test(
         actor,
         "Integration test candidate correction",
       );
+      await saveCandidateRemarkInDatabase(
+        String(vacancy.organisation_id),
+        result.candidateId,
+        "  Strong portfolio; confirm availability.  ",
+        actor,
+      );
+      const [candidateAfterRemark] = await sql`
+        SELECT remarks, email, current_title, stage
+        FROM candidates WHERE id = ${result.candidateId}
+      `;
+      assert.equal(candidateAfterRemark.remarks, "Strong portfolio; confirm availability.");
+      assert.equal(candidateAfterRemark.email, `database.applicant.${unique}@example.test`);
+      assert.equal(candidateAfterRemark.current_title, "Senior Logistics Specialist");
+      assert.equal(candidateAfterRemark.stage, "Applied");
       await updateCandidateStageInDatabase(
         String(vacancy.organisation_id),
         result.candidateId,

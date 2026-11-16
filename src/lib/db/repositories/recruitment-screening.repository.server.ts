@@ -8,7 +8,7 @@ import {
   PRELIMINARY_RULES_VERSION,
 } from "../../recruitment/preliminary-evidence.ts";
 
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 
 import {
   CV_PROCESSOR_VERSION,
@@ -161,6 +161,138 @@ export async function shortlistCandidateApplicationInDatabase(
       beforeSummary: { status: application.status },
       afterSummary: { status: "Shortlisted", interviewSelected: false },
       reason: "HR shortlisted the application for this vacancy",
+      riskLevel: "Medium",
+    });
+  });
+}
+
+/** Undo a shortlist decision without rejecting the candidate or erasing their CV. */
+export async function unshortlistCandidateApplicationInDatabase(
+  organisationId: string,
+  vacancyId: string,
+  candidateId: string,
+  actor: AuditActorContext,
+): Promise<void> {
+  recruiter(actor);
+  const actorUserId = actor.userId;
+  if (!actorUserId) throw new Error("A verified VIA user is required.");
+  await getDatabaseClient().transaction(async (tx) => {
+    const [vacancy] = await tx
+      .select({ id: vacancies.id, status: vacancies.status, archivedAt: vacancies.archivedAt })
+      .from(vacancies)
+      .where(and(eq(vacancies.organisationId, organisationId), eq(vacancies.id, vacancyId)))
+      .for("update")
+      .limit(1);
+    if (!vacancy || vacancy.archivedAt || vacancy.status !== "Open")
+      throw new Error("Choose an open vacancy.");
+    const [application] = await tx
+      .select()
+      .from(candidateApplications)
+      .where(
+        and(
+          eq(candidateApplications.organisationId, organisationId),
+          eq(candidateApplications.vacancyId, vacancyId),
+          eq(candidateApplications.candidateId, candidateId),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!application || application.archivedAt) throw new Error("Application not found.");
+    if (application.status !== "Shortlisted")
+      throw new Error("Only a shortlisted application can be returned to review.");
+    const [selection] = await tx
+      .select({ id: candidateInterviewRecommendations.id })
+      .from(candidateInterviewRecommendations)
+      .where(
+        and(
+          eq(candidateInterviewRecommendations.organisationId, organisationId),
+          eq(candidateInterviewRecommendations.applicationId, application.id),
+          inArray(candidateInterviewRecommendations.status, [
+            "Ready to Schedule",
+            "Interview Scheduled",
+          ]),
+        ),
+      )
+      .limit(1);
+    if (selection)
+      throw new Error("Unselect this candidate for interview before removing the shortlist.");
+    const [interview] = await tx
+      .select({ id: interviews.id })
+      .from(interviews)
+      .where(
+        and(
+          eq(interviews.organisationId, organisationId),
+          eq(interviews.vacancyId, vacancyId),
+          eq(interviews.candidateId, candidateId),
+          ne(interviews.status, "Cancelled"),
+        ),
+      )
+      .limit(1);
+    if (interview) throw new Error("Cancel the scheduled interview before removing the shortlist.");
+    const [candidate] = await tx
+      .select()
+      .from(candidates)
+      .where(and(eq(candidates.organisationId, organisationId), eq(candidates.id, candidateId)))
+      .for("update")
+      .limit(1);
+    if (!candidate || candidate.archivedAt) throw new Error("Candidate not found.");
+    await tx
+      .update(candidateApplications)
+      .set({
+        status: "New",
+        hrInterviewRecommendationId: null,
+        updatedAt: new Date(),
+        updatedBy: actorUserId,
+        recordVersion: sql`${candidateApplications.recordVersion} + 1`,
+      })
+      .where(eq(candidateApplications.id, application.id));
+    if (candidate.stage === "Shortlisted") {
+      const otherApplications = await tx
+        .select({ status: candidateApplications.status })
+        .from(candidateApplications)
+        .where(
+          and(
+            eq(candidateApplications.organisationId, organisationId),
+            eq(candidateApplications.candidateId, candidateId),
+            ne(candidateApplications.id, application.id),
+            isNull(candidateApplications.archivedAt),
+          ),
+        );
+      const statuses = new Set(otherApplications.map((item) => item.status));
+      const nextStage = statuses.has("Hired")
+        ? "Hired"
+        : statuses.has("Offered")
+          ? "Offer"
+          : statuses.has("Interviewing")
+            ? "Interview"
+            : statuses.has("Shortlisted")
+              ? "Shortlisted"
+              : "Applied";
+      if (nextStage !== candidate.stage)
+        await tx
+          .update(candidates)
+          .set({
+            stage: nextStage,
+            updatedAt: new Date(),
+            updatedBy: actorUserId,
+            recordVersion: sql`${candidates.recordVersion} + 1`,
+          })
+          .where(eq(candidates.id, candidateId));
+    }
+    await tx.insert(auditEvents).values({
+      organisationId,
+      actorUserId,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [],
+      action: "unshortlist",
+      module: "recruitment",
+      entityType: "candidate-application",
+      entityId: application.id,
+      beforeSummary: { status: application.status },
+      afterSummary: { status: "New", interviewSelected: false },
+      reason: "HR returned the application to review",
       riskLevel: "Medium",
     });
   });

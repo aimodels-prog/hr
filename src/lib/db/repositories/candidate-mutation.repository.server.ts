@@ -188,6 +188,54 @@ export async function updateCandidateDetailsInDatabase(
   });
 }
 
+/** A focused HR edit that cannot accidentally overwrite contact or salary fields. */
+export async function saveCandidateRemarkInDatabase(
+  organisationId: string,
+  candidateId: string,
+  remark: string,
+  actor: AuditActorContext,
+): Promise<void> {
+  assertRecruiter(actor);
+  if (!actor.userId) throw new Error("A verified VIA user is required.");
+  const value = remark.trim();
+  if (value.length > 5000) throw new Error("Keep the HR remark within 5,000 characters.");
+  await getDatabaseClient().transaction(async (tx) => {
+    const [candidate] = await tx
+      .select({ id: candidates.id, remarks: candidates.remarks, archivedAt: candidates.archivedAt })
+      .from(candidates)
+      .where(and(eq(candidates.organisationId, organisationId), eq(candidates.id, candidateId)))
+      .for("update")
+      .limit(1);
+    if (!candidate || candidate.archivedAt) throw new Error("Candidate not found.");
+    if ((candidate.remarks ?? "") === value) return;
+    await tx
+      .update(candidates)
+      .set({
+        remarks: value || null,
+        updatedAt: new Date(),
+        updatedBy: actor.userId,
+        recordVersion: sql`${candidates.recordVersion} + 1`,
+      })
+      .where(eq(candidates.id, candidateId));
+    await tx.insert(auditEvents).values({
+      organisationId,
+      actorUserId: actor.userId,
+      actorEmployeeId: actor.employeeId,
+      actorDisplayName: actor.displayName,
+      activeRole: actor.activeRole,
+      actorRoles: actor.roles ?? [actor.activeRole],
+      action: "update_hr_remark",
+      module: "recruitment",
+      entityType: "candidate",
+      entityId: candidateId,
+      beforeSummary: { hadRemark: Boolean(candidate.remarks) },
+      afterSummary: { hadRemark: Boolean(value) },
+      reason: "HR updated the candidate remark",
+      riskLevel: "Medium",
+    });
+  });
+}
+
 export async function mergeCandidatesInDatabase(
   organisationId: string,
   primaryId: string,

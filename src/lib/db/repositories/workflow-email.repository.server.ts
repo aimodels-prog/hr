@@ -22,7 +22,7 @@ export async function enqueueWorkflowEmails() {
     JOIN users u ON u.id=n.recipient_user_id AND u.organisation_id=n.organisation_id AND u.status='Active' AND u.archived_at IS NULL
     WHERE n.archived_at IS NULL AND n.status<>'Dismissed' AND n.created_at>=c.email_enabled_at
       AND ${workflowEmailRecipientPolicy()}
-      AND n.type NOT IN ('attendance.sign_out','attendance.sign_out_reminder')
+      AND n.type NOT IN ('attendance.sign_out','attendance.sign_out_reminder','attendance.morning_follow_up')
       AND (n.type='workflow.request_update' OR NOT EXISTS (
         SELECT 1 FROM notifications receipt WHERE receipt.type='workflow.request_update'
         AND receipt.organisation_id=n.organisation_id AND receipt.recipient_user_id=n.recipient_user_id
@@ -45,6 +45,7 @@ export async function claimDailyEmailDigest(at = new Date()) {
       JOIN app_settings s ON s.organisation_id=n.organisation_id
       JOIN google_calendar_connections c ON c.organisation_id=n.organisation_id AND c.email_enabled_at IS NOT NULL
       WHERE q.status IN ('Queued','Blocked') AND q.attempts<5 AND q.next_attempt_at<=${at.toISOString()}::timestamptz
+        AND n.type<>'attendance.morning_follow_up'
         AND u.status='Active' AND u.archived_at IS NULL AND n.archived_at IS NULL AND n.status<>'Dismissed'
         AND ${workflowEmailRecipientPolicy()}
         AND (${at.toISOString()}::timestamptz AT TIME ZONE s.timezone)::time >=

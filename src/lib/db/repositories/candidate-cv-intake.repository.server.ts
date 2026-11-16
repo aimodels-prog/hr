@@ -728,7 +728,9 @@ export async function finaliseCandidateCvIntakeInDatabase(
   if (!input.candidate.firstName.trim() || !input.candidate.lastName.trim() || !email || !phone)
     throw new Error("Name, email and phone number are required.");
   if (!isValidCurrentSalaryOmr(input.candidate.currentSalary))
-    throw new Error("Enter the candidate's current monthly salary in OMR (0 if not earning).");
+    throw new Error(
+      "Enter the candidate's current monthly salary and currency (0 if not earning).",
+    );
   if (!input.candidate.expectedSalary?.trim())
     throw new Error("Enter the candidate's expected monthly salary.");
   if (!Number.isInteger(input.candidate.yearsOfExperience) || input.candidate.yearsOfExperience < 0)

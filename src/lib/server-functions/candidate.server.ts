@@ -29,6 +29,7 @@ import {
   logCandidateContactInDatabase,
   mergeCandidatesInDatabase,
   reassignCandidateOwnerInDatabase,
+  saveCandidateRemarkInDatabase,
   updateCandidateDetailsInDatabase,
   updateCandidateStageInDatabase,
 } from "../db/repositories/candidate-mutation.repository.server.ts";
@@ -47,6 +48,7 @@ import {
   selectCandidateForInterviewInDatabase,
   unselectCandidateForInterviewInDatabase,
   shortlistCandidateApplicationInDatabase,
+  unshortlistCandidateApplicationInDatabase,
   updateAssessmentSelectionInDatabase,
 } from "../db/repositories/recruitment-screening.repository.server.ts";
 import { importCandidatesInDatabase } from "../db/repositories/candidate-import.repository.server.ts";
@@ -207,6 +209,28 @@ export const updateCandidateDetailsFn = createServerFn({ method: "POST" })
       verified.actor,
       data.reason,
     );
+  });
+
+export const saveCandidateRemarkFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: RecruitmentActor,
+        candidateId: z.string().uuid(),
+        remark: z.string().trim().max(5000),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await verifyRecruitmentActor(data.actor);
+    await saveCandidateRemarkInDatabase(
+      verified.organisationId,
+      data.candidateId,
+      data.remark,
+      verified.actor,
+    );
+    return { ok: true };
   });
 
 const CandidateMerge = z.object({
@@ -799,6 +823,28 @@ export const shortlistCandidateApplicationFn = createServerFn({ method: "POST" }
   .handler(async ({ data }) => {
     const verified = await verifyRecruitmentActor(data.actor);
     await shortlistCandidateApplicationInDatabase(
+      verified.organisationId,
+      data.vacancyId,
+      data.candidateId,
+      verified.actor,
+    );
+    return { ok: true };
+  });
+
+export const unshortlistCandidateApplicationFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: RecruitmentActor,
+        vacancyId: z.string().uuid(),
+        candidateId: z.string().uuid(),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await verifyRecruitmentActor(data.actor);
+    await unshortlistCandidateApplicationInDatabase(
       verified.organisationId,
       data.vacancyId,
       data.candidateId,

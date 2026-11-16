@@ -1,6 +1,6 @@
 import { SafeForm } from "@/components/ui/safe-form";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { RequirementFields } from "@/components/documents/requirement-fields";
 import {
   validateDocumentAnswers,
@@ -202,7 +202,10 @@ export function DocumentsTab({
 
   const documentLocation = useLocation();
   const navigateToDocuments = useNavigate();
-  const linkedDocumentId = new URLSearchParams(documentLocation.hash).get("document");
+  const documentHash = new URLSearchParams(documentLocation.hash);
+  const linkedDocumentId = documentHash.get("document");
+  const requestedUploadId = documentHash.get("upload");
+  const processedUploadRef = useRef<string | null>(null);
   const allDocs = documentService
     .getDocuments(currentUser.getActorContext())
     .filter((document) => document.employeeId === employeeId);
@@ -266,26 +269,64 @@ export function DocumentsTab({
       visibility: "Restricted",
     },
   });
-  const openRequirementUpload = (requirement: DocumentRequirement) => {
-    if (requirement.uploadBy === "HR" && !isHrOrAdmin) return;
-    setIsReplacing(null);
-    setReplacementRequirement(undefined);
-    setRequirementId(requirement.id);
-    setAnswers({});
-    setSelectedFile(null);
-    setDependantId("employee");
-    form.reset({
-      type: requirement.type,
-      documentNumber: "",
-      issueDate: "",
-      expiryDate: "",
-      issuingAuthority: "",
-      issuingCountry: "",
-      notes: "",
-      visibility: "Restricted",
+  const openRequirementUpload = useCallback(
+    (requirement: DocumentRequirement) => {
+      if (requirement.uploadBy === "HR" && !isHrOrAdmin) return;
+      setIsReplacing(null);
+      setReplacementRequirement(undefined);
+      setRequirementId(requirement.id);
+      setAnswers({});
+      setSelectedFile(null);
+      setDependantId("employee");
+      form.reset({
+        type: requirement.type,
+        documentNumber: "",
+        issueDate: "",
+        expiryDate: "",
+        issuingAuthority: "",
+        issuingCountry: "",
+        notes: "",
+        visibility: "Restricted",
+      });
+      setIsUploadOpen(true);
+    },
+    [form, isHrOrAdmin],
+  );
+  useEffect(() => {
+    if (!requestedUploadId) {
+      processedUploadRef.current = null;
+      return;
+    }
+    if (loading || processedUploadRef.current === requestedUploadId) return;
+    if (requestedUploadId === "new") {
+      processedUploadRef.current = requestedUploadId;
+      setIsUploadOpen(true);
+      void navigateToDocuments({
+        to: ".",
+        hash: "section=documents",
+        search: (previous) => previous,
+        replace: true,
+      });
+      return;
+    }
+    const requirement = requirements.find((item) => item.id === requestedUploadId);
+    if (!requirement || (requirement.uploadBy === "HR" && !isHrOrAdmin)) return;
+    processedUploadRef.current = requestedUploadId;
+    openRequirementUpload(requirement);
+    void navigateToDocuments({
+      to: ".",
+      hash: "section=documents",
+      search: (previous) => previous,
+      replace: true,
     });
-    setIsUploadOpen(true);
-  };
+  }, [
+    requestedUploadId,
+    loading,
+    requirements,
+    isHrOrAdmin,
+    navigateToDocuments,
+    openRequirementUpload,
+  ]);
   const selectedDocumentType = form.watch("type");
   const isInsuranceDocument = selectedDocumentType.startsWith("insurance_");
   useEffect(() => {

@@ -10,6 +10,10 @@ import { EmployeeService } from "@/lib/data/employee-service";
 import { AttendanceService } from "@/lib/data/attendance-service";
 import { SettingsService } from "@/lib/data/settings-service";
 import { employmentCalendarDate } from "@/lib/data/employment-change-policy";
+import {
+  getAttendanceFollowUpTimeFn,
+  saveAttendanceFollowUpTimeFn,
+} from "@/lib/server-functions/attendance-overview.server";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { trackingAssignment, type AttendanceTrackingMode } from "@/lib/data/attendance-tracking";
@@ -28,6 +32,13 @@ export function AttendanceTrackingSettings({ employeeId }: { employeeId?: string
     queryFn: () => getAttendanceTrackingFn({ data: actor }),
     enabled: allowed,
   });
+  const followUpQuery = useQuery({
+    queryKey: ["attendance-follow-up-time", user.id, user.activeRole],
+    queryFn: () => getAttendanceFollowUpTimeFn({ data: { actor } }),
+    enabled: allowed && !employeeId,
+  });
+  const [followUpTime, setFollowUpTime] = useState<string | null>(null);
+  const [savingFollowUp, setSavingFollowUp] = useState(false);
   const [office, setOffice] = useState("");
   const [mode, setMode] = useState<AttendanceTrackingMode | null>(null);
   const today = employmentCalendarDate(new SettingsService().getAppSettingsSync().timezone);
@@ -160,6 +171,45 @@ export function AttendanceTrackingSettings({ employeeId }: { employeeId?: string
             </div>
           )}
         </>
+      )}
+      {!employeeId && !followUpQuery.isPending && !followUpQuery.isError && (
+        <div className="flex flex-wrap items-end gap-3 border-t pt-4">
+          <label className="text-sm">
+            Check missing clock-ins after
+            <input
+              type="time"
+              min="08:00"
+              max="12:59"
+              className="mt-1 block h-11 rounded-md border bg-background px-3"
+              value={followUpTime ?? followUpQuery.data ?? "09:30"}
+              onChange={(event) => setFollowUpTime(event.target.value)}
+            />
+          </label>
+          <Button
+            variant="outline"
+            disabled={savingFollowUp}
+            onClick={async () => {
+              setSavingFollowUp(true);
+              try {
+                await saveAttendanceFollowUpTimeFn({
+                  data: { actor, time: followUpTime ?? followUpQuery.data ?? "09:30" },
+                });
+                await queryClient.invalidateQueries({ queryKey: ["attendance-follow-up-time"] });
+                await queryClient.invalidateQueries({ queryKey: ["hr-attendance-today"] });
+                setFollowUpTime(null);
+                toast.success("Morning attendance check time saved.");
+              } catch (error) {
+                toast.error(
+                  error instanceof Error ? error.message : "Could not save the check time.",
+                );
+              } finally {
+                setSavingFollowUp(false);
+              }
+            }}
+          >
+            Save check time
+          </Button>
+        </div>
       )}
     </section>
   );

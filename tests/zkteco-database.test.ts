@@ -517,6 +517,127 @@ test(
         new Date(finishedOffice.clock_out_at).toISOString(),
         `${siteDate}T17:30:00.000Z`,
       );
+      const homeVisitDay = new Date(siteDay);
+      homeVisitDay.setUTCDate(homeVisitDay.getUTCDate() - 2);
+      const homeVisitDate = homeVisitDay.toISOString().slice(0, 10);
+      const homeVisitRecordId = randomUUID();
+      await sql`INSERT INTO attendance_records (id, organisation_id, employee_id, date, clock_in_at, source, work_mode, status, created_by, updated_by)
+        VALUES (${homeVisitRecordId}, ${organisationId}, ${employeeId}, ${homeVisitDate}, ${`${homeVisitDate}T07:00:00Z`}, 'Site Visit Auto', 'Approved Site Visit', 'Present', ${hrUserId}, ${hrUserId})`;
+      await sql`INSERT INTO site_visit_requests (organisation_id, employee_id, date, start_time, end_time, origin, destination, purpose, status, requested_at, details, created_by, updated_by)
+        VALUES (${organisationId}, ${employeeId}, ${homeVisitDate}, '07:00', '17:00', 'Home', 'Ministry', 'Approved official visit', 'Approved', now(), '{"returnPlan":"Time","expectedReturnTime":"10:00"}'::jsonb, ${hrUserId}, ${hrUserId})`;
+      for (const [suffix, time, status] of [
+        ["arrival", "10:00", 1], // The terminal may mark the first physical scan as OUT.
+        ["finish", "17:00", 0], // Other terminals use IN for every scan.
+      ] as const) {
+        await ingestZktecoPunchBatch(organisationId, "front-door", {
+          punches: [
+            {
+              externalEventId: `home-visit-${suffix}`,
+              deviceUserId: "VIA-TERM-101",
+              occurredAt: `${homeVisitDate}T${time}:00Z`,
+              status,
+            },
+          ],
+        });
+        const [record] =
+          await sql`SELECT clock_in_at, clock_out_at FROM attendance_records WHERE id=${homeVisitRecordId}`;
+        assert.equal(new Date(record.clock_in_at).toISOString(), `${homeVisitDate}T07:00:00.000Z`);
+        assert.equal(
+          record.clock_out_at ? new Date(record.clock_out_at).toISOString() : null,
+          suffix === "finish" ? `${homeVisitDate}T17:00:00.000Z` : null,
+        );
+      }
+      const [homeVisit] =
+        await sql`SELECT details FROM site_visit_requests WHERE employee_id=${employeeId} AND date=${homeVisitDate}`;
+      assert.equal(
+        new Date(homeVisit.details.returnedAt).toISOString(),
+        `${homeVisitDate}T10:00:00.000Z`,
+      );
+      const awayDay = new Date(siteDay);
+      awayDay.setUTCDate(awayDay.getUTCDate() - 1);
+      const awayDate = awayDay.toISOString().slice(0, 10);
+      const awayId = randomUUID();
+      await sql`INSERT INTO time_away (id, organisation_id, employee_id, date, start_time, end_time,
+        category, status, treatment, reviewed_by, created_by, updated_by)
+        VALUES (${awayId}, ${organisationId}, ${employeeId}, ${awayDate}, '09:00', '10:00',
+          'Personal matter', 'Approved', 'Paid time', ${hrUserId}, ${hrUserId}, ${hrUserId})`;
+      for (const [suffix, time, status] of [
+        ["first-in", "08:00", 0],
+        ["departure-out", "09:00", 1],
+        ["return-in", "10:00", 0],
+        ["final-out", "17:00", 0], // Some terminals send the same marker for every thumb.
+      ] as const) {
+        await ingestZktecoPunchBatch(organisationId, "front-door", {
+          punches: [
+            {
+              externalEventId: `away-${suffix}`,
+              deviceUserId: "VIA-TERM-101",
+              occurredAt: `${awayDate}T${time}:00Z`,
+              status,
+            },
+          ],
+        });
+        const [attendance] = await sql`
+          SELECT clock_in_at, clock_out_at FROM attendance_records
+          WHERE organisation_id=${organisationId} AND employee_id=${employeeId} AND date=${awayDate}
+        `;
+        assert.equal(new Date(attendance.clock_in_at).toISOString(), `${awayDate}T08:00:00.000Z`);
+        assert.equal(
+          attendance.clock_out_at ? new Date(attendance.clock_out_at).toISOString() : null,
+          suffix === "final-out"
+            ? `${awayDate}T17:00:00.000Z`
+            : suffix === "departure-out"
+              ? `${awayDate}T09:00:00.000Z`
+              : null,
+          `${suffix} must not become a premature final exit`,
+        );
+      }
+      const [machineReturn] = await sql`
+        SELECT count(*)::int AS count FROM audit_events
+        WHERE organisation_id=${organisationId} AND entity_id=${awayId}
+          AND entity_type='time-away' AND action='time-away-return'
+      `;
+      assert.equal(machineReturn.count, 1);
+
+      const homeAwayDay = new Date(awayDay);
+      homeAwayDay.setUTCDate(homeAwayDay.getUTCDate() - 1);
+      const homeAwayDate = homeAwayDay.toISOString().slice(0, 10);
+      const homeAwayId = randomUUID();
+      await sql`INSERT INTO time_away (id, organisation_id, employee_id, date, start_time, end_time,
+        category, status, treatment, reviewed_by, created_by, updated_by)
+        VALUES (${homeAwayId}, ${organisationId}, ${employeeId}, ${homeAwayDate}, '07:00', '10:00',
+          'Personal matter', 'Approved', 'Paid time', ${hrUserId}, ${hrUserId}, ${hrUserId})`;
+      for (const [suffix, time] of [
+        ["first-office-arrival", "10:00"],
+        ["end-of-day", "17:00"],
+      ] as const)
+        await ingestZktecoPunchBatch(organisationId, "front-door", {
+          punches: [
+            {
+              externalEventId: `home-away-${suffix}`,
+              deviceUserId: "VIA-TERM-101",
+              occurredAt: `${homeAwayDate}T${time}:00Z`,
+              status: 0,
+            },
+          ],
+        });
+      const [homeArrival] = await sql`
+        SELECT clock_in_at, clock_out_at FROM attendance_records
+        WHERE organisation_id=${organisationId} AND employee_id=${employeeId} AND date=${homeAwayDate}
+      `;
+      assert.equal(
+        new Date(homeArrival.clock_in_at).toISOString(),
+        `${homeAwayDate}T10:00:00.000Z`,
+      );
+      assert.equal(
+        new Date(homeArrival.clock_out_at).toISOString(),
+        `${homeAwayDate}T17:00:00.000Z`,
+      );
+      const [homeArrivalAudit] = await sql`
+        SELECT count(*)::int AS count FROM audit_events
+        WHERE entity_id=${homeAwayId} AND action='time-away-return'
+      `;
+      assert.equal(homeArrivalAudit.count, 1);
       // Keep history: stop exact-ID automatic rematching without touching approved/site records.
       const [mainMatch] =
         await sql`SELECT id FROM attendance_device_employee_mappings WHERE device_id=${deviceId} AND device_user_id='VIA-TERM-101'`;
