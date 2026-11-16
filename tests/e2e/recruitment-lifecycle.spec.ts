@@ -192,7 +192,7 @@ test("public application progresses through shortlist, interview, offer and onbo
   await page.getByRole("link", { name: /^Applications \(/ }).click();
   await expect(page.getByText("Submitted answers")).toBeVisible();
   await expect(page.getByText("Salary expectation")).toBeVisible();
-  await expect(page.getByText("18000", { exact: true })).toBeVisible();
+  await expect(page.getByText("AED 18000", { exact: true })).toBeVisible();
   await expect(
     page.getByText("Yes, with evidence from regional logistics operations.").first(),
   ).toBeVisible();

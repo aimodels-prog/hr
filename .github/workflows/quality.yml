@@ -291,6 +291,9 @@ jobs:
             grep -E '^[[:space:]]*[0-9]+\) tests/|^[[:space:]]*[0-9]+ failed' browser-tests.txt | head -n 20 | while IFS= read -r failure; do
               echo "::error title=Browser journey failed::$failure"
             done || true
+            grep -E 'Error:|TimeoutError:|Expected:|Received:' browser-tests.txt | tail -n 12 | while IFS= read -r detail; do
+              echo "::error title=Browser failure detail::$detail"
+            done || true
           fi
 
       - name: Upload browser and worker evidence
