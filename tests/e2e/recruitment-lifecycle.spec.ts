@@ -35,9 +35,9 @@ test("public application progresses through shortlist, interview, offer and onbo
     await page.locator(`input[name="${name}"]`).fill(value);
   }
   await page.getByRole("combobox", { name: /Current salary currency/ }).click();
-  await page.getByRole("option", { name: /AED/ }).click();
+  await page.getByRole("option", { name: /^AED —/ }).click();
   await page.getByRole("combobox", { name: /Expected salary currency/ }).click();
-  await page.getByRole("option", { name: /AED/ }).click();
+  await page.getByRole("option", { name: /^AED —/ }).click();
   await selectApplicationLocation(page, "United Arab Emirates", "Dubai");
   await page.locator('select[name="workEligibility"]').selectOption("Need employer sponsorship");
   const textareas = page.locator("textarea");
