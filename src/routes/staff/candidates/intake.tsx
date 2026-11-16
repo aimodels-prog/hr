@@ -882,7 +882,7 @@ function CandidateIntakePage() {
                     placeholder="Immediate, 30 days"
                   />
                   <Field
-                    label="Work visa status"
+                    label="Work authorisation"
                     value={workEligibility}
                     onChange={setWorkEligibility}
                     placeholder="Own visa, sponsorship required"

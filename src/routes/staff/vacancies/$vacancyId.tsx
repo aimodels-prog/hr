@@ -2652,7 +2652,7 @@ function VacancyDetailRoute() {
                           ? undefined
                           : `${previewCandidate.yearsOfExperience} years`,
                       ],
-                      ["Work visa", previewCandidate?.workEligibility],
+                      ["Work authorisation", previewCandidate?.workEligibility],
                       ["Notice period", previewApplication.noticePeriod],
                       ["Current salary", previewCandidate?.currentSalary],
                       [

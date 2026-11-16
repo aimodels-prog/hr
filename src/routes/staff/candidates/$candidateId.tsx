@@ -993,7 +993,7 @@ function CandidateProfile({
                   <ProfileList label="Talent Pools" values={candidate.talentPools} />
                   <div>
                     <p className="text-xs font-medium text-muted-foreground">
-                      Availability & work visa status
+                      Availability & work authorisation
                     </p>
                     <p className="mt-1 text-sm font-medium">
                       {[candidate.availability, candidate.workEligibility]
