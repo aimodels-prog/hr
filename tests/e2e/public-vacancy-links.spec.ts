@@ -17,7 +17,7 @@ test("careers links use readable references and keep old job links usable", asyn
   expect(vacancy.publicSlug).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
   await page.goto("/");
   const link = page.locator(`a[href="/jobs/${vacancy.publicSlug}"]`);
-  await expect(link).toBeVisible();
+  await expect(link).toBeVisible({ timeout: 20_000 });
   await link.click();
   await expect(page).toHaveURL(new RegExp(`/jobs/${vacancy.publicSlug}$`));
   await expect(

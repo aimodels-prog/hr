@@ -468,12 +468,14 @@ test(
       const [sheet] = await sql`SELECT total_hours FROM timesheets WHERE id=${sheetId}`;
       assert.equal(Number(sheet.total_hours), 8, "Never silently edit saved timesheet entries");
 
+      const atMuscat = (day: string, time: string) =>
+        new Date(`${day}T${time}:00+04:00`).toISOString();
       const siteDay = new Date(yesterday);
       siteDay.setUTCDate(siteDay.getUTCDate() - 5);
       const siteDate = siteDay.toISOString().slice(0, 10);
       const siteRecordId = randomUUID();
       await sql`INSERT INTO attendance_records (id, organisation_id, employee_id, date, clock_in_at, source, status, created_by, updated_by)
-        VALUES (${siteRecordId}, ${organisationId}, ${employeeId}, ${siteDate}, ${`${siteDate}T08:00:00Z`}, 'Site Visit Auto', 'Present', ${hrUserId}, ${hrUserId})`;
+        VALUES (${siteRecordId}, ${organisationId}, ${employeeId}, ${siteDate}, ${atMuscat(siteDate, "08:00")}, 'Site Visit Auto', 'Present', ${hrUserId}, ${hrUserId})`;
       await sql`INSERT INTO site_visit_requests (organisation_id, employee_id, date, start_time, end_time, origin, destination, purpose, status, requested_at, details, created_by, updated_by)
         VALUES (${organisationId}, ${employeeId}, ${siteDate}, '08:00', '17:00', 'Home', 'Client site', 'Approved site duty', 'Approved', now(), '{"returnPlan":"Unknown"}'::jsonb, ${hrUserId}, ${hrUserId})`;
       await ingestZktecoPunchBatch(organisationId, "front-door", {
@@ -481,7 +483,7 @@ test(
           {
             externalEventId: "site-return",
             deviceUserId: "VIA-TERM-101",
-            occurredAt: `${siteDate}T14:00:00Z`,
+            occurredAt: atMuscat(siteDate, "14:00"),
             status: 0,
           },
         ],
@@ -490,7 +492,7 @@ test(
         await sql`SELECT clock_in_at, clock_out_at FROM attendance_records WHERE id=${siteRecordId}`;
       assert.equal(
         new Date(returnedFromSite.clock_in_at).toISOString(),
-        `${siteDate}T08:00:00.000Z`,
+        atMuscat(siteDate, "08:00"),
         "Keep the approved home-origin start",
       );
       assert.equal(returnedFromSite.clock_out_at, null, "Terminal IN marks return, not clock-out");
@@ -498,31 +500,31 @@ test(
         await sql`SELECT details FROM site_visit_requests WHERE employee_id=${employeeId} AND date=${siteDate}`;
       assert.equal(
         new Date(siteVisit.details.returnedAt).toISOString(),
-        `${siteDate}T14:00:00.000Z`,
+        atMuscat(siteDate, "14:00"),
       );
       await ingestZktecoPunchBatch(organisationId, "front-door", {
         punches: [
           {
             externalEventId: "site-office-out",
             deviceUserId: "VIA-TERM-101",
-            occurredAt: `${siteDate}T17:30:00Z`,
+            occurredAt: atMuscat(siteDate, "17:30"),
             status: 1,
           },
         ],
       });
       const [finishedOffice] =
         await sql`SELECT clock_in_at, clock_out_at FROM attendance_records WHERE id=${siteRecordId}`;
-      assert.equal(new Date(finishedOffice.clock_in_at).toISOString(), `${siteDate}T08:00:00.000Z`);
+      assert.equal(new Date(finishedOffice.clock_in_at).toISOString(), atMuscat(siteDate, "08:00"));
       assert.equal(
         new Date(finishedOffice.clock_out_at).toISOString(),
-        `${siteDate}T17:30:00.000Z`,
+        atMuscat(siteDate, "17:30"),
       );
       const homeVisitDay = new Date(siteDay);
       homeVisitDay.setUTCDate(homeVisitDay.getUTCDate() - 2);
       const homeVisitDate = homeVisitDay.toISOString().slice(0, 10);
       const homeVisitRecordId = randomUUID();
       await sql`INSERT INTO attendance_records (id, organisation_id, employee_id, date, clock_in_at, source, work_mode, status, created_by, updated_by)
-        VALUES (${homeVisitRecordId}, ${organisationId}, ${employeeId}, ${homeVisitDate}, ${`${homeVisitDate}T07:00:00Z`}, 'Site Visit Auto', 'Approved Site Visit', 'Present', ${hrUserId}, ${hrUserId})`;
+        VALUES (${homeVisitRecordId}, ${organisationId}, ${employeeId}, ${homeVisitDate}, ${atMuscat(homeVisitDate, "07:00")}, 'Site Visit Auto', 'Approved Site Visit', 'Present', ${hrUserId}, ${hrUserId})`;
       await sql`INSERT INTO site_visit_requests (organisation_id, employee_id, date, start_time, end_time, origin, destination, purpose, status, requested_at, details, created_by, updated_by)
         VALUES (${organisationId}, ${employeeId}, ${homeVisitDate}, '07:00', '17:00', 'Home', 'Ministry', 'Approved official visit', 'Approved', now(), '{"returnPlan":"Time","expectedReturnTime":"10:00"}'::jsonb, ${hrUserId}, ${hrUserId})`;
       for (const [suffix, time, status] of [
@@ -534,24 +536,24 @@ test(
             {
               externalEventId: `home-visit-${suffix}`,
               deviceUserId: "VIA-TERM-101",
-              occurredAt: `${homeVisitDate}T${time}:00Z`,
+              occurredAt: atMuscat(homeVisitDate, time),
               status,
             },
           ],
         });
         const [record] =
           await sql`SELECT clock_in_at, clock_out_at FROM attendance_records WHERE id=${homeVisitRecordId}`;
-        assert.equal(new Date(record.clock_in_at).toISOString(), `${homeVisitDate}T07:00:00.000Z`);
+        assert.equal(new Date(record.clock_in_at).toISOString(), atMuscat(homeVisitDate, "07:00"));
         assert.equal(
           record.clock_out_at ? new Date(record.clock_out_at).toISOString() : null,
-          suffix === "finish" ? `${homeVisitDate}T17:00:00.000Z` : null,
+          suffix === "finish" ? atMuscat(homeVisitDate, "17:00") : null,
         );
       }
       const [homeVisit] =
         await sql`SELECT details FROM site_visit_requests WHERE employee_id=${employeeId} AND date=${homeVisitDate}`;
       assert.equal(
         new Date(homeVisit.details.returnedAt).toISOString(),
-        `${homeVisitDate}T10:00:00.000Z`,
+        atMuscat(homeVisitDate, "10:00"),
       );
       const awayDay = new Date(siteDay);
       awayDay.setUTCDate(awayDay.getUTCDate() - 1);
@@ -572,7 +574,7 @@ test(
             {
               externalEventId: `away-${suffix}`,
               deviceUserId: "VIA-TERM-101",
-              occurredAt: `${awayDate}T${time}:00Z`,
+              occurredAt: atMuscat(awayDate, time),
               status,
             },
           ],
@@ -581,13 +583,13 @@ test(
           SELECT clock_in_at, clock_out_at FROM attendance_records
           WHERE organisation_id=${organisationId} AND employee_id=${employeeId} AND date=${awayDate}
         `;
-        assert.equal(new Date(attendance.clock_in_at).toISOString(), `${awayDate}T08:00:00.000Z`);
+        assert.equal(new Date(attendance.clock_in_at).toISOString(), atMuscat(awayDate, "08:00"));
         assert.equal(
           attendance.clock_out_at ? new Date(attendance.clock_out_at).toISOString() : null,
           suffix === "final-out"
-            ? `${awayDate}T17:00:00.000Z`
+            ? atMuscat(awayDate, "17:00")
             : suffix === "departure-out"
-              ? `${awayDate}T09:00:00.000Z`
+              ? atMuscat(awayDate, "09:00")
               : null,
           `${suffix} must not become a premature final exit`,
         );
@@ -600,7 +602,7 @@ test(
       assert.equal(machineReturn.count, 1);
 
       const homeAwayDay = new Date(awayDay);
-      homeAwayDay.setUTCDate(homeAwayDay.getUTCDate() - 1);
+      homeAwayDay.setUTCDate(homeAwayDay.getUTCDate() - 2);
       const homeAwayDate = homeAwayDay.toISOString().slice(0, 10);
       const homeAwayId = randomUUID();
       await sql`INSERT INTO time_away (id, organisation_id, employee_id, date, start_time, end_time,
@@ -616,7 +618,7 @@ test(
             {
               externalEventId: `home-away-${suffix}`,
               deviceUserId: "VIA-TERM-101",
-              occurredAt: `${homeAwayDate}T${time}:00Z`,
+              occurredAt: atMuscat(homeAwayDate, time),
               status: 0,
             },
           ],
@@ -627,11 +629,11 @@ test(
       `;
       assert.equal(
         new Date(homeArrival.clock_in_at).toISOString(),
-        `${homeAwayDate}T10:00:00.000Z`,
+        atMuscat(homeAwayDate, "10:00"),
       );
       assert.equal(
         new Date(homeArrival.clock_out_at).toISOString(),
-        `${homeAwayDate}T17:00:00.000Z`,
+        atMuscat(homeAwayDate, "17:00"),
       );
       const [homeArrivalAudit] = await sql`
         SELECT count(*)::int AS count FROM audit_events

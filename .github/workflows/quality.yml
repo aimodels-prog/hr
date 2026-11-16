@@ -134,6 +134,22 @@ jobs:
           grep --quiet '^# fail 0$' live-tests.tap
           grep --quiet '^# skipped 0$' live-tests.tap
 
+      - name: Summarize failed authoritative-store tests
+        if: failure()
+        run: |
+          if [ -f live-tests.tap ]; then
+            {
+              echo '### Failed PostgreSQL and object-storage tests'
+              echo '```text'
+              grep -A 22 '^not ok ' live-tests.tap | head -n 220 || true
+              tail -n 12 live-tests.tap
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            grep '^not ok ' live-tests.tap | head -n 20 | while IFS= read -r failure; do
+              echo "::error title=Authoritative-store test failed::$failure"
+            done || true
+          fi
+
       - name: Upload authoritative-store test evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -271,6 +287,11 @@ jobs:
             fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ -f browser-tests.txt ]; then
+            grep -E '^[[:space:]]*[0-9]+\) tests/|^[[:space:]]*[0-9]+ failed' browser-tests.txt | head -n 20 | while IFS= read -r failure; do
+              echo "::error title=Browser journey failed::$failure"
+            done || true
+          fi
 
       - name: Upload browser and worker evidence
         if: always()
