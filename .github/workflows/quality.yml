@@ -295,6 +295,11 @@ jobs:
               echo "::error title=Browser failure detail::$detail"
             done || true
           fi
+          if [ -f production-smoke.txt ]; then
+            grep -E '^[[:space:]]*[0-9]+\) tests/|^[[:space:]]*[0-9]+ failed|Error:|TimeoutError:|Expected:|Received:' production-smoke.txt | tail -n 12 | while IFS= read -r detail; do
+              echo "::error title=Production smoke failure::$detail"
+            done || true
+          fi
 
       - name: Upload browser and worker evidence
         if: always()
