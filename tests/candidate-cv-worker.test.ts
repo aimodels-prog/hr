@@ -141,7 +141,7 @@ test(
           },
           actor,
         ),
-        /current monthly salary in OMR/,
+        /current monthly salary and currency/,
       );
       const finalised = await finaliseCandidateCvIntakeInDatabase(
         String(hr.organisation_id),

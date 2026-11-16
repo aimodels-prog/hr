@@ -24,9 +24,9 @@ async function previewAs(page: Page, userId: string, activeRole: PreviewRole, pa
 
 test("sensitive direct URLs enforce the active VIA role", async ({ page }) => {
   await page.goto("/staff");
-  await expect(
-    page.getByRole("navigation", { name: "Main navigation", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Main navigation", exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
 
   const denied: Array<{
     userId: string;

@@ -28,12 +28,16 @@ test("public application progresses through shortlist, interview, offer and onbo
     noticePeriod: "30 days",
     currentCompany: "Global Freight",
     currentTitle: "Logistics Manager",
-    currentSalary: "AED 7000",
-    salaryExpectation: "AED 18000",
+    currentSalary: "7000",
+    salaryExpectation: "18000",
   };
   for (const [name, value] of Object.entries(fields)) {
     await page.locator(`input[name="${name}"]`).fill(value);
   }
+  await page.getByRole("combobox", { name: /Current salary currency/ }).click();
+  await page.getByRole("option", { name: /AED/ }).click();
+  await page.getByRole("combobox", { name: /Expected salary currency/ }).click();
+  await page.getByRole("option", { name: /AED/ }).click();
   await selectApplicationLocation(page, "United Arab Emirates", "Dubai");
   await page.locator('select[name="workEligibility"]').selectOption("Need employer sponsorship");
   const textareas = page.locator("textarea");
