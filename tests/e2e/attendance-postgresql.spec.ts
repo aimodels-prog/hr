@@ -53,9 +53,7 @@ test("staff outside biometric tracking retain recorded-attendance and leave char
   await expect(
     page.getByRole("heading", { name: "My annual leave balance", exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: /^Recorded attendance(?: vs expected)?$/ }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "My attendance vs expected" })).toBeVisible();
 });
 
 test("terminal refresh survives identity updates and recovers from a stalled request", async ({
@@ -365,9 +363,7 @@ test("workforce charts load real data for HR and personal attendance on mobile",
   await previewAs(page, "user-omar", "Employee", "/staff/me/attendance");
   const personal = page.getByRole("region", { name: "My working hours", exact: true });
   await expect(personal).toBeVisible({ timeout: 30_000 });
-  await expect(
-    personal.getByRole("heading", { name: /^Recorded attendance(?: vs expected)?$/ }),
-  ).toBeVisible();
+  await expect(personal.getByRole("heading", { name: "My attendance vs expected" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Recruitment pipeline" })).toHaveCount(0);
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),

@@ -198,7 +198,12 @@ test("dashboard chart figures match server data for HR and employee across perio
       expect(data.days.at(-1)?.date).toBe(data.today.date);
       expect(data.days.at(-1)?.missing).toBe(0);
       expect(data.days.at(-1)?.review).toBe(0);
-      await expect(insights.locator(".recharts-xAxis").getByText(/Today/).first()).toBeVisible();
+      if (role === "HR" || period === 7)
+        await expect(insights.locator(".recharts-xAxis").getByText(/Today/).first()).toBeVisible();
+      else
+        await expect(
+          insights.getByRole("region", { name: "My attendance vs expected" }),
+        ).toBeVisible();
       const details = insights
         .locator("details")
         .filter({ has: page.getByText("How these figures are calculated", { exact: true }) });
@@ -270,6 +275,13 @@ test("dashboard chart figures match server data for HR and employee across perio
         ])
           await expect(page.getByRole("heading", { name, exact: true })).toHaveCount(0);
       }
+    }
+    if (role === "Employee") {
+      await insights.getByLabel("Chart period").selectOption("90");
+      await expect(
+        insights.getByRole("region", { name: "My attendance vs expected" }),
+      ).toBeVisible();
+      await expect(insights.getByText("Attendance completion").first()).toBeVisible();
     }
     await page.setViewportSize({ width: 390, height: 844 });
     expect(
