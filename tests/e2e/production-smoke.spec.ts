@@ -166,7 +166,7 @@ test("production release smoke loads HR and employee charts through portal SSO",
   await page.getByLabel("Chart period", { exact: true }).selectOption("7");
   await expect(page).toHaveURL(/days=7/);
   await page
-    .getByRole("region", { name: /^Recorded attendance(?: vs expected)?$/ })
+    .getByRole("region", { name: "Attendance vs expected", exact: true })
     .getByRole("link", { name: "View details" })
     .click();
   await expect(page).toHaveURL(/days=7.*#attendance/);
@@ -176,9 +176,7 @@ test("production release smoke loads HR and employee charts through portal SSO",
   await page.getByRole("button", { name: "Clear employee filter" }).click();
   await expect(page.getByRole("heading", { name: "Recruitment pipeline" })).toBeVisible();
   await page.goto("/staff/me/attendance");
-  await expect(
-    page.getByRole("heading", { name: /^Recorded attendance(?: vs expected)?$/ }),
-  ).toBeVisible({
+  await expect(page.getByRole("heading", { name: "My attendance vs expected" })).toBeVisible({
     timeout: 30_000,
   });
   await expect(page.getByRole("heading", { name: "My attendance summary" })).toHaveCount(0);
@@ -239,7 +237,7 @@ test("production release smoke preserves employee charts when a refresh fails", 
     "Requires isolated portal SSO configuration",
   );
   await signInAs(page, "rana.nair@via-int.com", "Rana Nair", "/staff/me/attendance");
-  const chart = page.getByRole("heading", { name: /^Recorded attendance(?: vs expected)?$/ });
+  const chart = page.getByRole("heading", { name: "My attendance vs expected" });
   await expect(chart).toBeVisible({ timeout: 30_000 });
   let unavailable = true;
   await page.route("**/_serverFn/**", async (route) => {
@@ -322,19 +320,15 @@ test("production release smoke keeps employee dashboard concise on desktop and p
     "Requires isolated portal SSO configuration",
   );
   await signInAs(page, "omar.rahman@via-int.com", "Omar Rahman", "/staff");
-  await expect(
-    page.getByRole("heading", { name: /^Recorded attendance(?: vs expected)?$/ }),
-  ).toBeVisible({
+  await expect(page.getByRole("heading", { name: "My attendance vs expected" })).toBeVisible({
     timeout: 30_000,
   });
   await expect(
     page.getByTestId("primary-dashboard-charts").locator(":scope > section"),
   ).toHaveCount(2);
   await expect(page.getByText("Viewing: All employees", { exact: false })).toHaveCount(0);
-  await page.getByRole("button", { name: "About Expected attendance", exact: true }).click();
-  await expect(
-    page.getByText("Completed days only; includes breaks where applicable", { exact: true }),
-  ).toBeVisible();
+  await page.getByRole("button", { name: "Reporting period and timezone", exact: true }).click();
+  await expect(page.getByText(/\d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2}/)).toBeVisible();
   await page.keyboard.press("Escape");
   await page.screenshot({ path: test.info().outputPath("employee-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
