@@ -261,7 +261,7 @@ export function DashboardActionQueue() {
               </Button>
             </div>
           ) : (
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
               {reminders.slice(0, 4).map((task) => {
                 const visual = taskVisual(task);
                 const Icon = visual.icon;
@@ -273,53 +273,33 @@ export function DashboardActionQueue() {
                   <Link
                     key={task.id}
                     to={task.actionUrl}
-                    className="group flex min-h-20 min-w-0 items-center gap-3 rounded-xl border border-border/80 bg-muted/20 p-3 transition-colors hover:border-primary/40 hover:bg-primary/[0.035] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-32 md:flex-col md:items-stretch md:justify-between md:p-4"
+                    className="group flex min-h-16 min-w-0 items-center gap-2.5 rounded-xl border border-border/80 bg-muted/20 px-3 py-2.5 transition-colors hover:border-primary/40 hover:bg-primary/[0.035] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    <div className="shrink-0">
-                      <span
-                        className={`grid size-10 shrink-0 place-items-center rounded-xl ${visual.color}`}
-                      >
-                        <Icon className="size-5" aria-hidden="true" />
+                    <span
+                      className={`grid size-8 shrink-0 place-items-center rounded-lg ${visual.color}`}
+                    >
+                      <Icon className="size-4" aria-hidden="true" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <span className="block text-[13px] font-semibold leading-tight text-foreground">
+                        {task.title}
+                      </span>
+                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                        {subject ? `${subject} · ` : ""}
+                        {task.state !== "Open" ? task.state : taskActionLabel(task)}
                       </span>
                     </div>
-                    <div className="flex min-w-0 flex-1 items-center justify-between gap-3 md:mt-3 md:w-full md:flex-none md:items-end">
-                      <div className="min-w-0">
-                        <span className="block text-sm font-semibold leading-snug text-foreground">
-                          {task.title}
-                        </span>
-                        {subject && (
-                          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                            {subject}
-                          </span>
-                        )}
-                        {task.state !== "Open" && (
-                          <span
-                            className={`mt-1 block text-xs font-semibold ${
-                              task.state === "Overdue"
-                                ? "text-amber-800 dark:text-amber-200"
-                                : task.state === "Due Soon"
-                                  ? "text-sky-700 dark:text-sky-300"
-                                  : "text-muted-foreground"
-                            }`}
-                          >
-                            {task.state}
-                          </span>
-                        )}
-                        <span className="mt-1.5 block text-xs font-semibold text-primary">
-                          {taskActionLabel(task)}
-                        </span>
-                      </div>
-                      <span className="grid size-8 shrink-0 place-items-center rounded-full border border-primary/20 bg-card text-primary transition-transform group-hover:translate-x-0.5">
-                        <ArrowRight className="size-4" aria-hidden="true" />
-                      </span>
-                    </div>
+                    <ArrowRight
+                      className="size-4 shrink-0 text-primary transition-transform group-hover:translate-x-0.5"
+                      aria-hidden="true"
+                    />
                   </Link>
                 );
               })}
               {reminders.length > 4 && (
                 <Link
                   to="/staff/my-tasks"
-                  className="flex min-h-32 items-center justify-center rounded-xl border border-dashed border-primary/30 bg-primary/[0.025] text-sm font-semibold text-primary hover:bg-primary/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="flex min-h-16 items-center justify-center rounded-xl border border-dashed border-primary/30 bg-primary/[0.025] px-3 text-sm font-semibold text-primary hover:bg-primary/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   View {reminders.length - 4} more {reminders.length - 4 === 1 ? "task" : "tasks"}
                   <ArrowRight className="ml-2 size-4" aria-hidden="true" />

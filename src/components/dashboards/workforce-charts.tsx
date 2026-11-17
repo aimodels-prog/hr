@@ -9,10 +9,8 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  ComposedChart,
   Legend,
   Label,
-  Line,
   Tooltip,
   XAxis,
   YAxis,
@@ -25,12 +23,17 @@ import { Button } from "@/components/ui/button";
 import { WorkforceKpiDetails, type WorkforceKpi } from "./workforce-kpi-details";
 import { approvalDestination } from "@/lib/data/approval-destinations";
 import type { LeaveChartRow } from "@/lib/data/dashboard-priorities";
+import {
+  attendancePerformanceRows,
+  attendancePerformanceSummary,
+  type AttendanceView,
+} from "@/lib/data/workforce-analytics";
 import type { DashboardChartsProps } from "./dashboard-charts";
 
 const colors = {
-  worked: "#0d9488",
-  expected: "#2563eb",
   recorded: "#0d9488",
+  credit: "#0d9488",
+  target: "#2563eb",
   review: "#d97706",
   missing: "#94a3b8",
   leaveDays: "#6366f1",
@@ -364,8 +367,10 @@ export default function WorkforceCharts({
   const [dashboardDetail, setDashboardDetail] = useState<WorkforceKpi | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
-  const days: 7 | 30 = Number((location.search as { days?: number }).days) === 7 ? 7 : 30;
-  const setDays = (value: 7 | 30) => {
+  const requestedDays = Number((location.search as { days?: number }).days);
+  const days: 7 | 30 | 90 =
+    requestedDays === 7 ? 7 : requestedDays === 90 && (scope === "self" || employeeId) ? 90 : 30;
+  const setDays = (value: 7 | 30 | 90) => {
     void navigate({ to: ".", search: (previous) => ({ ...previous, days: value }), replace: true });
   };
   const query = useQuery({
@@ -396,7 +401,11 @@ export default function WorkforceCharts({
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
   });
   const data = query.data;
-  const hasExpectedHours = Boolean(data?.days.some((day) => day.expected > 0));
+  const attendanceView: AttendanceView = days === 7 ? "daily" : days === 90 ? "monthly" : "weekly";
+  const performance = data ? attendancePerformanceSummary(data.days, data.today.date) : null;
+  const performanceRows = data
+    ? attendancePerformanceRows(data.days, attendanceView, data.today.date)
+    : [];
   const label =
     scope === "self" ? "My working hours" : employeeId ? "Employee insights" : "HR insights";
   const detail = (section: string, fallback: string) =>
@@ -439,11 +448,16 @@ export default function WorkforceCharts({
           <select
             id={`chart-period-${scope}`}
             value={days}
-            onChange={(event) => setDays(Number(event.target.value) as 7 | 30)}
+            onChange={(event) => setDays(Number(event.target.value) as 7 | 30 | 90)}
             className="h-9 rounded-md border bg-background px-2 text-sm"
           >
-            <option value={7}>Last 7 days · including today</option>
-            <option value={30}>Last 30 days · including today</option>
+            <option value={7}>
+              {scope === "self" || employeeId ? "Daily · 7 days" : "Last 7 days"}
+            </option>
+            <option value={30}>
+              {scope === "self" || employeeId ? "Weekly · 30 days" : "Last 30 days"}
+            </option>
+            {(scope === "self" || employeeId) && <option value={90}>Monthly · 90 days</option>}
           </select>
           <Button
             variant="outline"
@@ -531,14 +545,16 @@ export default function WorkforceCharts({
                   ]
                 : [
                     {
-                      label: "Recorded attendance",
-                      value: `${hours(data.totals.worked)} h`,
-                      note: "Includes scheduled breaks where applicable; today is shown live",
+                      label: "Attendance completion",
+                      value: performance?.percentage === null ? "—" : `${performance?.percentage}%`,
+                      note: "Completed days; paid leave and remote work count",
                     },
                     {
-                      label: "Expected attendance",
-                      value: !hasExpectedHours ? "—" : `${hours(data.totals.expected)} h`,
-                      note: "Completed days only; includes breaks where applicable",
+                      label: "Credited / expected",
+                      value: performance?.target
+                        ? `${hours(performance.credit)} / ${hours(performance.target)} h`
+                        : "—",
+                      note: "Today is in progress and excluded",
                     },
                     {
                       label: "Annual leave remaining",
@@ -573,67 +589,65 @@ export default function WorkforceCharts({
           <div className="grid min-w-0 gap-5 xl:grid-cols-2" data-testid="primary-dashboard-charts">
             {(scope === "self" || employeeId) && (
               <Panel
-                title={
-                  !hasExpectedHours ? "Recorded attendance" : "Recorded attendance vs expected"
-                }
-                description="Today shows live hours. Timesheet hours exclude breaks."
+                title={scope === "self" ? "My attendance vs expected" : "Attendance vs expected"}
+                description="Attendance includes the scheduled break. Paid leave, approved remote work and duty count. Today is in progress."
                 link={detail(
                   "attendance",
                   scope === "hr" ? "/staff/attendance" : "/staff/me/attendance",
                 )}
               >
+                <div className="mb-4 flex flex-wrap items-end justify-between gap-2 rounded-xl bg-primary/[0.045] px-4 py-3">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Attendance completion
+                    </p>
+                    <p
+                      className={`text-3xl font-semibold tabular-nums ${performance?.percentage !== null && performance && performance.percentage < 90 ? "text-amber-700" : "text-primary"}`}
+                    >
+                      {performance?.percentage === null ? "—" : `${performance?.percentage}%`}
+                    </p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {performance?.target
+                      ? `${hours(performance.credit)} of ${hours(performance.target)} expected hours`
+                      : "No scheduled hours in this period"}
+                  </p>
+                </div>
                 <ChartContainer
                   config={chartConfig}
                   className="h-64 w-full aspect-auto"
                   role="img"
-                  aria-label="Daily recorded attendance compared with expected attendance"
+                  aria-label={`${attendanceView} attendance credit compared with expected hours`}
                 >
-                  <ComposedChart
-                    data={data.days.map((day) => ({
-                      ...day,
-                      expected: day.date === data.today.date ? null : day.expected,
-                    }))}
+                  <BarChart
+                    data={performanceRows}
                     margin={{ left: -18, right: 8 }}
                     accessibilityLayer
                   >
                     <CartesianGrid vertical={false} />
-                    <XAxis
-                      dataKey="date"
-                      tickFormatter={(date) =>
-                        date === data.today.date ? `${shortDate(date)} Today` : shortDate(date)
-                      }
-                      interval="preserveStartEnd"
-                      minTickGap={24}
-                    />
+                    <XAxis dataKey="label" interval="preserveStartEnd" minTickGap={20} />
                     <YAxis />
-                    <Tooltip
-                      labelFormatter={(date) =>
-                        date === data.today.date ? `${date} · Today (in progress)` : String(date)
-                      }
-                    />
+                    <Tooltip />
                     <Legend />
                     <Bar
-                      name="Recorded attendance"
-                      dataKey="worked"
-                      fill={colors.worked}
+                      name="Credited hours"
+                      dataKey="credit"
+                      fill={colors.credit}
                       radius={[3, 3, 0, 0]}
                       isAnimationActive={false}
                     />
-                    {hasExpectedHours && (
-                      <Line
-                        name="Expected attendance"
-                        dataKey="expected"
-                        stroke={colors.expected}
-                        strokeWidth={2}
-                        dot={false}
-                        isAnimationActive={false}
-                      />
-                    )}
-                  </ComposedChart>
+                    <Bar
+                      name="Expected hours"
+                      dataKey="target"
+                      fill={colors.target}
+                      radius={[3, 3, 0, 0]}
+                      isAnimationActive={false}
+                    />
+                  </BarChart>
                 </ChartContainer>
-                {!data.days.some((day) => day.worked > 0) && (
+                {!performance?.target && (
                   <p className="mt-2 text-xs text-muted-foreground">
-                    No attendance hours recorded in this period.
+                    No scheduled attendance hours in this period.
                   </p>
                 )}
               </Panel>
@@ -660,6 +674,13 @@ export default function WorkforceCharts({
                   description="Recorded, pending review and missing records by day. Today is still in progress."
                   link={detail("attendance", "/staff/attendance")}
                 >
+                  <div className="mb-3 flex items-baseline gap-2 text-sm">
+                    <span className="text-muted-foreground">Overall attendance</span>
+                    <strong className="text-xl tabular-nums text-primary">
+                      {performance?.percentage === null ? "—" : `${performance?.percentage}%`}
+                    </strong>
+                    <span className="text-xs text-muted-foreground">completed days</span>
+                  </div>
                   <ChartContainer
                     config={chartConfig}
                     className="h-64 w-full aspect-auto"

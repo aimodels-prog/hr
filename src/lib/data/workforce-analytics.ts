@@ -12,6 +12,8 @@ export interface AnalyticsDay {
   date: string;
   worked: number;
   expected: number;
+  attendanceCredit: number;
+  attendanceTarget: number;
   recorded: number;
   review: number;
   missing: number;
@@ -60,6 +62,61 @@ export function completedDateRange(today: string, count: number): string[] {
 /** Last N calendar days, including the current local day. */
 export function attendanceChartDateRange(today: string, count: number): string[] {
   return [...completedDateRange(today, count - 1), today];
+}
+
+export type AttendanceView = "daily" | "weekly" | "monthly";
+
+export function attendancePerformanceRows(
+  days: AnalyticsDay[],
+  view: AttendanceView,
+  today: string,
+) {
+  const rows = new Map<string, { key: string; label: string; credit: number; target: number }>();
+  for (const day of days) {
+    if (view !== "daily" && day.date === today) continue;
+    const date = new Date(`${day.date}T12:00:00Z`);
+    const key =
+      view === "monthly"
+        ? day.date.slice(0, 7)
+        : view === "weekly"
+          ? (() => {
+              date.setUTCDate(date.getUTCDate() - date.getUTCDay());
+              return date.toISOString().slice(0, 10);
+            })()
+          : day.date;
+    const label =
+      view === "monthly"
+        ? new Date(`${key}-01T12:00:00Z`).toLocaleDateString("en", {
+            month: "short",
+            year: "numeric",
+            timeZone: "UTC",
+          })
+        : view === "weekly"
+          ? `Week ${new Date(`${key}T12:00:00Z`).toLocaleDateString("en", { day: "numeric", month: "short", timeZone: "UTC" })}`
+          : day.date === today
+            ? "Today"
+            : day.date.slice(8, 10) + "/" + day.date.slice(5, 7);
+    const row = rows.get(key) ?? { key, label, credit: 0, target: 0 };
+    row.credit += day.attendanceCredit;
+    row.target += day.attendanceTarget;
+    rows.set(key, row);
+  }
+  return [...rows.values()].map((row) => ({
+    ...row,
+    credit: Math.round(row.credit * 10) / 10,
+    target: Math.round(row.target * 10) / 10,
+  }));
+}
+
+export function attendancePerformanceSummary(days: AnalyticsDay[], today: string) {
+  const completed = days.filter((day) => day.date !== today);
+  const target = completed.reduce((sum, day) => sum + day.attendanceTarget, 0);
+  const credit = completed.reduce((sum, day) => sum + day.attendanceCredit, 0);
+  return {
+    credit: Math.round(credit * 10) / 10,
+    target: Math.round(target * 10) / 10,
+    percentage: target > 0 ? Math.min(100, Math.round((credit / target) * 100)) : null,
+  };
 }
 
 type AttendanceTodayInput = {
@@ -169,12 +226,16 @@ export function calculateAttendanceAnalytics(input: {
     startDate: string;
     endDate: string;
     isHalfDay: boolean;
-    policySnapshot?: unknown;
+    policySnapshot?: {
+      isPaid?: boolean;
+      specialRequest?: { unpaidByDate?: Array<{ date: string; days: number }> };
+    } | null;
   }[];
   remoteWork?: {
     employeeId: string;
     startDate: string;
     endDate: string;
+    isHalfDay?: boolean;
     policySnapshot?: unknown;
   }[];
   records: {
@@ -208,6 +269,8 @@ export function calculateAttendanceAnalytics(input: {
       date,
       worked: 0,
       expected: 0,
+      attendanceCredit: 0,
+      attendanceTarget: 0,
       recorded: 0,
       review: 0,
       missing: 0,
@@ -233,6 +296,45 @@ export function calculateAttendanceAnalytics(input: {
           .filter((leave) => approvedLeaveCoversDate(leave, date))
           .reduce((sum, leave) => sum + (leave.isHalfDay ? 0.5 : 1), 0),
       );
+      const paidLeaveFraction = Math.min(
+        1,
+        (leaveByEmployee.get(employee.id) ?? [])
+          .filter((leave) => approvedLeaveCoversDate(leave, date))
+          .reduce((sum, leave) => {
+            const fraction = leave.isHalfDay ? 0.5 : 1;
+            const unpaidByDate = leave.policySnapshot?.specialRequest?.unpaidByDate?.find(
+              (entry) => entry.date === date,
+            )?.days;
+            const unpaid = leave.policySnapshot?.specialRequest
+              ? Math.min(fraction, Math.max(0, unpaidByDate ?? 0))
+              : leave.policySnapshot?.isPaid === false
+                ? fraction
+                : 0;
+            return sum + fraction - unpaid;
+          }, 0),
+      );
+      const remoteFraction = Math.min(
+        1,
+        (input.remoteWork ?? [])
+          .filter(
+            (request) =>
+              request.employeeId === employee.id && approvedLeaveCoversDate(request, date),
+          )
+          .reduce((sum, request) => sum + (request.isHalfDay ? 0.5 : 1), 0),
+      );
+      const scheduledWorkday =
+        tracked &&
+        workingDay &&
+        !holidays.has(`all:${date}`) &&
+        !holidays.has(`${employee.locationId}:${date}`);
+      if (scheduledWorkday) {
+        // Approved paid leave and remote work satisfy the day's attendance target.
+        // Unpaid leave is authorised but excluded from both sides of the comparison.
+        const unpaidFraction = Math.max(0, leaveFraction - paidLeaveFraction);
+        day.attendanceTarget += input.dailyHours * (1 - unpaidFraction);
+        day.attendanceCredit +=
+          input.dailyHours * Math.min(1 - unpaidFraction, paidLeaveFraction + remoteFraction);
+      }
       const expected = scheduled ? input.dailyHours * (1 - leaveFraction) : 0;
       day.expected += expected;
       if (scheduled) day.leaveDays += leaveFraction;
@@ -251,6 +353,11 @@ export function calculateAttendanceAnalytics(input: {
           const liveHours = record.creditedHours ?? (end - start) / 3_600_000;
           if (Number.isFinite(liveHours) && liveHours >= 0 && liveHours <= 24) {
             day.worked += liveHours;
+            if (scheduledWorkday)
+              day.attendanceCredit += Math.min(
+                liveHours,
+                Math.max(0, input.dailyHours * (1 - leaveFraction - remoteFraction)),
+              );
             day.recorded += 1;
           }
         }
@@ -265,6 +372,11 @@ export function calculateAttendanceAnalytics(input: {
         hours >= 0 &&
         hours <= 24;
       if (closed && !pendingVisit) day.worked += hours;
+      if (scheduledWorkday && closed && !pendingVisit)
+        day.attendanceCredit += Math.min(
+          hours,
+          Math.max(0, input.dailyHours * (1 - leaveFraction - remoteFraction)),
+        );
       // Actual evidence remains visible even before tracking is configured or on
       // non-working days. Only infer a missing record when work was expected.
       const leaveWithoutPunches =
@@ -279,6 +391,8 @@ export function calculateAttendanceAnalytics(input: {
     }
     day.worked = Math.round(day.worked * 100) / 100;
     day.expected = Math.round(day.expected * 100) / 100;
+    day.attendanceCredit = Math.round(day.attendanceCredit * 100) / 100;
+    day.attendanceTarget = Math.round(day.attendanceTarget * 100) / 100;
     return day;
   });
 }

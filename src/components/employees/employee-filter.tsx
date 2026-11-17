@@ -6,7 +6,7 @@ import { getMasterDataRepository } from "@/lib/data/master-data";
 
 export function employeeSearch(search: Record<string, unknown>): {
   employeeId?: string | undefined;
-  days?: 7 | 30 | undefined;
+  days?: 7 | 30 | 90 | undefined;
   from?: string | undefined;
   until?: string | undefined;
   location?: string | undefined;
@@ -16,7 +16,14 @@ export function employeeSearch(search: Record<string, unknown>): {
     typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined;
   return {
     employeeId: typeof search["employeeId"] === "string" ? search["employeeId"] : undefined,
-    days: Number(search["days"]) === 7 ? 7 : Number(search["days"]) === 30 ? 30 : undefined,
+    days:
+      Number(search["days"]) === 7
+        ? 7
+        : Number(search["days"]) === 30
+          ? 30
+          : Number(search["days"]) === 90
+            ? 90
+            : undefined,
     from: date(search["from"]),
     until: date(search["until"]),
     location: typeof search["location"] === "string" ? search["location"] : undefined,

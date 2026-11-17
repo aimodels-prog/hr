@@ -56,7 +56,7 @@ export function HrDashboard() {
   const user = useCurrentUser();
   const navigate = useNavigate();
   const location = useLocation();
-  const search = location.search as { employeeId?: string; days?: 7 | 30 };
+  const search = location.search as { employeeId?: string; days?: 7 | 30 | 90 };
   const [term, setTerm] = useState("");
   const service = useMemo(() => new EmployeeService(), []);
   const employees = service.getEmployees(user.getActorContext());
@@ -186,8 +186,8 @@ function OrganisationHrDashboard({ toolbar }: { toolbar: ReactNode }) {
   return (
     <div className="flex flex-col gap-4">
       {toolbar}
-      <DashboardCharts scope="hr" />
       <HrAttendanceToday />
+      <DashboardCharts scope="hr" />
       <StaffDataBoundary modules={DASHBOARD_MODULES.hr}>
         <OrganisationHrDashboardDetails />
       </StaffDataBoundary>

@@ -46,9 +46,11 @@ export function HrAttendanceToday() {
     staleTime: 30_000,
   });
   const [ask, setAsk] = useState<Row | null>(null);
+  const [view, setView] = useState<"all" | "not-clocked-in">("all");
   const [sending, setSending] = useState(false);
   const rows = query.data?.rows ?? [];
-  const followUps = rows.filter((row) => row.needsFollowUp && !row.followUpState);
+  const notClockedIn = rows.filter((row) => row.status === "Not clocked in");
+  const visibleRows = view === "not-clocked-in" ? notClockedIn : rows;
   const send = async () => {
     if (!ask || sending) return;
     setSending(true);
@@ -71,11 +73,9 @@ export function HrAttendanceToday() {
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
         <div>
-          <CardTitle className="text-lg">Head Office attendance today</CardTitle>
+          <CardTitle className="text-lg">Head Office today</CardTitle>
           <p className="mt-1 text-sm text-muted-foreground">
-            {query.data
-              ? `${query.data.date} · ${rows.filter((row) => row.clockIn).length} clocked in · ${followUps.length} need a check`
-              : "Checking today's records…"}
+            {query.data ? query.data.date : "Checking today's records…"}
           </p>
         </div>
         <div className="flex gap-2">
@@ -96,6 +96,36 @@ export function HrAttendanceToday() {
         </div>
       </CardHeader>
       <CardContent>
+        {query.data && (
+          <div className="mb-4 flex flex-wrap items-center gap-2" aria-label="Attendance overview">
+            <button
+              type="button"
+              aria-pressed={view === "all"}
+              onClick={() => setView("all")}
+              className={`rounded-lg border px-3 py-2 text-sm font-medium ${view === "all" ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted"}`}
+            >
+              Everyone <strong className="ml-1 tabular-nums">{rows.length}</strong>
+            </button>
+            <button
+              type="button"
+              aria-pressed={view === "not-clocked-in"}
+              title="No clock-in is recorded yet; this is not confirmed absence."
+              onClick={() => setView("not-clocked-in")}
+              className={`rounded-lg border px-3 py-2 text-sm font-medium ${view === "not-clocked-in" ? "border-amber-400 bg-amber-100 text-amber-950" : "border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100"}`}
+            >
+              Not clocked in <strong className="ml-1 tabular-nums">{notClockedIn.length}</strong>
+            </button>
+            {notClockedIn.length > 0 && view === "all" && (
+              <span className="text-xs text-muted-foreground">
+                {notClockedIn
+                  .slice(0, 4)
+                  .map((row) => row.name)
+                  .join(", ")}
+                {notClockedIn.length > 4 ? ` +${notClockedIn.length - 4} more` : ""}
+              </span>
+            )}
+          </div>
+        )}
         {query.isError && (
           <p role="alert" className="text-sm text-destructive">
             Today's attendance could not be loaded. Try Refresh.
@@ -127,7 +157,7 @@ export function HrAttendanceToday() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((row) => (
+                {visibleRows.map((row) => (
                   <TableRow key={row.employeeId}>
                     <TableCell className="font-medium">{row.name}</TableCell>
                     <TableCell>

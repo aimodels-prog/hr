@@ -27,11 +27,11 @@ export async function getWorkforceAnalytics(
   organisationId: string,
   actor: AuditActorContext,
   scope: "self" | "hr",
-  days: 7 | 30,
+  days: 7 | 30 | 90,
   at = new Date(),
   employeeId?: string,
 ): Promise<WorkforceAnalytics> {
-  if (![7, 30].includes(days)) throw new Error("Choose 7 or 30 days.");
+  if (![7, 30, 90].includes(days)) throw new Error("Choose 7, 30 or 90 days.");
   if (scope !== "self" && scope !== "hr") throw new Error("Unknown dashboard scope.");
   if (scope === "hr" && !["HR", "Super Admin"].includes(actor.activeRole ?? ""))
     throw new Error("Only HR can view organisation charts.");
@@ -273,7 +273,12 @@ export async function getWorkforceAnalytics(
       ...record,
       calculatedHours: recordedAttendanceHours(record),
     })),
-    leave: leave.filter(isAbsenceLeave),
+    leave: leave.filter(isAbsenceLeave).map((item) => ({
+      ...item,
+      policySnapshot: (item.policySnapshot ?? null) as NonNullable<
+        import("../../data/approved-leave.ts").ApprovedLeaveDates["policySnapshot"]
+      > | null,
+    })),
     remoteWork: leave.filter(isRemoteWorkMarker),
     holidays,
     pendingVisits,

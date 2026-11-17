@@ -6,6 +6,8 @@ import {
   attendanceTodayEmployeeIds,
   completedDateRange,
   attendanceChartDateRange,
+  attendancePerformanceRows,
+  attendancePerformanceSummary,
   type AnalyticsEmployee,
 } from "../src/lib/data/workforce-analytics.ts";
 
@@ -63,6 +65,77 @@ test("remote-work days require timesheet hours but not a biometric attendance pu
   assert.equal(day!.expected, 0);
   assert.equal(day!.leaveDays, 0);
   assert.equal(day!.missing, 0);
+  assert.equal(day!.attendanceCredit, 8);
+  assert.equal(day!.attendanceTarget, 8);
+});
+
+test("attendance completion credits paid leave and remote work but not unpaid leave", () => {
+  const leave = {
+    employeeId: "a",
+    startDate: "2026-09-14",
+    endDate: "2026-09-14",
+    isHalfDay: false,
+  };
+  const [paid] = calculateAttendanceAnalytics({ ...base, leave: [leave] });
+  const [unpaid] = calculateAttendanceAnalytics({
+    ...base,
+    leave: [{ ...leave, policySnapshot: { isPaid: false } }],
+  });
+  const [half] = calculateAttendanceAnalytics({
+    ...base,
+    leave: [{ ...leave, isHalfDay: true }],
+  });
+  assert.deepEqual([paid?.attendanceCredit, paid?.attendanceTarget], [8, 8]);
+  assert.deepEqual([unpaid?.attendanceCredit, unpaid?.attendanceTarget], [0, 0]);
+  assert.deepEqual([half?.attendanceCredit, half?.attendanceTarget], [4, 8]);
+});
+
+test("daily, weekly and monthly attendance comparisons exclude today's unfinished shift from the score", () => {
+  const days = [
+    {
+      date: "2026-10-31",
+      worked: 0,
+      expected: 8,
+      attendanceCredit: 4,
+      attendanceTarget: 8,
+      recorded: 1,
+      review: 0,
+      missing: 0,
+      leaveDays: 0,
+    },
+    {
+      date: "2026-11-01",
+      worked: 0,
+      expected: 8,
+      attendanceCredit: 8,
+      attendanceTarget: 8,
+      recorded: 1,
+      review: 0,
+      missing: 0,
+      leaveDays: 0,
+    },
+    {
+      date: "2026-11-02",
+      worked: 2,
+      expected: 0,
+      attendanceCredit: 2,
+      attendanceTarget: 8,
+      recorded: 1,
+      review: 0,
+      missing: 0,
+      leaveDays: 0,
+    },
+  ];
+  assert.equal(attendancePerformanceSummary(days, "2026-11-02").percentage, 75);
+  assert.equal(attendancePerformanceRows(days, "daily", "2026-11-02").length, 3);
+  assert.deepEqual(
+    attendancePerformanceRows(days, "weekly", "2026-11-02").map((row) => row.credit),
+    [4, 8],
+  );
+  assert.deepEqual(
+    attendancePerformanceRows(days, "monthly", "2026-11-02").map((row) => row.credit),
+    [4, 8],
+  );
 });
 
 test("a worked date excluded from an approved leave range is neither on leave nor remote", () => {

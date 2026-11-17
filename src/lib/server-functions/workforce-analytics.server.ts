@@ -12,7 +12,7 @@ export const getWorkforceAnalyticsFn = createServerFn({ method: "GET" })
         actorEmail: z.string().email().optional(),
         activeRole: z.enum(ROLE_VALUES),
         scope: z.enum(["self", "hr"]),
-        days: z.union([z.literal(7), z.literal(30)]),
+        days: z.union([z.literal(7), z.literal(30), z.literal(90)]),
         employeeId: z.string().uuid().optional(),
       })
       .strict()
