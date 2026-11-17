@@ -19,11 +19,10 @@ test("HR dashboard setup: connections, retry, shortcuts and mobile", async ({ pa
   });
   await page.goto("/staff");
   const setup = page.getByRole("region", { name: "HR setup", exact: true });
-  const toggle = setup.getByRole("button", { name: /^HR setup/ });
+  await expect(setup.getByRole("heading", { name: "HR setup" })).toBeVisible();
   await expect(setup.getByRole("button", { name: "Enable emails", exact: true })).toBeEnabled({
     timeout: 30_000,
   });
-  await expect(toggle).toHaveAttribute("aria-expanded", "true");
   await expect(setup.getByRole("button", { name: "Hide from dashboard" })).toHaveCount(0);
   await expect(
     setup.locator('form[action="/api/integrations/google-calendar?email=enable"]'),
@@ -42,17 +41,13 @@ test("HR dashboard setup: connections, retry, shortcuts and mobile", async ({ pa
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
   ).toBeTruthy();
   await page.screenshot({ path: test.info().outputPath("hr-setup-mobile.png") });
-  await toggle.click();
-  await expect(setup.getByRole("button", { name: "Enable emails", exact: true })).toHaveCount(0);
+  await expect(setup.getByRole("button", { name: "Enable emails", exact: true })).toBeVisible();
 
   connected = true;
   emailEnabled = true;
   await page.reload();
-  await expect(toggle).toBeVisible();
-  await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await toggle.click();
-  await expect(setup.getByText("Enabled", { exact: true })).toBeVisible();
-  await expect(setup.getByText("Connected", { exact: true })).toBeVisible();
+  await expect(setup.getByRole("heading", { name: "HR setup" })).toBeVisible();
+  await expect(setup.getByText("Ready", { exact: true })).toHaveCount(2);
   await expect(setup.getByRole("button", { name: "Enable emails", exact: true })).toHaveCount(0);
   await setup.getByRole("button", { name: "Hide from dashboard" }).click();
   await expect(setup).toHaveCount(0);
@@ -64,7 +59,7 @@ test("HR dashboard setup: connections, retry, shortcuts and mobile", async ({ pa
   await expect(page.getByRole("button", { name: "Show setup on dashboard" })).toHaveCount(0);
   await page.goto("/staff");
   await expect(setup).toBeVisible();
-  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(setup.getByText("Ready", { exact: true })).toHaveCount(2);
 
   failed = true;
   await page.reload();
