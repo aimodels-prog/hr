@@ -980,7 +980,7 @@ function VacancyDetailRoute() {
                     setTransitionDialog({ open: true, action: "Pause", status: "Paused" })
                   }
                 >
-                  <PauseCircle className="mr-2 h-4 w-4" /> Pause
+                  <PauseCircle className="mr-2 h-4 w-4" /> Take offline
                 </Button>
               )}
               {vacancy.status === "Paused" && (
@@ -989,7 +989,7 @@ function VacancyDetailRoute() {
                     setTransitionDialog({ open: true, action: "Reopen", status: "Open" })
                   }
                 >
-                  <PlayCircle className="mr-2 h-4 w-4" /> Reopen
+                  <PlayCircle className="mr-2 h-4 w-4" /> Put online
                 </Button>
               )}
               {["Open", "Paused", "Draft"].includes(vacancy.status) && (
@@ -999,7 +999,7 @@ function VacancyDetailRoute() {
                     setTransitionDialog({ open: true, action: "Close", status: "Closed" })
                   }
                 >
-                  <XCircle className="mr-2 h-4 w-4" /> Close
+                  <XCircle className="mr-2 h-4 w-4" /> Close vacancy
                 </Button>
               )}
               {vacancy.status === "Closed" && (

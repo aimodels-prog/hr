@@ -1,14 +1,56 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, ClipboardCheck, FileUp, Search } from "lucide-react";
+import {
+  ArrowRight,
+  ArrowUpRight,
+  ClipboardCheck,
+  Clock3,
+  FileUp,
+  Landmark,
+  Search,
+  UserRound,
+} from "lucide-react";
 import { useCurrentUser } from "@/lib/auth";
 import { isApprovalTask } from "@/lib/data/request-tracking";
+import type { AppTask } from "@/lib/data/task-service";
 import { getMyTasksFn } from "@/lib/server-functions/task.server";
 import { getDashboardMissingDocumentsFn } from "@/lib/server-functions/dashboard-document-checklist.server";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { AttentionQueue } from "./dashboard-kit";
+
+function taskVisual(task: AppTask) {
+  const title = task.title.toLowerCase();
+  if (task.actionLabel.toLowerCase().includes("upload")) {
+    return { icon: FileUp, color: "bg-sky-50 text-sky-700 dark:bg-sky-950/50 dark:text-sky-300" };
+  }
+  if (title.includes("bank") || title.includes("salary")) {
+    return {
+      icon: Landmark,
+      color: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
+    };
+  }
+  if (title.includes("personal") || title.includes("emergency") || title.includes("profile")) {
+    return {
+      icon: UserRound,
+      color: "bg-violet-50 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300",
+    };
+  }
+  if (task.module === "Timesheets" || task.module === "Attendance") {
+    return {
+      icon: Clock3,
+      color: "bg-teal-50 text-teal-700 dark:bg-teal-950/50 dark:text-teal-300",
+    };
+  }
+  return { icon: ClipboardCheck, color: "bg-primary/10 text-primary" };
+}
+
+function taskActionLabel(task: AppTask) {
+  if (task.actionLabel !== "Open task") return task.actionLabel;
+  if (task.title.toLowerCase().includes("bank")) return "Add bank details";
+  if (task.title.toLowerCase().includes("personal")) return "Complete details";
+  return task.actionLabel;
+}
 
 /** A single dashboard home for personal tasks and missing required documents. */
 export function DashboardActionQueue() {
@@ -180,52 +222,110 @@ export function DashboardActionQueue() {
       {(reminders.length > 0 || tasks.isPending || tasks.isError) && (
         <section
           aria-label="Tasks and reminders"
-          className="space-y-3 rounded-2xl border bg-card p-5 shadow-sm"
+          className="relative overflow-hidden rounded-2xl border border-border/80 bg-card p-4 shadow-[0_12px_32px_rgba(15,50,90,0.06)] sm:p-5"
         >
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <span className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary">
-                <ClipboardCheck className="size-4" aria-hidden="true" />
+          <span
+            aria-hidden="true"
+            className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-primary via-sky-500 to-emerald-400"
+          />
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <span className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
+                <ClipboardCheck className="size-5" aria-hidden="true" />
               </span>
-              <h2 className="text-base font-semibold">Other tasks</h2>
-              {reminders.length > 0 && (
-                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
-                  {reminders.length}
-                </span>
-              )}
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight">Your next steps</h2>
+                {reminders.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {reminders.length} {reminders.length === 1 ? "task" : "tasks"} to complete
+                  </p>
+                )}
+              </div>
             </div>
-            <Link to="/staff/my-tasks" className="text-sm font-medium text-primary hover:underline">
-              View all tasks
+            <Link
+              to="/staff/my-tasks"
+              className="inline-flex min-h-10 items-center gap-1.5 rounded-lg px-2 text-sm font-semibold text-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              All tasks <ArrowRight className="size-4" aria-hidden="true" />
             </Link>
           </div>
           {tasks.isPending ? (
-            <p role="status" className="text-sm text-muted-foreground">
+            <p role="status" className="mt-4 text-sm text-muted-foreground">
               Checking tasks…
             </p>
           ) : tasks.isError ? (
-            <div role="alert" className="flex items-center gap-3 text-sm">
+            <div role="alert" className="mt-4 flex items-center gap-3 text-sm">
               Tasks could not be loaded.
               <Button size="sm" variant="outline" onClick={() => void tasks.refetch()}>
                 Try again
               </Button>
             </div>
           ) : (
-            <AttentionQueue
-              items={reminders.slice(0, 5).map((task) => ({
-                id: task.id,
-                severity:
-                  task.state === "Overdue" ||
-                  task.priority === "High" ||
-                  task.priority === "Critical"
-                    ? "warning"
-                    : "info",
-                icon: ClipboardCheck,
-                title: task.title,
-                meta: task.subjectName || task.description,
-                actionLabel: task.actionLabel,
-                actionTo: task.actionUrl,
-              }))}
-            />
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              {reminders.slice(0, 4).map((task) => {
+                const visual = taskVisual(task);
+                const Icon = visual.icon;
+                const subject =
+                  task.subjectEmployeeId && task.subjectEmployeeId !== user.employeeId
+                    ? task.subjectName
+                    : undefined;
+                return (
+                  <Link
+                    key={task.id}
+                    to={task.actionUrl}
+                    className="group flex min-h-20 min-w-0 items-center gap-3 rounded-xl border border-border/80 bg-muted/20 p-3 transition-colors hover:border-primary/40 hover:bg-primary/[0.035] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-32 md:flex-col md:items-stretch md:justify-between md:p-4"
+                  >
+                    <div className="shrink-0">
+                      <span
+                        className={`grid size-10 shrink-0 place-items-center rounded-xl ${visual.color}`}
+                      >
+                        <Icon className="size-5" aria-hidden="true" />
+                      </span>
+                    </div>
+                    <div className="flex min-w-0 flex-1 items-center justify-between gap-3 md:mt-3 md:w-full md:flex-none md:items-end">
+                      <div className="min-w-0">
+                        <span className="block text-sm font-semibold leading-snug text-foreground">
+                          {task.title}
+                        </span>
+                        {subject && (
+                          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                            {subject}
+                          </span>
+                        )}
+                        {task.state !== "Open" && (
+                          <span
+                            className={`mt-1 block text-xs font-semibold ${
+                              task.state === "Overdue"
+                                ? "text-amber-800 dark:text-amber-200"
+                                : task.state === "Due Soon"
+                                  ? "text-sky-700 dark:text-sky-300"
+                                  : "text-muted-foreground"
+                            }`}
+                          >
+                            {task.state}
+                          </span>
+                        )}
+                        <span className="mt-1.5 block text-xs font-semibold text-primary">
+                          {taskActionLabel(task)}
+                        </span>
+                      </div>
+                      <span className="grid size-8 shrink-0 place-items-center rounded-full border border-primary/20 bg-card text-primary transition-transform group-hover:translate-x-0.5">
+                        <ArrowRight className="size-4" aria-hidden="true" />
+                      </span>
+                    </div>
+                  </Link>
+                );
+              })}
+              {reminders.length > 4 && (
+                <Link
+                  to="/staff/my-tasks"
+                  className="flex min-h-32 items-center justify-center rounded-xl border border-dashed border-primary/30 bg-primary/[0.025] text-sm font-semibold text-primary hover:bg-primary/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  View {reminders.length - 4} more {reminders.length - 4 === 1 ? "task" : "tasks"}
+                  <ArrowRight className="ml-2 size-4" aria-hidden="true" />
+                </Link>
+              )}
+            </div>
           )}
         </section>
       )}

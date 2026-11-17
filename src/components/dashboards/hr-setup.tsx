@@ -1,8 +1,7 @@
 import { SafeForm } from "@/components/ui/safe-form";
-import { useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { CheckCircle2, ChevronDown, Settings2 } from "lucide-react";
+import { ArrowUpRight, CheckCircle2, Settings2 } from "lucide-react";
 import { useCurrentUser } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -15,11 +14,12 @@ type ConnectionStatus = {
   accountEmail: string;
 };
 
+const shortcutClass =
+  "inline-flex min-h-9 items-center gap-1 rounded-lg border px-3 text-xs font-semibold hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
 export function HrSetup() {
   const user = useCurrentUser();
-  const panelId = useId();
   const preference = useHrSetupPreference();
-  const [expanded, setExpanded] = useState<boolean | null>(null);
   const allowed = user.activeRole === "HR" || user.activeRole === "Super Admin";
   const status = useQuery({
     queryKey: ["hr-dashboard-setup", user.id, user.activeRole],
@@ -38,8 +38,6 @@ export function HrSetup() {
   if (!allowed || !preference.loaded || preference.hidden) return null;
   const data = status.data;
   const complete = !status.isError && data?.configured && data.connected && data.emailEnabled;
-  const needsConnection = data && (!data.configured || !data.connected || !data.emailEnabled);
-  const open = expanded ?? Boolean(needsConnection || status.isError);
   const connections = [
     {
       title: "Approval emails & reminders",
@@ -56,36 +54,24 @@ export function HrSetup() {
   ];
 
   return (
-    <section aria-label="HR setup" className="rounded-xl border bg-card">
-      <div className="flex flex-wrap items-center gap-x-2 pr-3">
-        <button
-          type="button"
-          className="flex min-h-12 flex-1 items-center gap-3 rounded-xl p-4 text-left focus-visible:outline-primary"
-          aria-expanded={open}
-          aria-controls={panelId}
-          onClick={() => setExpanded(!open)}
-        >
-          <Settings2 className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-          <span className="font-medium">HR setup</span>
-          {needsConnection && (
-            <span className="rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
-              Connect your HR account
-            </span>
-          )}
-          {status.isError && (
-            <span className="text-xs text-muted-foreground">Check connection status</span>
-          )}
-          <ChevronDown
-            className={`ml-auto h-4 w-4 shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
-            aria-hidden="true"
-          />
-        </button>
+    <section aria-label="HR setup" className="rounded-2xl border bg-card p-4 shadow-sm sm:p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+            <Settings2 className="size-5" aria-hidden="true" />
+          </span>
+          <div>
+            <h2 className="text-base font-semibold tracking-tight">HR setup</h2>
+            <p className="text-xs text-muted-foreground">
+              {complete ? "Email and calendar are ready" : "Connections and working rules"}
+            </p>
+          </div>
+        </div>
         {complete && (
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="mb-1 ml-3 sm:mb-0"
             onClick={() => {
               preference.setHidden(true);
               toast.success("Setup hidden on this browser. Restore it from Manage connections.", {
@@ -97,106 +83,85 @@ export function HrSetup() {
           </Button>
         )}
       </div>
-      {open && (
-        <div id={panelId} className="space-y-4 border-t p-4">
-          {status.isPending ? (
-            <p role="status" className="text-sm text-muted-foreground">
-              Checking connections…
-            </p>
-          ) : status.isError ? (
-            <div className="flex flex-wrap items-center gap-3">
-              <p role="status" className="text-sm">
-                Connection status is unavailable.
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={status.isFetching}
-                onClick={() => status.refetch()}
-              >
-                Try again
-              </Button>
-            </div>
-          ) : (
-            <>
-              {!data?.configured && (
-                <p className="text-sm text-muted-foreground">
-                  Your administrator needs to finish Google setup before HR can connect.
-                </p>
-              )}
-              <div className="grid gap-3 sm:grid-cols-2">
-                {connections.map((connection) => (
-                  <div
-                    key={connection.title}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
-                  >
-                    <div className="min-w-0">
-                      <h3 className="text-sm font-medium">{connection.title}</h3>
-                      {connection.ready && (
-                        <p className="mt-1 flex items-center gap-1 break-all text-xs text-muted-foreground">
-                          <CheckCircle2
-                            className="h-3.5 w-3.5 shrink-0 text-primary"
-                            aria-hidden="true"
-                          />
-                          {data?.accountEmail}
-                        </p>
-                      )}
-                    </div>
-                    {connection.ready ? (
-                      <span className="text-xs text-primary">
-                        {connection.title.startsWith("Approval") ? "Enabled" : "Connected"}
-                      </span>
-                    ) : (
-                      <SafeForm method="post" action={connection.action}>
-                        <Button size="sm" disabled={!data?.configured}>
-                          {connection.button}
-                        </Button>
-                      </SafeForm>
-                    )}
-                  </div>
-                ))}
-              </div>
-              {needsConnection && data?.configured && (
-                <p className="text-xs text-muted-foreground">
-                  Connect {status.data?.accountEmail ?? "the organising account"} once. Email
-                  permission is separate from calendar permission.
-                </p>
-              )}
-            </>
-          )}
-          <nav aria-label="HR setup shortcuts" className="flex flex-wrap gap-2 border-t pt-3">
-            <Button variant="outline" size="sm" asChild>
-              <Link to="/staff/settings" search={{ section: "connections" }}>
-                Manage connections
-              </Link>
-            </Button>
-            {user.can("attendance:manage_all") && (
-              <Button variant="outline" size="sm" asChild>
-                <Link to="/staff/attendance" hash="section=setup">
-                  Office & working hours
-                </Link>
-              </Button>
-            )}
-            {user.can("leave:admin_all") && (
-              <Button variant="outline" size="sm" asChild>
-                <Link to="/staff/leave-policies">Leave policies</Link>
-              </Button>
-            )}
-            {(user.can("timesheet:admin_all") || user.can("system:settings_manage")) && (
-              <Button variant="outline" size="sm" asChild>
-                <Link to="/staff/timesheet-settings">Timesheet settings</Link>
-              </Button>
-            )}
-            {(user.activeRole === "HR" || user.can("system:settings_manage")) && (
-              <Button variant="outline" size="sm" asChild>
-                <Link to="/staff/settings" search={{ section: "org" }}>
-                  Company setup
-                </Link>
-              </Button>
-            )}
-          </nav>
+
+      {status.isPending ? (
+        <p role="status" className="mt-4 text-sm text-muted-foreground">
+          Checking connections…
+        </p>
+      ) : status.isError ? (
+        <div role="status" className="mt-4 flex flex-wrap items-center gap-3 text-sm">
+          Connection status is unavailable.
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={status.isFetching}
+            onClick={() => void status.refetch()}
+          >
+            Try again
+          </Button>
         </div>
+      ) : (
+        <>
+          {!data?.configured && (
+            <p className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              An administrator needs to finish Google setup before HR can connect.
+            </p>
+          )}
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {connections.map((connection) => (
+              <div
+                key={connection.title}
+                className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/20 p-3"
+              >
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold">{connection.title}</h3>
+                  <p className="mt-0.5 break-all text-xs text-muted-foreground">
+                    {connection.ready ? data?.accountEmail : "Not connected"}
+                  </p>
+                </div>
+                {connection.ready ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                    <CheckCircle2 className="size-3.5" aria-hidden="true" />
+                    Ready
+                  </span>
+                ) : (
+                  <SafeForm method="post" action={connection.action}>
+                    <Button size="sm" disabled={!data?.configured}>
+                      {connection.button}
+                    </Button>
+                  </SafeForm>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
       )}
+
+      <nav aria-label="HR setup shortcuts" className="mt-4 flex flex-wrap gap-2 border-t pt-4">
+        <Link to="/staff/settings" search={{ section: "connections" }} className={shortcutClass}>
+          Manage connections <ArrowUpRight className="size-3.5" aria-hidden="true" />
+        </Link>
+        {user.can("attendance:manage_all") && (
+          <Link to="/staff/attendance" hash="section=setup" className={shortcutClass}>
+            Office & working hours
+          </Link>
+        )}
+        {user.can("leave:admin_all") && (
+          <Link to="/staff/leave-policies" className={shortcutClass}>
+            Leave policies
+          </Link>
+        )}
+        {(user.can("timesheet:admin_all") || user.can("system:settings_manage")) && (
+          <Link to="/staff/timesheet-settings" className={shortcutClass}>
+            Timesheet settings
+          </Link>
+        )}
+        {(user.activeRole === "HR" || user.can("system:settings_manage")) && (
+          <Link to="/staff/settings" search={{ section: "org" }} className={shortcutClass}>
+            Company setup
+          </Link>
+        )}
+      </nav>
     </section>
   );
 }

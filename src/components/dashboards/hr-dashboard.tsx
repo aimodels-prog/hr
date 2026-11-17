@@ -16,6 +16,7 @@ import {
   Plane,
   ClipboardCheck,
   Send,
+  ArrowUpRight,
 } from "lucide-react";
 import { EmployeeService } from "@/lib/data/employee-service";
 import { RecruitmentService } from "@/lib/data/recruitment-service";
@@ -40,7 +41,6 @@ import type { Employee } from "@/lib/data/types";
 import { isCurrentWorkforceMember } from "@/components/dashboards/dashboard-data";
 import { useCurrentUser } from "@/lib/auth";
 import {
-  AttentionQueue,
   DashboardPanel,
   ProgressRing,
   type AttentionItem,
@@ -471,21 +471,79 @@ function OrganisationHrDashboardDetails() {
 
   return (
     <div className="flex flex-col gap-4">
-      <details
-        aria-labelledby="hr-attention-heading"
-        className="rounded-xl border border-border/70 bg-card p-5"
-      >
-        <summary id="hr-attention-heading" className="mb-3 cursor-pointer text-sm font-semibold">
-          Organisation follow-up
-        </summary>
-        <AttentionQueue items={attentionItems} />
-      </details>
+      {attentionItems.length > 0 && (
+        <section
+          aria-labelledby="hr-attention-heading"
+          className="rounded-2xl border bg-card p-4 shadow-sm sm:p-5"
+        >
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 id="hr-attention-heading" className="text-base font-semibold tracking-tight">
+                Needs attention
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                {attentionItems.length} {attentionItems.length === 1 ? "area" : "areas"} to follow
+                up
+              </p>
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {attentionItems.map((item) => {
+              const Icon = item.icon;
+              const tone =
+                item.severity === "critical"
+                  ? "border-rose-200 bg-rose-50/40 dark:border-rose-900 dark:bg-rose-950/20"
+                  : item.severity === "warning"
+                    ? "border-amber-200 bg-amber-50/40 dark:border-amber-900 dark:bg-amber-950/20"
+                    : "border-border bg-muted/20";
+              const iconTone =
+                item.severity === "critical"
+                  ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
+                  : item.severity === "warning"
+                    ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+                    : "bg-primary/10 text-primary";
+              return (
+                <Link
+                  key={item.id}
+                  to={item.actionTo}
+                  className={`group flex min-h-24 min-w-0 items-center gap-3 rounded-xl border p-3 transition-colors hover:border-primary/40 hover:bg-primary/[0.035] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${tone}`}
+                >
+                  <span
+                    className={`grid size-10 shrink-0 place-items-center rounded-xl ${iconTone}`}
+                  >
+                    <Icon className="size-5" aria-hidden="true" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold leading-snug">{item.title}</span>
+                    {item.meta && (
+                      <span className="mt-1 block truncate text-xs text-muted-foreground">
+                        {item.meta}
+                      </span>
+                    )}
+                  </span>
+                  <ArrowUpRight
+                    className="size-4 shrink-0 text-primary transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
+                    aria-hidden="true"
+                  />
+                </Link>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
-      <details className="rounded-xl border border-border/70 bg-card p-4">
-        <summary className="cursor-pointer text-sm font-medium">
-          Leave, onboarding & recruitment details
-        </summary>
-        <div className="mt-4 grid gap-4 lg:grid-cols-3">
+      <section aria-labelledby="hr-people-heading" className="space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h2 id="hr-people-heading" className="text-base font-semibold tracking-tight">
+              People & hiring
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              Today’s leave, onboarding and open roles
+            </p>
+          </div>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-3">
           <DashboardPanel
             title="People on leave today"
             viewAllLabel="Open Leave Admin"
@@ -557,7 +615,7 @@ function OrganisationHrDashboardDetails() {
             </div>
           </DashboardPanel>
         </div>
-      </details>
+      </section>
     </div>
   );
 }
