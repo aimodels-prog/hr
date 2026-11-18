@@ -2,6 +2,7 @@ import "@tanstack/react-start/server-only";
 import { syncEmployeeAttendanceTracking } from "./attendance-tracking.repository.server.ts";
 import { assignSupervisorApprovalAccess } from "./supervisor-access.repository.server.ts";
 import { isHrOwnedSetupTask } from "../../data/hr-owned-fields.ts";
+import { validateInterviewRound } from "../../recruitment/interview-round.ts";
 import {
   assertReusableEmployeeIdentity,
   resolveHireIdentity,
@@ -36,6 +37,8 @@ import {
 } from "../schema/onboarding-offboarding.ts";
 import {
   candidateApplications,
+  candidateContacts,
+  candidateInterviewRecommendations,
   candidateScoreRuns,
   candidates,
   hiringDecisions,
@@ -672,6 +675,244 @@ export async function prepareManualInterviewHireInDatabase(
   });
 }
 
+/** HR records a completed or waived second-round decision before the controlled offer path. */
+export async function skipInterviewToOfferInDatabase(
+  organisationId: string,
+  vacancyId: string,
+  candidateId: string,
+  secondRound: {
+    method: "Phone" | "In-Person" | "Waived" | "Scheduled";
+    date?: string | undefined;
+  },
+  remark: string,
+  actor: AuditActorContext,
+): Promise<string> {
+  recruiter(actor);
+  if (actor.activeRole !== "HR") throw new Error("Only HR can record the second-round outcome.");
+  const { remark: reason } = validateInterviewRound("second", { ...secondRound, remark });
+  return getDatabaseClient().transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`hiring:${vacancyId}`}))`);
+    const [vacancy] = await tx
+      .select({ id: vacancies.id, status: vacancies.status, archivedAt: vacancies.archivedAt })
+      .from(vacancies)
+      .where(and(eq(vacancies.organisationId, organisationId), eq(vacancies.id, vacancyId)))
+      .limit(1);
+    if (!vacancy || vacancy.archivedAt || !["Open", "Paused"].includes(vacancy.status))
+      throw new Error("Select an active vacancy before proceeding to offer.");
+    const [existingDecision] = await tx
+      .select({ id: hiringDecisions.id })
+      .from(hiringDecisions)
+      .where(
+        and(
+          eq(hiringDecisions.organisationId, organisationId),
+          eq(hiringDecisions.vacancyId, vacancyId),
+          eq(hiringDecisions.status, "Finalized"),
+        ),
+      )
+      .limit(1);
+    if (existingDecision)
+      throw new Error("A final hiring decision already exists for this vacancy.");
+    const [finalShortlist] = await tx
+      .select({ selectedCandidateIds: shortlistSnapshots.selectedCandidateIds })
+      .from(shortlistSnapshots)
+      .where(
+        and(
+          eq(shortlistSnapshots.organisationId, organisationId),
+          eq(shortlistSnapshots.vacancyId, vacancyId),
+          eq(shortlistSnapshots.status, "Finalized"),
+        ),
+      )
+      .orderBy(desc(shortlistSnapshots.updatedAt))
+      .limit(1);
+    if (finalShortlist && !finalShortlist.selectedCandidateIds.includes(candidateId))
+      throw new Error("This candidate is not in the final shortlist for this vacancy.");
+    const [application] = await tx
+      .select()
+      .from(candidateApplications)
+      .where(
+        and(
+          eq(candidateApplications.organisationId, organisationId),
+          eq(candidateApplications.vacancyId, vacancyId),
+          eq(candidateApplications.candidateId, candidateId),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (
+      !application ||
+      application.archivedAt ||
+      !["Shortlisted", "Interviewing"].includes(application.status)
+    )
+      throw new Error("Only an application in the second interview stage can proceed to offer.");
+    const [secondRoundSelection] = await tx
+      .select({
+        id: candidateInterviewRecommendations.id,
+        screeningDecision: candidateInterviewRecommendations.screeningDecision,
+        reason: candidateInterviewRecommendations.reason,
+      })
+      .from(candidateInterviewRecommendations)
+      .where(
+        and(
+          eq(candidateInterviewRecommendations.organisationId, organisationId),
+          eq(candidateInterviewRecommendations.applicationId, application.id),
+          inArray(candidateInterviewRecommendations.status, [
+            "Ready to Schedule",
+            "Interview Scheduled",
+          ]),
+        ),
+      )
+      .limit(1);
+    if (!secondRoundSelection || secondRoundSelection.screeningDecision !== "First round complete")
+      throw new Error("Complete the first-round review before moving to offer.");
+    if (secondRound.method === "Scheduled") {
+      const completed = await tx
+        .select({ id: interviews.id })
+        .from(interviews)
+        .where(
+          and(
+            eq(interviews.organisationId, organisationId),
+            eq(interviews.vacancyId, vacancyId),
+            eq(interviews.candidateId, candidateId),
+            eq(interviews.status, "Completed"),
+          ),
+        );
+      const requiredCount = secondRoundSelection.reason.startsWith("First round Scheduled") ? 2 : 1;
+      if (completed.length < requiredCount)
+        throw new Error("Complete the second interview before recording its outcome.");
+    } else if (application.status !== "Shortlisted") {
+      throw new Error("Complete or cancel the scheduled second interview first.");
+    }
+    if (!application.consentGiven)
+      throw new Error("Candidate consent is required before making an offer decision.");
+    const [candidate] = await tx
+      .select({
+        id: candidates.id,
+        archivedAt: candidates.archivedAt,
+        mergedIntoId: candidates.mergedIntoId,
+        doNotContact: candidates.doNotContact,
+      })
+      .from(candidates)
+      .where(and(eq(candidates.organisationId, organisationId), eq(candidates.id, candidateId)))
+      .for("update")
+      .limit(1);
+    if (!candidate || candidate.archivedAt || candidate.mergedIntoId || candidate.doNotContact)
+      throw new Error("This candidate is not available for an offer.");
+    if (secondRound.method !== "Waived" && secondRound.method !== "Scheduled") {
+      const contactDate = secondRound.date!;
+      await tx.insert(candidateContacts).values({
+        organisationId,
+        candidateId,
+        vacancyId,
+        channel: secondRound.method,
+        date: contactDate,
+        contactedByUserId: actor.userId!,
+        outcome: "Interested",
+        notes: `Second-round interview: ${reason}`,
+        createdBy: actor.userId!,
+        updatedBy: actor.userId!,
+      });
+      const [currentCandidate] = await tx
+        .select({ lastContactAt: candidates.lastContactAt })
+        .from(candidates)
+        .where(eq(candidates.id, candidateId))
+        .limit(1);
+      if (
+        !currentCandidate?.lastContactAt ||
+        contactDate >= currentCandidate.lastContactAt.slice(0, 10)
+      )
+        await tx
+          .update(candidates)
+          .set({
+            lastContactAt: `${contactDate}T12:00:00.000Z`,
+            updatedAt: new Date(),
+            updatedBy: actor.userId!,
+            recordVersion: sql`${candidates.recordVersion} + 1`,
+          })
+          .where(eq(candidates.id, candidateId));
+    }
+    const [activeInterview] = await tx
+      .select({ id: interviews.id })
+      .from(interviews)
+      .where(
+        and(
+          eq(interviews.organisationId, organisationId),
+          eq(interviews.vacancyId, vacancyId),
+          eq(interviews.candidateId, candidateId),
+          inArray(interviews.status, ["Proposed", "Awaiting Candidate", "Scheduled"]),
+        ),
+      )
+      .limit(1);
+    if (activeInterview) throw new Error("Complete or cancel the pending interview first.");
+    await tx
+      .update(candidateInterviewRecommendations)
+      .set({
+        status: "Withdrawn",
+        updatedAt: new Date(),
+        updatedBy: actor.userId!,
+        recordVersion: sql`${candidateInterviewRecommendations.recordVersion} + 1`,
+      })
+      .where(
+        and(
+          eq(candidateInterviewRecommendations.organisationId, organisationId),
+          eq(candidateInterviewRecommendations.applicationId, application.id),
+          inArray(candidateInterviewRecommendations.status, [
+            "Ready to Schedule",
+            "Interview Scheduled",
+          ]),
+        ),
+      );
+    const decisionId = randomUUID();
+    await tx.insert(hiringDecisions).values({
+      id: decisionId,
+      organisationId,
+      vacancyId,
+      systemRecommendedCandidateId: null,
+      finalSelectedCandidateId: candidateId,
+      waiverReason: secondRound.method === "Waived" ? reason : null,
+      overrideReason: secondRound.method === "Waived" ? null : reason,
+      decisionSource: secondRound.method === "Waived" ? "Interview Waiver" : "Manual Interview",
+      status: "Finalized",
+      createdBy: actor.userId!,
+      updatedBy: actor.userId!,
+    });
+    await tx
+      .update(candidateApplications)
+      .set({
+        status: "Offered",
+        hrInterviewRecommendationId: null,
+        updatedAt: new Date(),
+        updatedBy: actor.userId!,
+        recordVersion: sql`${candidateApplications.recordVersion} + 1`,
+      })
+      .where(eq(candidateApplications.id, application.id));
+    await tx
+      .update(candidates)
+      .set({
+        stage: "Offer",
+        updatedAt: new Date(),
+        updatedBy: actor.userId!,
+        recordVersion: sql`${candidates.recordVersion} + 1`,
+      })
+      .where(eq(candidates.id, candidateId));
+    await audit(tx, organisationId, actor, {
+      action: "finalise",
+      entityType: "hiring-decision",
+      entityId: decisionId,
+      reason,
+      after: {
+        source: secondRound.method === "Waived" ? "Interview Waiver" : "Manual Interview",
+        secondRoundMethod: secondRound.method,
+        vacancyId,
+        candidateId,
+        priorApplicationStatus: application.status,
+        nextStep: "Prepare and approve offer; onboarding follows acceptance",
+      },
+      risk: "Critical",
+    });
+    return decisionId;
+  });
+}
+
 export async function finaliseHiringDecisionInDatabase(
   organisationId: string,
   input: {
@@ -701,6 +942,27 @@ export async function finaliseHiringDecisionInDatabase(
     const scores = await candidateDecisionScores(tx, organisationId, input.vacancyId);
     const selected = scores.find((item) => item.candidateId === input.selectedCandidateId);
     if (!selected) throw new Error("Select a candidate from the final shortlist.");
+    const [twoRoundSelection] = await tx
+      .select({ id: candidateInterviewRecommendations.id })
+      .from(candidateInterviewRecommendations)
+      .where(
+        and(
+          eq(candidateInterviewRecommendations.organisationId, organisationId),
+          eq(candidateInterviewRecommendations.vacancyId, input.vacancyId),
+          eq(candidateInterviewRecommendations.candidateId, input.selectedCandidateId),
+          inArray(candidateInterviewRecommendations.screeningDecision, [
+            "First interview pending",
+            "First round complete",
+          ]),
+          inArray(candidateInterviewRecommendations.status, [
+            "Ready to Schedule",
+            "Interview Scheduled",
+          ]),
+        ),
+      )
+      .limit(1);
+    if (twoRoundSelection)
+      throw new Error("Record the second-round outcome from the vacancy's Applications list.");
     const systemRecommendedCandidateId = scores[0]?.candidateId ?? null;
     if (scores.some((item) => item.missingInterview) && !input.waiverReason?.trim())
       throw new Error("A hiring decision with incomplete interviews requires a waiver reason.");

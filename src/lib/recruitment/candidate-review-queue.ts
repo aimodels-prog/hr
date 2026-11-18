@@ -7,7 +7,15 @@ export interface CandidateReviewQueue {
   applicationSource: string;
   applicationView: string;
   applicationSort: string;
-  pipelineView: "all" | "shortlisted" | "interview";
+  pipelineView:
+    | "all"
+    | "review"
+    | "shortlisted"
+    | "first_interview"
+    | "second"
+    | "interview"
+    | "offer"
+    | "closed";
   pipelineSearch: string;
   scrollY: number;
   listScrollTop: number;
@@ -49,7 +57,16 @@ export function readCandidateReviewQueue(vacancyId: string): CandidateReviewQueu
       applicationView: typeof parsed.applicationView === "string" ? parsed.applicationView : "all",
       applicationSort:
         typeof parsed.applicationSort === "string" ? parsed.applicationSort : "newest",
-      pipelineView: ["all", "shortlisted", "interview"].includes(parsed.pipelineView ?? "")
+      pipelineView: [
+        "all",
+        "review",
+        "shortlisted",
+        "first_interview",
+        "second",
+        "interview",
+        "offer",
+        "closed",
+      ].includes(parsed.pipelineView ?? "")
         ? parsed.pipelineView!
         : "all",
       pipelineSearch: typeof parsed.pipelineSearch === "string" ? parsed.pipelineSearch : "",

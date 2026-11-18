@@ -72,6 +72,7 @@ export interface CandidateDetailsInput {
   currentSalary?: string | undefined;
   expectedSalary?: string | undefined;
   acceptedSalary?: string | undefined;
+  lastContactAt?: string | undefined;
   interviewDate?: string | undefined;
   remarks?: string | undefined;
 }
@@ -89,6 +90,14 @@ export async function updateCandidateDetailsInDatabase(
   const phoneDigits = input.phone.replace(/\D/g, "").replace(/^00/, "");
   if (!phoneDigits) throw new Error("Enter a valid contact number.");
   const phone = `+${phoneDigits}`;
+  if (input.lastContactAt) {
+    const date = new Date(`${input.lastContactAt}T12:00:00.000Z`);
+    if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== input.lastContactAt)
+      throw new Error("Enter a valid last-contact date.");
+    // A recruiter may already be on the next calendar day while the server is still on UTC.
+    if (input.lastContactAt > new Date(Date.now() + 14 * 60 * 60 * 1000).toISOString().slice(0, 10))
+      throw new Error("The last-contact date cannot be in the future.");
+  }
   const db = getDatabaseClient();
   await db.transaction(async (tx) => {
     const before = await candidateInOrganisation(organisationId, candidateId, tx);
@@ -146,6 +155,7 @@ export async function updateCandidateDetailsInDatabase(
         acceptedSalaryEncrypted: input.acceptedSalary
           ? encryptSensitiveJson(input.acceptedSalary.trim())
           : null,
+        lastContactAt: input.lastContactAt ? `${input.lastContactAt}T12:00:00.000Z` : null,
         interviewDate: input.interviewDate || null,
         remarks: input.remarks?.trim() || null,
         updatedAt: new Date(),
@@ -171,6 +181,7 @@ export async function updateCandidateDetailsInDatabase(
         currentCompany: before.currentCompany,
         location: before.location,
         projectId: before.projectId,
+        lastContactAt: before.lastContactAt,
         salaryDetails: "Restricted",
       },
       afterSummary: {
@@ -180,6 +191,7 @@ export async function updateCandidateDetailsInDatabase(
         currentCompany: input.currentCompany,
         location: input.location,
         projectId: input.projectId,
+        lastContactAt: input.lastContactAt || null,
         salaryDetails: "Restricted",
       },
       reason,
@@ -462,12 +474,13 @@ export async function logCandidateContactInDatabase(
   if (!actor.userId) throw new Error("A verified VIA user is required.");
   const actorUserId = actor.userId;
   const contactDate = new Date(`${input.date}T00:00:00Z`);
-  const today = new Date().toISOString().slice(0, 10);
+  // The recruiter may already be in a new local day while the server is still on UTC yesterday.
+  const latestLocalDay = new Date(Date.now() + 14 * 60 * 60 * 1000).toISOString().slice(0, 10);
   if (
     !/^\d{4}-\d{2}-\d{2}$/.test(input.date) ||
     Number.isNaN(contactDate.getTime()) ||
     contactDate.toISOString().slice(0, 10) !== input.date ||
-    input.date > today
+    input.date > latestLocalDay
   )
     throw new Error("Enter a valid contact date that is not in the future.");
   if (input.nextFollowUpDate) {

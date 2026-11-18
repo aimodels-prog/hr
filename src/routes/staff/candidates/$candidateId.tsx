@@ -139,6 +139,7 @@ const recruitmentDetailsSchema = z.object({
   currentSalary: z.string().optional(),
   expectedSalary: z.string().optional(),
   acceptedSalary: z.string().optional(),
+  lastContactAt: z.string().optional(),
   interviewDate: z.string().optional(),
   remarks: z.string().optional(),
 });
@@ -192,8 +193,9 @@ function ProfileList({ label, values }: { label: string; values?: string[] | und
 }
 
 export const Route = createFileRoute("/staff/candidates/$candidateId")({
-  validateSearch: (search: Record<string, unknown>): { fromVacancy?: string } => ({
+  validateSearch: (search: Record<string, unknown>): { fromVacancy?: string; contact?: "1" } => ({
     ...(typeof search["fromVacancy"] === "string" ? { fromVacancy: search["fromVacancy"] } : {}),
+    ...(search["contact"] === "1" ? { contact: "1" as const } : {}),
   }),
   loader: ({ params }) => ({ candidateId: params.candidateId }),
   component: CandidateProfileWrapper,
@@ -203,7 +205,7 @@ type DetailedCandidate = ReturnType<CandidateService["getDetailedCandidates"]>[n
 
 function CandidateProfileWrapper() {
   const { candidateId } = Route.useLoaderData();
-  const { fromVacancy } = Route.useSearch();
+  const { fromVacancy, contact } = Route.useSearch();
   const currentUser = useCurrentUser();
   const [candidateService] = useState(() => new CandidateService());
   const [candidate, setCandidate] = useState<DetailedCandidate | null>(null);
@@ -267,6 +269,7 @@ function CandidateProfileWrapper() {
         <CandidateProfile
           candidate={candidate}
           fromVacancy={fromVacancy}
+          startContact={contact === "1"}
           onRefresh={() => setReloadToken((value) => value + 1)}
         />
       ) : (
@@ -293,10 +296,12 @@ function CandidateProfileWrapper() {
 function CandidateProfile({
   candidate,
   fromVacancy,
+  startContact,
   onRefresh,
 }: {
   candidate: DetailedCandidate;
   fromVacancy?: string | undefined;
+  startContact: boolean;
   onRefresh: () => void;
 }) {
   const currentUser = useCurrentUser();
@@ -507,7 +512,7 @@ function CandidateProfile({
     }
   };
 
-  const [isContactDialogOpen, setIsContactDialogOpen] = useState(false);
+  const [isContactDialogOpen, setIsContactDialogOpen] = useState(startContact);
   const [isInterviewDialogOpen, setIsInterviewDialogOpen] = useState(false);
   const [isInterviewRecommendationOpen, setIsInterviewRecommendationOpen] = useState(false);
   const [interviewVacancyId, setInterviewVacancyId] = useState(preferredInterviewVacancyId);
@@ -524,7 +529,7 @@ function CandidateProfile({
     defaultValues: {
       channel: "Phone",
       outcome: "Follow-up Required",
-      vacancyId: "",
+      vacancyId: fromVacancy || "",
       occurredAt: new Date(Date.now() - new Date().getTimezoneOffset() * 60_000)
         .toISOString()
         .slice(0, 16),
@@ -554,6 +559,7 @@ function CandidateProfile({
       currentSalary: candidate.currentSalary || "",
       expectedSalary: candidate.expectedSalary || "",
       acceptedSalary: candidate.acceptedSalary || "",
+      lastContactAt: candidate.lastContactAt?.slice(0, 10) || "",
       interviewDate: candidate.interviewDate || "",
       remarks: candidate.remarks || "",
     },
@@ -627,6 +633,7 @@ function CandidateProfile({
           currentSalary: values.currentSalary || undefined,
           expectedSalary: values.expectedSalary || undefined,
           acceptedSalary: values.acceptedSalary || undefined,
+          lastContactAt: values.lastContactAt,
           interviewDate: values.interviewDate || undefined,
           remarks: values.remarks || undefined,
         },
@@ -944,7 +951,7 @@ function CandidateProfile({
         </aside>
 
         <div className="flex-1 min-w-0">
-          <Tabs defaultValue="overview">
+          <Tabs defaultValue={startContact ? "contact" : "overview"}>
             <TabsList className="mb-4 flex-wrap w-full justify-start h-auto">
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="applications">
@@ -1307,6 +1314,27 @@ function CandidateProfile({
                           </div>
                           <FormField
                             control={recruitmentForm.control}
+                            name="lastContactAt"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Last contacted</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="date"
+                                    max={new Date(
+                                      Date.now() - new Date().getTimezoneOffset() * 60_000,
+                                    )
+                                      .toISOString()
+                                      .slice(0, 10)}
+                                    {...field}
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={recruitmentForm.control}
                             name="interviewDate"
                             render={({ field }) => (
                               <FormItem>
@@ -1410,7 +1438,22 @@ function CandidateProfile({
                   </div>
                   <div>
                     <span className="text-muted-foreground block mb-1">Last Contacted</span>
-                    <span className="font-medium">{candidate.lastContactAt || "Not recorded"}</span>
+                    <span className="font-medium">
+                      {candidate.lastContactAt
+                        ? new Date(candidate.lastContactAt).toLocaleDateString()
+                        : "Not recorded"}
+                    </span>
+                    {currentUser.can("recruitment:manage_candidates") && (
+                      <Button
+                        type="button"
+                        variant="link"
+                        size="sm"
+                        className="ml-2 h-auto p-0"
+                        onClick={() => setIsRecruitmentDialogOpen(true)}
+                      >
+                        Edit date
+                      </Button>
+                    )}
                   </div>
                   <div>
                     <span className="text-muted-foreground block mb-1">Interview Date</span>

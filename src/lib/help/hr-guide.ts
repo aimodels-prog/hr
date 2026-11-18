@@ -331,6 +331,8 @@ export const hrGuide = [
     "approval inbox pending returned reject approve reminders email escalation organisation",
     [
       "Open HR Approvals. Waiting for me shows decisions assigned to you; My decisions shows what you already reviewed. All employee requests shows organisation-wide progress.",
+      "When HR opens the app, a new-request prompt links directly to waiting approvals. It is a reminder, not an automatic approval.",
+      "To review a backlog with a colleague, choose Copy numbered list in HR Approvals and share the current waiting items. Decide each request only after checking its details.",
       "Filter for the request type or status you need. Open the original request and read its details.",
       "Check the outstanding stage, assigned reviewer, dates and attachments before deciding.",
       "Approve, return for correction or decline using the available action. Give a useful explanation when requested.",
@@ -695,7 +697,9 @@ export const hrGuide = [
     "/staff/interviews",
     "google calendar calender meet connect sign in once interview invite panel reschedule cancel scoring template",
     [
-      "From a vacancy, select a candidate for interview. You can do this without CV or AI analysis.",
+      "From the vacancy, move a suitable applicant to the First shortlist. CV or AI analysis is optional.",
+      "Record the first-round decision with a remark. If the conversation happened by phone or in person, record its date. If it will happen in the app, schedule it and record the outcome afterward. HR may waive the interview with an explanation.",
+      "Candidates who pass the first round appear in the Second shortlist. Record a second-round conversation or waiver with a remark before moving a candidate to Offer. The offer is prepared and approved separately; moving to Offer does not start onboarding.",
       "Open Interviews. Candidates waiting for a time appear under Candidates Awaiting Interview Scheduling; choose Schedule beside the right person.",
       "To change the organising email, open Google Calendar & Meet, enter the new Organising email and choose Save account and reconnect. Then sign into that Google account. Approval emails pause until you grant email access again. If interviews are already linked, ask your administrator to move the bookings first; changing the address does not move meetings between calendars.",
       "Confirm the vacancy, date, time and panel. Choose Google Meet to create a meeting and send Calendar invitations, or In person and enter the room. Clear I am interviewing this candidate if you are only arranging it. A scorecard template is optional.",

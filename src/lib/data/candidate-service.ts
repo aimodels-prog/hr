@@ -382,6 +382,7 @@ export class CandidateService {
           ...(details.currentSalary ? { currentSalary: details.currentSalary } : {}),
           ...(details.expectedSalary ? { expectedSalary: details.expectedSalary } : {}),
           ...(details.acceptedSalary ? { acceptedSalary: details.acceptedSalary } : {}),
+          ...(details.lastContactAt !== undefined ? { lastContactAt: details.lastContactAt } : {}),
           ...(details.interviewDate ? { interviewDate: details.interviewDate } : {}),
           ...(details.remarks ? { remarks: details.remarks } : {}),
         },
@@ -415,6 +416,11 @@ export class CandidateService {
     if (Number.isNaN(occurredAt.getTime()) || occurredAt.getTime() > Date.now()) {
       throw new Error("Enter a valid contact date that is not in the future.");
     }
+    // datetime-local values represent the recruiter's local calendar day, not UTC's day.
+    const contactDay =
+      payload.occurredAt && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(payload.occurredAt)
+        ? payload.occurredAt.slice(0, 10)
+        : occurredAt.toISOString().slice(0, 10);
     const vacancyId = this.databaseVacancyId(payload.vacancyId);
     const { logCandidateContactFn } = await import("../server-functions/candidate.server.ts");
     await logCandidateContactFn({
@@ -423,7 +429,7 @@ export class CandidateService {
         contact: {
           candidateId: payload.candidateId,
           channel: payload.channel,
-          date: occurredAt.toISOString().slice(0, 10),
+          date: contactDay,
           ...(vacancyId ? { vacancyId } : {}),
           outcome: payload.outcome,
           notes: payload.notes,

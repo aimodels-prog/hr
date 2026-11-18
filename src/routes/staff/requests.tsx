@@ -18,6 +18,7 @@ import { PageSections, SectionNavigation, SectionLink } from "@/components/ui/pa
 import { approvalActionUrl } from "@/lib/data/approval-links";
 import { cn } from "@/lib/utils";
 import { DecisionSnapshot } from "@/components/requests/decision-snapshot";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/staff/requests")({
   component: RequestCentre,
@@ -281,6 +282,22 @@ function RequestCentre() {
         : resultCount === 1
           ? "request"
           : "requests";
+  const copyHrApprovalList = async () => {
+    const tasks = inbox.data ?? [];
+    if (!hr || tasks.length === 0) return;
+    const lines = tasks.map(
+      (task, index) =>
+        `${index + 1}. ${task.module} | ${task.subjectName ?? "Employee"} | ${task.title} | ${approvalActionUrl(task)} | ID: ${task.id}`,
+    );
+    try {
+      await navigator.clipboard.writeText(
+        `VIA HR approvals awaiting review (${tasks.length})\n\n${lines.join("\n")}`,
+      );
+      toast.success("Numbered approval list copied for HR review.");
+    } catch {
+      toast.error("Could not copy the list. Check browser clipboard permission.");
+    }
+  };
   return (
     <main className="mx-auto min-w-0 max-w-[1440px] space-y-6 pb-8">
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -303,6 +320,11 @@ function RequestCentre() {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {view === "approvals" && hr && Boolean(inbox.data?.length) && (
+            <Button variant="outline" size="sm" onClick={() => void copyHrApprovalList()}>
+              Copy numbered list
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"

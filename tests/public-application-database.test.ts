@@ -23,6 +23,7 @@ import {
   finaliseShortlistInDatabase,
   runDetailedAssessmentInDatabase,
   setCandidateCvSuitabilityInDatabase,
+  shortlistCandidateApplicationInDatabase,
   selectCandidateForInterviewInDatabase,
   unselectCandidateForInterviewInDatabase,
   unshortlistCandidateApplicationInDatabase,
@@ -303,7 +304,7 @@ test(
            ${`TEST-DIRECT-${unique}`}, ${directSelectionCandidateId}, ${vacancy.id},
            'New', ${String(file.id)}, '30 days', 'HR Upload', true, now())
       `;
-      await selectCandidateForInterviewInDatabase(
+      await shortlistCandidateApplicationInDatabase(
         String(vacancy.organisation_id),
         vacancyId,
         directSelectionCandidateId,
@@ -313,6 +314,14 @@ test(
         String(vacancy.organisation_id),
         vacancyId,
         directSelectionCandidateId,
+        { method: "Waived", remark: "First interview waived after HR review" },
+        actor,
+      );
+      await selectCandidateForInterviewInDatabase(
+        String(vacancy.organisation_id),
+        vacancyId,
+        directSelectionCandidateId,
+        { method: "Waived", remark: "First interview waived after HR review" },
         actor,
       );
       const [directSelection] = await sql`
@@ -390,10 +399,17 @@ test(
         ),
         /Only a shortlisted application/,
       );
+      await shortlistCandidateApplicationInDatabase(
+        String(vacancy.organisation_id),
+        vacancyId,
+        directSelectionCandidateId,
+        actor,
+      );
       await selectCandidateForInterviewInDatabase(
         String(vacancy.organisation_id),
         vacancyId,
         directSelectionCandidateId,
+        { method: "Waived", remark: "First interview waived after HR review" },
         actor,
       );
       await assert.rejects(

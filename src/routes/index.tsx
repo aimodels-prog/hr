@@ -376,6 +376,11 @@ function CareerPortal() {
                         <span className="inline-flex items-center gap-2">
                           <Building2 className="h-4 w-4" /> {job.employmentType}
                         </span>
+                        {job.headcount > 1 && (
+                          <span className="inline-flex items-center gap-2 font-medium text-[#07558e]">
+                            {job.headcount} openings
+                          </span>
+                        )}
                         {job.targetStartDate && (
                           <span className="inline-flex items-center gap-2">
                             <Clock3 className="h-4 w-4" /> Start {job.targetStartDate}

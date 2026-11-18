@@ -347,6 +347,9 @@ function JobDetail() {
             <span className="inline-flex items-center gap-2">
               <Building2 className="h-4 w-4" /> {job.employmentType}
             </span>
+            {job.headcount > 1 && (
+              <span className="font-medium text-white">{job.headcount} openings</span>
+            )}
             {job.salaryRange?.visibleToPublic && (
               <span className="font-medium text-white">
                 {job.salaryRange.currency} {job.salaryRange.min} – {job.salaryRange.max}

@@ -45,6 +45,7 @@ import {
   runDetailedAssessmentInDatabase,
   saveShortlistDraftInDatabase,
   setCandidateCvSuitabilityInDatabase,
+  declineFirstShortlistInDatabase,
   selectCandidateForInterviewInDatabase,
   unselectCandidateForInterviewInDatabase,
   shortlistCandidateApplicationInDatabase,
@@ -190,6 +191,7 @@ const CandidateDetailsChange = z.object({
     currentSalary: z.string().trim().max(200).optional(),
     expectedSalary: z.string().trim().max(200).optional(),
     acceptedSalary: z.string().trim().max(200).optional(),
+    lastContactAt: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.literal("")]).optional(),
     interviewDate: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -765,6 +767,30 @@ export const setCandidateCvSuitabilityFn = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+export const declineFirstShortlistFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: RecruitmentActor,
+        vacancyId: z.string().uuid(),
+        candidateId: z.string().uuid(),
+        remark: z.string().trim().min(5).max(500),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await verifyRecruitmentActor(data.actor);
+    await declineFirstShortlistInDatabase(
+      verified.organisationId,
+      data.vacancyId,
+      data.candidateId,
+      data.remark,
+      verified.actor,
+    );
+    return { ok: true };
+  });
+
 export const selectCandidateForInterviewFn = createServerFn({ method: "POST" })
   .validator((input) =>
     z
@@ -772,6 +798,22 @@ export const selectCandidateForInterviewFn = createServerFn({ method: "POST" })
         actor: RecruitmentActor,
         vacancyId: z.string().uuid(),
         candidateId: z.string().uuid(),
+        firstRound: z
+          .object({
+            method: z.enum(["Phone", "In-Person", "Waived", "Scheduled"]),
+            remark: z.string().trim().min(5).max(2000),
+            date: z
+              .string()
+              .regex(/^\d{4}-\d{2}-\d{2}$/)
+              .optional(),
+          })
+          .refine(
+            (value) => ["Waived", "Scheduled"].includes(value.method) || Boolean(value.date),
+            {
+              message: "Enter the date of the conversation.",
+              path: ["date"],
+            },
+          ),
       })
       .strict()
       .parse(input),
@@ -782,6 +824,7 @@ export const selectCandidateForInterviewFn = createServerFn({ method: "POST" })
       verified.organisationId,
       data.vacancyId,
       data.candidateId,
+      data.firstRound,
       verified.actor,
     );
     return { ok: true };

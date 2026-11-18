@@ -47,6 +47,7 @@ export function NotificationDrawer() {
   const [, setTicker] = useState(0); // force refresh after repository mutations
   const [isLoading, setIsLoading] = useState(true);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [hrPromptTaskIds, setHrPromptTaskIds] = useState<string[]>([]);
   const [browserAlertsEnabled, setBrowserAlertsEnabled] = useState(false);
   const [browserPermission, setBrowserPermission] = useState<
     NotificationPermission | "unsupported"
@@ -68,6 +69,10 @@ export function NotificationDrawer() {
   const actorContext = useMemo(() => JSON.parse(actorKey) as ActorContext, [actorKey]);
   const activeRole = actorContext.actor.activeRole ?? actorContext.actor.roles[0] ?? "Employee";
   const canReceiveApprovalAlerts = activeRole !== "Super Admin";
+
+  useEffect(() => {
+    if (activeRole !== "HR") setHrPromptTaskIds([]);
+  }, [activeRole]);
 
   useEffect(() => {
     if (!canReceiveApprovalAlerts || !("Notification" in window) || !window.isSecureContext) {
@@ -96,11 +101,29 @@ export function NotificationDrawer() {
     queryKey: ["approval-inbox", actorKey],
     queryFn: async () =>
       getApprovalInboxFn({ data: { actor: await notificationServerActor(actorContext) } }),
-    enabled: open || browserAlertsEnabled,
+    enabled: open || browserAlertsEnabled || activeRole === "HR",
     staleTime: 15_000,
-    refetchInterval: open || browserAlertsEnabled ? 30_000 : false,
+    refetchInterval: open || browserAlertsEnabled || activeRole === "HR" ? 30_000 : false,
     refetchIntervalInBackground: browserAlertsEnabled,
   });
+
+  useEffect(() => {
+    if (activeRole !== "HR" || !approvalInbox.data?.length) return;
+    try {
+      const newlyShown = claimBrowserApprovalTasks(
+        approvalInbox.data,
+        window.localStorage,
+        `via-hr:hr-in-app-approval-prompt:${actorContext.actor.userId}`,
+        5000,
+      );
+      if (newlyShown.length)
+        setHrPromptTaskIds((current) => [
+          ...new Set([...current, ...newlyShown.map((task) => task.id)]),
+        ]);
+    } catch {
+      // The approval inbox and notification bell remain available if browser storage is blocked.
+    }
+  }, [activeRole, actorContext.actor.userId, approvalInbox.data]);
 
   useEffect(() => {
     knownApprovalTaskIds.current = null;
@@ -554,6 +577,60 @@ export function NotificationDrawer() {
           <AlertDialogFooter>
             <AlertDialogCancel>Keep notifications</AlertDialogCancel>
             <AlertDialogAction onClick={() => handleDismissAll()}>Clear all</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={hrPromptTaskIds.length > 0}
+        onOpenChange={(value) => {
+          if (!value) setHrPromptTaskIds([]);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>New requests for HR review</AlertDialogTitle>
+            <AlertDialogDescription>
+              Review each request before deciding. Nothing has been approved automatically.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="max-h-64 space-y-2 overflow-y-auto">
+            {approvalInbox.data
+              ?.filter((task) => hrPromptTaskIds.includes(task.id))
+              .slice(0, 5)
+              .map((task) => (
+                <div key={task.id} className="rounded-lg border p-3">
+                  <p className="text-sm font-medium">{task.title}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {task.subjectName ?? task.description}
+                  </p>
+                  <Button
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => {
+                      setHrPromptTaskIds([]);
+                      openApproval(approvalActionUrl(task));
+                    }}
+                  >
+                    Review request
+                  </Button>
+                </div>
+              ))}
+            {hrPromptTaskIds.length > 5 && (
+              <p className="text-xs text-muted-foreground">
+                And {hrPromptTaskIds.length - 5} more requests.
+              </p>
+            )}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setHrPromptTaskIds([])}>Later</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setHrPromptTaskIds([]);
+                void navigate({ to: "/staff/requests", search: { view: "approvals" } });
+              }}
+            >
+              See all approvals
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

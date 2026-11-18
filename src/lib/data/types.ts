@@ -551,7 +551,12 @@ export interface CandidateInterviewRecommendation extends BaseRecord {
   assessmentSource?: "Automatic Assessment" | "Existing Assessment" | undefined;
   /** Retained only so older browser records remain readable after migration. */
   screeningDecision?:
-    "Run Assessment" | "Use Existing Assessment" | "Proceed Without Assessment" | undefined;
+    | "Run Assessment"
+    | "Use Existing Assessment"
+    | "Proceed Without Assessment"
+    | "First interview pending"
+    | "First round complete"
+    | undefined;
   status: "Ready for Assessment" | "Ready to Schedule" | "Interview Scheduled" | "Withdrawn";
 }
 
@@ -843,7 +848,7 @@ export interface HiringDecisionSnapshot extends BaseRecord {
   finalSelectedCandidateId: RecordId;
   overrideReason?: string;
   waiverReason?: string;
-  decisionSource?: "Standard Recruitment" | "Manual Interview" | undefined;
+  decisionSource?: "Standard Recruitment" | "Manual Interview" | "Interview Waiver" | undefined;
   interviewId?: RecordId | undefined;
   status: "Draft" | "Finalized";
 }

@@ -31,6 +31,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { updateVacancyOpportunitySettingsFn } from "@/lib/server-functions/vacancy.server";
+import { skipInterviewToOfferFn } from "@/lib/server-functions/offer.server";
 import {
   getCandidatePoolMatchesFn,
   scanCandidatePoolMatchesFn,
@@ -97,6 +98,7 @@ import {
 } from "@/lib/recruitment/candidate-review-queue";
 import {
   setCandidateCvSuitabilityFn,
+  declineFirstShortlistFn,
   selectCandidateForInterviewFn,
   unselectCandidateForInterviewFn,
   shortlistCandidateApplicationFn,
@@ -192,13 +194,47 @@ function VacancyDetailRoute() {
   const [rejectCandidateId, setRejectCandidateId] = useState<string | null>(null);
   const [rejectionRemark, setRejectionRemark] = useState("");
   const [savingSuitability, setSavingSuitability] = useState(false);
+  const [declineShortlistCandidateId, setDeclineShortlistCandidateId] = useState<string | null>(
+    null,
+  );
+  const [declineShortlistRemark, setDeclineShortlistRemark] = useState("");
+  const [decliningShortlist, setDecliningShortlist] = useState(false);
+  const [contactCandidateId, setContactCandidateId] = useState<string | null>(null);
+  const [contactChannel, setContactChannel] = useState<"Phone" | "In-Person">("Phone");
+  const [contactOutcome, setContactOutcome] = useState<
+    "Interested" | "Not Interested" | "Follow-up Required" | "Interview Arranged"
+  >("Follow-up Required");
+  const [contactDate, setContactDate] = useState("");
+  const [contactNotes, setContactNotes] = useState("");
+  const [savingContact, setSavingContact] = useState(false);
+  const [skipInterviewCandidateId, setSkipInterviewCandidateId] = useState<string | null>(null);
+  const [skipInterviewReason, setSkipInterviewReason] = useState("");
+  const [firstRoundCandidateId, setFirstRoundCandidateId] = useState<string | null>(null);
+  const [firstRoundRemark, setFirstRoundRemark] = useState("");
+  const [firstRoundMethod, setFirstRoundMethod] = useState<
+    "Phone" | "In-Person" | "Waived" | "Scheduled"
+  >("Phone");
+  const [secondRoundMethod, setSecondRoundMethod] = useState<
+    "Phone" | "In-Person" | "Waived" | "Scheduled"
+  >("Phone");
+  const [roundDate, setRoundDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [skippingInterview, setSkippingInterview] = useState(false);
   const [applicationSearch, setApplicationSearch] = useState("");
   const [applicationSource, setApplicationSource] = useState("all");
   const [applicationView, setApplicationView] = useState("all");
   const [applicationSort, setApplicationSort] = useState("newest");
   const [selectingCandidateId, setSelectingCandidateId] = useState<string | null>(null);
   const [shortlistingCandidateId, setShortlistingCandidateId] = useState<string | null>(null);
-  const [pipelineView, setPipelineView] = useState<"all" | "shortlisted" | "interview">("all");
+  const [pipelineView, setPipelineView] = useState<
+    | "all"
+    | "review"
+    | "shortlisted"
+    | "first_interview"
+    | "second"
+    | "interview"
+    | "offer"
+    | "closed"
+  >("all");
   const [pipelineSearch, setPipelineSearch] = useState("");
   const [pipelineCountry, setPipelineCountry] = useState("all");
   const [pipelineArea, setPipelineArea] = useState("");
@@ -374,16 +410,52 @@ function VacancyDetailRoute() {
         )
         .map((item) => item.status),
     );
+  const pipelineStage = (application: (typeof applications)[number]) => {
+    if (["Offered", "Hired"].includes(application.status)) return "offer";
+    if (["Rejected", "Withdrawn"].includes(application.status)) return "closed";
+    const selection = interviewSelections.find((item) => item.applicationId === application.id);
+    if (selection?.screeningDecision === "First interview pending") return "first_interview";
+    if (
+      selection?.screeningDecision === "First round complete" &&
+      selection.status === "Ready to Schedule"
+    )
+      return "second";
+    const stage = applicationStage(application);
+    if (stage !== "interview") return stage;
+    const hasInterview =
+      application.status === "Interviewing" ||
+      interviewSelections.some(
+        (item) =>
+          item.candidateId === application.candidateId && item.status === "Interview Scheduled",
+      ) ||
+      interviews.some(
+        (item) => item.candidateId === application.candidateId && item.status !== "Cancelled",
+      );
+    return hasInterview ? "interview" : "second";
+  };
+  const reviewApplications = applications.filter(
+    (application) => pipelineStage(application) === "review",
+  );
   const shortlistedApplications = applications.filter(
-    (application) => applicationStage(application) === "shortlisted",
+    (application) => pipelineStage(application) === "shortlisted",
+  );
+  const firstInterviewApplications = applications.filter(
+    (application) => pipelineStage(application) === "first_interview",
+  );
+  const secondShortlistApplications = applications.filter(
+    (application) => pipelineStage(application) === "second",
   );
   const interviewApplications = applications.filter(
-    (application) => applicationStage(application) === "interview",
+    (application) => pipelineStage(application) === "interview",
+  );
+  const offerApplications = applications.filter(
+    (application) => pipelineStage(application) === "offer",
+  );
+  const closedApplications = applications.filter(
+    (application) => pipelineStage(application) === "closed",
   );
   const pipelineApplications = applications
-    .filter(
-      (application) => pipelineView === "all" || applicationStage(application) === pipelineView,
-    )
+    .filter((application) => pipelineView === "all" || pipelineStage(application) === pipelineView)
     .filter((application) => {
       const candidate = candidates.find((item) => item.id === application.candidateId);
       if (
@@ -587,12 +659,13 @@ function VacancyDetailRoute() {
       });
       await candidateService.hydrateCompatibilityCache(context);
       refreshScreening();
+      if (decision === "restore") setPipelineView("review");
       setRejectCandidateId(null);
       setRejectionRemark("");
       toast.success(
         decision === "not-suitable"
           ? "CV marked not suitable. Your remark is saved privately."
-          : "CV restored to preliminary review.",
+          : "Application restored to review.",
       );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "The CV decision could not be saved.");
@@ -605,17 +678,139 @@ function VacancyDetailRoute() {
     setSelectingCandidateId(candidateId);
     try {
       await selectCandidateForInterviewFn({
-        data: { actor: serverActor, vacancyId: databaseVacancyId, candidateId },
+        data: {
+          actor: serverActor,
+          vacancyId: databaseVacancyId,
+          candidateId,
+          firstRound: {
+            method: firstRoundMethod,
+            remark: firstRoundRemark.trim(),
+            ...(!["Waived", "Scheduled"].includes(firstRoundMethod) ? { date: roundDate } : {}),
+          },
+        },
       });
       await candidateService.hydrateCompatibilityCache(context);
       refreshScreening();
-      setPipelineView("interview");
+      setPipelineView(
+        firstRoundMethod === "Scheduled" &&
+          !interviewSelections.some(
+            (item) =>
+              item.candidateId === candidateId &&
+              item.screeningDecision === "First interview pending",
+          )
+          ? "first_interview"
+          : "second",
+      );
       setActiveTab("applications");
-      toast.success("Selected for interview. Schedule the interview from the candidate profile.");
+      setFirstRoundCandidateId(null);
+      setFirstRoundRemark("");
+      toast.success(
+        firstRoundMethod === "Scheduled" &&
+          !interviewSelections.some(
+            (item) =>
+              item.candidateId === candidateId &&
+              item.screeningDecision === "First interview pending",
+          )
+          ? "First interview selected. Schedule it from the candidate profile."
+          : "First-round outcome saved. Candidate moved to the second shortlist.",
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not select this candidate.");
     } finally {
       setSelectingCandidateId(null);
+    }
+  };
+
+  const declineFirstShortlist = async () => {
+    if (!declineShortlistCandidateId) return;
+    setDecliningShortlist(true);
+    try {
+      await declineFirstShortlistFn({
+        data: {
+          actor: serverActor,
+          vacancyId: databaseVacancyId,
+          candidateId: declineShortlistCandidateId,
+          remark: declineShortlistRemark.trim(),
+        },
+      });
+      await candidateService.hydrateCompatibilityCache(context);
+      refreshScreening();
+      setDeclineShortlistCandidateId(null);
+      setDeclineShortlistRemark("");
+      setPipelineView("closed");
+      toast.success("Decision saved. This candidate is now in Closed.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save the decision.");
+    } finally {
+      setDecliningShortlist(false);
+    }
+  };
+
+  const openContactLog = (candidateId: string) => {
+    setContactCandidateId(candidateId);
+    setContactChannel("Phone");
+    setContactOutcome("Follow-up Required");
+    setContactDate(
+      new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16),
+    );
+    setContactNotes("");
+  };
+
+  const saveContactLog = async () => {
+    if (!contactCandidateId) return;
+    setSavingContact(true);
+    try {
+      await candidateService.logContactAsync(
+        {
+          candidateId: contactCandidateId,
+          vacancyId: vacancy.id,
+          channel: contactChannel,
+          outcome: contactOutcome,
+          occurredAt: contactDate,
+          notes: contactNotes.trim(),
+        },
+        context,
+      );
+      await candidateService.hydrateCompatibilityCache(context);
+      setContactCandidateId(null);
+      setContactNotes("");
+      toast.success("Conversation saved. You can now choose the next stage.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save the conversation.");
+    } finally {
+      setSavingContact(false);
+    }
+  };
+
+  const skipInterviewToOffer = async () => {
+    if (!skipInterviewCandidateId) return;
+    setSkippingInterview(true);
+    try {
+      await skipInterviewToOfferFn({
+        data: {
+          actor: serverActor,
+          vacancyId: databaseVacancyId,
+          candidateId: skipInterviewCandidateId,
+          secondRound: {
+            method: secondRoundMethod,
+            ...(!["Waived", "Scheduled"].includes(secondRoundMethod) ? { date: roundDate } : {}),
+          },
+          remark: skipInterviewReason.trim(),
+        },
+      });
+      await candidateService.hydrateCompatibilityCache(context);
+      refreshScreening();
+      setSkipInterviewCandidateId(null);
+      setSkipInterviewReason("");
+      setPipelineView("offer");
+      setActiveTab("decision");
+      toast.success(
+        "Second-round outcome saved. Prepare the offer; onboarding waits for acceptance.",
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not proceed to offer.");
+    } finally {
+      setSkippingInterview(false);
     }
   };
 
@@ -1168,8 +1363,8 @@ function VacancyDetailRoute() {
                 <div>
                   <CardTitle>Candidates for this role</CardTitle>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Review an application, shortlist it, then select it for interview. CV analysis
-                    is optional.
+                    Move candidates from review to the first shortlist, then to a second shortlist
+                    after your call. Interviews can be scheduled here or recorded later.
                   </p>
                 </div>
                 <Button variant="outline" onClick={() => setActiveTab("shortlist")}>
@@ -1177,20 +1372,36 @@ function VacancyDetailRoute() {
                 </Button>
               </CardHeader>
               <CardContent className="space-y-3">
-                <nav aria-label="Candidate lists" className="grid gap-2 sm:grid-cols-3">
+                <nav
+                  aria-label="Candidate lists"
+                  className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4"
+                >
                   {(
                     [
                       { value: "all", label: "All applications", count: applications.length },
+                      { value: "review", label: "To review", count: reviewApplications.length },
                       {
                         value: "shortlisted",
-                        label: "Shortlisted",
+                        label: "First shortlist",
                         count: shortlistedApplications.length,
                       },
                       {
+                        value: "first_interview",
+                        label: "First interview",
+                        count: firstInterviewApplications.length,
+                      },
+                      {
+                        value: "second",
+                        label: "Second shortlist",
+                        count: secondShortlistApplications.length,
+                      },
+                      {
                         value: "interview",
-                        label: "Selected for interview",
+                        label: "Interviews",
                         count: interviewApplications.length,
                       },
+                      { value: "offer", label: "Offer / hired", count: offerApplications.length },
+                      { value: "closed", label: "Closed", count: closedApplications.length },
                     ] as const
                   ).map((item) => (
                     <button
@@ -1239,8 +1450,12 @@ function VacancyDetailRoute() {
                     {pipelineSearch || pipelineCountry !== "all" || pipelineArea
                       ? "No candidates match this search."
                       : pipelineView === "shortlisted"
-                        ? "No shortlisted candidates yet. Choose Shortlist from All applications."
-                        : "No candidates selected for interview yet."}
+                        ? "No candidates in the first shortlist yet."
+                        : pipelineView === "first_interview"
+                          ? "No candidates awaiting a first interview."
+                          : pipelineView === "second"
+                            ? "No candidates in the second shortlist yet."
+                            : `No candidates in ${pipelineView} yet.`}
                   </p>
                 ) : (
                   pipelineApplications.map((application) => {
@@ -1255,17 +1470,25 @@ function VacancyDetailRoute() {
                       !candidate?.mergedIntoId &&
                       candidate?.stage !== "Archived" &&
                       vacancy.status === "Open";
-                    const scheduled =
-                      interviewSelections.some(
-                        (item) =>
-                          item.candidateId === application.candidateId &&
-                          item.status === "Interview Scheduled",
-                      ) ||
-                      interviews.some(
-                        (item) =>
-                          item.candidateId === application.candidateId &&
-                          item.status !== "Cancelled",
-                      );
+                    const scheduled = interviews.some(
+                      (item) =>
+                        item.candidateId === application.candidateId &&
+                        item.vacancyId === vacancy.id &&
+                        ["Proposed", "Awaiting Candidate", "Scheduled"].includes(item.status),
+                    );
+                    const completedInterviewCount = interviews.filter(
+                      (item) =>
+                        item.candidateId === application.candidateId &&
+                        item.vacancyId === vacancy.id &&
+                        item.status === "Completed",
+                    ).length;
+                    const firstRoundSelection = interviewSelections.find(
+                      (item) => item.applicationId === application.id,
+                    );
+                    const secondInterviewComplete =
+                      firstRoundSelection?.screeningDecision === "First round complete" &&
+                      completedInterviewCount >=
+                        (firstRoundSelection.reason.startsWith("First round Scheduled") ? 2 : 1);
                     return (
                       <div
                         key={application.id}
@@ -1297,6 +1520,23 @@ function VacancyDetailRoute() {
                           <p className="text-sm text-muted-foreground">
                             {application.referenceId} · {application.source}
                           </p>
+                          {interviewSelections
+                            .find((item) => item.applicationId === application.id)
+                            ?.reason?.startsWith("First round") && (
+                            <p className="mt-1 text-sm text-muted-foreground">
+                              {
+                                interviewSelections.find(
+                                  (item) => item.applicationId === application.id,
+                                )?.reason
+                              }
+                            </p>
+                          )}
+                          {application.screeningDecision?.startsWith("HR review: ") && (
+                            <p className="text-sm text-muted-foreground">
+                              HR decision:{" "}
+                              {application.screeningDecision.slice("HR review: ".length)}
+                            </p>
+                          )}
                           {candidate && (
                             <CandidateRemarkInline
                               candidate={{
@@ -1313,6 +1553,16 @@ function VacancyDetailRoute() {
                           )}
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
+                          {(stage === "shortlisted" || stage === "interview") &&
+                            canManageCandidates && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => openContactLog(application.candidateId)}
+                              >
+                                Record call / interview
+                              </Button>
+                            )}
                           {canManageCandidates && (
                             <Button
                               size="sm"
@@ -1323,11 +1573,10 @@ function VacancyDetailRoute() {
                             </Button>
                           )}
                           {stage === "interview" ? (
-                            <Badge>
-                              {scheduled ? "Interview scheduled" : "Selected for interview"}
-                            </Badge>
+                            <Badge>{scheduled ? "Interview scheduled" : "Second shortlist"}</Badge>
                           ) : application.status === "Rejected" &&
-                            application.screeningDecision?.startsWith("Not suitable: ") ? (
+                            (application.screeningDecision?.startsWith("Not suitable: ") ||
+                              application.screeningDecision?.startsWith("HR review: ")) ? (
                             <Badge variant="secondary">Not suitable</Badge>
                           ) : (
                             <StatusBadge status={application.status} />
@@ -1362,19 +1611,36 @@ function VacancyDetailRoute() {
                                   : "Remove shortlist"}
                               </Button>
                             )}
-                          {(stage === "review" || stage === "shortlisted") && canProgress && (
-                            <Button
-                              size="sm"
-                              disabled={
-                                selectingCandidateId !== null || shortlistingCandidateId !== null
-                              }
-                              onClick={() => void selectForInterview(application.candidateId)}
-                            >
-                              {selectingCandidateId === application.candidateId
-                                ? "Selecting..."
-                                : "Select for interview"}
-                            </Button>
-                          )}
+                          {stage === "shortlisted" &&
+                            canProgress &&
+                            currentUser.activeRole === "HR" && (
+                              <Button
+                                size="sm"
+                                disabled={
+                                  selectingCandidateId !== null || shortlistingCandidateId !== null
+                                }
+                                onClick={() => {
+                                  setFirstRoundCandidateId(application.candidateId);
+                                  setFirstRoundMethod("Phone");
+                                  setFirstRoundRemark("");
+                                  setRoundDate(new Date().toISOString().slice(0, 10));
+                                }}
+                              >
+                                Record first-round decision
+                              </Button>
+                            )}
+                          {(stage === "shortlisted" || (stage === "interview" && !scheduled)) &&
+                            canProgress && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() =>
+                                  setDeclineShortlistCandidateId(application.candidateId)
+                                }
+                              >
+                                Not suitable
+                              </Button>
+                            )}
                           {stage === "interview" && (
                             <Button asChild size="sm" variant="outline">
                               <Link
@@ -1393,6 +1659,39 @@ function VacancyDetailRoute() {
                               </Link>
                             </Button>
                           )}
+                          {pipelineStage(application) === "first_interview" &&
+                            !scheduled &&
+                            completedInterviewCount === 0 && (
+                              <Button asChild size="sm" variant="outline">
+                                <Link
+                                  to="/staff/candidates/$candidateId"
+                                  params={{ candidateId: application.candidateId }}
+                                  search={{ fromVacancy: vacancy.id }}
+                                  hash="interviews"
+                                >
+                                  Schedule first interview
+                                </Link>
+                              </Button>
+                            )}
+                          {pipelineStage(application) === "first_interview" &&
+                            interviews.some(
+                              (item) =>
+                                item.candidateId === application.candidateId &&
+                                item.vacancyId === vacancy.id &&
+                                item.status === "Completed",
+                            ) &&
+                            currentUser.activeRole === "HR" && (
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  setFirstRoundCandidateId(application.candidateId);
+                                  setFirstRoundMethod("Scheduled");
+                                  setFirstRoundRemark("");
+                                }}
+                              >
+                                Record first interview outcome
+                              </Button>
+                            )}
                           {stage === "interview" && !scheduled && canManageCandidates && (
                             <Button
                               size="sm"
@@ -1405,6 +1704,68 @@ function VacancyDetailRoute() {
                                 : "Unselect"}
                             </Button>
                           )}
+                          {pipelineStage(application) === "second" &&
+                            !scheduled &&
+                            application.status === "Shortlisted" &&
+                            currentUser.activeRole === "HR" &&
+                            vacancy.status === "Open" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setSkipInterviewCandidateId(application.candidateId);
+                                  setSecondRoundMethod("Phone");
+                                  setSkipInterviewReason("");
+                                  setRoundDate(new Date().toISOString().slice(0, 10));
+                                }}
+                              >
+                                Record second-round decision
+                              </Button>
+                            )}
+                          {pipelineStage(application) === "second" &&
+                            !scheduled &&
+                            currentUser.activeRole === "HR" && (
+                              <Button asChild size="sm" variant="outline">
+                                <Link
+                                  to="/staff/candidates/$candidateId"
+                                  params={{ candidateId: application.candidateId }}
+                                  search={{ fromVacancy: vacancy.id }}
+                                  hash="interviews"
+                                >
+                                  Schedule second interview
+                                </Link>
+                              </Button>
+                            )}
+                          {secondInterviewComplete &&
+                            !scheduled &&
+                            currentUser.activeRole === "HR" &&
+                            pipelineStage(application) === "interview" && (
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  setSkipInterviewCandidateId(application.candidateId);
+                                  setSecondRoundMethod("Scheduled");
+                                  setSkipInterviewReason("");
+                                }}
+                              >
+                                Record second interview outcome
+                              </Button>
+                            )}
+                          {application.status === "Rejected" &&
+                            application.screeningDecision?.startsWith("HR review: ") &&
+                            canManageCandidates &&
+                            vacancy.status === "Open" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={savingSuitability}
+                                onClick={() =>
+                                  void saveSuitability(application.candidateId, "restore")
+                                }
+                              >
+                                Restore to review
+                              </Button>
+                            )}
                         </div>
                       </div>
                     );
@@ -1510,7 +1871,14 @@ function VacancyDetailRoute() {
           </TabsContent>
 
           <TabsContent value="decision" className="pt-4">
-            <DecisionPanel vacancyId={vacancy.id} />
+            <DecisionPanel
+              vacancyId={vacancy.id}
+              managedInApplications={interviewSelections.some((item) =>
+                ["First interview pending", "First round complete"].includes(
+                  item.screeningDecision ?? "",
+                ),
+              )}
+            />
           </TabsContent>
 
           <TabsContent value="shortlist" className="pt-4">
@@ -2360,6 +2728,195 @@ function VacancyDetailRoute() {
             </Dialog>
 
             <Dialog
+              open={firstRoundCandidateId !== null}
+              onOpenChange={(open) => {
+                if (!open && selectingCandidateId === null) {
+                  setFirstRoundCandidateId(null);
+                  setFirstRoundRemark("");
+                }
+              }}
+            >
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>
+                    {firstRoundCandidateId &&
+                    interviewSelections.some(
+                      (item) =>
+                        item.candidateId === firstRoundCandidateId &&
+                        item.screeningDecision === "First interview pending",
+                    )
+                      ? "First interview outcome"
+                      : "First-round decision"}
+                  </DialogTitle>
+                </DialogHeader>
+                <p className="text-sm text-muted-foreground">
+                  Record what happened. A scheduled interview stays in the first-interview list
+                  until HR records its completed outcome.
+                </p>
+                <div className="space-y-2">
+                  <Label htmlFor="first-round-method">How was the first interview handled?</Label>
+                  <Select
+                    value={firstRoundMethod}
+                    onValueChange={(value) => setFirstRoundMethod(value as typeof firstRoundMethod)}
+                  >
+                    <SelectTrigger id="first-round-method">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Scheduled">
+                        {firstRoundCandidateId &&
+                        interviewSelections.some(
+                          (item) =>
+                            item.candidateId === firstRoundCandidateId &&
+                            item.screeningDecision === "First interview pending",
+                        )
+                          ? "Completed in app"
+                          : "Schedule in app"}
+                      </SelectItem>
+                      <SelectItem value="Phone">Phone call completed</SelectItem>
+                      <SelectItem value="In-Person">In-person interview completed</SelectItem>
+                      <SelectItem value="Waived">Interview waived</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {firstRoundMethod !== "Waived" && firstRoundMethod !== "Scheduled" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="first-round-date">Conversation date</Label>
+                    <Input
+                      id="first-round-date"
+                      type="date"
+                      value={roundDate}
+                      max={new Date().toISOString().slice(0, 10)}
+                      onChange={(event) => setRoundDate(event.target.value)}
+                    />
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <Label htmlFor="first-round-remark">HR remark *</Label>
+                  <Textarea
+                    id="first-round-remark"
+                    value={firstRoundRemark}
+                    maxLength={2000}
+                    onChange={(event) => setFirstRoundRemark(event.target.value)}
+                    placeholder="Record the discussion and why this candidate should continue; if waived, explain why."
+                  />
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    disabled={selectingCandidateId !== null}
+                    onClick={() => setFirstRoundCandidateId(null)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    disabled={
+                      selectingCandidateId !== null ||
+                      firstRoundRemark.trim().length < 5 ||
+                      (firstRoundMethod !== "Waived" &&
+                        firstRoundMethod !== "Scheduled" &&
+                        !roundDate)
+                    }
+                    onClick={() =>
+                      firstRoundCandidateId && void selectForInterview(firstRoundCandidateId)
+                    }
+                  >
+                    {selectingCandidateId !== null
+                      ? "Saving..."
+                      : firstRoundMethod === "Scheduled" &&
+                          !interviewSelections.some(
+                            (item) =>
+                              item.candidateId === firstRoundCandidateId &&
+                              item.screeningDecision === "First interview pending",
+                          )
+                        ? "Continue to scheduling"
+                        : "Move to second shortlist"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog
+              open={skipInterviewCandidateId !== null}
+              onOpenChange={(open) => {
+                if (!open && !skippingInterview) {
+                  setSkipInterviewCandidateId(null);
+                  setSkipInterviewReason("");
+                }
+              }}
+            >
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Second-round decision</DialogTitle>
+                </DialogHeader>
+                <p className="text-sm text-muted-foreground">
+                  Record whether the interview happened in the app, outside it, or was waived. A
+                  remark is required. Moving to Offer does not send an offer or start onboarding.
+                </p>
+                <div className="space-y-2">
+                  <Label htmlFor="second-round-method">How was the second interview handled?</Label>
+                  <Select
+                    value={secondRoundMethod}
+                    onValueChange={(value) =>
+                      setSecondRoundMethod(value as typeof secondRoundMethod)
+                    }
+                  >
+                    <SelectTrigger id="second-round-method">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Phone">Phone call completed</SelectItem>
+                      <SelectItem value="In-Person">In-person interview completed</SelectItem>
+                      <SelectItem value="Waived">Interview waived</SelectItem>
+                      <SelectItem value="Scheduled">Completed in this app</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {secondRoundMethod !== "Waived" && secondRoundMethod !== "Scheduled" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="second-round-date">Conversation date</Label>
+                    <Input
+                      id="second-round-date"
+                      type="date"
+                      value={roundDate}
+                      max={new Date().toISOString().slice(0, 10)}
+                      onChange={(event) => setRoundDate(event.target.value)}
+                    />
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <Label htmlFor="skip-interview-reason">HR decision remark</Label>
+                  <Textarea
+                    id="skip-interview-reason"
+                    value={skipInterviewReason}
+                    maxLength={2000}
+                    onChange={(event) => setSkipInterviewReason(event.target.value)}
+                    placeholder="Record the outcome and why this candidate should proceed to Offer; if waived, explain why."
+                  />
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    disabled={skippingInterview}
+                    onClick={() => setSkipInterviewCandidateId(null)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    disabled={
+                      skippingInterview ||
+                      skipInterviewReason.trim().length < 10 ||
+                      (!["Waived", "Scheduled"].includes(secondRoundMethod) && !roundDate)
+                    }
+                    onClick={() => void skipInterviewToOffer()}
+                  >
+                    {skippingInterview ? "Saving..." : "Proceed to offer"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog
               open={rejectCandidateId !== null}
               onOpenChange={(open) => {
                 if (!open && !savingSuitability) {
@@ -2403,6 +2960,138 @@ function VacancyDetailRoute() {
                     }}
                   >
                     {savingSuitability ? "Saving..." : "Mark not suitable"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog
+              open={declineShortlistCandidateId !== null}
+              onOpenChange={(open) => {
+                if (!open && !decliningShortlist) {
+                  setDeclineShortlistCandidateId(null);
+                  setDeclineShortlistRemark("");
+                }
+              }}
+            >
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Mark this application not suitable?</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-2">
+                  <Label htmlFor="first-shortlist-decision">HR review remark</Label>
+                  <Textarea
+                    id="first-shortlist-decision"
+                    value={declineShortlistRemark}
+                    maxLength={500}
+                    onChange={(event) => setDeclineShortlistRemark(event.target.value)}
+                    placeholder="Briefly note the job-related reason after your call or review"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    This closes this vacancy application, not the candidate's shared profile or CV.
+                    Do not use age or other protected characteristics as the reason.
+                  </p>
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    disabled={decliningShortlist}
+                    onClick={() => setDeclineShortlistCandidateId(null)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    disabled={decliningShortlist || declineShortlistRemark.trim().length < 5}
+                    onClick={() => void declineFirstShortlist()}
+                  >
+                    {decliningShortlist ? "Saving..." : "Mark not suitable"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog
+              open={contactCandidateId !== null}
+              onOpenChange={(open) => {
+                if (!open && !savingContact) setContactCandidateId(null);
+              }}
+            >
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Record a call or offline interview</DialogTitle>
+                </DialogHeader>
+                <p className="text-sm text-muted-foreground">
+                  Record what happened, then decide whether to move this application to the second
+                  shortlist. No meeting invitation will be sent.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="vacancy-contact-channel">Conversation</Label>
+                    <Select
+                      value={contactChannel}
+                      onValueChange={(value) => setContactChannel(value as "Phone" | "In-Person")}
+                    >
+                      <SelectTrigger id="vacancy-contact-channel">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Phone">Phone call</SelectItem>
+                        <SelectItem value="In-Person">In person</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="vacancy-contact-outcome">Outcome</Label>
+                    <Select
+                      value={contactOutcome}
+                      onValueChange={(value) => setContactOutcome(value as typeof contactOutcome)}
+                    >
+                      <SelectTrigger id="vacancy-contact-outcome">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Interested">Interested</SelectItem>
+                        <SelectItem value="Not Interested">Not interested</SelectItem>
+                        <SelectItem value="Follow-up Required">Follow-up needed</SelectItem>
+                        <SelectItem value="Interview Arranged">
+                          Interview arranged elsewhere
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="vacancy-contact-date">When</Label>
+                  <Input
+                    id="vacancy-contact-date"
+                    type="datetime-local"
+                    value={contactDate}
+                    onChange={(event) => setContactDate(event.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="vacancy-contact-notes">HR remark</Label>
+                  <Textarea
+                    id="vacancy-contact-notes"
+                    value={contactNotes}
+                    onChange={(event) => setContactNotes(event.target.value)}
+                    placeholder="What did you discuss and what should happen next?"
+                  />
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    disabled={savingContact}
+                    onClick={() => setContactCandidateId(null)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    disabled={savingContact || !contactDate || contactNotes.trim().length < 5}
+                    onClick={() => void saveContactLog()}
+                  >
+                    {savingContact ? "Saving..." : "Save conversation"}
                   </Button>
                 </DialogFooter>
               </DialogContent>

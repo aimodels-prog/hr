@@ -33,6 +33,7 @@ export function claimBrowserApprovalTasks<T extends { id: string }>(
   tasks: readonly T[],
   storage: Pick<Storage, "getItem" | "setItem">,
   key: string,
+  maxHistory = 200,
 ): T[] {
   let priorIds: string[] = [];
   try {
@@ -51,7 +52,7 @@ export function claimBrowserApprovalTasks<T extends { id: string }>(
   if (claimed.length > 0) {
     storage.setItem(
       key,
-      JSON.stringify([...priorIds, ...claimed.map((task) => task.id)].slice(-200)),
+      JSON.stringify([...priorIds, ...claimed.map((task) => task.id)].slice(-maxHistory)),
     );
   }
   return claimed;

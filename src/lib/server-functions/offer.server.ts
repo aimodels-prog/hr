@@ -4,6 +4,7 @@ import * as z from "zod";
 import {
   convertAcceptedJobOfferInDatabase,
   finaliseHiringDecisionInDatabase,
+  skipInterviewToOfferInDatabase,
   generateJobOfferDocumentInDatabase,
   prepareManualInterviewHireInDatabase,
   saveJobOfferInDatabase,
@@ -111,6 +112,48 @@ export const finaliseHiringDecisionFn = createServerFn({ method: "POST" })
       },
       verified.actor,
     );
+  });
+
+export const skipInterviewToOfferFn = createServerFn({ method: "POST" })
+  .validator((input) =>
+    z
+      .object({
+        actor: Actor,
+        vacancyId: z.string().uuid(),
+        candidateId: z.string().uuid(),
+        secondRound: z
+          .object({
+            method: z.enum(["Phone", "In-Person", "Waived", "Scheduled"]),
+            date: z
+              .string()
+              .regex(/^\d{4}-\d{2}-\d{2}$/)
+              .optional(),
+          })
+          .refine(
+            (value) => ["Waived", "Scheduled"].includes(value.method) || Boolean(value.date),
+            {
+              message: "Enter the date of the conversation.",
+              path: ["date"],
+            },
+          ),
+        remark: z.string().trim().min(10).max(2000),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const verified = await recruiter(data.actor);
+    if (verified.actor.activeRole !== "HR")
+      throw new Error("Only HR can record the second-round outcome.");
+    const decisionId = await skipInterviewToOfferInDatabase(
+      verified.organisationId,
+      data.vacancyId,
+      data.candidateId,
+      data.secondRound,
+      data.remark,
+      verified.actor,
+    );
+    return { decisionId };
   });
 
 const Offer = z.object({

@@ -30,9 +30,10 @@ import { OfferDialog } from "./offer-dialog";
 
 interface DecisionPanelProps {
   vacancyId: string;
+  managedInApplications?: boolean;
 }
 
-export function DecisionPanel({ vacancyId }: DecisionPanelProps) {
+export function DecisionPanel({ vacancyId, managedInApplications = false }: DecisionPanelProps) {
   const currentUser = useCurrentUser();
   const offerService = useMemo(() => new OfferService(), []);
   const candidateService = useMemo(() => new CandidateService(), []);
@@ -137,7 +138,12 @@ export function DecisionPanel({ vacancyId }: DecisionPanelProps) {
 
             {decision.overrideReason && (
               <div className="p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-800">
-                <strong>System Override Reason:</strong> {decision.overrideReason}
+                <strong>
+                  {decision.decisionSource === "Manual Interview"
+                    ? "Second-round HR remark:"
+                    : "System Override Reason:"}
+                </strong>{" "}
+                {decision.overrideReason}
               </div>
             )}
             {decision.waiverReason && (
@@ -170,6 +176,19 @@ export function DecisionPanel({ vacancyId }: DecisionPanelProps) {
       </div>
     );
   }
+
+  if (managedInApplications)
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Complete the interview stages</CardTitle>
+          <CardDescription>
+            Review the first and second shortlists in Applications. HR records a remark at each
+            stage, then the selected person moves to Offer. CV analysis is optional.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    );
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-[1fr_350px] gap-6">
