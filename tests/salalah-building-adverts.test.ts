@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  existingSalalahQuantitySurveyorAssignmentMonths,
   existingSalalahQuantitySurveyorHeadcount,
   salalahBuildingAdverts,
 } from "../src/lib/recruitment/salalah-building-adverts.ts";
@@ -19,11 +20,11 @@ test("Salalah building advert drafts cover six new roles without duplicating Qua
       "Document Controller",
     ],
   );
-  assert.equal(existingSalalahQuantitySurveyorHeadcount, 12);
+  assert.equal(existingSalalahQuantitySurveyorHeadcount, 1);
+  assert.equal(existingSalalahQuantitySurveyorAssignmentMonths, 12);
   assert.equal(
-    salalahBuildingAdverts.reduce((sum, advert) => sum + advert.headcount, 0) +
-      existingSalalahQuantitySurveyorHeadcount,
-    75,
+    salalahBuildingAdverts.every((advert) => advert.headcount === 1),
+    true,
   );
 });
 
@@ -38,6 +39,10 @@ test("each draft is role-specific, located in Salalah, and does not invent exper
       `${advert.summary} ${advert.minimumExperience} ${advert.requirements.join(" ")}`,
       /\b\d+\+?\s*years?\b/i,
     );
-    assert.equal(advert.headcount, advert.position === "Land Surveyor" ? 3 : 12);
+    assert.equal(advert.assignmentMonths, advert.position === "Land Surveyor" ? 3 : 12);
+    assert.match(
+      advert.summary,
+      new RegExp(`Assignment duration: ${advert.assignmentMonths} months`),
+    );
   }
 });

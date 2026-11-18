@@ -3,6 +3,7 @@ export type SalalahBuildingAdvert = {
   title: string;
   position: string;
   headcount: number;
+  assignmentMonths: number;
   summary: string;
   education: string;
   minimumExperience: string;
@@ -13,14 +14,16 @@ export type SalalahBuildingAdvert = {
 const PROJECT =
   "VIA International Engineering Consultancy is recruiting for a building project in Salalah, Oman.";
 
-export const existingSalalahQuantitySurveyorHeadcount = 12;
+export const existingSalalahQuantitySurveyorHeadcount = 1;
+export const existingSalalahQuantitySurveyorAssignmentMonths = 12;
 
 export const salalahBuildingAdverts: readonly SalalahBuildingAdvert[] = [
   {
     title: "Junior Architect — Salalah",
     position: "Junior Architect",
-    headcount: 12,
-    summary: `${PROJECT} We are seeking Junior Architects to support architectural design coordination and site delivery. Apply directly through the careers form.`,
+    headcount: 1,
+    assignmentMonths: 12,
+    summary: `${PROJECT} We are seeking Junior Architects to support architectural design coordination and site delivery. Apply directly through the careers form. Assignment duration: 12 months.`,
     education: "Relevant qualification in architecture or a related discipline.",
     minimumExperience: "Relevant experience with building drawings or architectural coordination.",
     responsibilities: [
@@ -37,8 +40,9 @@ export const salalahBuildingAdverts: readonly SalalahBuildingAdvert[] = [
   {
     title: "Electrical Engineer — Salalah",
     position: "Electrical Engineer",
-    headcount: 12,
-    summary: `${PROJECT} We are seeking Electrical Engineers for building-services coordination and site supervision. Apply directly through the careers form.`,
+    headcount: 1,
+    assignmentMonths: 12,
+    summary: `${PROJECT} We are seeking Electrical Engineers for building-services coordination and site supervision. Apply directly through the careers form. Assignment duration: 12 months.`,
     education: "Relevant qualification in electrical engineering.",
     minimumExperience: "Relevant experience with electrical systems on building projects.",
     responsibilities: [
@@ -55,8 +59,9 @@ export const salalahBuildingAdverts: readonly SalalahBuildingAdvert[] = [
   {
     title: "Mechanical Engineer — Salalah",
     position: "Mechanical Engineer",
-    headcount: 12,
-    summary: `${PROJECT} We are seeking Mechanical Engineers for building-services coordination and site supervision. Apply directly through the careers form.`,
+    headcount: 1,
+    assignmentMonths: 12,
+    summary: `${PROJECT} We are seeking Mechanical Engineers for building-services coordination and site supervision. Apply directly through the careers form. Assignment duration: 12 months.`,
     education: "Relevant qualification in mechanical engineering.",
     minimumExperience: "Relevant experience with mechanical systems on building projects.",
     responsibilities: [
@@ -73,8 +78,9 @@ export const salalahBuildingAdverts: readonly SalalahBuildingAdvert[] = [
   {
     title: "Civil Inspector — Salalah",
     position: "Civil Inspector",
-    headcount: 12,
-    summary: `${PROJECT} We are seeking Civil Inspectors to monitor and document building construction work on site. Apply directly through the careers form.`,
+    headcount: 1,
+    assignmentMonths: 12,
+    summary: `${PROJECT} We are seeking Civil Inspectors to monitor and document building construction work on site. Apply directly through the careers form. Assignment duration: 12 months.`,
     education: "Relevant qualification in civil engineering or construction.",
     minimumExperience: "Relevant experience inspecting civil works on building projects.",
     responsibilities: [
@@ -91,8 +97,9 @@ export const salalahBuildingAdverts: readonly SalalahBuildingAdvert[] = [
   {
     title: "Land Surveyor — Salalah",
     position: "Land Surveyor",
-    headcount: 3,
-    summary: `${PROJECT} We are seeking Land Surveyors to support site setting-out and survey records. Apply directly through the careers form.`,
+    headcount: 1,
+    assignmentMonths: 3,
+    summary: `${PROJECT} We are seeking Land Surveyors to support site setting-out and survey records. Apply directly through the careers form. Assignment duration: 3 months.`,
     education: "Relevant qualification in surveying, geomatics or a related field.",
     minimumExperience: "Relevant experience surveying construction sites.",
     responsibilities: [
@@ -109,8 +116,9 @@ export const salalahBuildingAdverts: readonly SalalahBuildingAdvert[] = [
   {
     title: "Document Controller — Salalah",
     position: "Document Controller",
-    headcount: 12,
-    summary: `${PROJECT} We are seeking Document Controllers to keep project information accurate and accessible to the building team. Apply directly through the careers form.`,
+    headcount: 1,
+    assignmentMonths: 12,
+    summary: `${PROJECT} We are seeking Document Controllers to keep project information accurate and accessible to the building team. Apply directly through the careers form. Assignment duration: 12 months.`,
     education:
       "Relevant qualification or practical training in document control or administration.",
     minimumExperience: "Relevant experience controlling documents for construction projects.",
