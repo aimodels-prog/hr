@@ -1,6 +1,6 @@
 import { SafeForm } from "@/components/ui/safe-form";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, MapPin, Building2, Upload, Loader2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, MapPin, Building2, Upload, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useForm, useFieldArray } from "react-hook-form";
 import * as z from "zod";
@@ -22,7 +22,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -322,7 +321,7 @@ function JobDetail() {
     <PublicCareersPage>
       <PublicCareersHeader compact />
       <section className="bg-[#07558e] text-white">
-        <div className="mx-auto max-w-[1280px] px-5 py-14 sm:px-8 sm:py-20 lg:px-10">
+        <div className="mx-auto max-w-[1380px] px-5 py-14 sm:px-8 sm:py-20 lg:px-10">
           <Link
             to="/"
             hash="openings"
@@ -356,12 +355,18 @@ function JobDetail() {
               </span>
             )}
           </div>
+          <a
+            href="#application"
+            className="mt-8 inline-flex min-h-11 items-center gap-2 rounded-lg bg-white px-5 text-sm font-semibold text-[#07558e] transition hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#07558e]"
+          >
+            Apply now <ArrowRight className="h-4 w-4" />
+          </a>
         </div>
       </section>
 
       <div className="bg-[#f5f6f6]">
-        <div className="mx-auto grid max-w-[1280px] gap-10 px-5 py-12 sm:px-8 sm:py-16 lg:grid-cols-[minmax(0,1fr)_420px] lg:px-10">
-          <article className="bg-white p-7 sm:p-10">
+        <div className="mx-auto grid max-w-[1380px] items-start gap-8 px-5 py-10 sm:px-8 sm:py-14 xl:grid-cols-[minmax(0,1fr)_minmax(0,600px)] xl:px-10">
+          <article className="rounded-2xl border border-slate-200 bg-white p-7 sm:p-10">
             <p className="text-base leading-8 whitespace-pre-wrap text-slate-700">{job.summary}</p>
 
             <h2 className="mt-10 border-t border-slate-200 pt-8 text-2xl font-medium">The role</h2>
@@ -403,15 +408,22 @@ function JobDetail() {
             )}
           </article>
 
-          <aside className="h-fit border-t-4 border-[#07558e] bg-white p-6 shadow-sm lg:sticky lg:top-6 sm:p-8">
+          <aside
+            id="application"
+            className="h-fit scroll-mt-6 rounded-2xl border border-slate-200 border-t-4 border-t-[#07558e] bg-white p-6 shadow-sm sm:p-8 lg:p-10"
+          >
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#0a5d9c]">
               Application
             </p>
-            <h2 className="mb-6 mt-2 text-2xl font-medium">Apply for this position</h2>
+            <h2 className="mt-2 text-2xl font-semibold tracking-tight">Apply for this position</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Complete the form and attach your CV. Fields marked * are required.
+            </p>
 
             <Form {...form}>
-              <SafeForm onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+              <SafeForm onSubmit={form.handleSubmit(onSubmit)} className="mt-8 space-y-5">
+                <h3 className="text-base font-semibold text-slate-900">Your details</h3>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <FormField
                     control={form.control}
                     name="firstName"
@@ -421,7 +433,7 @@ function JobDetail() {
                           First Name <span className="text-destructive">*</span>
                         </FormLabel>
                         <FormControl>
-                          <Input {...field} />
+                          <Input autoComplete="given-name" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -436,88 +448,95 @@ function JobDetail() {
                           Last Name <span className="text-destructive">*</span>
                         </FormLabel>
                         <FormControl>
-                          <Input {...field} />
+                          <Input autoComplete="family-name" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
                 </div>
-                <FormField
-                  control={form.control}
-                  name="email"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        Email <span className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input type="email" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="phone"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        Phone <span className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="locationCountry"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        Current country <span className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <SearchableSelect
-                          options={COUNTRY_OPTIONS}
-                          value={field.value}
-                          onValueChange={field.onChange}
-                          placeholder="Select a country"
-                          searchPlaceholder="Search countries"
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="locationArea"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        City, state or province <span className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input {...field} placeholder="For example, Salalah or Rome" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <FormField
+                    control={form.control}
+                    name="email"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          Email <span className="text-destructive">*</span>
+                        </FormLabel>
+                        <FormControl>
+                          <Input type="email" autoComplete="email" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="phone"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          Phone <span className="text-destructive">*</span>
+                        </FormLabel>
+                        <FormControl>
+                          <Input type="tel" autoComplete="tel" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <FormField
+                    control={form.control}
+                    name="locationCountry"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          Current country <span className="text-destructive">*</span>
+                        </FormLabel>
+                        <FormControl>
+                          <SearchableSelect
+                            options={COUNTRY_OPTIONS}
+                            value={field.value}
+                            onValueChange={field.onChange}
+                            placeholder="Select a country"
+                            searchPlaceholder="Search countries"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="locationArea"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          City, state or province <span className="text-destructive">*</span>
+                        </FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="e.g. Salalah or Rome" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <h3 className="border-t border-slate-200 pt-7 text-base font-semibold text-slate-900">
+                  Work and experience
+                </h3>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <FormField
                     control={form.control}
                     name="yearsOfExperience"
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>
-                          Years Experience <span className="text-destructive">*</span>
+                          Years of experience <span className="text-destructive">*</span>
                         </FormLabel>
                         <FormControl>
                           <Input
@@ -561,12 +580,9 @@ function JobDetail() {
                           <Input
                             {...field}
                             maxLength={200}
-                            placeholder="Company, self-employed, or not currently employed"
+                            placeholder="Employer or Not employed"
                           />
                         </FormControl>
-                        <FormDescription>
-                          If you are not employed, enter “Not currently employed.”
-                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -580,15 +596,8 @@ function JobDetail() {
                           Current Title <span className="text-destructive">*</span>
                         </FormLabel>
                         <FormControl>
-                          <Input
-                            {...field}
-                            maxLength={200}
-                            placeholder="e.g. Logistics Manager or Job seeker"
-                          />
+                          <Input {...field} maxLength={200} placeholder="Job title or Job seeker" />
                         </FormControl>
-                        <FormDescription>
-                          If you are not employed, enter your most recent title or “Job seeker.”
-                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -622,6 +631,9 @@ function JobDetail() {
                   )}
                 />
 
+                <h3 className="border-t border-slate-200 pt-7 text-base font-semibold text-slate-900">
+                  Monthly salary
+                </h3>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <FormField
                     control={form.control}
@@ -629,12 +641,11 @@ function JobDetail() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>
-                          Current Salary (Monthly) <span className="text-destructive">*</span>
+                          Current salary <span className="text-destructive">*</span>
                         </FormLabel>
                         <FormControl>
-                          <Input {...field} inputMode="decimal" placeholder="e.g. 1500" />
+                          <Input {...field} inputMode="decimal" placeholder="0 if none" />
                         </FormControl>
-                        <FormDescription>Enter 0 if you are not currently earning.</FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -644,7 +655,7 @@ function JobDetail() {
                     name="currentSalaryCurrency"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Current salary currency (if earning)</FormLabel>
+                        <FormLabel>Current salary currency</FormLabel>
                         <FormControl>
                           <SearchableSelect
                             options={SALARY_CURRENCY_OPTIONS}
@@ -664,7 +675,7 @@ function JobDetail() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>
-                          Expected Salary (Monthly) <span className="text-destructive">*</span>
+                          Expected salary <span className="text-destructive">*</span>
                         </FormLabel>
                         <FormControl>
                           <Input
@@ -673,7 +684,6 @@ function JobDetail() {
                             placeholder="e.g. 1800 or 1800-2000"
                           />
                         </FormControl>
-                        <FormDescription>Enter a monthly amount or range.</FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -718,11 +728,14 @@ function JobDetail() {
                   />
                 ))}
 
-                <div className="space-y-2 pt-2 border-t mt-4">
-                  <Label>
-                    Resume/CV (PDF or DOCX) <span className="text-destructive">*</span>
+                <h3 className="border-t border-slate-200 pt-7 text-base font-semibold text-slate-900">
+                  CV and consent
+                </h3>
+                <div className="space-y-2">
+                  <Label htmlFor="cv-upload">
+                    Resume/CV <span className="text-destructive">*</span>
                   </Label>
-                  <div className="relative rounded-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+                  <div className="group relative rounded-xl focus-within:ring-2 focus-within:ring-[#07558e] focus-within:ring-offset-2">
                     <input
                       id="cv-upload"
                       type="file"
@@ -733,10 +746,15 @@ function JobDetail() {
                     />
                     <div
                       aria-hidden="true"
-                      className="flex h-11 w-full items-center justify-center gap-2 rounded-md border border-input bg-background px-4 text-sm font-medium shadow-sm"
+                      className="flex min-h-24 w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#b8cddd] bg-[#f7fafc] px-4 py-4 text-center text-sm font-medium text-[#07558e] transition-colors group-hover:border-[#07558e] group-hover:bg-[#eef6fc]"
                     >
-                      <Upload className="h-4 w-4 shrink-0" />
-                      <span className="truncate">{cvFile ? cvFile.name : "Choose File"}</span>
+                      <Upload className="h-5 w-5 shrink-0" />
+                      <span className="max-w-full truncate">
+                        {cvFile ? cvFile.name : "Choose your CV"}
+                      </span>
+                      <span className="text-xs font-normal text-slate-500">
+                        PDF, DOC or DOCX · up to 10 MB
+                      </span>
                     </div>
                   </div>
                 </div>

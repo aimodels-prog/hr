@@ -26,6 +26,10 @@ test("careers links use readable references and keep old job links usable", asyn
   await expect(
     page.getByRole("heading", { name: "Apply for this position", exact: true }),
   ).toBeVisible();
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await expect
+    .poll(async () => (await page.locator("#application").boundingBox())?.width ?? 0)
+    .toBeGreaterThanOrEqual(560);
   await expect(
     page.getByText("Are you authorised to work in the country where this job is based?"),
   ).toBeVisible();
