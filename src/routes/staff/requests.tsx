@@ -119,7 +119,10 @@ function TrackedRequestRow({
             {row.status}
           </span>
           {row.group === "Waiting" ? (
-            <p className="text-xs text-muted-foreground lg:mt-2">Next: {row.waitingFor}</p>
+            <p className="text-xs text-muted-foreground lg:mt-2">
+              Next: <span className="font-medium text-foreground">{row.waitingFor}</span>
+              {row.waitingForRole && <span className="block">{row.waitingForRole}</span>}
+            </p>
           ) : row.waitingFor !== "No approval pending" ? (
             <p className="text-xs text-muted-foreground lg:mt-2">With {row.waitingFor}</p>
           ) : null}
@@ -155,7 +158,12 @@ function TrackedRequestRow({
             </li>
           ))}
           <li className="text-sm font-medium">
-            Current: {row.status} · {row.waitingFor}
+            Current: {row.waitingForRole ? row.waitingFor : row.status}
+            {row.waitingForRole && (
+              <span className="block text-xs font-normal text-muted-foreground">
+                {row.waitingForRole} · awaiting decision
+              </span>
+            )}
           </li>
         </ol>
       </details>

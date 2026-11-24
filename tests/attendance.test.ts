@@ -285,6 +285,26 @@ test("assigned HR supervisor finalises a correction without a second approval", 
   assert.throws(() => service.hrFinaliseCorrection(opened.id, true, "Again", hr), /awaiting HR/);
 });
 
+test("HR can approve adjusted time while keeping the employee's requested time", async () => {
+  const { service } = harnessWithClock(() => new Date("2026-08-24T12:00:00Z"));
+  const record = seedRecord(service, "2026-08-24");
+  const opened = await service.requestCorrection(
+    record.id,
+    "09:00",
+    "17:30",
+    "Correct the clock-out time",
+    employee,
+  );
+  service.managerApproveCorrection(opened.id, manager, "Reviewed by manager");
+  service.hrFinaliseCorrection(opened.id, true, "Machine evidence confirms 17:00, not 17:30", hr, {
+    clockOut: "17:00",
+  });
+  const approved = service.getAllCorrections(hr).find((item) => item.id === opened.id);
+  assert.equal(approved?.proposedClockOut, "17:30");
+  assert.equal(approved?.approvedClockOut, "17:00");
+  assert.equal(service.getAllRecords(hr).find((item) => item.id === record.id)?.clockOut, "17:00");
+});
+
 test("only HR/Super Admin can export attendance CSV, and the export is audited", () => {
   const { service, audit } = harness();
   seedRecord(service, "2026-08-24");

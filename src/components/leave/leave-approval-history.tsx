@@ -1,5 +1,7 @@
 import type { LeaveRequest } from "@/lib/data/leave-types";
-import { leaveDecisionSummary } from "@/lib/data/leave-decision-display";
+import { leaveDecisionSummary, leaveRequestStatusLabel } from "@/lib/data/leave-decision-display";
+import { leaveSubmittedAt } from "@/lib/data/leave-presentation";
+import { SettingsService } from "@/lib/data/settings-service";
 
 function decisionDate(value?: string) {
   if (!value || Number.isNaN(Date.parse(value))) return null;
@@ -27,7 +29,8 @@ function stepPerson(
       request.lineManagerName || (showRecordGaps ? "Assigned manager name not recorded" : null)
     );
   }
-  if (step.role === "HR") return "HR team";
+  if (step.role === "HR") return request.independentReviewerName || "HR team";
+  if (step.role === "Country Manager") return request.countryManagerName || "Country Manager";
   return step.role;
 }
 
@@ -41,6 +44,8 @@ export function LeaveApprovalHistory({
   showRecordGaps?: boolean;
 }) {
   const steps = request.chainApprovals;
+  const timeZone = new SettingsService().getAppSettingsSync().timezone;
+  const submittedAt = leaveSubmittedAt(request, timeZone);
   const amendmentSteps = request.pendingAmendment?.chainApprovals ?? [];
   const missingCurrentManager =
     !showRecordGaps &&
@@ -53,21 +58,27 @@ export function LeaveApprovalHistory({
     <div className="space-y-3 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-muted-foreground">
-          {request.startDate} to {request.endDate} · {request.workingDaysRequested} day(s)
+          Leave dates: {request.startDate} to {request.endDate} · {request.workingDaysRequested}{" "}
+          day(s)
         </p>
         <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium">
-          {request.status}
+          {leaveRequestStatusLabel(request)}
         </span>
       </div>
-      {(request.lineManagerName || showRecordGaps) && (
+      <p className="text-muted-foreground">
+        {submittedAt
+          ? `Submitted: ${submittedAt} (${timeZone})`
+          : "Original submission date unavailable"}
+      </p>
+      {request.lineManagerName && (
         <p>
-          Line manager: <strong>{request.lineManagerName || "None assigned"}</strong>
+          <strong className="block">{request.lineManagerName}</strong>
+          <span className="text-xs text-muted-foreground">Line manager</span>
         </p>
       )}
       {missingCurrentManager && (
         <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-950">
-          This request is waiting for a manager, but their name is unavailable. Contact HR if it is
-          not moving forward.
+          The reviewer for this request is not named. Contact HR if it is not moving forward.
         </p>
       )}
       {leaveDecisionSummary(request, { staffView: !showRecordGaps }) && (
@@ -108,13 +119,10 @@ export function LeaveApprovalHistory({
             className="flex items-start justify-between gap-3 rounded-lg border p-3"
           >
             <span>
-              <span className="block font-medium">{step.role}</span>
-              {stepPerson(request, step, showRecordGaps) && (
-                <span className="block text-xs text-muted-foreground">
-                  {step.status === "Pending" ? "Assigned to " : "By "}
-                  {stepPerson(request, step, showRecordGaps)}
-                </span>
-              )}
+              <span className="block font-medium">
+                {stepPerson(request, step, showRecordGaps) || "Reviewer not recorded"}
+              </span>
+              <span className="block text-xs text-muted-foreground">{step.role}</span>
             </span>
             <span className="text-right">
               <span
@@ -147,13 +155,10 @@ export function LeaveApprovalHistory({
                 className="flex items-start justify-between gap-3 rounded-lg border p-3"
               >
                 <span>
-                  <span className="block font-medium">{step.role}</span>
-                  {stepPerson(request, step, showRecordGaps) && (
-                    <span className="block text-xs text-muted-foreground">
-                      {step.status === "Pending" ? "Assigned to " : "By "}
-                      {stepPerson(request, step, showRecordGaps)}
-                    </span>
-                  )}
+                  <span className="block font-medium">
+                    {stepPerson(request, step, showRecordGaps) || "Reviewer not recorded"}
+                  </span>
+                  <span className="block text-xs text-muted-foreground">{step.role}</span>
                 </span>
                 <span className="text-right">
                   <span

@@ -571,6 +571,8 @@ export const attendanceCorrections = pgTable(
     originalStatus: attendanceStatus("original_status").notNull(),
     proposedClockIn: timestamp("proposed_clock_in", { withTimezone: true, mode: "string" }),
     proposedClockOut: timestamp("proposed_clock_out", { withTimezone: true, mode: "string" }),
+    approvedClockIn: timestamp("approved_clock_in", { withTimezone: true, mode: "string" }),
+    approvedClockOut: timestamp("approved_clock_out", { withTimezone: true, mode: "string" }),
     explanation: text("explanation").notNull(),
     evidenceFileId: uuid("evidence_file_id").references(() => fileMetadata.id, {
       onDelete: "restrict",

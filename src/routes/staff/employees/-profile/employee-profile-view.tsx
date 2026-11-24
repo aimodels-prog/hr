@@ -950,11 +950,11 @@ export function EmployeeProfileView({ employeeId: requestedEmployeeId }: { emplo
             <UserRound className="h-4 w-4" />
           </span>
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
-              Line manager
-            </p>
             <p className="mt-0.5 text-sm font-semibold">
               {manager?.preferredName || "Not assigned"}
+            </p>
+            <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+              Line manager
             </p>
           </div>
         </div>

@@ -41,6 +41,10 @@ export interface WorkforceAnalytics {
   startDate: string;
   endDate: string;
   dailyHours: number;
+  /** The configured weekly target for this employee, not a fixed UI constant. */
+  weeklyGoalHours?: number;
+  weekStartDay?: number;
+  workingDays?: number[];
   days: AnalyticsDay[];
   totals: { worked: number; expected: number; review: number; missing: number; leaveDays: number };
   departments: { name: string; count: number }[];

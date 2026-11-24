@@ -35,6 +35,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export const Route = createFileRoute("/staff/attendance/corrections")({
   component: AttendanceCorrectionsRoute,
@@ -52,6 +54,8 @@ function AttendanceCorrectionsRoute() {
   const [activeTab, setActiveTab] = useState(currentUser.activeRole === "HR" ? "hr" : "manager");
   const openedFocusedCorrection = useRef<string | null>(null);
   const [notes, setNotes] = useState("");
+  const [approvedClockIn, setApprovedClockIn] = useState("");
+  const [approvedClockOut, setApprovedClockOut] = useState("");
   const [saving, setSaving] = useState(false);
   const decisionInFlight = useRef(false);
   const actorContext = useMemo(() => currentUser.getActorContext(), [currentUser]);
@@ -132,6 +136,8 @@ function AttendanceCorrectionsRoute() {
     setActiveTab(hr ? "hr" : "manager");
     setReviewMode(hr ? "hr" : "manager");
     setNotes("");
+    setApprovedClockIn(correction.proposedClockIn ?? correction.originalClockIn ?? "");
+    setApprovedClockOut(correction.proposedClockOut ?? correction.originalClockOut ?? "");
     setSelected(correction);
   }, [
     actorContext,
@@ -148,10 +154,29 @@ function AttendanceCorrectionsRoute() {
     setSelected(correction);
     setReviewMode(mode);
     setNotes("");
+    setApprovedClockIn(correction.proposedClockIn ?? correction.originalClockIn ?? "");
+    setApprovedClockOut(correction.proposedClockOut ?? correction.originalClockOut ?? "");
   };
 
   const decide = async (approve: boolean) => {
     if (!selected || decisionInFlight.current) return;
+    const requestedIn = selected.proposedClockIn ?? selected.originalClockIn ?? "";
+    const requestedOut = selected.proposedClockOut ?? selected.originalClockOut ?? "";
+    if (
+      approve &&
+      currentUser.activeRole === "HR" &&
+      ((requestedIn && !approvedClockIn) || (requestedOut && !approvedClockOut))
+    ) {
+      toast.error("Keep each requested time or enter the corrected time before approving.");
+      return;
+    }
+    const adjustedTimes =
+      approve && currentUser.activeRole === "HR"
+        ? {
+            ...(approvedClockIn !== requestedIn ? { clockIn: approvedClockIn } : {}),
+            ...(approvedClockOut !== requestedOut ? { clockOut: approvedClockOut } : {}),
+          }
+        : {};
     decisionInFlight.current = true;
     setSaving(true);
     try {
@@ -161,6 +186,7 @@ function AttendanceCorrectionsRoute() {
         notes,
         actorContext,
         selected.recordVersion,
+        adjustedTimes,
       );
       setSelected(null);
       setRevision((value) => value + 1);
@@ -211,7 +237,8 @@ function AttendanceCorrectionsRoute() {
               <TableHead>Date</TableHead>
               <TableHead>Type</TableHead>
               <TableHead>Original</TableHead>
-              <TableHead>Proposed</TableHead>
+              <TableHead>Employee requested</TableHead>
+              {mode === "history" && <TableHead>Approved time</TableHead>}
               <TableHead>Justification</TableHead>
               <TableHead>Evidence</TableHead>
               <TableHead>Status</TableHead>
@@ -221,10 +248,7 @@ function AttendanceCorrectionsRoute() {
           <TableBody>
             {corrections.length === 0 ? (
               <TableRow>
-                <TableCell
-                  colSpan={mode === "history" ? 8 : 9}
-                  className="h-28 text-center text-muted-foreground"
-                >
+                <TableCell colSpan={9} className="h-28 text-center text-muted-foreground">
                   No attendance corrections in this queue.
                 </TableCell>
               </TableRow>
@@ -249,6 +273,13 @@ function AttendanceCorrectionsRoute() {
                     <TableCell className="font-medium text-emerald-700">
                       {correction.proposedClockIn ?? "?"}–{correction.proposedClockOut ?? "?"}
                     </TableCell>
+                    {mode === "history" && (
+                      <TableCell className="font-medium">
+                        {correction.status === "Approved"
+                          ? `${correction.approvedClockIn ?? correction.proposedClockIn ?? correction.originalClockIn ?? "?"}–${correction.approvedClockOut ?? correction.proposedClockOut ?? correction.originalClockOut ?? "?"}`
+                          : "—"}
+                      </TableCell>
+                    )}
                     <TableCell className="max-w-72 truncate" title={correction.explanation}>
                       {correction.explanation}
                     </TableCell>
@@ -347,7 +378,7 @@ function AttendanceCorrectionsRoute() {
                   {selected.originalClockIn ?? "?"}–{selected.originalClockOut ?? "?"}
                 </div>
                 <div>
-                  <span className="block text-xs text-muted-foreground">Proposed</span>
+                  <span className="block text-xs text-muted-foreground">Employee requested</span>
                   {selected.proposedClockIn ?? "?"}–{selected.proposedClockOut ?? "?"}
                 </div>
                 <div className="sm:col-span-2">
@@ -363,10 +394,38 @@ function AttendanceCorrectionsRoute() {
                   </div>
                 )}
               </div>
+              {currentUser.activeRole === "HR" && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="approved-clock-in">Clock-in to approve</Label>
+                    <Input
+                      id="approved-clock-in"
+                      type="time"
+                      value={approvedClockIn}
+                      disabled={saving || selected.correctionType === "Missed Sign-out"}
+                      onChange={(event) => setApprovedClockIn(event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="approved-clock-out">Clock-out to approve</Label>
+                    <Input
+                      id="approved-clock-out"
+                      type="time"
+                      value={approvedClockOut}
+                      disabled={saving}
+                      onChange={(event) => setApprovedClockOut(event.target.value)}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground sm:col-span-2">
+                    Check the evidence before changing a time. The employee's request stays in the
+                    history.
+                  </p>
+                </div>
+              )}
               <Textarea
                 value={notes}
                 onChange={(event) => setNotes(event.target.value)}
-                placeholder="Required decision notes"
+                placeholder="Decision notes; explain any change to the requested time"
               />
             </div>
           )}

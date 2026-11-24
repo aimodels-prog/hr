@@ -545,7 +545,9 @@ function MyAttendanceRoute() {
       setCorrectionRecord(null);
       setRevision((value) => value + 1);
       toast.success(
-        clockOutOnly ? "Clock-out submitted to HR." : "Correction submitted to your line manager.",
+        clockOutOnly
+          ? "Clock-out submitted to HR."
+          : "Correction submitted. See My Requests for the named reviewer and status.",
       );
     } catch (error) {
       if (uploadedFileId) {
@@ -1126,7 +1128,7 @@ function MyAttendanceRoute() {
               <DialogDescription>
                 {clockOutOnly
                   ? "Enter the time you left. HR will confirm it."
-                  : "Original punches are preserved. Your line manager reviews first, followed by HR."}
+                  : "Original punches are preserved. My Requests will show the named reviewer and each decision."}
               </DialogDescription>
             </DialogHeader>
             {missingClockOut && (

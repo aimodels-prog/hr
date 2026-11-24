@@ -340,6 +340,8 @@ export class AttendanceService {
         originalStatus: row.originalStatus,
         ...(row.proposedClockIn ? { proposedClockIn: localTime(row.proposedClockIn) } : {}),
         ...(row.proposedClockOut ? { proposedClockOut: localTime(row.proposedClockOut) } : {}),
+        ...(row.approvedClockIn ? { approvedClockIn: localTime(row.approvedClockIn) } : {}),
+        ...(row.approvedClockOut ? { approvedClockOut: localTime(row.approvedClockOut) } : {}),
         explanation: row.explanation,
         ...(row.evidenceFileId ? { evidenceFileId: row.evidenceFileId } : {}),
         status: row.status,
@@ -691,15 +693,22 @@ export class AttendanceService {
     notes: string,
     context: ActorContext,
     expectedVersion: number,
+    approvedTimes: { clockIn?: string; clockOut?: string } = {},
   ): Promise<void> {
     const storedCorrection = this.correctionRepo.getById(correctionId);
     if (!storedCorrection || storedCorrection.recordVersion !== expectedVersion)
       throw new Error("This correction has changed. Refresh and review the latest version.");
+    if (
+      (approvedTimes.clockIn || approvedTimes.clockOut) &&
+      (!approve || context.actor.activeRole !== "HR")
+    )
+      throw new Error("Only HR can adjust times while approving a correction.");
     if (!storedCorrection?.databaseId && import.meta.env.DEV) {
       if (storedCorrection?.status === "Pending Manager") {
-        if (approve) this.managerApproveCorrection(correctionId, context, notes);
+        if (approve)
+          this.managerReviewCorrection(correctionId, true, notes, context, approvedTimes);
         else this.managerRejectCorrection(correctionId, notes, context);
-      } else this.hrFinaliseCorrection(correctionId, approve, notes, context);
+      } else this.hrFinaliseCorrection(correctionId, approve, notes, context, approvedTimes);
       return;
     }
     const { decideAttendanceCorrectionFn } =
@@ -711,6 +720,8 @@ export class AttendanceService {
         expectedVersion,
         decision: approve ? "approve" : "reject",
         ...(notes.trim() ? { notes } : {}),
+        ...(approvedTimes.clockIn ? { approvedClockIn: approvedTimes.clockIn } : {}),
+        ...(approvedTimes.clockOut ? { approvedClockOut: approvedTimes.clockOut } : {}),
       },
     });
     await this.hydrateFromDatabase(context);
@@ -1723,6 +1734,7 @@ export class AttendanceService {
     approve: boolean,
     notes: string,
     context: ActorContext,
+    approvedTimes: { clockIn?: string; clockOut?: string } = {},
   ): AttendanceCorrection {
     this.requireRole(context, ["HR"], "finalise attendance corrections");
     const storedCorrection = this.correctionRepo.getById(correctionId);
@@ -1736,11 +1748,14 @@ export class AttendanceService {
     if (!record) throw new Error("The underlying attendance record was not found.");
 
     if (approve) {
+      const approvedClockIn = approvedTimes.clockIn ?? correction.proposedClockIn ?? record.clockIn;
+      const approvedClockOut =
+        approvedTimes.clockOut ?? correction.proposedClockOut ?? record.clockOut;
       this.updateRecordInternal(
         record.id,
         {
-          clockIn: correction.proposedClockIn ?? record.clockIn,
-          clockOut: correction.proposedClockOut ?? record.clockOut,
+          clockIn: approvedClockIn,
+          clockOut: approvedClockOut,
           status: "Corrected",
         },
         { ...context, reason: notes.trim() },
@@ -1759,6 +1774,14 @@ export class AttendanceService {
         hrNotes: notes.trim(),
         hrReviewedBy: context.actor.userId,
         hrReviewedAt: this.now().toISOString(),
+        ...(approve
+          ? {
+              approvedClockIn:
+                approvedTimes.clockIn ?? correction.proposedClockIn ?? record.clockIn,
+              approvedClockOut:
+                approvedTimes.clockOut ?? correction.proposedClockOut ?? record.clockOut,
+            }
+          : {}),
       },
       { ...context, reason: notes.trim() },
     );
@@ -2416,6 +2439,7 @@ export class AttendanceService {
     approve: boolean,
     notes: string,
     context: ActorContext,
+    approvedTimes: { clockIn?: string; clockOut?: string } = {},
   ): AttendanceCorrection {
     this.requireRole(context, ["Line Manager", "HR"], "review this correction");
     if (notes.trim().length < 3) throw new Error("Manager decision notes are required.");
@@ -2434,6 +2458,8 @@ export class AttendanceService {
       throw new Error("Only the employee's assigned line manager can review this correction.");
     }
     const hrStandIn = effectiveRole(context) === "HR";
+    if ((approvedTimes.clockIn || approvedTimes.clockOut) && !hrStandIn)
+      throw new Error("Only HR can adjust times while finalising a correction.");
     const record = this.recordRepo.getById(correction.attendanceRecordId);
     if (approve && hrStandIn && !record)
       throw new Error("The underlying attendance record was not found.");
@@ -2441,8 +2467,8 @@ export class AttendanceService {
       this.updateRecordInternal(
         record.id,
         {
-          clockIn: correction.proposedClockIn ?? record.clockIn,
-          clockOut: correction.proposedClockOut ?? record.clockOut,
+          clockIn: approvedTimes.clockIn ?? correction.proposedClockIn ?? record.clockIn,
+          clockOut: approvedTimes.clockOut ?? correction.proposedClockOut ?? record.clockOut,
           status: "Corrected",
         },
         { ...context, reason: notes.trim() },
@@ -2468,6 +2494,10 @@ export class AttendanceService {
               hrNotes: notes.trim(),
               hrReviewedBy: context.actor.userId,
               hrReviewedAt: this.now().toISOString(),
+              approvedClockIn:
+                approvedTimes.clockIn ?? correction.proposedClockIn ?? record?.clockIn,
+              approvedClockOut:
+                approvedTimes.clockOut ?? correction.proposedClockOut ?? record?.clockOut,
             }
           : {}),
       },

@@ -38,6 +38,18 @@ const base: RequestRow = {
   metadata: { manager: "Approved", hr: "Approved", finance: "Pending" },
 };
 
+test("the pending manager stage shows the person's name with the role separately", () => {
+  const tracked = toTrackedRequest({
+    ...base,
+    module: "Leave",
+    status: "Pending Line Manager",
+    manager_name: "Roshana Ahmed",
+  });
+  assert.equal(tracked.waitingFor, "Roshana Ahmed");
+  assert.equal(tracked.waitingForRole, "Line manager");
+  assert.equal(tracked.status, "Awaiting review");
+});
+
 test("request tracking names earlier approvers while showing the outstanding reviewer", () => {
   const tracked = toTrackedRequest(base, [
     {

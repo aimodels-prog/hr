@@ -115,6 +115,8 @@ export interface TrackedRequest {
   status: string;
   group: Exclude<RequestGroup, "All">;
   waitingFor: string;
+  /** Display beneath a named reviewer, never in place of their name. */
+  waitingForRole?: string;
   nextStep: string;
   approvedBy: string[];
   createdAt: string;
@@ -160,9 +162,7 @@ export function toTrackedRequest(
   const executiveTravel =
     row.module === "Travel" && approvalRoute["kind"] === "Managerless Executive";
   const hrOwnTravel = row.module === "Travel" && approvalRoute["kind"] === "HR Own Travel";
-  const manager = row.manager_name
-    ? `${row.manager_name} — Line Manager`
-    : "Reviewer assignment needed";
+  const manager = row.manager_name || "Reviewer assignment needed";
   let waitingFor = "No approval pending";
   let nextStep = "Open the record for details.";
   if (archivedAt) {
@@ -277,6 +277,17 @@ export function toTrackedRequest(
     waitingFor = text(meta["independentReviewerName"]) ?? "HR";
     nextStep = `The original visit is approved. ${waitingFor} needs to review the extension.`;
   }
+
+  const waitingForRole =
+    group !== "Waiting"
+      ? undefined
+      : row.manager_name && waitingFor === row.manager_name
+        ? "Line manager"
+        : text(meta["independentReviewerName"]) === waitingFor
+          ? "Independent reviewer"
+          : text(meta["countryManagerName"]) === waitingFor
+            ? "Country Manager"
+            : undefined;
 
   if (group === "Approved" && waitingFor === "No approval pending") {
     nextStep = "Approved. No further decision is waiting.";
@@ -425,9 +436,12 @@ export function toTrackedRequest(
             ? `Awaiting ${text(meta["independentReviewerName"])}`
             : (executiveTravel || hrOwnTravel) && row.status === "Pending HR and Accounts"
               ? `Awaiting ${waitingFor}`
-              : row.status,
+              : waitingForRole && /Manager|Supervisor/.test(row.status)
+                ? "Awaiting review"
+                : row.status,
     group,
     waitingFor,
+    ...(waitingForRole ? { waitingForRole } : {}),
     nextStep,
     approvedBy: [...new Set(approvedBy)],
     createdAt: row.created_at,

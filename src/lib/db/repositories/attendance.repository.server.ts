@@ -1469,6 +1469,7 @@ export async function decideAttendanceCorrectionInDatabase(
   notes: string | undefined,
   actor: AuditActorContext,
   expectedVersion: number,
+  approvedTimes: { clockIn?: string; clockOut?: string } = {},
 ): Promise<void> {
   if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1)
     throw new Error("Refresh the correction before making a decision.");
@@ -1528,8 +1529,22 @@ export async function decideAttendanceCorrectionInDatabase(
       throw new Error("You are not the assigned correction approver.");
     if (actor.employeeId === correction.employeeId)
       throw new Error("You cannot approve your own attendance correction.");
+    const timesAdjusted = Boolean(approvedTimes.clockIn || approvedTimes.clockOut);
+    for (const value of [approvedTimes.clockIn, approvedTimes.clockOut]) {
+      if (value && !/^([01]\d|2[0-3]):[0-5]\d$/.test(value))
+        throw new Error("Enter an approved time in 24-hour HH:mm format.");
+    }
+    if (
+      timesAdjusted &&
+      (decision !== "approve" || actor.activeRole !== "HR" || (managerStage && !hrStandIn))
+    )
+      throw new Error("Only HR can adjust times while finalising a correction.");
+    if (timesAdjusted && (notes?.trim().length ?? 0) < 3)
+      throw new Error("Explain why HR changed the requested time.");
     if (decision === "reject" && !notes?.trim())
       throw new Error("Explain why the correction is rejected.");
+    let appliedClockInAt: string | null = null;
+    let appliedClockOutAt: string | null = null;
     if (decision === "reject") {
       await tx
         .update(attendanceCorrections)
@@ -1591,8 +1606,6 @@ export async function decideAttendanceCorrectionInDatabase(
           "Attendance has changed since this correction was requested. Reject this request and ask the employee to submit an updated correction.",
         );
       }
-      const clockInAt = correction.proposedClockIn ?? correction.originalClockIn;
-      const clockOutAt = correction.proposedClockOut ?? correction.originalClockOut;
       const [[settings], [policy]] = await Promise.all([
         tx
           .select({ timezone: appSettings.timezone })
@@ -1613,6 +1626,46 @@ export async function decideAttendanceCorrectionInDatabase(
           .limit(1),
       ]);
       const timezone = settings?.timezone ?? "UTC";
+      const requestedClockIn = correction.proposedClockIn ?? correction.originalClockIn;
+      const requestedClockOut = correction.proposedClockOut ?? correction.originalClockOut;
+      const clockInAt = approvedTimes.clockIn
+        ? zonedDateTimeToUtc(record.date, approvedTimes.clockIn, timezone).toISOString()
+        : requestedClockIn;
+      let clockOutAt = approvedTimes.clockOut
+        ? zonedDateTimeToUtc(record.date, approvedTimes.clockOut, timezone).toISOString()
+        : requestedClockOut;
+      if (approvedTimes.clockOut && clockInAt && clockOutAt && clockOutAt <= clockInAt) {
+        const overnight = new Date(clockOutAt);
+        overnight.setUTCDate(overnight.getUTCDate() + 1);
+        clockOutAt = overnight.toISOString();
+      }
+      if (clockInAt && clockOutAt) {
+        const duration = new Date(clockOutAt).getTime() - new Date(clockInAt).getTime();
+        if (duration <= 0 || duration > 24 * 60 * 60 * 1000)
+          throw new Error("The approved clock-out must follow clock-in within 24 hours.");
+      }
+      appliedClockInAt = clockInAt;
+      appliedClockOutAt = clockOutAt;
+      for (const [kind, value] of [
+        ["in", clockInAt],
+        ["out", clockOutAt],
+      ] as const) {
+        if (!value) continue;
+        const at = new Date(value);
+        const localDate = zonedParts(at, timezone).date;
+        const nextDate = new Date(`${record.date}T12:00:00.000Z`);
+        nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+        if (
+          Number.isNaN(at.getTime()) ||
+          at.getTime() > Date.now() ||
+          (kind === "in" && localDate !== record.date) ||
+          (kind === "out" &&
+            ![record.date, nextDate.toISOString().slice(0, 10)].includes(localDate))
+        )
+          throw new Error(
+            "Approved times must fall on the attendance day and not be in the future.",
+          );
+      }
       const localClockIn = clockInAt ? zonedParts(new Date(clockInAt), timezone).time : null;
       const localClockOut = clockOutAt ? zonedParts(new Date(clockOutAt), timezone).time : null;
       const expectedClockIn =
@@ -1688,6 +1741,8 @@ export async function decideAttendanceCorrectionInDatabase(
         .update(attendanceCorrections)
         .set({
           status: "Approved",
+          approvedClockIn: clockInAt,
+          approvedClockOut: clockOutAt,
           ...(hrStandIn
             ? {
                 managerNotes: notes?.trim(),
@@ -1741,7 +1796,12 @@ export async function decideAttendanceCorrectionInDatabase(
       module: "attendance",
       entityType: "attendance-correction",
       entityId: correctionId,
-      beforeSummary: { status: correction.status, recordVersion: correction.recordVersion },
+      beforeSummary: {
+        status: correction.status,
+        recordVersion: correction.recordVersion,
+        requestedClockIn: correction.proposedClockIn,
+        requestedClockOut: correction.proposedClockOut,
+      },
       afterSummary: {
         stage: correction.status,
         decision,
@@ -1753,6 +1813,13 @@ export async function decideAttendanceCorrectionInDatabase(
               : "Approved",
         ...(hrStandIn ? { hrStandIn: true } : {}),
         recordVersion: correction.recordVersion + 1,
+        ...(decision === "approve" && (hrStage || hrStandIn)
+          ? {
+              appliedClockIn: appliedClockInAt,
+              appliedClockOut: appliedClockOutAt,
+              hrAdjustedTimes: timesAdjusted,
+            }
+          : {}),
       },
       reason: notes?.trim() ?? "Attendance correction decision",
       riskLevel: "High",

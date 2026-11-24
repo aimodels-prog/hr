@@ -27,6 +27,9 @@ import { EmployeeService } from "@/lib/data/employee-service";
 import type { LeaveRequest } from "@/lib/data/leave-types";
 import { useCurrentUser, RequirePermission } from "@/lib/auth";
 import { focusedApprovalId } from "@/lib/data/approval-links";
+import { leaveSubmittedAt } from "@/lib/data/leave-presentation";
+import { leaveRequestStatusLabel } from "@/lib/data/leave-decision-display";
+import { SettingsService } from "@/lib/data/settings-service";
 
 export const Route = createFileRoute("/staff/leave-approvals")({
   component: LeaveApprovalsRoute,
@@ -70,6 +73,7 @@ function LeaveApprovalsContent() {
   // Assuming anyone can be a manager if they have direct reports.
 
   const policies = leaveService.getPolicies();
+  const timeZone = new SettingsService().getAppSettingsSync().timezone;
 
   const [managerQueue, setManagerQueue] = useState<LeaveRequest[]>([]);
   const [adminQueue, setAdminQueue] = useState<LeaveRequest[]>([]);
@@ -212,7 +216,7 @@ function LeaveApprovalsContent() {
           )
           ? "Your review was recorded. HR will make the final decision."
           : req.policySnapshot.noticeException && req.status === "Pending HR"
-            ? "Your special review was recorded. The request will reach the line manager after both special reviewers approve."
+            ? `Your special review was recorded. ${req.lineManagerName || "The assigned reviewer"} will receive the request after both special reviewers approve.`
             : "Leave request approved.",
       );
       loadData();
@@ -329,6 +333,19 @@ function LeaveApprovalsContent() {
             const reviewDays =
               req.pendingAmendment?.proposedWorkingDays ?? req.workingDaysRequested;
             const isSpecial = Boolean(req.policySnapshot.specialRequest);
+            const submittedAt = leaveSubmittedAt(req, timeZone);
+            const pendingStep = (req.pendingAmendment?.chainApprovals ?? req.chainApprovals).find(
+              (step) => step.status === "Pending",
+            );
+            const reviewerName = pendingStep
+              ? ["Line Manager", "Supervisor", "Manager"].includes(pendingStep.role)
+                ? req.lineManagerName || "Reviewer assignment needed"
+                : pendingStep.role === "Country Manager"
+                  ? req.countryManagerName || "Country Manager assignment needed"
+                  : pendingStep.role === "HR"
+                    ? req.independentReviewerName || "HR team"
+                    : pendingStep.role
+              : null;
             const overlaps = leaveService
               .getTeamOverlaps(
                 emp?.department || "",
@@ -361,9 +378,12 @@ function LeaveApprovalsContent() {
                           {policy?.name ?? "Leave"} · {reviewDays}{" "}
                           {reviewDays === 1 ? "day" : "days"}
                         </CardDescription>
-                        {req.lineManagerName && (
+                        {reviewerName && (
                           <p className="mt-1 text-xs text-muted-foreground">
-                            Line manager: {req.lineManagerName}
+                            <span className="block font-medium text-foreground">
+                              {reviewerName}
+                            </span>
+                            <span>{pendingStep?.role} · next reviewer</span>
                           </p>
                         )}
                         {!req.policySnapshot.specialRequest &&
@@ -381,9 +401,7 @@ function LeaveApprovalsContent() {
                       variant="outline"
                       className="border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-800"
                     >
-                      {req.status === "Pending HR" && req.policySnapshot.noticeException
-                        ? "Special approvals"
-                        : req.status}
+                      {leaveRequestStatusLabel(req)}
                     </Badge>
                   </div>
                 </CardHeader>
@@ -393,7 +411,7 @@ function LeaveApprovalsContent() {
                       <strong>
                         {req.independentReviewerEmployeeId
                           ? "Special leave - independent review"
-                          : "Special leave - line manager, then Country Manager, then HR"}
+                          : `Special leave - ${req.lineManagerName || "assigned reviewer"}, then Country Manager, then HR`}
                       </strong>
                       <p className="mt-1">
                         This request may cross leave years or exceed the ordinary allowance. The
@@ -431,8 +449,16 @@ function LeaveApprovalsContent() {
                       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         <CalendarDays className="size-4" aria-hidden="true" /> Request details
                       </div>
+                      {submittedAt && (
+                        <div className="grid grid-cols-[85px_minmax(0,1fr)] gap-2">
+                          <span className="text-muted-foreground">Submitted:</span>
+                          <span className="font-medium">
+                            {submittedAt} ({timeZone})
+                          </span>
+                        </div>
+                      )}
                       <div className="grid grid-cols-[85px_minmax(0,1fr)] gap-2">
-                        <span className="text-muted-foreground">Dates:</span>
+                        <span className="text-muted-foreground">Leave dates:</span>
                         <span className="font-medium">
                           {new Date(reviewStartDate).toLocaleDateString()}
                           {reviewStartDate !== reviewEndDate

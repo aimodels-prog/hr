@@ -2,6 +2,30 @@ import type { LeaveRequest } from "./leave-types";
 
 type ApprovalStep = LeaveRequest["chainApprovals"][number];
 
+/** Internal workflow statuses are not reviewer identities. */
+export function leaveStatusLabel(status: LeaveRequest["status"]): string {
+  if (status === "Pending Line Manager" || status === "Amendment Pending Line Manager")
+    return "Awaiting reviewer";
+  if (status === "Pending HR" || status === "Amendment Pending HR") return "Awaiting HR";
+  return status;
+}
+
+/** The request itself, rather than its stored status, identifies the current reviewer. */
+export function leaveRequestStatusLabel(request: LeaveRequest): string {
+  if (!request.status.startsWith("Pending") && !request.status.startsWith("Amendment Pending"))
+    return leaveStatusLabel(request.status);
+  const pending = allSteps(request).find((step) => step.status === "Pending");
+  if (!pending) return leaveStatusLabel(request.status);
+  const name = ["Line Manager", "Supervisor", "Manager"].includes(pending.role)
+    ? request.lineManagerName
+    : pending.role === "Country Manager"
+      ? request.countryManagerName
+      : pending.role === "HR"
+        ? request.independentReviewerName
+        : undefined;
+  return name ? `Awaiting ${name}` : leaveStatusLabel(request.status);
+}
+
 function allSteps(request: LeaveRequest): ApprovalStep[] {
   return [...request.chainApprovals, ...(request.pendingAmendment?.chainApprovals ?? [])];
 }
@@ -19,12 +43,10 @@ function pendingPerson(request: LeaveRequest, staffView: boolean): string | null
   const pending = allSteps(request).find((step) => step.status === "Pending");
   if (!pending) return null;
   if (["Line Manager", "Supervisor", "Manager"].includes(pending.role)) {
-    return (
-      request.lineManagerName ||
-      (staffView ? "manager review" : "assigned manager (name not recorded)")
-    );
+    return request.lineManagerName || (staffView ? "reviewer assignment" : "reviewer not assigned");
   }
-  if (pending.role === "HR") return "HR team";
+  if (pending.role === "HR") return request.independentReviewerName || "HR team";
+  if (pending.role === "Country Manager") return request.countryManagerName || "Country Manager";
   if (pending.role === "Super Admin") return staffView ? "HR review" : pending.role;
   return pending.role;
 }
@@ -51,10 +73,9 @@ export function leaveDecisionSummary(
   const waitingFor =
     pendingPerson(request, staffView) ||
     (request.status.includes("Line Manager")
-      ? request.lineManagerName ||
-        (staffView ? "manager review" : "assigned manager (name not recorded)")
+      ? request.lineManagerName || (staffView ? "reviewer assignment" : "reviewer not assigned")
       : request.status.includes("HR")
-        ? "HR team"
+        ? request.independentReviewerName || "HR team"
         : request.status.includes("Super Admin")
           ? staffView
             ? "HR review"
@@ -72,7 +93,7 @@ export function leaveDecisionSummary(
         ));
     if (managerNameMissing) {
       const prefix = approved?.approverName ? `${approved.approverName} approved · ` : "";
-      return `${prefix}Manager review pending · Ask HR to confirm the reviewer`;
+      return `${prefix}Reviewer not named · Ask HR to confirm who will decide`;
     }
     if (approved?.approverName && waitingFor)
       return `${approved.approverName} approved · Waiting for ${waitingFor}`;

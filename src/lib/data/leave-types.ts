@@ -195,6 +195,10 @@ export interface LeaveRequest extends BaseRecord {
   lineManagerName?: string;
   /** Snapshot reviewer for an HR employee's own request, visible only to authorised viewers. */
   independentReviewerEmployeeId?: string;
+  /** Named independent reviewer for an HR employee's own request, when assigned. */
+  independentReviewerName?: string;
+  /** The named Country Manager assigned to a special or short-notice review. */
+  countryManagerName?: string;
   policyId: RecordId;
   startDate: string;
   endDate: string;

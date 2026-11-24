@@ -1,6 +1,37 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { leaveDisplayReason, newestLeaveFirst } from "../src/lib/data/leave-presentation.ts";
+import {
+  leaveDisplayReason,
+  leaveSubmittedAt,
+  newestLeaveFirst,
+} from "../src/lib/data/leave-presentation.ts";
+
+test("show the actual submission time in the organisation timezone, not the leave date", () => {
+  assert.equal(
+    leaveSubmittedAt(
+      { createdAt: "2026-11-24T07:30:00.000Z", policySnapshot: { name: "Annual Leave" } },
+      "Asia/Muscat",
+    ),
+    "24 Nov 2026, 11:30",
+  );
+  assert.equal(
+    leaveSubmittedAt(
+      { createdAt: "2026-11-24T07:30:00.000Z", policySnapshot: { name: "Annual Leave" } },
+      "Europe/Rome",
+    ),
+    "24 Nov 2026, 08:30",
+  );
+  assert.equal(
+    leaveSubmittedAt(
+      {
+        createdAt: "2026-11-24T07:30:00.000Z",
+        policySnapshot: { name: "Annual Leave — imported history" },
+      },
+      "Asia/Muscat",
+    ),
+    null,
+  );
+});
 
 test("hide generated spreadsheet notes without losing real reasons or stored provenance", () => {
   const note =

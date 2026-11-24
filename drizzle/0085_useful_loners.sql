@@ -1,0 +1,2 @@
+ALTER TABLE "attendance_corrections" ADD COLUMN "approved_clock_in" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "attendance_corrections" ADD COLUMN "approved_clock_out" timestamp with time zone;

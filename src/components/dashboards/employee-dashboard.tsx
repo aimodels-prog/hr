@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { LeaveService } from "@/lib/data/leave-service";
 import { leaveDisplayType } from "@/lib/data/leave-presentation";
+import { leaveRequestStatusLabel } from "@/lib/data/leave-decision-display";
 import { TimesheetService } from "@/lib/data/timesheet-service";
 import { timesheetPeriodLabel } from "@/lib/data/timesheet-periods";
 import { organisationDate } from "@/lib/data/approved-leave";
@@ -414,7 +415,7 @@ function EmployeeDashboardDetails({ employee, userId }: { employee: Employee; us
                             : "border-border bg-muted/60 text-foreground"
                     }`}
                   >
-                    {request.status}
+                    {leaveRequestStatusLabel(request)}
                   </span>
                 </Link>
               ))}

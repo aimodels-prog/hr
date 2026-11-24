@@ -8,7 +8,12 @@ import { getDatabaseClient } from "../client.ts";
 import { employees } from "../schema/employee.ts";
 import { departments, locations, publicHolidays } from "../schema/master-data.ts";
 import { appSettings } from "../schema/organisation.ts";
-import { attendancePolicies, attendanceRecords, siteVisitRequests } from "../schema/time.ts";
+import {
+  attendancePolicies,
+  attendanceRecords,
+  siteVisitRequests,
+  timesheetSettings,
+} from "../schema/time.ts";
 import { leaveRequests } from "../schema/leave.ts";
 import { candidateApplications, vacancies } from "../schema/recruitment.ts";
 import type { AuditActorContext } from "./master-data.repository.server.ts";
@@ -39,12 +44,13 @@ export async function getWorkforceAnalytics(
   if (employeeId && scope !== "hr") throw new Error("Only HR can select another employee.");
   const individualId = employeeId ?? (scope === "self" ? actor.employeeId : undefined);
   const db = getDatabaseClient();
-  const [settingsRows, policyRows, people] = await Promise.all([
+  const [settingsRows, policyRows, people, timesheetSettingRows] = await Promise.all([
     db
       .select({
         timezone: appSettings.timezone,
         workingDays: appSettings.workingDays,
         dailyHours: appSettings.standardDailyHours,
+        weeklyHours: appSettings.standardWeeklyHours,
         yearStart: appSettings.leaveYearStart,
       })
       .from(appSettings)
@@ -70,6 +76,7 @@ export async function getWorkforceAnalytics(
         department: departments.name,
         office: locations.name,
         timezone: locations.timezone,
+        weeklyHours: employees.weeklyHours,
       })
       .from(employees)
       .innerJoin(
@@ -90,6 +97,11 @@ export async function getWorkforceAnalytics(
           ...(individualId ? [eq(employees.id, individualId)] : []),
         ),
       ),
+    db
+      .select({ weekStartDay: timesheetSettings.weeklyPeriodStartDay })
+      .from(timesheetSettings)
+      .where(eq(timesheetSettings.organisationId, organisationId))
+      .limit(1),
   ]);
   const settings = settingsRows[0];
   if (!settings)
@@ -354,6 +366,9 @@ export async function getWorkforceAnalytics(
     startDate,
     endDate,
     dailyHours,
+    weeklyGoalHours: Number(people[0]?.weeklyHours ?? settings.weeklyHours),
+    weekStartDay: timesheetSettingRows[0]?.weekStartDay ?? 1,
+    workingDays: settings.workingDays,
     offices: counts(officeCounts),
     employmentStatuses: counts(statusCounts),
     leaveQueue: leaveQueue.sort((a, b) => a.name.localeCompare(b.name)),

@@ -16,6 +16,7 @@ import {
   YAxis,
 } from "recharts";
 import { DoorOpen, RefreshCw } from "lucide-react";
+import { WeeklyGoalCard } from "./weekly-goal-card";
 import { useCurrentUser } from "@/lib/auth";
 import { getWorkforceAnalyticsFn } from "@/lib/server-functions/workforce-analytics.server";
 import { ChartContainer } from "@/components/ui/chart";
@@ -511,6 +512,9 @@ export default function WorkforceCharts({
       )}
       {data && (
         <>
+          {scope === "self" && user.employeeId && (
+            <WeeklyGoalCard data={data} employeeId={user.employeeId} />
+          )}
           <PulseStrip
             compact
             metrics={

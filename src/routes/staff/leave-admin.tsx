@@ -3,9 +3,11 @@ import { LeaveApprovalHistory } from "@/components/leave/leave-approval-history"
 import {
   leaveDisplayReason,
   leaveDisplayType,
+  leaveSubmittedAt,
   newestLeaveFirst,
 } from "@/lib/data/leave-presentation";
-import { leaveDecisionSummary } from "@/lib/data/leave-decision-display";
+import { SettingsService } from "@/lib/data/settings-service";
+import { leaveDecisionSummary, leaveRequestStatusLabel } from "@/lib/data/leave-decision-display";
 import { employeeSearch, useEmployeeFilter } from "@/components/employees/employee-filter";
 import { useEffect, useState, useMemo } from "react";
 import { PageHeader } from "@/components/ui/page-header";
@@ -90,6 +92,7 @@ function LeaveAdminContent() {
     .filter((employee) => employeeFilter.matchesEmployee(employee.id));
   const departments = getMasterDataRepository("departments").list() as MasterRecord[];
   const policies = leaveService.getPolicies();
+  const timeZone = new SettingsService().getAppSettingsSync().timezone;
 
   const allRequests = useMemo(
     () => leaveService.getAllRequests(currentUser.getActorContext()).sort(newestLeaveFirst),
@@ -233,9 +236,9 @@ function LeaveAdminContent() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All Statuses</SelectItem>
-                        <SelectItem value="Pending Line Manager">Pending Line Manager</SelectItem>
+                        <SelectItem value="Pending Line Manager">Awaiting reviewer</SelectItem>
                         <SelectItem value="Pending Super Admin">Pending Super Admin</SelectItem>
-                        <SelectItem value="Pending HR">Pending HR</SelectItem>
+                        <SelectItem value="Pending HR">Awaiting HR</SelectItem>
                         <SelectItem value="Approved">Approved (Future)</SelectItem>
                         <SelectItem value="Taken">Taken (Past)</SelectItem>
                         <SelectItem value="Automatically Refused">Automatically Refused</SelectItem>
@@ -268,7 +271,7 @@ function LeaveAdminContent() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Employee</TableHead>
-                      <TableHead>Dates</TableHead>
+                      <TableHead>Leave dates / submitted</TableHead>
                       <TableHead>Days</TableHead>
                       <TableHead>Policy</TableHead>
                       <TableHead>Status</TableHead>
@@ -283,20 +286,31 @@ function LeaveAdminContent() {
                         req.status === "Cancellation Approved" &&
                         Boolean(req.policySnapshot.officeWorkCorrections?.length) &&
                         req.policySnapshot.workingDates?.length === 0;
+                      const submittedAt = leaveSubmittedAt(req, timeZone);
 
                       return (
                         <TableRow key={req.id}>
                           <TableCell>
                             <div className="font-medium">{emp?.preferredName}</div>
                             <div className="text-xs text-muted-foreground">{emp?.department}</div>
-                            <div className="text-xs text-muted-foreground">
-                              Manager: {req.lineManagerName || "None assigned"}
-                            </div>
+                            {req.lineManagerName && (
+                              <div className="text-xs text-muted-foreground">
+                                <span className="block font-medium text-foreground">
+                                  {req.lineManagerName}
+                                </span>
+                                <span>Line manager</span>
+                              </div>
+                            )}
                           </TableCell>
                           <TableCell className="whitespace-nowrap">
                             {format(parseISO(req.startDate), "MMM d, yyyy")}
                             {req.startDate !== req.endDate &&
                               ` - ${format(parseISO(req.endDate), "MMM d, yyyy")}`}
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              {submittedAt
+                                ? `Submitted ${submittedAt} (${timeZone})`
+                                : "Original submission date unavailable"}
+                            </div>
                           </TableCell>
                           <TableCell className="font-medium">{req.workingDaysRequested}</TableCell>
                           <TableCell>
@@ -333,9 +347,7 @@ function LeaveAdminContent() {
                             >
                               {fullyReplacedByWork
                                 ? "Counted as work"
-                                : req.policySnapshot.noticeException && req.status === "Pending HR"
-                                  ? "Special approvals pending"
-                                  : req.status}
+                                : leaveRequestStatusLabel(req)}
                             </Badge>
                             {leaveDecisionSummary(req) && (
                               <span className="mt-1 block text-xs text-muted-foreground">

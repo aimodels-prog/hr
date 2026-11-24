@@ -50,7 +50,7 @@ import { RequirePermission, useCurrentUser } from "@/lib/auth";
 import { LeaveService } from "@/lib/data/leave-service";
 import { organisationDate } from "@/lib/data/approved-leave";
 import { SettingsService } from "@/lib/data/settings-service";
-import { leaveDecisionSummary } from "@/lib/data/leave-decision-display";
+import { leaveDecisionSummary, leaveRequestStatusLabel } from "@/lib/data/leave-decision-display";
 import {
   leaveDisplayReason,
   leaveDisplayType,
@@ -690,7 +690,9 @@ function LeaveBalancesRoute() {
                           </p>
                         </div>
                         <Badge variant={requestVariant(request.status)}>
-                          {fullyReplacedByWork ? "Counted as work" : request.status}
+                          {fullyReplacedByWork
+                            ? "Counted as work"
+                            : leaveRequestStatusLabel(request)}
                         </Badge>
                       </div>
                       {leaveDecisionSummary(request, { staffView: true }) && (
@@ -767,7 +769,7 @@ function LeaveBalancesRoute() {
                                 : request.policySnapshot.noticeException &&
                                     request.status === "Pending HR"
                                   ? "Special approvals pending"
-                                  : request.status}
+                                  : leaveRequestStatusLabel(request)}
                             </Badge>
                             {leaveDecisionSummary(request, { staffView: true }) && (
                               <span className="mt-1 block text-xs text-muted-foreground">

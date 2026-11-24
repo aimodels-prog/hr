@@ -271,7 +271,12 @@ export async function listLeaveSnapshotForActor(
               eq(hrIndependentReviewAssignments.organisationId, organisationId),
               eq(hrIndependentReviewAssignments.module, "Leave"),
               ...(!privileged && actor.employeeId
-                ? [eq(hrIndependentReviewAssignments.reviewerEmployeeId, actor.employeeId)]
+                ? [
+                    or(
+                      eq(hrIndependentReviewAssignments.reviewerEmployeeId, actor.employeeId),
+                      eq(hrIndependentReviewAssignments.requesterEmployeeId, actor.employeeId),
+                    )!,
+                  ]
                 : []),
               isNull(hrIndependentReviewAssignments.archivedAt),
             ),
@@ -380,19 +385,33 @@ export async function listLeaveSnapshotForActor(
   const requestPeopleById = new Map(requestPeople.map((person) => [person.id, person]));
   const managerIds = [
     ...new Set(
-      requestPeople.map((person) => person.lineManagerId).filter((id): id is string => !!id),
+      [
+        ...requestPeople.map((person) => person.lineManagerId),
+        ...independentAssignments.map((item) => item.reviewerEmployeeId),
+        ...requestRows.flatMap((row) => {
+          const snapshot = row.policySnapshot as LeaveRequest["policySnapshot"];
+          return [
+            snapshot.specialRequest?.countryManagerEmployeeId,
+            snapshot.noticeException?.countryManagerEmployeeId,
+          ];
+        }),
+      ].filter((id): id is string => !!id),
     ),
   ];
   const managerNames = new Map(
     managerIds.length
       ? (
           await db
-            .select({ id: employees.id, name: employees.legalName })
+            .select({
+              id: employees.id,
+              legalName: employees.legalName,
+              preferredName: employees.preferredName,
+            })
             .from(employees)
             .where(
               and(eq(employees.organisationId, organisationId), inArray(employees.id, managerIds)),
             )
-        ).map((person) => [person.id, person.name])
+        ).map((person) => [person.id, person.preferredName || person.legalName])
       : [],
   );
   const decisionUserIds = new Set<string>();
@@ -447,6 +466,34 @@ export async function listLeaveSnapshotForActor(
             independentReviewerEmployeeId: independentAssignments.find(
               (item) => item.requestId === row.id,
             )!.reviewerEmployeeId,
+            ...(managerNames.get(
+              independentAssignments.find((item) => item.requestId === row.id)!.reviewerEmployeeId,
+            )
+              ? {
+                  independentReviewerName: managerNames.get(
+                    independentAssignments.find((item) => item.requestId === row.id)!
+                      .reviewerEmployeeId,
+                  )!,
+                }
+              : {}),
+          }
+        : {}),
+      ...(!payrollReader &&
+      managerNames.get(
+        (row.policySnapshot as LeaveRequest["policySnapshot"]).specialRequest
+          ?.countryManagerEmployeeId ??
+          (row.policySnapshot as LeaveRequest["policySnapshot"]).noticeException
+            ?.countryManagerEmployeeId ??
+          "",
+      )
+        ? {
+            countryManagerName: managerNames.get(
+              (row.policySnapshot as LeaveRequest["policySnapshot"]).specialRequest
+                ?.countryManagerEmployeeId ??
+                (row.policySnapshot as LeaveRequest["policySnapshot"]).noticeException
+                  ?.countryManagerEmployeeId ??
+                "",
+            )!,
           }
         : {}),
       ...(requestPeopleById.get(row.employeeId)?.name

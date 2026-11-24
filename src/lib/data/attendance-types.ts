@@ -136,6 +136,9 @@ export interface AttendanceCorrection extends BaseRecord {
   originalStatus: AttendanceStatus;
   proposedClockIn?: string | undefined;
   proposedClockOut?: string | undefined;
+  /** Final punches approved by HR; the employee's proposed punches remain unchanged. */
+  approvedClockIn?: string | undefined;
+  approvedClockOut?: string | undefined;
   explanation: string;
   evidenceFileId?: RecordId | undefined;
   status: CorrectionStatus;

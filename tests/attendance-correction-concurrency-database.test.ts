@@ -159,6 +159,55 @@ test(
       });
 
       await t.test(
+        "HR-adjusted approval preserves the employee's proposal and records the applied time",
+        async () => {
+          const item = await fixture();
+          const requested = await correction(item.id);
+          await decideAttendanceCorrectionInDatabase(
+            org,
+            item.id,
+            "approve",
+            "Machine evidence shows the employee left at 18:00",
+            hr,
+            item.version,
+            { clockOut: "18:00" },
+          );
+          const saved = await correction(item.id);
+          const attendance = await record(item.recordId);
+          assert.equal(
+            new Date(saved.proposed_clock_out).getTime(),
+            new Date(requested.proposed_clock_out).getTime(),
+          );
+          assert.equal(
+            new Date(saved.approved_clock_out).getTime(),
+            Date.parse(`${attendance.date}T18:00:00Z`),
+          );
+          assert.equal(
+            new Date(attendance.clock_out_at).getTime(),
+            new Date(saved.approved_clock_out).getTime(),
+          );
+          assert.equal((await decisions(item.id)).length, 1);
+        },
+      );
+
+      await t.test("line managers cannot change requested times while endorsing", async () => {
+        const item = await fixture("Pending Manager");
+        await assert.rejects(
+          decideAttendanceCorrectionInDatabase(
+            org,
+            item.id,
+            "approve",
+            "Trying to change a time",
+            manager,
+            item.version,
+            { clockOut: "18:00" },
+          ),
+          /Only HR can adjust times/,
+        );
+        assert.equal((await correction(item.id)).status, "Pending Manager");
+      });
+
+      await t.test(
         "manager decisions serialize and stale HR screens cannot skip a review stage",
         async () => {
           const racing = await fixture("Pending Manager"),

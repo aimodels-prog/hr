@@ -216,7 +216,7 @@ function TimesheetMonitoringContent() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Employee</TableHead>
-                    <TableHead>Line Manager</TableHead>
+                    <TableHead>Reviewer</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Logged Hours</TableHead>
                     <TableHead>Compliance</TableHead>
@@ -233,7 +233,10 @@ function TimesheetMonitoringContent() {
                       <TableRow key={row.emp.id}>
                         <TableCell className="font-medium">{row.emp.preferredName}</TableCell>
                         <TableCell className="text-muted-foreground">
-                          {manager ? `${manager.preferredName}` : "None"}
+                          <span className="block font-medium text-foreground">
+                            {manager?.preferredName || "Not assigned"}
+                          </span>
+                          {manager && <span className="text-xs">Line manager</span>}
                         </TableCell>
                         <TableCell>
                           <Badge

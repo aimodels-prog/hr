@@ -370,6 +370,14 @@ const CorrectionDecision = z
     expectedVersion: z.number().int().positive(),
     decision: z.enum(["approve", "reject"]),
     notes: z.string().trim().max(2000).optional(),
+    approvedClockIn: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .optional(),
+    approvedClockOut: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .optional(),
   })
   .strict();
 export const decideAttendanceCorrectionFn = createServerFn({ method: "POST" })
@@ -383,6 +391,10 @@ export const decideAttendanceCorrectionFn = createServerFn({ method: "POST" })
       data.notes,
       v.actor,
       data.expectedVersion,
+      {
+        ...(data.approvedClockIn ? { clockIn: data.approvedClockIn } : {}),
+        ...(data.approvedClockOut ? { clockOut: data.approvedClockOut } : {}),
+      },
     );
     return { ok: true };
   });

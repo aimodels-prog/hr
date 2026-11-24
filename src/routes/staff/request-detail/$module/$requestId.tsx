@@ -138,7 +138,12 @@ function RequestDetailPage() {
             <p>
               <span className="text-muted-foreground">Next</span>
               <br />
-              {request.waitingFor}
+              <strong>{request.waitingFor}</strong>
+              {request.waitingForRole && (
+                <span className="block text-xs text-muted-foreground">
+                  {request.waitingForRole} · awaiting decision
+                </span>
+              )}
             </p>
           )}
           {request.approvedBy.length > 0 && (

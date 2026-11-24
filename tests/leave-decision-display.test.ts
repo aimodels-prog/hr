@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { leaveDecisionSummary } from "../src/lib/data/leave-decision-display.ts";
+import {
+  leaveDecisionSummary,
+  leaveRequestStatusLabel,
+  leaveStatusLabel,
+} from "../src/lib/data/leave-decision-display.ts";
 import type { LeaveRequest } from "../src/lib/data/leave-types.ts";
 
 function request(patch: Partial<LeaveRequest>): LeaveRequest {
@@ -13,8 +17,53 @@ function request(patch: Partial<LeaveRequest>): LeaveRequest {
 
 test("pending leave names the assigned line manager", () => {
   assert.equal(
+    leaveRequestStatusLabel(request({ lineManagerName: "Roshana Ahmed" })),
+    "Awaiting Roshana Ahmed",
+  );
+  assert.equal(
     leaveDecisionSummary(request({ lineManagerName: "Roshana Ahmed" })),
     "Waiting for Roshana Ahmed",
+  );
+});
+
+test("stored manager-stage status is not displayed as a person's identity", () => {
+  assert.equal(leaveStatusLabel("Pending Line Manager"), "Awaiting reviewer");
+  assert.equal(leaveStatusLabel("Pending HR"), "Awaiting HR");
+});
+
+test("an independent HR reviewer is named when the request is assigned", () => {
+  assert.equal(
+    leaveDecisionSummary(
+      request({
+        status: "Pending HR",
+        independentReviewerName: "Riccardo Centonze",
+        chainApprovals: [{ role: "HR", status: "Pending" }],
+      }),
+    ),
+    "Waiting for Riccardo Centonze",
+  );
+});
+
+test("a special request names its assigned Country Manager", () => {
+  assert.equal(
+    leaveRequestStatusLabel(
+      request({
+        status: "Pending HR",
+        countryManagerName: "Riccardo Centonze",
+        chainApprovals: [{ role: "Country Manager", status: "Pending" }],
+      }),
+    ),
+    "Awaiting Riccardo Centonze",
+  );
+  assert.equal(
+    leaveDecisionSummary(
+      request({
+        status: "Pending HR",
+        countryManagerName: "Riccardo Centonze",
+        chainApprovals: [{ role: "Country Manager", status: "Pending" }],
+      }),
+    ),
+    "Waiting for Riccardo Centonze",
   );
 });
 
@@ -88,7 +137,7 @@ test("missing decision actors are omitted rather than invented", () => {
 test("an active request without a named manager still shows the review stage", () => {
   assert.equal(
     leaveDecisionSummary(request({ lineManagerName: undefined }), { staffView: true }),
-    "Manager review pending · Ask HR to confirm the reviewer",
+    "Reviewer not named · Ask HR to confirm who will decide",
   );
 });
 

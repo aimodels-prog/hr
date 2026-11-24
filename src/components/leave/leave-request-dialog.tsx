@@ -73,6 +73,12 @@ export function LeaveRequestDialog({
   const requestingEmployee = employees.find(
     (employee) => employee.id === employeeId || employee.databaseId === employeeId,
   );
+  const assignedManager = employees.find(
+    (employee) =>
+      employee.id === requestingEmployee?.lineManagerId ||
+      employee.databaseId === requestingEmployee?.lineManagerId,
+  );
+  const assignedManagerName = assignedManager?.preferredName || assignedManager?.legalName;
   const executiveHrReview = Boolean(
     requestingEmployee?.status === "Active" &&
     requestingEmployee.employmentConfirmationStatus === "Confirmed" &&
@@ -272,7 +278,7 @@ export function LeaveRequestDialog({
               : "Leave request sent",
           {
             description: specialRequestReason
-              ? "Your line manager reviews first, then Riccardo, then HR. HR decides the balance and pay treatment."
+              ? `${assignedManagerName || "Your assigned reviewer"} reviews first, then the Country Manager, then HR. HR decides the balance and pay treatment.`
               : sentDirectlyToHr
                 ? "HR is the only reviewer for this request. Follow its status in My Requests."
                 : "Your request is now pending approval.",
@@ -318,7 +324,7 @@ export function LeaveRequestDialog({
 
         {executiveHrReview && !needsSpecialRoute && (
           <p className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm text-foreground">
-            Ordinary leave for your position goes directly to HR. You do not need a line manager.
+            Ordinary leave for your position goes directly to HR.
           </p>
         )}
         {executiveHrReview && needsSpecialRoute && (
@@ -734,7 +740,7 @@ export function LeaveRequestDialog({
               {exceedsAllowance ? "It exceeds the usual leave allowance. " : ""}
               {executiveHrReview
                 ? "Special approval needs an independent reviewer. Ask HR to arrange the approval route before sending this request; ordinary leave can go directly to HR."
-                : "Explain the circumstances. Your line manager reviews first, then Riccardo, then HR. HR decides which balances to deduct from and whether any remaining days are paid or unpaid. Nothing is approved automatically."}
+                : `Explain the circumstances. ${assignedManagerName || "Your assigned reviewer"} reviews first, then the Country Manager, then HR. HR decides which balances to deduct from and whether any remaining days are paid or unpaid. Nothing is approved automatically.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {!executiveHrReview && (
