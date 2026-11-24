@@ -165,12 +165,16 @@ jobs:
           retention-days: 30
 
   browser-journeys:
-    name: PostgreSQL/MinIO browser journeys
+    name: PostgreSQL/MinIO browser journeys (${{ matrix.shard }}/4)
     needs: application
     # Keep browser evidence available even when the dependency audit fails.
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     services:
       postgres:
         image: postgres:17-alpine
@@ -271,12 +275,14 @@ jobs:
           trap 'kill "$worker_pid" 2>/dev/null || true' EXIT
           NODE_ENV=test PORTAL_SSO_ENABLED=false \
             VIA_HR_E2E_WEB_SERVER_COMMAND="npm run dev -- --host 127.0.0.1 --port 4173" \
-            npx playwright test --grep-invert "production release smoke" --reporter=line \
+            npx playwright test --grep-invert "production release smoke" --shard=${{ matrix.shard }}/4 --reporter=line \
             | tee browser-tests.txt
-          NODE_ENV=production \
-            VIA_HR_E2E_WEB_SERVER_COMMAND="npm run build && npm start" \
-            npx playwright test tests/e2e/production-smoke.spec.ts --reporter=line \
-            | tee production-smoke.txt
+          if [ "${{ matrix.shard }}" = "1" ]; then
+            NODE_ENV=production \
+              VIA_HR_E2E_WEB_SERVER_COMMAND="npm run build && npm start" \
+              npx playwright test tests/e2e/production-smoke.spec.ts --reporter=line \
+              | tee production-smoke.txt
+          fi
 
       - name: Summarize failed browser checks
         if: failure()
@@ -310,7 +316,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: browser-test-evidence-${{ github.sha }}
+          name: browser-test-evidence-${{ github.sha }}-shard-${{ matrix.shard }}
           path: |
             ci-services.log
             browser-tests.txt
