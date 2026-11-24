@@ -328,7 +328,9 @@ test("production release smoke keeps employee dashboard concise on desktop and p
   ).toHaveCount(2);
   await expect(page.getByText("Viewing: All employees", { exact: false })).toHaveCount(0);
   await page.getByRole("button", { name: "Reporting period and timezone", exact: true }).click();
-  await expect(page.getByText(/\d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2}/)).toBeVisible();
+  await expect(
+    page.getByRole("dialog").getByText(/\d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2}/),
+  ).toBeVisible();
   await page.keyboard.press("Escape");
   await page.screenshot({ path: test.info().outputPath("employee-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });

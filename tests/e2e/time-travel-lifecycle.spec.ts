@@ -282,7 +282,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   await correctionRow.getByRole("button", { name: "Review" }).click();
   const managerCorrectionDialog = page.getByRole("dialog", { name: "Team correction" });
   await managerCorrectionDialog
-    .getByPlaceholder("Required decision notes")
+    .getByPlaceholder("Decision notes; explain any change to the requested time")
     .fill("Punch checked with the employee and endorsed.");
   await managerCorrectionDialog.getByRole("button", { name: "Send to HR" }).click();
   await expect(managerCorrectionDialog).toBeHidden();
@@ -329,7 +329,7 @@ test("leave, timesheet, attendance, overtime and travel complete their role work
   await finalCorrectionRow.getByRole("button", { name: "Review" }).click();
   const hrCorrectionDialog = page.getByRole("dialog", { name: "HR final decision" });
   await hrCorrectionDialog
-    .getByPlaceholder("Required decision notes")
+    .getByPlaceholder("Decision notes; explain any change to the requested time")
     .fill("Correction evidence and supervisor endorsement reviewed.");
   await hrCorrectionDialog.getByRole("button", { name: "Approve & Apply" }).click();
   await expect(hrCorrectionDialog).toBeHidden();
