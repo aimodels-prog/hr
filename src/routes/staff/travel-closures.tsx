@@ -315,7 +315,7 @@ function TravelClosuresContent() {
                   <span className="text-muted-foreground font-medium text-amber-700 block mb-1">
                     Employee Variance Explanation:
                   </span>
-                  <div className="bg-white p-2 border border-amber-200 rounded">
+                  <div className="rounded border border-amber-200 bg-card p-2">
                     {selectedReq.varianceExplanation}
                   </div>
                 </div>

@@ -320,6 +320,14 @@ test("production release smoke keeps employee dashboard concise on desktop and p
     "Requires isolated portal SSO configuration",
   );
   await signInAs(page, "omar.rahman@via-int.com", "Omar Rahman", "/staff");
+  const workspaceColors = await page.locator(".via-hr-app").evaluate((element) => {
+    const styles = getComputedStyle(element);
+    return {
+      background: styles.getPropertyValue("--background").trim(),
+      card: styles.getPropertyValue("--card").trim(),
+    };
+  });
+  expect(workspaceColors).toEqual({ background: "#eaf2fa", card: "#f7fbff" });
   await expect(page.getByRole("heading", { name: "My attendance vs expected" })).toBeVisible({
     timeout: 30_000,
   });
@@ -327,20 +335,10 @@ test("production release smoke keeps employee dashboard concise on desktop and p
     page.getByTestId("primary-dashboard-charts").locator(":scope > section"),
   ).toHaveCount(2);
   await expect(page.getByTestId("weekly-goal-card")).toBeVisible();
-  const dashboardOrder = await page
-    .locator(".via-metric-card, [data-testid='weekly-goal-card']")
-    .evaluateAll((elements) =>
-      elements.map((element) =>
-        element.hasAttribute("data-testid")
-          ? "weekly-goal"
-          : element.textContent?.includes("Attendance completion")
-            ? "attendance-percentage"
-            : "other",
-      ),
-    );
-  expect(dashboardOrder.indexOf("attendance-percentage")).toBeLessThan(
-    dashboardOrder.indexOf("weekly-goal"),
-  );
+  const sectionAfterWelcome = await page
+    .locator(".via-dashboard-hero")
+    .evaluate((element) => element.nextElementSibling?.getAttribute("data-testid"));
+  expect(sectionAfterWelcome).toBe("weekly-goal-card");
   await expect(page.getByText("Viewing: All employees", { exact: false })).toHaveCount(0);
   await page.getByRole("button", { name: "Reporting period and timezone", exact: true }).click();
   await expect(

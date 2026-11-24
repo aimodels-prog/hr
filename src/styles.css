@@ -154,22 +154,22 @@ body.via-hr-portal-theme {
   --radius: 0.75rem;
   --font-display: "Inter", "Aptos Display", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   --font-sans: "Inter", "Aptos", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
-  --background: #f5f8fc;
+  --background: #eaf2fa;
   --foreground: #0b1d36;
-  --card: #ffffff;
+  --card: #f7fbff;
   --card-foreground: #0b1d36;
   --popover: #ffffff;
   --popover-foreground: #0b1d36;
   --primary: #0b5796;
   --primary-foreground: #ffffff;
-  --secondary: #eaf2fa;
+  --secondary: #dfedf9;
   --secondary-foreground: #173e67;
-  --muted: #eef3f9;
+  --muted: #e4eff8;
   --muted-foreground: #61748e;
-  --accent: #e8f2fb;
+  --accent: #dcecf9;
   --accent-foreground: #0b5796;
-  --border: #d8e3ef;
-  --input: #cfdeed;
+  --border: #c6d9ea;
+  --input: #bdd2e5;
   --ring: #0b5796;
   --chart-1: #0b5796;
   --chart-2: #079968;
@@ -187,9 +187,9 @@ body.via-hr-portal-theme {
   --sidebar-heading: #c8e1f5;
   --sidebar-detail: #b8e9dc;
   --sidebar-detail-accent: rgb(255 255 255 / 12%);
-  --via-table-header: #f0f5fa;
-  --via-table-hover: #f4f9fd;
-  --via-table-heading: #526b87;
+  --via-table-header: #dceaf6;
+  --via-table-hover: #e7f3fc;
+  --via-table-heading: #3c5d7f;
   font-family: var(--font-sans);
 }
 
@@ -220,6 +220,17 @@ body.via-hr-portal-theme [data-sidebar="sidebar"] {
   background-image: none;
 }
 
+.via-hr-app .via-workspace-main {
+  background-color: var(--background);
+  background-image:
+    radial-gradient(circle at 96% 0%, rgb(183 216 241 / 58%), transparent 430px),
+    linear-gradient(155deg, #edf5fc, #e7f0f9);
+}
+
+.dark .via-hr-app .via-workspace-main {
+  background-image: linear-gradient(155deg, #101e31, #152940);
+}
+
 .via-hr-app [data-via-surface="card"] {
   box-shadow:
     0 1px 2px rgb(11 29 54 / 4%),
@@ -243,6 +254,26 @@ body.via-hr-portal-theme [data-sidebar="sidebar"] {
   box-shadow: 0 1px 2px rgb(11 29 54 / 5%);
 }
 
+.via-hr-app .via-metric-card-blue {
+  border-color: #bdd9ee;
+  background-color: #e7f3fc;
+}
+
+.via-hr-app .via-metric-card-green {
+  border-color: #bfe1d2;
+  background-color: #e8f6ef;
+}
+
+.dark .via-hr-app .via-metric-card-blue {
+  border-color: #365b79;
+  background-color: #1b3a57;
+}
+
+.dark .via-hr-app .via-metric-card-green {
+  border-color: #2e6056;
+  background-color: #1b3d3d;
+}
+
 .via-hr-app .via-metric-card::before {
   position: absolute;
   inset-block: 0;
@@ -264,7 +295,7 @@ body.via-hr-portal-theme [data-via-control="select"],
 body.via-hr-portal-theme [data-via-control="textarea"] {
   min-height: 2.5rem;
   border-radius: 0.65rem;
-  background-color: var(--card);
+  background-color: var(--popover);
 }
 
 .via-hr-app [data-via-control="textarea"],

@@ -749,7 +749,7 @@ function TravelDetailRoute() {
                       placeholder="Please explain the reason for the additional expenses..."
                       value={varianceExplanation}
                       onChange={(e) => setVarianceExplanation(e.target.value)}
-                      className="bg-white border-amber-300"
+                      className="border-amber-300 bg-popover"
                       disabled={isSubmissionLocked}
                     />
                   </div>

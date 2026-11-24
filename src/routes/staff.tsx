@@ -159,7 +159,7 @@ function StaffWorkspace({ actor }: { actor: ActorContext }) {
                     <DevRoleSwitcher />
                   </div>
                 </header>
-                <main className="flex-1 bg-background p-4 sm:p-6 lg:p-8">
+                <main className="via-workspace-main flex-1 bg-background p-4 sm:p-6 lg:p-8">
                   {setupNeedsAttention && (
                     <div className="mx-auto mb-5 flex max-w-7xl flex-wrap items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5 sm:px-4">
                       <ClipboardCheck className="size-5 shrink-0 text-primary" aria-hidden="true" />

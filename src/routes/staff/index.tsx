@@ -27,6 +27,7 @@ import { AccountsDashboard } from "@/components/dashboards/accounts-dashboard";
 import { employeeSearch } from "@/components/employees/employee-filter";
 import { RequestTrackerSummary } from "@/components/dashboards/request-tracker-summary";
 import { DashboardActionQueue } from "@/components/dashboards/dashboard-action-queue";
+import { WeeklyAttendanceOverview } from "@/components/dashboards/weekly-attendance-overview";
 
 const quickActionArt: Record<string, { background: string; ring: string; accent: string }> = {
   "bg-primary/10 text-primary": {
@@ -394,6 +395,9 @@ function Dashboard() {
         </div>
       </section>
 
+      {["Employee", "IT", "Travel Admin"].includes(activeRole) && currentEmployee && (
+        <WeeklyAttendanceOverview employeeId={currentEmployee.id} />
+      )}
       <DashboardActionQueue />
       <RequestTrackerSummary />
       {quickAccess}

@@ -106,11 +106,11 @@ export function WeeklyGoalCard({
     <section
       aria-label="My weekly attendance goal"
       data-testid="weekly-goal-card"
-      className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm"
+      className="overflow-hidden rounded-2xl border border-[#bdd9ec] bg-gradient-to-br from-[#e8f3fc] via-[#f3f8fd] to-[#e8f5f1] shadow-[0_12px_30px_-22px_rgba(11,87,150,0.55)] dark:border-[#365b79] dark:from-[#18334f] dark:via-[#1b344e] dark:to-[#193d43]"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b px-5 py-3.5 sm:px-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#c4deef] px-5 py-3.5 sm:px-6 dark:border-[#365b79]">
         <div className="flex items-center gap-2.5">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-[#0b5796] text-white">
             <Clock3 className="size-4" aria-hidden="true" />
           </span>
           <h2 className="text-sm font-semibold">Weekly attendance</h2>
@@ -132,7 +132,7 @@ export function WeeklyGoalCard({
           aria-valuenow={Math.min(goal, progress.creditedHours)}
           aria-label={`${displayHours(progress.creditedHours)} of ${displayHours(goal)} weekly goal`}
         >
-          <div className="flex size-[5.75rem] flex-col items-center justify-center rounded-full bg-card text-center sm:size-[7rem]">
+          <div className="flex size-[5.75rem] flex-col items-center justify-center rounded-full bg-[#edf6fc] text-center dark:bg-[#19344e] sm:size-[7rem]">
             <strong className="text-xl font-semibold tabular-nums tracking-tight sm:text-[1.65rem]">
               {displayHours(progress.creditedHours)}
             </strong>
@@ -184,11 +184,13 @@ export function WeeklyGoalCard({
           </div>
         </div>
 
-        <div className="col-span-2 flex items-center justify-between gap-3 rounded-xl border border-primary/10 bg-primary/5 px-4 py-3 lg:col-span-1 lg:block lg:px-5 lg:py-4">
-          <span className="text-xs font-medium text-muted-foreground">
+        <div
+          className={`col-span-2 flex items-center justify-between gap-3 rounded-xl px-4 py-3 text-white shadow-sm lg:col-span-1 lg:block lg:px-5 lg:py-4 ${complete ? "bg-[#087d61]" : "bg-[#0b5796]"}`}
+        >
+          <span className="text-xs font-medium text-white/80">
             {complete ? (overGoal > 0 ? "Beyond target" : "Target completed") : "Time to goal"}
           </span>
-          <strong className="text-[1.65rem] font-semibold tabular-nums tracking-tight text-primary lg:mt-2 lg:block lg:text-3xl">
+          <strong className="text-[1.65rem] font-semibold tabular-nums tracking-tight text-white lg:mt-2 lg:block lg:text-3xl">
             {complete
               ? overGoal > 0
                 ? `+${displayHours(overGoal)}`
@@ -196,12 +198,12 @@ export function WeeklyGoalCard({
               : displayHours(progress.remainingHours)}
           </strong>
           {needsReview && (
-            <span className="text-xs text-amber-700 lg:mt-1 lg:block">Provisional</span>
+            <span className="text-xs text-amber-100 lg:mt-1 lg:block">Provisional</span>
           )}
         </div>
       </div>
 
-      <div className="border-t bg-muted/15 px-4 py-3.5 sm:px-6">
+      <div className="border-t border-[#c4deef] bg-[#dcecf8]/65 px-4 py-3.5 dark:border-[#365b79] dark:bg-[#122d46]/55 sm:px-6">
         <div className="grid grid-cols-7 gap-1.5 sm:gap-3" aria-label="This week's daily hours">
           {weekDays.map(({ date, weekday, day, scheduled }) => {
             const future = date > data.today.date;

@@ -509,7 +509,7 @@ function PayrollWorkbenchContent() {
                           </div>
                           <p className="text-sm">{ex.description}</p>
                           {ex.acknowledged && ex.acknowledgementNotes && (
-                            <div className="mt-2 text-xs bg-white p-2 rounded border">
+                            <div className="mt-2 rounded border bg-card p-2 text-xs">
                               Admin note: {ex.acknowledgementNotes}
                             </div>
                           )}
@@ -520,7 +520,7 @@ function PayrollWorkbenchContent() {
                           <Button
                             size="sm"
                             variant="outline"
-                            className="bg-white"
+                            className="bg-card"
                             onClick={() => {
                               setAckNotes("");
                               setShowAckDialog(ex);
