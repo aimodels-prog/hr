@@ -78,7 +78,7 @@ test(
         await query`INSERT INTO attendance_corrections (id,organisation_id,attendance_record_id,employee_id,correction_type,original_clock_in,original_clock_out,
         original_status,proposed_clock_in,proposed_clock_out,explanation,status,record_version,created_by,updated_by)
         VALUES (${id},${org},${recordId},${employee.employeeId!},'Punch Correction',${originalIn},${originalOut},'Present',${proposedIn},${proposedOut},'Correct the punches',${status},${version},${author},${author})`;
-        return { id, recordId, version, proposedOut };
+        return { id, recordId, version, proposedOut, date };
       };
       const record = async (id: string) =>
         (await query`SELECT * FROM attendance_records WHERE id=${id}`)[0]!;
@@ -180,7 +180,7 @@ test(
           );
           assert.equal(
             new Date(saved.approved_clock_out).getTime(),
-            Date.parse(`${attendance.date}T18:00:00Z`),
+            Date.parse(`${item.date}T18:00:00Z`),
           );
           assert.equal(
             new Date(attendance.clock_out_at).getTime(),
