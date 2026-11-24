@@ -1,14 +1,35 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, Clock3, Trophy } from "lucide-react";
+import { ArrowRight, CircleAlert, CircleCheck, Clock3, Trophy } from "lucide-react";
 import type { WorkforceAnalytics } from "@/lib/data/workforce-analytics";
 import { weeklyGoalMessage } from "@/lib/data/weekly-goal-message";
 
 const displayHours = (value: number) => {
   const minutes = Math.max(0, Math.round(value * 60));
-  const wholeHours = Math.floor(minutes / 60);
-  const remaining = minutes % 60;
-  return remaining ? `${wholeHours}h ${String(remaining).padStart(2, "0")}m` : `${wholeHours}h`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours}h ${String(rest).padStart(2, "0")}m` : `${hours}h`;
 };
+const compactHours = (value: number) => {
+  const minutes = Math.max(0, Math.round(value * 60));
+  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`;
+};
+
+const dateAtNoon = (date: string) => new Date(`${date}T12:00:00Z`);
+const shortDate = (date: string) =>
+  new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(
+    dateAtNoon(date),
+  );
+
+function weekLabel(start: string, end: string) {
+  const startYear = start.slice(0, 4);
+  const endYear = end.slice(0, 4);
+  if (startYear !== endYear)
+    return `${shortDate(start)} ${startYear} – ${shortDate(end)} ${endYear}`;
+  if (start.slice(0, 7) === end.slice(0, 7)) {
+    return `${Number(start.slice(8))}–${shortDate(end)} ${endYear}`;
+  }
+  return `${shortDate(start)} – ${shortDate(end)} ${endYear}`;
+}
 
 export function WeeklyGoalCard({
   data,
@@ -19,6 +40,7 @@ export function WeeklyGoalCard({
 }) {
   const goal = data.weeklyGoalHours;
   if (!goal || !Number.isFinite(goal) || !data.attendanceTracked) return null;
+
   const progress = weeklyGoalMessage({
     days: data.days,
     today: data.today.date,
@@ -30,27 +52,79 @@ export function WeeklyGoalCard({
   });
   const percent = Math.max(0, Math.min(100, (progress.creditedHours / goal) * 100));
   const complete = progress.state === "goal-met" || progress.state === "above-goal";
-  const days = data.days.filter(
-    (day) => day.date >= progress.startDate && day.date <= data.today.date,
+  const needsReview = progress.state === "needs-review";
+  const behind = progress.state === "behind";
+  const approvedHours = Math.max(0, progress.creditedHours - progress.workedHours);
+  const overGoal = Math.max(0, progress.creditedHours - goal);
+  const weekDays = Array.from({ length: 7 }, (_, offset) => {
+    const date = dateAtNoon(progress.startDate);
+    date.setUTCDate(date.getUTCDate() + offset);
+    const key = date.toISOString().slice(0, 10);
+    return {
+      date: key,
+      weekday: new Intl.DateTimeFormat("en-GB", { weekday: "short", timeZone: "UTC" }).format(date),
+      day: data.days.find((entry) => entry.date === key),
+      scheduled: data.workingDays ? data.workingDays.includes(date.getUTCDay()) : true,
+    };
+  });
+  const status = complete
+    ? "Goal reached"
+    : needsReview
+      ? "Needs a check"
+      : behind
+        ? "Behind pace"
+        : progress.state === "approved-time"
+          ? "Approved time included"
+          : progress.state === "new-week"
+            ? "New week"
+            : "On track";
+  const statusColor = complete
+    ? "bg-emerald-50 text-emerald-800 ring-emerald-200"
+    : needsReview || behind
+      ? "bg-amber-50 text-amber-800 ring-amber-200"
+      : "bg-primary/5 text-primary ring-primary/15";
+  const statusIcon = complete ? (
+    <Trophy className="size-3.5" aria-hidden="true" />
+  ) : needsReview || behind ? (
+    <CircleAlert className="size-3.5" aria-hidden="true" />
+  ) : (
+    <CircleCheck className="size-3.5" aria-hidden="true" />
   );
+  const remainingPace = progress.remainingScheduledDays
+    ? progress.remainingHours / progress.remainingScheduledDays
+    : null;
+  const guidance =
+    needsReview && progress.problemDate
+      ? `Check ${shortDate(progress.problemDate)} before treating this total as final.`
+      : behind && remainingPace !== null
+        ? data.dailyHours && remainingPace > data.dailyHours + 0.25
+          ? "The remaining time exceeds a normal day. Check your records with HR."
+          : `About ${displayHours(remainingPace)} per remaining workday would reach your goal.`
+        : progress.headline;
 
   return (
     <section
       aria-label="My weekly attendance goal"
       data-testid="weekly-goal-card"
-      className="rounded-2xl border border-primary/15 bg-card p-5 shadow-sm sm:p-6"
+      className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-base font-semibold">Your week</h2>
-        <span className="text-xs text-muted-foreground">
-          {progress.startDate} to {data.today.date}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b px-5 py-3.5 sm:px-6">
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <Clock3 className="size-4" aria-hidden="true" />
+          </span>
+          <h2 className="text-sm font-semibold">Weekly attendance</h2>
+        </div>
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {weekLabel(progress.startDate, weekDays[6]!.date)}
         </span>
       </div>
-      <div className="mt-5 grid gap-6 md:grid-cols-[12rem_minmax(0,1fr)] md:items-center">
+
+      <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-4 px-5 py-5 sm:grid-cols-[8.5rem_minmax(0,1fr)] sm:gap-7 sm:px-6 lg:grid-cols-[8.5rem_minmax(0,1fr)_minmax(11rem,14rem)]">
         <div
-          className="relative mx-auto flex size-44 items-center justify-center rounded-full"
+          className="relative mx-auto flex size-[7rem] items-center justify-center rounded-full sm:size-[8.5rem]"
           style={{
-            background: `conic-gradient(${complete ? "#079669" : "#0b61ba"} ${percent}%, #e5eaf0 ${percent}% 100%)`,
+            background: `conic-gradient(${complete ? "#079669" : "var(--primary)"} ${percent}%, var(--muted) ${percent}% 100%)`,
           }}
           role="progressbar"
           aria-valuemin={0}
@@ -58,83 +132,125 @@ export function WeeklyGoalCard({
           aria-valuenow={Math.min(goal, progress.creditedHours)}
           aria-label={`${displayHours(progress.creditedHours)} of ${displayHours(goal)} weekly goal`}
         >
-          <div className="flex size-[9.25rem] flex-col items-center justify-center rounded-full bg-card text-center">
-            <strong className="text-2xl font-semibold tabular-nums tracking-tight">
+          <div className="flex size-[5.75rem] flex-col items-center justify-center rounded-full bg-card text-center sm:size-[7rem]">
+            <strong className="text-xl font-semibold tabular-nums tracking-tight sm:text-[1.65rem]">
               {displayHours(progress.creditedHours)}
             </strong>
-            <span className="mt-1 text-xs text-muted-foreground">of {displayHours(goal)} goal</span>
+            <span className="text-[11px] text-muted-foreground">of {displayHours(goal)}</span>
           </div>
         </div>
+
         <div className="min-w-0">
-          <div className="flex items-start gap-2.5">
-            {complete ? (
-              <Trophy className="mt-0.5 size-5 shrink-0 text-emerald-600" aria-hidden="true" />
-            ) : (
-              <Clock3 className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
-            )}
-            <div>
-              <p className="text-lg font-semibold leading-snug">{progress.headline}</p>
-              <p className="mt-1 text-sm text-muted-foreground">{progress.detail}</p>
-              {progress.paceGuidance && (
-                <p className="mt-2 text-sm font-medium text-primary">{progress.paceGuidance}</p>
-              )}
-            </div>
-          </div>
-          <div className="mt-5 flex flex-wrap gap-x-7 gap-y-3 border-t pt-4 text-sm">
-            <div>
-              <strong className="block tabular-nums">{displayHours(progress.workedHours)}</strong>
-              <span className="text-xs text-muted-foreground">Recorded work</span>
-            </div>
-            <div>
-              <strong className="block tabular-nums">{displayHours(goal)}</strong>
-              <span className="text-xs text-muted-foreground">Weekly goal</span>
-            </div>
-            <div>
-              <strong className="block tabular-nums">
-                {progress.provisional ? "Pending review" : displayHours(progress.remainingHours)}
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ${statusColor}`}
+          >
+            {statusIcon}
+            {status}
+          </span>
+          <p className="mt-3 max-w-xl text-sm font-medium leading-relaxed text-foreground">
+            {guidance}
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
+            <span className="text-muted-foreground">
+              Recorded work{" "}
+              <strong className="ml-1 font-semibold tabular-nums text-foreground">
+                {displayHours(progress.workedHours)}
               </strong>
-              <span className="text-xs text-muted-foreground">
-                {progress.provisional ? "Result is provisional" : "To reach goal"}
+            </span>
+            {approvedHours > 0.01 && (
+              <span className="text-muted-foreground">
+                Approved time{" "}
+                <strong className="ml-1 font-semibold tabular-nums text-foreground">
+                  {displayHours(approvedHours)}
+                </strong>
               </span>
-            </div>
+            )}
+            {needsReview && progress.problemDate ? (
+              <Link
+                to="/staff/me/attendance"
+                search={{ correct: progress.problemDate }}
+                className="inline-flex items-center gap-1 font-semibold text-primary hover:underline"
+              >
+                Review day <ArrowRight className="size-3.5" aria-hidden="true" />
+              </Link>
+            ) : (
+              <Link
+                to="/staff/me/attendance"
+                className="inline-flex items-center gap-1 font-semibold text-primary hover:underline"
+              >
+                View attendance <ArrowRight className="size-3.5" aria-hidden="true" />
+              </Link>
+            )}
           </div>
-          {progress.provisional && progress.problemDate ? (
-            <Link
-              to="/staff/me/attendance"
-              search={{ correct: progress.problemDate }}
-              className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
-            >
-              Check {progress.problemDate} <ArrowRight className="size-4" aria-hidden="true" />
-            </Link>
-          ) : (
-            <Link
-              to="/staff/me/attendance"
-              className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
-            >
-              View attendance <ArrowRight className="size-4" aria-hidden="true" />
-            </Link>
+        </div>
+
+        <div className="col-span-2 flex items-center justify-between gap-3 rounded-xl border border-primary/10 bg-primary/5 px-4 py-3 lg:col-span-1 lg:block lg:px-5 lg:py-4">
+          <span className="text-xs font-medium text-muted-foreground">
+            {complete ? (overGoal > 0 ? "Beyond target" : "Target completed") : "Time to goal"}
+          </span>
+          <strong className="text-[1.65rem] font-semibold tabular-nums tracking-tight text-primary lg:mt-2 lg:block lg:text-3xl">
+            {complete
+              ? overGoal > 0
+                ? `+${displayHours(overGoal)}`
+                : displayHours(progress.creditedHours)
+              : displayHours(progress.remainingHours)}
+          </strong>
+          {needsReview && (
+            <span className="text-xs text-amber-700 lg:mt-1 lg:block">Provisional</span>
           )}
         </div>
       </div>
-      {days.length > 0 && (
-        <div
-          className="mt-6 grid grid-cols-3 gap-2 border-t pt-4 sm:grid-cols-7"
-          aria-label="This week's daily hours"
-        >
-          {days.map((day) => (
-            <div key={day.date} className="min-w-0 rounded-lg bg-muted/40 px-2 py-2 text-center">
-              <span className="block text-xs text-muted-foreground">
-                {new Intl.DateTimeFormat("en-GB", { weekday: "short", timeZone: "UTC" }).format(
-                  new Date(`${day.date}T12:00:00Z`),
-                )}
-              </span>
-              <strong className="mt-0.5 block text-sm tabular-nums">
-                {displayHours(Math.max(day.worked, day.attendanceCredit))}
-              </strong>
-            </div>
-          ))}
+
+      <div className="border-t bg-muted/15 px-4 py-3.5 sm:px-6">
+        <div className="grid grid-cols-7 gap-1.5 sm:gap-3" aria-label="This week's daily hours">
+          {weekDays.map(({ date, weekday, day, scheduled }) => {
+            const future = date > data.today.date;
+            const credited = day ? Math.max(day.worked, day.attendanceCredit) : 0;
+            const review = !future && Boolean(day && (day.review > 0 || day.missing > 0));
+            const target = day?.attendanceTarget || data.dailyHours || 8;
+            const dailyPercent = Math.min(100, (credited / target) * 100);
+            const label = future
+              ? "—"
+              : review
+                ? "Review"
+                : credited > 0
+                  ? displayHours(credited)
+                  : scheduled
+                    ? "—"
+                    : "Off";
+            return (
+              <div
+                key={date}
+                className="min-w-0 text-center"
+                aria-label={`${weekday} ${shortDate(date)}: ${future ? "upcoming" : review ? "needs review" : credited > 0 ? `${displayHours(credited)} credited` : scheduled ? "no time recorded" : "non-working day"}`}
+              >
+                <div className="flex items-baseline justify-center gap-1 text-[11px] text-muted-foreground">
+                  <span>{weekday}</span>
+                  <span className="tabular-nums">{Number(date.slice(8))}</span>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border/70">
+                  <div
+                    className={`h-full rounded-full ${review ? "bg-amber-500" : credited >= target - 0.01 ? "bg-emerald-600" : "bg-primary"}`}
+                    style={{ width: `${dailyPercent}%` }}
+                  />
+                </div>
+                <span
+                  className={`mt-1.5 block truncate text-[11px] font-semibold tabular-nums ${review ? "text-amber-700" : future || !credited ? "text-muted-foreground" : "text-foreground"}`}
+                >
+                  {credited > 0 && !review && !future ? (
+                    <>
+                      <span className="sm:hidden">{compactHours(credited)}</span>
+                      <span className="hidden sm:inline">{label}</span>
+                    </>
+                  ) : (
+                    label
+                  )}
+                </span>
+              </div>
+            );
+          })}
         </div>
-      )}
+      </div>
     </section>
   );
 }

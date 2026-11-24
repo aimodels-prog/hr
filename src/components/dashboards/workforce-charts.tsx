@@ -512,9 +512,6 @@ export default function WorkforceCharts({
       )}
       {data && (
         <>
-          {scope === "self" && user.employeeId && (
-            <WeeklyGoalCard data={data} employeeId={user.employeeId} />
-          )}
           <PulseStrip
             compact
             metrics={
@@ -573,6 +570,9 @@ export default function WorkforceCharts({
                   ]
             }
           />
+          {scope === "self" && user.employeeId && (
+            <WeeklyGoalCard data={data} employeeId={user.employeeId} />
+          )}
           {scope === "hr" && !employeeId && dashboardDetail && (
             <WorkforceKpiDetails
               key={dashboardDetail}

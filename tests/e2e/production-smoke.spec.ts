@@ -326,6 +326,21 @@ test("production release smoke keeps employee dashboard concise on desktop and p
   await expect(
     page.getByTestId("primary-dashboard-charts").locator(":scope > section"),
   ).toHaveCount(2);
+  await expect(page.getByTestId("weekly-goal-card")).toBeVisible();
+  const dashboardOrder = await page
+    .locator(".via-metric-card, [data-testid='weekly-goal-card']")
+    .evaluateAll((elements) =>
+      elements.map((element) =>
+        element.hasAttribute("data-testid")
+          ? "weekly-goal"
+          : element.textContent?.includes("Attendance completion")
+            ? "attendance-percentage"
+            : "other",
+      ),
+    );
+  expect(dashboardOrder.indexOf("attendance-percentage")).toBeLessThan(
+    dashboardOrder.indexOf("weekly-goal"),
+  );
   await expect(page.getByText("Viewing: All employees", { exact: false })).toHaveCount(0);
   await page.getByRole("button", { name: "Reporting period and timezone", exact: true }).click();
   await expect(
