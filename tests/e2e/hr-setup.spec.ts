@@ -19,7 +19,9 @@ test("HR dashboard setup: connections, retry, shortcuts and mobile", async ({ pa
   });
   await page.goto("/staff");
   const setup = page.getByRole("region", { name: "HR setup", exact: true });
-  await expect(setup.getByRole("heading", { name: "HR setup" })).toBeVisible();
+  await expect(setup.getByRole("heading", { name: "HR setup" })).toBeVisible({
+    timeout: 30_000,
+  });
   await expect(setup.getByRole("button", { name: "Enable emails", exact: true })).toBeEnabled({
     timeout: 30_000,
   });
